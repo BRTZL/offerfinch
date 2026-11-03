@@ -8,6 +8,7 @@ import { startFixtureBoards } from "./fixture-boards";
 import {
 	APP_DIR,
 	launchApp,
+	pickFakeModels,
 	RESUME,
 	skipRestOfSetup,
 	tempUserData,
@@ -91,10 +92,7 @@ test("Inbox: matches first, grouped by company, Not interested with reasons, hid
 		await page.setViewportSize({ width: 1280, height: 800 });
 		// A profile and test models, as onboarding does; the rest of setup is put off.
 		await page.getByTestId("welcome-start").click();
-		for (const role of ["scoring", "tailoring", "claims"]) {
-			await page.getByTestId(`role-${role}-mode`).click();
-			await page.getByTestId(`role-${role}-fake`).click();
-		}
+		await pickFakeModels(page);
 		await page.getByTestId("step-continue").click();
 		await page.getByTestId("resume-option-paste").click();
 		await page.getByTestId("onboarding-text").fill(RESUME);

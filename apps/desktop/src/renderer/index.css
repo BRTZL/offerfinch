@@ -319,6 +319,39 @@ textarea:focus-visible,
 	--step-from: -12px;
 }
 
+/* Setup's finch walks the step trail: it moves to the current step and hops once on the way
+   (components/system/step-trail.tsx). */
+.finch-trail {
+	transition: transform 200ms var(--ease-standard);
+}
+.finch-trail[data-hopping] .finch-trail-body {
+	animation: finch-hop 200ms var(--ease-standard);
+}
+@keyframes finch-hop {
+	50% {
+		transform: translateY(-4px);
+	}
+}
+
+/* A small burst of the mark's cells for setup's two moments (components/system/sparkle.tsx):
+   out from the middle and gone. Not drawn at all under reduced motion. */
+.sparkle {
+	top: -2px;
+	left: -2px;
+	opacity: 0;
+	animation: sparkle 560ms var(--ease-standard) both;
+}
+@keyframes sparkle {
+	0% {
+		opacity: 1;
+		transform: translate(0, 0) scale(1);
+	}
+	100% {
+		opacity: 0;
+		transform: translate(var(--dx), var(--dy)) scale(0.6);
+	}
+}
+
 @media (prefers-reduced-motion: reduce) {
 	*,
 	*::before,

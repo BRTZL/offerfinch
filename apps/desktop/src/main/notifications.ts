@@ -80,6 +80,16 @@ export class Notifier {
 		return this.get();
 	}
 
+	/**
+	 * The chirp on its own, for a moment in the app, only when the chirp is the chosen sound.
+	 * Test runs count it without playing anything.
+	 */
+	chirp(): boolean {
+		if (this.state.sound !== "chirp") return false;
+		if (!this.standIn) this.playChirp();
+		return true;
+	}
+
 	/** Clears the missed count (the user has seen the in-app notice). */
 	clearMissed(): NotificationState {
 		this.save({ missed: 0 });

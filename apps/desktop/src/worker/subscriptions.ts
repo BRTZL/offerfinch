@@ -235,7 +235,42 @@ function electronClaudeQuery(
 	};
 }
 
-interface CliState {
+/** What to run in Terminal to install a CLI or sign in to it. */
+export interface CliFix {
+	kind: "install" | "login";
+	/** One line to paste in Terminal. */
+	command: string;
+	/** What to do once it runs, when the command alone is not enough. */
+	after: string | null;
+}
+
+/** The commands the app and its docs give for Claude Code and the Codex CLI. */
+export const CLAUDE_FIX: Record<CliFix["kind"], CliFix> = {
+	install: {
+		kind: "install",
+		command: "curl -fsSL https://claude.ai/install.sh | bash",
+		after: "Then run claude, type /login and sign in with your Claude plan.",
+	},
+	login: {
+		kind: "login",
+		command: "claude",
+		after: "Then type /login and sign in with your Claude plan.",
+	},
+};
+export const CODEX_FIX: Record<CliFix["kind"], CliFix> = {
+	install: {
+		kind: "install",
+		command: "npm install -g @openai/codex",
+		after: "Then run codex login and sign in with your ChatGPT plan.",
+	},
+	login: {
+		kind: "login",
+		command: "codex login",
+		after: "Sign in with your ChatGPT plan.",
+	},
+};
+
+export interface CliState {
 	/** The binary found on the login shell's PATH, or null. */
 	path: string | null;
 	version: string | null;
@@ -243,6 +278,8 @@ interface CliState {
 	login: LlmLoginState;
 	/** What to run in Terminal when it is not ready. */
 	command: string | null;
+	/** The same, as a command to copy and what to do after it. */
+	fix: CliFix | null;
 }
 
 export interface Subscriptions {
@@ -352,6 +389,7 @@ export function subscriptions(input: {
 								login.state === "logged_in"
 									? null
 									: "claude   (then type /login and sign in with your Claude plan)",
+							fix: login.state === "logged_in" ? null : CLAUDE_FIX.login,
 						};
 					})()
 				: {
@@ -362,7 +400,8 @@ export function subscriptions(input: {
 							state: "logged_out",
 							detail: "Claude Code is not installed.",
 						},
-						command: "curl -fsSL https://claude.ai/install.sh | bash",
+						command: CLAUDE_FIX.install.command,
+						fix: CLAUDE_FIX.install,
 					};
 			claudeCache = { at: Date.now(), state };
 			return state;
@@ -381,10 +420,15 @@ export function subscriptions(input: {
 				tested: CODEX_TESTED,
 				login,
 				command: !binary
-					? "npm install -g @openai/codex"
+					? CODEX_FIX.install.command
 					: login.state === "logged_in"
 						? null
-						: "codex login",
+						: CODEX_FIX.login.command,
+				fix: !binary
+					? CODEX_FIX.install
+					: login.state === "logged_in"
+						? null
+						: CODEX_FIX.login,
 			};
 			codexCache = { at: Date.now(), state };
 			return state;

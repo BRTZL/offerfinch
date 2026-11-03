@@ -55,6 +55,7 @@ import {
 import { cleanStoredPostings, readPostingForJob } from "./add-job";
 import { localChromeProvider } from "./browser";
 import type { CheckStop, SiteTabHost } from "./checks";
+import { fakeSubscriptions } from "./fake-clis";
 import { FakeCodexSubscription } from "./fake-codex";
 import {
 	FOLLOW_UP_EVERY_MS,
@@ -150,10 +151,14 @@ export class WorkerApp {
 		this.db = db;
 		this.secrets = init.secrets;
 		this.settings = new SettingsStore(db);
-		this.subscriptions = subscriptions({
+		// Test runs never reach the CLIs on this Mac: their state is the test's (fake-clis.ts).
+		const local = subscriptions({
 			hostScript: init.claudeHost,
 			log: (message, data) => hooks.log("info", message, data),
 		});
+		this.subscriptions = init.test
+			? fakeSubscriptions(init.userData, local)
+			: local;
 		this.blobs = new FsBlobStore(path.join(init.userData, "files"));
 		this.followUpDelivery = new FollowUpDelivery({
 			db,
@@ -467,10 +472,11 @@ export class WorkerApp {
 	}
 
 	/** Reads PATH from the login shell again; rebuilds the pipeline when it changed. */
-	async refreshClis(): Promise<void> {
+	async refreshClis(options: { always?: boolean } = {}): Promise<void> {
 		const before = await this.settings.get("shellPath");
 		const pathEnv = await this.subscriptions.refresh();
-		if (pathEnv === before) return;
+		// Same PATH: a CLI installed since is found again only by a rebuild (`always`).
+		if (pathEnv === before && !options.always) return;
 		await this.settings.set("shellPath", pathEnv);
 		await this.rebuild();
 		this.runner.poke();

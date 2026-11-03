@@ -138,3 +138,33 @@ export function AnimatedMark({ size = 40 }: { size?: number }) {
 		</span>
 	);
 }
+
+/** The frames a still finch can show, by name (setup's step trail: resting, or mid-hop). */
+export type MarkFrameName = "idle" | "hop" | "chirp" | "note";
+
+/** One frame of the sheet, drawn still: the finch that walks setup's step trail. */
+export function MarkFrame({
+	frame,
+	size = 16,
+}: {
+	frame: MarkFrameName;
+	size?: number;
+}) {
+	const f = MARK_FRAMES.find((m) => m.name === frame) ?? MARK_FRAMES[0];
+	if (!f) return null;
+	return (
+		<svg
+			xmlns="http://www.w3.org/2000/svg"
+			viewBox="0 0 32 32"
+			width={size}
+			height={size}
+			className="text-foreground block"
+			data-brand="grid"
+			data-frame={f.name}
+			aria-hidden="true"
+		>
+			<Cells cells={f.body} fill="currentColor" />
+			<Cells cells={f.green} fill="var(--brand)" />
+		</svg>
+	);
+}

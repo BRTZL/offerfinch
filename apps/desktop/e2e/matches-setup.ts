@@ -3,7 +3,7 @@ import { type ElectronApplication, expect, type Page } from "@playwright/test";
 import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
-import { RESUME, skipRestOfSetup } from "./launch";
+import { pickFakeModels, RESUME, skipRestOfSetup } from "./launch";
 
 /** Runs `fn` on the app's database in `userData` (read only unless asked). */
 export function withDb<T>(
@@ -29,10 +29,7 @@ export const countIn = (userData: string, query: string) =>
 /** Setup as a new user does it, with the test models; the rest of setup put off. */
 export async function onboardWithFakes(page: Page) {
 	await page.getByTestId("welcome-start").click();
-	for (const role of ["scoring", "tailoring", "claims"]) {
-		await page.getByTestId(`role-${role}-mode`).click();
-		await page.getByTestId(`role-${role}-fake`).click();
-	}
+	await pickFakeModels(page);
 	await page.getByTestId("step-continue").click();
 	await page.getByTestId("resume-option-paste").click();
 	await page.getByTestId("onboarding-text").fill(RESUME);

@@ -10,6 +10,9 @@ at the top, above the newest version. Only what is merged into main belongs here
 
 ## Unreleased
 
+- Setup is five short steps, finds Claude Code and Codex on your Mac and connects them for you,
+  and tells you exactly what to run when one is missing.
+
 ### Help with answers on Questions
 
 - Help me remember on Questions turns a hard question into a few multiple-choice asks (which

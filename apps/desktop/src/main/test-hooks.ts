@@ -15,6 +15,8 @@ export const testHooks = {
 	/** Files the app saved where a real run would ask the user (an interview's .ics). */
 	savedFiles: [] as string[],
 	updateNotices: [] as { title: string; body: string; path: string }[],
+	/** Chirps the window asked for (setup's moments), when the time each was played. */
+	chirps: [] as number[],
 	workerPid: () => mainState.worker?.pid,
 	/**
 	 * Presses button `index` of the `n`th notice shown, as Notification Center would (test runs

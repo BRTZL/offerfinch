@@ -15,6 +15,7 @@ import { startFixtureBoards } from "./fixture-boards";
 import {
 	launchApp,
 	openRoute,
+	pickFakeModels,
 	RESUME,
 	skipRestOfSetup,
 	tempUserData,
@@ -103,10 +104,7 @@ test.describe
 				const { page } = a;
 				await page.setViewportSize({ width: 1280, height: 860 });
 				await page.getByTestId("welcome-start").click();
-				for (const role of ["scoring", "tailoring", "claims"]) {
-					await page.getByTestId(`role-${role}-mode`).click();
-					await page.getByTestId(`role-${role}-fake`).click();
-				}
+				await pickFakeModels(page);
 				await page.getByTestId("step-continue").click();
 				await page.getByTestId("resume-option-paste").click();
 				await page.getByTestId("onboarding-text").fill(RESUME);

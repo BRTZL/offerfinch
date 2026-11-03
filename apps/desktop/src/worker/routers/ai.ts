@@ -6,6 +6,7 @@ import {
 } from "@offerfinch/local-llm/codex";
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
+import { autoFill } from "../../shared/auto-connect";
 import { VENDOR_RULE } from "../pipeline";
 import { aiSettingsSchema } from "../settings";
 import { protectedProcedure } from "./procedure";
@@ -59,6 +60,39 @@ export const aiRouter = {
 			codexCredits: CODEX_CREDITS_HOWTO,
 		};
 	}),
+	/**
+	 * Setup's Connect AI: finds Claude Code and Codex, and gives each role that is still open
+	 * (on an API key with none stored) the signed-in one: Claude finds matches and drafts, Codex
+	 * checks drafts. A choice the user made is never changed. `refresh` reads PATH and the
+	 * logins again (Check again, after installing or signing in).
+	 */
+	autoConnect: protectedProcedure
+		.input(z.object({ refresh: z.boolean().default(false) }))
+		.handler(async ({ input }) => {
+			const w = worker();
+			await w.pathRefresh;
+			if (input.refresh) await w.refreshClis({ always: true });
+			const [claude, codex] = await Promise.all([
+				w.subscriptions.claude(),
+				w.subscriptions.codex(),
+			]);
+			const settings = await w.settings.get("ai");
+			const { settings: next, filled } = autoFill({
+				settings,
+				claude: claude.login.state === "logged_in",
+				codex: codex.login.state === "logged_in",
+				keys: {
+					anthropic: w.hasSecret("anthropic"),
+					openai: w.hasSecret("openai"),
+				},
+			});
+			if (filled.length) {
+				await w.settings.set("ai", next as typeof settings);
+				await w.rebuild();
+				w.runner.poke();
+			}
+			return { claude, codex, filled, roles: w.roles };
+		}),
 	/**
 	 * A live test of one role: one small call through the metered path (counted against the
 	 * cap like any call). Sends no profile data.

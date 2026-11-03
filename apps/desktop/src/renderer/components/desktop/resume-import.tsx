@@ -49,6 +49,37 @@ type Picked = {
 };
 
 /**
+ * The whole step takes a dropped file, not only the Upload card: `dragging` while one is over
+ * it, for the card's highlight.
+ */
+function useFileDrop(onFile: (file: File) => void, enabled: boolean) {
+	const [dragging, setDragging] = useState(false);
+	if (!enabled)
+		return { dragging: false, props: { "data-testid": "resume-drop" } };
+	return {
+		dragging,
+		props: {
+			"data-testid": "resume-drop",
+			"data-dragging": dragging || undefined,
+			onDragOver: (e: React.DragEvent) => {
+				e.preventDefault();
+				setDragging(true);
+			},
+			onDragLeave: (e: React.DragEvent) => {
+				if (!e.currentTarget.contains(e.relatedTarget as Node | null))
+					setDragging(false);
+			},
+			onDrop: (e: React.DragEvent) => {
+				e.preventDefault();
+				setDragging(false);
+				const file = e.dataTransfer.files[0];
+				if (file) onFile(file);
+			},
+		},
+	};
+}
+
+/**
  * Step: the resume, by one of three ways: upload a file (click or drop), paste or type it, or
  * start from scratch. Your AI drafts profile records from the text; nothing is saved until the
  * draft is reviewed. In onboarding, "Draft my profile" sits in the footer.
@@ -68,7 +99,6 @@ export function ResumeImport({
 	const [mode, setMode] = useState<Mode>("choose");
 	const [text, setText] = useState("");
 	const [picked, setPicked] = useState<Picked | null>(null);
-	const [dragging, setDragging] = useState(false);
 	const fileInput = useRef<HTMLInputElement>(null);
 	const structure = useMutation({
 		mutationFn: () => client.profile.structure({ text }),
@@ -120,6 +150,7 @@ export function ResumeImport({
 		}
 	};
 	const ready = text.trim().length >= 20 && picked?.state !== "reading";
+	const drop = useFileDrop((file) => void read(file), !structure.isPending);
 	const inFooter = useStepAction({
 		label: "Draft my profile",
 		onClick: () => structure.mutate(),
@@ -162,7 +193,7 @@ export function ResumeImport({
 		/>
 	);
 	return (
-		<div className="flex flex-col gap-4">
+		<div className="flex flex-col gap-4" {...drop.props}>
 			{existing.data && (
 				<Notice tone="info" data-testid="onboarding-replaces">
 					You already have a profile. A new draft replaces it when you save it;
@@ -176,11 +207,9 @@ export function ResumeImport({
 					<OptionCard
 						icon={<FileUp />}
 						title="Upload a file"
-						description="PDF, TXT or Markdown, up to 5 MB. Click, or drop it here."
+						description="PDF, TXT or Markdown, up to 5 MB. Click, or drop it anywhere here."
 						onClick={() => fileInput.current?.click()}
-						onDropFiles={(files) => files[0] && void read(files[0])}
-						dragging={dragging}
-						onDragState={setDragging}
+						dragging={drop.dragging}
 						testId="resume-option-upload"
 					/>
 					<OptionCard

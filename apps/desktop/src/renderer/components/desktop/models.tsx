@@ -22,9 +22,11 @@ import {
 } from "@/components/ui/select";
 import { desktop } from "@/lib/desktop";
 import { client, orpc } from "@/lib/orpc";
-
-type Role = "scoring" | "tailoring" | "claims";
-type Mode = "api" | "claude-subscription" | "codex-subscription" | "fake";
+import {
+	type Mode,
+	type Role,
+	unavailable,
+} from "../../../shared/auto-connect";
 
 const ROLES: {
 	role: Role;
@@ -58,15 +60,6 @@ const MODE_LABEL: Record<Mode, string> = {
 	"codex-subscription": "Codex subscription",
 	fake: "Test models",
 };
-
-/** Which choices a role can take: the claims check stays on another vendor than tailoring. */
-function unavailable(role: Role, mode: Mode): string | null {
-	if (role === "claims" && mode === "claude-subscription")
-		return "Drafting uses Claude, so Claude cannot check its drafts";
-	if (role !== "claims" && mode === "codex-subscription")
-		return "Codex only checks drafts";
-	return null;
-}
 
 function useKeys() {
 	return useQuery({
@@ -269,6 +262,47 @@ function CliRow({
 
 /** Claude Code and Codex: login, guards, budget, and the terms, read before turning either on. */
 function SubscriptionSection() {
+	const subs = useQuery({
+		...orpc.ai.subscriptions.queryOptions(),
+		staleTime: 30_000,
+		meta: { quiet: true },
+	});
+	const d = subs.data;
+	return (
+		<div className="flex flex-col gap-3" data-testid="subscriptions">
+			{subs.isLoading ? <RowsSkeleton rows={2} twoLine /> : null}
+			{d ? (
+				<Group>
+					<CliRow id="claude" name="Claude Code" state={d.claude} />
+					<CliRow id="codex" name="Codex" state={d.codex} />
+				</Group>
+			) : null}
+			<SubscriptionTerms />
+			{d ? (
+				<Disclosure title="Advanced" data-testid="models-advanced">
+					<PlanLimits />
+				</Disclosure>
+			) : null}
+		</div>
+	);
+}
+
+/** The plans' terms, shown wherever a subscription can be turned on. */
+export function SubscriptionTerms() {
+	return (
+		<p
+			className="text-muted-foreground text-xs"
+			data-testid="subscription-terms"
+		>
+			Using a Claude or ChatGPT subscription here is subject to Anthropic's and
+			OpenAI's terms. OfferFinch checks before each call that it cannot be
+			billed as extra usage or credits, and pauses if it could.
+		</p>
+	);
+}
+
+/** What protects the plans: the daily call budget, and Codex's usage headroom. */
+export function PlanLimits() {
 	const queryClient = useQueryClient();
 	const subs = useQuery({
 		...orpc.ai.subscriptions.queryOptions(),
@@ -286,74 +320,50 @@ function SubscriptionSection() {
 		onError: (e) => toast.error(e.message),
 	});
 	const d = subs.data;
+	if (!d) return <RowsSkeleton rows={1} twoLine />;
 	return (
-		<div className="flex flex-col gap-3" data-testid="subscriptions">
-			{subs.isLoading ? <RowsSkeleton rows={2} twoLine /> : null}
-			{d ? (
-				<Group>
-					<CliRow id="claude" name="Claude Code" state={d.claude} />
-					<CliRow id="codex" name="Codex" state={d.codex} />
-				</Group>
-			) : null}
-			<p
-				className="text-muted-foreground text-xs"
-				data-testid="subscription-terms"
+		<div className="flex flex-col gap-3 pt-1">
+			<FormRow
+				label="Subscription calls per 24 hours"
+				htmlFor="call-budget"
+				hint={
+					<span data-testid="call-budget-used">
+						{d.callBudget.used} used in the last 24 hours, Claude and Codex
+						together. It protects the plans you also work with.
+					</span>
+				}
 			>
-				Using a Claude or ChatGPT subscription here is subject to Anthropic's
-				and OpenAI's terms. OfferFinch checks before each call that it cannot be
-				billed as extra usage or credits, and pauses if it could.
+				<form
+					className="flex items-center gap-2"
+					onSubmit={(e) => {
+						e.preventDefault();
+						budget.mutate(
+							calls === "" || calls === null ? null : Number(calls),
+						);
+					}}
+				>
+					<Input
+						id="call-budget"
+						type="number"
+						min={0}
+						max={1000}
+						className="w-20 tabular-nums"
+						value={calls ?? String(d.callBudget.budget)}
+						onChange={(e) => setCalls(e.target.value)}
+					/>
+					<Button variant="outline" type="submit" disabled={calls === null}>
+						Save
+					</Button>
+				</form>
+			</FormRow>
+			<p
+				className="text-muted-foreground px-4 text-xs"
+				data-testid="codex-guards"
+			>
+				A Codex call starts only while every usage window of your ChatGPT plan
+				is below {d.codexHeadroomPercent}% used; one that spent credits is
+				recorded as paid and pauses Codex.
 			</p>
-			{d ? (
-				<Disclosure title="Advanced" data-testid="models-advanced">
-					<div className="flex flex-col gap-3 pt-1">
-						<FormRow
-							label="Subscription calls per 24 hours"
-							htmlFor="call-budget"
-							hint={
-								<span data-testid="call-budget-used">
-									{d.callBudget.used} used in the last 24 hours, Claude and
-									Codex together. It protects the plans you also work with.
-								</span>
-							}
-						>
-							<form
-								className="flex items-center gap-2"
-								onSubmit={(e) => {
-									e.preventDefault();
-									budget.mutate(
-										calls === "" || calls === null ? null : Number(calls),
-									);
-								}}
-							>
-								<Input
-									id="call-budget"
-									type="number"
-									min={0}
-									max={1000}
-									className="w-20 tabular-nums"
-									value={calls ?? String(d.callBudget.budget)}
-									onChange={(e) => setCalls(e.target.value)}
-								/>
-								<Button
-									variant="outline"
-									type="submit"
-									disabled={calls === null}
-								>
-									Save
-								</Button>
-							</form>
-						</FormRow>
-						<p
-							className="text-muted-foreground px-4 text-xs"
-							data-testid="codex-guards"
-						>
-							A Codex call starts only while every usage window of your ChatGPT
-							plan is below {d.codexHeadroomPercent}% used; one that spent
-							credits is recorded as paid and pauses Codex.
-						</p>
-					</div>
-				</Disclosure>
-			) : null}
 		</div>
 	);
 }
@@ -362,7 +372,14 @@ function SubscriptionSection() {
  * Which model each role uses and how it is paid for. API keys live in the macOS Keychain; the
  * pipeline gets them in memory only. Each role can be tested live with one small call.
  */
-export function ModelSettings({ compact = false }: { compact?: boolean }) {
+export function ModelSettings({
+	compact = false,
+	subscriptions = true,
+}: {
+	compact?: boolean;
+	/** The Subscriptions section; setup shows its own (Connect AI). */
+	subscriptions?: boolean;
+}) {
 	const queryClient = useQueryClient();
 	const ai = useQuery(orpc.ai.get.queryOptions());
 	const [tests, setTests] = useState<
@@ -472,6 +489,8 @@ export function ModelSettings({ compact = false }: { compact?: boolean }) {
 										}
 									>
 										<ModeSelect
+											// A choice made elsewhere (setup's Check again) shows at once.
+											key={current.mode}
 											role={role}
 											label={label}
 											value={current.mode as Mode}
@@ -500,9 +519,11 @@ export function ModelSettings({ compact = false }: { compact?: boolean }) {
 					</Group>
 				</Section>
 			) : null}
-			<Section title="Subscriptions">
-				<SubscriptionSection />
-			</Section>
+			{subscriptions ? (
+				<Section title="Subscriptions">
+					<SubscriptionSection />
+				</Section>
+			) : null}
 		</>
 	);
 	if (compact) return body;

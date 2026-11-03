@@ -236,6 +236,11 @@ export function registerIpc() {
 			throw new Error("Bad request");
 		return mainState.notifier.setSound(sound as NotificationSound);
 	});
+	handle(IPC.notifyChirp, () => {
+		const played = mainState.notifier.chirp();
+		if (TEST_MODE && played) testHooks.chirps.push(Date.now());
+		return played;
+	});
 	handle(IPC.notifyOpenSettings, async () => {
 		if (TEST_MODE) return;
 		await shell.openExternal(NOTIFICATION_SETTINGS_URL);
