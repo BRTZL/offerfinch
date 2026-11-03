@@ -168,6 +168,8 @@ export const documentsMethods = {
 			prepareRequestedAt: row.app.prepareRequestedAt,
 			/** The check of a version that kept failing; the API shows it only for the current version. */
 			checkError: row.app.checkError,
+			/** The Redraft the user asked for, until its new versions are saved (with any stop). */
+			redraft: row.app.redraft ?? null,
 			appliedAt: row.app.appliedAt,
 			appliedVia: row.app.appliedVia,
 			stateChangedAt: row.app.stateChangedAt,

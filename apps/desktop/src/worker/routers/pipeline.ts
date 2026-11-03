@@ -16,6 +16,10 @@ import { MAX_SUBSCRIPTION_DAILY_CALLS } from "@offerfinch/core/scoring/metered";
 import { BLOCKING_RULES, locateFlag } from "@offerfinch/core/tailor/flags";
 import { evidenceProfile } from "@offerfinch/core/tailor/profile-rules";
 import {
+	REDRAFT_INSTRUCTION_MAX,
+	REDRAFT_SCOPES,
+} from "@offerfinch/core/tailor/redraft";
+import {
 	ruleExplanation,
 	ruleLabel,
 } from "@offerfinch/core/tailor/rule-labels";
@@ -112,6 +116,7 @@ export const pipelineRouter = {
 						: [];
 				const approvable =
 					detail.state === "ready_for_review" &&
+					!detail.redraft &&
 					reviewCurrent &&
 					review.passed &&
 					review.atsChecked &&
@@ -186,6 +191,11 @@ export const pipelineRouter = {
 				};
 				return {
 					...detail,
+					/** Every saved version of each document, for the version picker. */
+					versions: await repoOf(context).documentHistory(
+						context.session.user.id,
+						input.id,
+					),
 					/** Rendered, sanitized HTML of each Markdown document, for the review pane. */
 					preview,
 					formAnswers: formAnswers ? parseFormAnswers(formAnswers.content) : [],
@@ -298,6 +308,81 @@ export const pipelineRouter = {
 					return { kind: result.kind, version: result.version };
 				}),
 			),
+		/**
+		 * Redraft: a new version of the chosen documents from the current profile and the posting,
+		 * with the user's optional instruction as a preference; then the check, back in review.
+		 */
+		redraft: protectedProcedure
+			.input(
+				z.object({
+					id: z.string().uuid(),
+					scope: z.enum(REDRAFT_SCOPES),
+					instruction: z.string().max(REDRAFT_INSTRUCTION_MAX).optional(),
+					rewriteOwnAnswers: z.boolean().optional(),
+				}),
+			)
+			.handler(({ context, input }) =>
+				refusal(async () => {
+					const result = await repoOf(context).requestRedraft({
+						userId: context.session.user.id,
+						applicationId: input.id,
+						scope: input.scope,
+						instruction: input.instruction,
+						rewriteOwnAnswers: input.rewriteOwnAnswers,
+					});
+					await context.sendEvent(result.event);
+					return { revoked: result.revoked };
+				}),
+			),
+		retryRedraft: protectedProcedure
+			.input(z.object({ id: z.string().uuid() }))
+			.handler(({ context, input }) =>
+				refusal(async () => {
+					const event = await repoOf(context).retryRedraft({
+						userId: context.session.user.id,
+						applicationId: input.id,
+					});
+					await context.sendEvent(event);
+					return { ok: true };
+				}),
+			),
+		cancelRedraft: protectedProcedure
+			.input(z.object({ id: z.string().uuid() }))
+			.handler(({ context, input }) =>
+				repoOf(context).cancelRedraft({
+					userId: context.session.user.id,
+					applicationId: input.id,
+				}),
+			),
+		/** One earlier (or the current) version of a document, read only. */
+		documentVersion: protectedProcedure
+			.input(
+				z.object({
+					id: z.string().uuid(),
+					kind: documentKind,
+					version: z.number().int().min(1),
+				}),
+			)
+			.handler(async ({ context, input }) => {
+				const found = await repoOf(context).documentVersion(
+					context.session.user.id,
+					input.id,
+					input.kind,
+					input.version,
+				);
+				if (!found) throw new ORPCError("NOT_FOUND");
+				return {
+					...found,
+					html:
+						found.kind === "form_answers"
+							? null
+							: markdownToPreviewHtml(found.content),
+					formAnswers:
+						found.kind === "form_answers"
+							? parseFormAnswers(found.content || "[]")
+							: [],
+				};
+			}),
 		/** The check of the current version kept failing: check the same version again, no redraft. */
 		retryCheck: protectedProcedure
 			.input(z.object({ id: z.string().uuid() }))

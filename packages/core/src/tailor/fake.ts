@@ -113,7 +113,9 @@ function savedAnswer(profile: ProfileSnapshot, topic: RegExp): string | null {
 export function fakeTailorResponder(
 	request: GenerateObjectRequest<unknown>,
 ): TailorOutput {
-	const input = request.context as TailorInput;
+	const input = request.context as TailorInput & { redraft?: unknown };
+	// A redraft writes another arrangement of the same verbatim lines, so its version differs.
+	const variant = input.redraft !== undefined;
 	const profile = evidenceProfile(input.profile);
 	const posting = input.job.descriptionText;
 	const company = input.job.companyName;
@@ -152,6 +154,7 @@ export function fakeTailorResponder(
 				.sort((a, b) => b.score - a.score)
 				.slice(0, 2)
 				.map((b) => b.line);
+			if (variant) bullets.reverse();
 			const meta = [
 				...record.locationParts.filter((p) => !/^(?:full|part)-time$/i.test(p)),
 				record.dates,
@@ -221,6 +224,7 @@ export function fakeTailorResponder(
 		}
 	}
 	if (summary && wordCount(letterText()) < MIN) paragraphs.unshift(summary);
+	if (variant) paragraphs.reverse();
 	const coverLetter = [
 		`${name}\\`,
 		`{{email}} · {{phone}} · ${field("LinkedIn")}`,
@@ -242,7 +246,7 @@ export function fakeTailorResponder(
 	const formAnswers: TailorOutput["formAnswers"] = [
 		{
 			question: `Why do you want to work at ${company}?`,
-			answer: `The ${title} role at ${company} is the work I want to do next. ${proof[0] ?? summary}`,
+			answer: `The ${title} role at ${company} is the work I want to do next. ${(variant ? proof[1] : undefined) ?? proof[0] ?? summary}`,
 		},
 	];
 	if (/notice period/i.test(posting)) {

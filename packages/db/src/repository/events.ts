@@ -228,6 +228,16 @@ export const eventsMethods = {
 				return { eventId: existing.id, instanceId, created: false };
 			}
 			if (input.transition?.to === "approved") {
+				// A Redraft the user asked for replaces documents: approve after it, or cancel it.
+				const [pending] = await tx
+					.select({ redraft: applications.redraft })
+					.from(applications)
+					.where(eq(applications.id, input.applicationId));
+				if (pending?.redraft)
+					throw new ApprovalRequiredError(
+						input.applicationId,
+						"a redraft is pending; approve its new version once checked, or cancel the redraft",
+					);
 				// Approve exactly what the user saw: refuse if the documents changed since.
 				const current = await this.currentHashes(
 					tx,

@@ -21,6 +21,7 @@ import type { JobSource } from "../sources/types";
 import type { CheckedSegment, ReviewFlag, ReviewStatus } from "../tailor/flags";
 import type { RuleIssue } from "../tailor/profile-rules";
 import type { AskedQuestion } from "../tailor/questions";
+import type { RedraftDocument, RedraftRequest } from "../tailor/redraft";
 import type { CitedUnit } from "../tailor/stale";
 import type { ApplicationWorkflowParams } from "../workflow/types";
 import type { ProviderRun, ScanProvider } from "./providers";
@@ -327,6 +328,35 @@ export interface PipelineRepository {
 		userId: string,
 		applicationId: string,
 		attempts: number,
+	): Promise<void>;
+	/** The redraft the user asked for and that has not been saved yet (`tailor/redraft.ts`). */
+	pendingRedraft?(
+		userId: string,
+		applicationId: string,
+	): Promise<RedraftRequest | null>;
+	/** Every version of one document, oldest first (who saved each: the user's own answers). */
+	documentVersions?(
+		userId: string,
+		applicationId: string,
+		kind: StoredDocumentKind,
+	): Promise<{ version: number; content: string | null; createdBy: Actor }[]>;
+	/**
+	 * Saves a redraft's new versions and clears its request, in one transaction: "saved". When the
+	 * request is gone (cancelled, already saved) "gone"; when a chosen document has a newer version
+	 * than the request was made against, "conflict" (recorded on the request, nothing written).
+	 */
+	saveRedraft?(
+		userId: string,
+		applicationId: string,
+		requestId: string,
+		versions: { kind: RedraftDocument; content: string }[],
+	): Promise<"saved" | "gone" | "conflict">;
+	/** Records why a redraft has not run (paused, an error after retries) on its request. */
+	setRedraftProblem?(
+		userId: string,
+		applicationId: string,
+		requestId: string,
+		problem: NonNullable<RedraftRequest["problem"]>,
 	): Promise<void>;
 	/** Records (or, with null, clears) the check error of an application's current version. */
 	setCheckError(

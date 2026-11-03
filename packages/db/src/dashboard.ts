@@ -10,6 +10,7 @@ import { flagsMethods } from "./dashboard/flags";
 import { inboxMethods } from "./dashboard/inbox";
 import { profileMethods } from "./dashboard/profile";
 import { questionsMethods } from "./dashboard/questions";
+import { redraftMethods } from "./dashboard/redraft";
 import { spendingMethods } from "./dashboard/spending";
 import { submissionMethods } from "./dashboard/submission";
 import { DrizzlePipelineRepository } from "./repository";
@@ -66,6 +67,26 @@ export class DashboardRepository extends DrizzlePipelineRepository {
 
 	protected addEvent(...args: Parameters<typeof applicationsMethods.addEvent>) {
 		return applicationsMethods.addEvent.apply(this, args);
+	}
+
+	requestRedraft(...args: Parameters<typeof redraftMethods.requestRedraft>) {
+		return redraftMethods.requestRedraft.apply(this, args);
+	}
+
+	retryRedraft(...args: Parameters<typeof redraftMethods.retryRedraft>) {
+		return redraftMethods.retryRedraft.apply(this, args);
+	}
+
+	cancelRedraft(...args: Parameters<typeof redraftMethods.cancelRedraft>) {
+		return redraftMethods.cancelRedraft.apply(this, args);
+	}
+
+	documentHistory(...args: Parameters<typeof redraftMethods.documentHistory>) {
+		return redraftMethods.documentHistory.apply(this, args);
+	}
+
+	documentVersion(...args: Parameters<typeof redraftMethods.documentVersion>) {
+		return redraftMethods.documentVersion.apply(this, args);
 	}
 
 	editDocument(...args: Parameters<typeof documentsMethods.editDocument>) {

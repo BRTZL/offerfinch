@@ -23,6 +23,7 @@ import type {
 	ReviewStatus,
 } from "@offerfinch/core/tailor/flags";
 import type { RuleIssue } from "@offerfinch/core/tailor/profile-rules";
+import type { RedraftRequest } from "@offerfinch/core/tailor/redraft";
 import type { CitedUnit } from "@offerfinch/core/tailor/stale";
 import { sql } from "drizzle-orm";
 import {
@@ -348,6 +349,11 @@ export const applications = sqliteTable(
 		 * finished review or the retry.
 		 */
 		checkError: text("check_error", { mode: "json" }).$type<CheckError>(),
+		/**
+		 * The Redraft the user asked for (scope, instruction, the versions it replaces), until its
+		 * new versions are saved; with `problem` while it waits on a pause, an error or a conflict.
+		 */
+		redraft: text("redraft", { mode: "json" }).$type<RedraftRequest>(),
 		/**
 		 * Which current roles this application's documents show ("relevant", "all" or an
 		 * experience file path), set when the user switches it for one application. Null: the

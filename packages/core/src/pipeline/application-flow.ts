@@ -31,6 +31,7 @@ import {
 	reviewStep,
 	startPreparingStep,
 } from "./prepare";
+import { redraftInReview } from "./redraft";
 
 export type ApplicationOutcome =
 	| { outcome: "read_failed"; reason: string }
@@ -302,6 +303,8 @@ export async function runApplicationFlow(
 			// An edit is reviewed again before the user can approve it. A check that keeps failing,
 			// or meets the cap, is recorded for this version: the dashboard shows it with a retry
 			// instead of "Checking…" forever, and approval stays blocked.
+			// A Redraft the user asked for writes its new version first; the review below checks it.
+			await redraftInReview(step, deps, userId, jobId, wake);
 			let failure: string | null = null;
 			try {
 				const reviewed = await step.do(
