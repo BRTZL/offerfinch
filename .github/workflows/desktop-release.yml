@@ -265,12 +265,31 @@ jobs:
       - name: Verify the signature and notarization
         if: env.DRY_RUN == 'false'
         working-directory: apps/desktop/dist
+        # Required: the signature (local), the Developer ID authority (local), the stapled ticket
+        # (local: codesign reports it) and Gatekeeper's verdict (online, three tries). stapler
+        # validate also asks Apple's ticket server; from the runner that lookup can drop the
+        # connection (NSURLErrorDomain -1005) for a correctly stapled app, so after three tries it
+        # warns instead of failing: the stapled ticket and Gatekeeper are already checked.
         run: |
+          online() {
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              echo "::warning::'$*' failed (try $attempt of 3)"
+              sleep $((attempt * 15))
+            done
+            return 1
+          }
           for app in mac/OfferFinch.app mac-arm64/OfferFinch.app; do
             codesign --verify --deep --strict "$app"
-            codesign -dvv "$app" 2>&1 | grep -q "Authority=Developer ID Application"
-            spctl --assess --type execute -v "$app"
-            xcrun stapler validate "$app"
+            details=$(codesign -dvvvv "$app" 2>&1)
+            grep -q "Authority=Developer ID Application" <<<"$details"
+            grep -q "Notarization Ticket=stapled" <<<"$details" || {
+              echo "::error::$app has no stapled notarization ticket"
+              exit 1
+            }
+            online spctl --assess --type execute -v "$app"
+            online xcrun stapler validate "$app" ||
+              echo "::warning::stapler validate could not reach Apple for $app; the stapled ticket and Gatekeeper passed"
           done
 
       # The packaged arm64 app opens its window in background test mode against a temporary
