@@ -10,7 +10,7 @@ import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
 import { startFixtureBoards } from "./fixture-boards";
-import { APP_DIR, launchApp, RESUME, tempUserData } from "./launch";
+import { APP_DIR, launchApp, RESUME, tempUserData, toastsGone } from "./launch";
 
 /**
  * Closed postings (docs/decisions.md, 2026-11-03), in the background against the fixture boards:
@@ -163,9 +163,7 @@ test("a posting taken down from its board shows as closed, Prepare is refused wi
 		await expect(closedRow).toContainText("Senior Full-Stack Engineer");
 		await closedRow.click();
 		await expect(page.getByTestId("posting-closed")).toBeVisible();
-		await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
-			timeout: 15_000,
-		});
+		await toastsGone(page, 15_000);
 		await shots(app, page, "closed-in-inbox");
 
 		// The check was wrong: It's still open puts it back, and Prepare is offered again.

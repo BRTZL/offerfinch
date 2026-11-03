@@ -7,7 +7,14 @@ import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
 import { startFixtureBoards } from "./fixture-boards";
-import { APP_DIR, fakeChrome, launchApp, RESUME, tempUserData } from "./launch";
+import {
+	APP_DIR,
+	fakeChrome,
+	launchApp,
+	RESUME,
+	tempUserData,
+	toastsGone,
+} from "./launch";
 
 /**
  * Scan history against local stand-ins only, in the background: job-board search on the fixture
@@ -183,9 +190,7 @@ test("the scan history: found, set aside with reasons, and a paused source", asy
 		await expect(page).toHaveURL(/\/applications\//);
 		await page.getByTestId("scan-status").click();
 		await expect(page.getByTestId("scan-outcome")).toBeVisible();
-		await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
-			timeout: 15_000,
-		});
+		await toastsGone(page, 15_000);
 		// The toolbar and sidebar settle on the finished scan.
 		await expect(page.getByTestId("scan-now").first()).toContainText(
 			"Scan now",

@@ -9,7 +9,7 @@ import {
 	test,
 } from "@playwright/test";
 
-import { APP_DIR, launchApp, tempUserData } from "./launch";
+import { APP_DIR, launchApp, tempUserData, toastsGone } from "./launch";
 import { onboardWithFakes, shootBothThemes, withDb } from "./matches-setup";
 
 /**
@@ -119,9 +119,7 @@ function expectNoCanary(text: string, where: string) {
 }
 
 async function quiet(page: Page) {
-	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
-		timeout: 15_000,
-	});
+	await toastsGone(page, 15_000);
 }
 
 /** Navigates as a notification does (main's test hook). */

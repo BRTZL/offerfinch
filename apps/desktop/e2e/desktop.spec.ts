@@ -393,8 +393,10 @@ test("the Inbox by keyboard and right-click; nothing approves by key, menu or âŒ
 		await page.getByRole("tab", { name: /^All/ }).click();
 		const rows = page.getByTestId("inbox-row");
 		await expect(rows.first()).toBeVisible({ timeout: 30_000 });
-		const count = await rows.count();
-		expect(count).toBeGreaterThan(1);
+		// The list fills in as it loads: wait for the rest, not only the first row.
+		await expect
+			.poll(() => rows.count(), { timeout: 30_000 })
+			.toBeGreaterThan(1);
 		const selected = () => new URL(page.url()).pathname.split("/").pop();
 
 		// Arrow keys move the selection, Home and End jump, as in Mail.

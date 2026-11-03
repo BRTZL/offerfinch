@@ -4,7 +4,7 @@ import { expect, type Page, test } from "@playwright/test";
 import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
-import { APP_DIR, launchApp, RESUME, tempUserData } from "./launch";
+import { APP_DIR, launchApp, RESUME, tempUserData, toastsGone } from "./launch";
 
 /**
  * The chat, with fake models (OFFERFINCH_FAKE_MODELS=1), in the background: beside an
@@ -42,9 +42,7 @@ function readDb<T>(query: string, ...params: unknown[]): T[] {
 
 /** Screenshots without toasts over the composer. */
 async function quietShot(page: Page, name: string) {
-	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
-		timeout: 15_000,
-	});
+	await toastsGone(page, 15_000);
 	fs.mkdirSync(SHOTS, { recursive: true });
 	await page.screenshot({ path: path.join(SHOTS, `${name}.png`) });
 }

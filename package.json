@@ -10,7 +10,7 @@
 		"test": "pnpm --filter @offerfinch/core --filter @offerfinch/db --filter @offerfinch/runner --filter @offerfinch/local-llm --filter @offerfinch/desktop test",
 		"lint": "biome check .",
 		"knip": "knip",
-		"lint:ci": "node --test scripts/check-biome-warnings.test.mjs && node scripts/check-biome-warnings.mjs"
+		"lint:ci": "node --test scripts/check-biome-warnings.test.mjs scripts/release-plan.test.mjs && node scripts/check-biome-warnings.mjs"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.6.2",

@@ -1,67 +1,245 @@
-# Releases the macOS app when a v<version> tag is pushed (pnpm --filter @offerfinch/desktop
-# release patch): tests, builds arm64 and x64, signs with the Developer ID, notarizes, and
-# publishes a GitHub Release with the DMGs (first install) and the zips plus latest-mac.yml
-# (over-the-air updates). Installed apps find it within 6 hours. See docs/releasing.md.
-name: Desktop release
+# Releases the macOS app: the one entry point for stable and preview releases (docs/releasing.md).
+#
+# Two ways in, the same jobs:
+# - A pushed tag: vX.Y.Z (stable, from `pnpm --filter @offerfinch/desktop release patch`, which
+#   bumps package.json and dates the changelog first) or vX.Y.Z-preview.N (preview).
+# - The Release button (workflow_dispatch) on main: it works out the version itself, and once the
+#   build is signed and notarized commits "Release X.Y.Z" to main (stable only), tags and pushes
+#   with the GITHUB_TOKEN. A tag pushed that way starts no other run, so this run publishes it.
+#
+# resolve -> quality, test, e2e -> build (arm64 + x64 on one runner) -> finalize (button only)
+#         -> publish -> notify
+#
+# Without the signing secrets, or with dry_run, it is a dry run: an ad-hoc signed build, no
+# notarization, the files kept as a run artifact, and nothing committed, tagged or published.
+name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*.*.*"]
   workflow_dispatch:
+    inputs:
+      channel:
+        description: "stable: installed apps update to it. preview: a prerelease only preview installs see."
+        type: choice
+        options: [preview, stable]
+        default: preview
+      bump:
+        description: "Stable only: which part of the version goes up. Previews are the next patch's -preview.N."
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      dry_run:
+        description: "Build and test, publish nothing."
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
 
+# One release at a time, and a running release is never cancelled.
 concurrency:
-  group: desktop-release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
-  mac:
-    runs-on: macos-15
-    timeout-minutes: 60
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      channel: ${{ steps.plan.outputs.channel }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+      date: ${{ steps.plan.outputs.date }}
+      dry_run: ${{ steps.mode.outputs.dry_run }}
+    steps:
+      # Full history and tags: the next preview number and the commits since the last tag.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Dry run or release
+        id: mode
+        env:
+          DRY_RUN_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          missing=""
+          for name in MAC_CERT_P12_BASE64 MAC_CERT_PASSWORD APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ "$DRY_RUN_INPUT" = "true" ]; then
+            echo "::notice::Dry run (asked for): nothing will be published."
+            echo "dry_run=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$missing" ]; then
+            echo "::warning::Dry run: these secrets are not set:$missing (docs/releasing.md). Nothing will be published."
+            echo "dry_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dry_run=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: The button releases from main
+        if: github.event_name == 'workflow_dispatch' && steps.mode.outputs.dry_run == 'false' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Run the Release button on main (this run is on ${GITHUB_REF_NAME})."
+          exit 1
+      - name: Version, tag and notes
+        id: plan
+        env:
+          RELEASE_EVENT: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref_name }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_BUMP: ${{ inputs.bump }}
+        run: node scripts/release-plan.mjs resolve --notes "$RUNNER_TEMP/release-notes.md"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/release-notes.md
+          retention-days: 14
+      - name: Summary
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          CHANNEL: ${{ steps.plan.outputs.channel }}
+          DRY_RUN: ${{ steps.mode.outputs.dry_run }}
+        run: |
+          {
+            echo "## OfferFinch $VERSION ($CHANNEL)"
+            if [ "$DRY_RUN" = "true" ]; then echo "**Dry run: nothing published.**"; fi
+            echo
+            cat "$RUNNER_TEMP/release-notes.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  quality:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-
       - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
-          version: 11.9.0
+          node-version: 24
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      # Existing diagnostics are budgeted per file/rule/message; new warnings fail. Also runs the
+      # release plan's tests (scripts/release-plan.test.mjs).
+      - run: pnpm lint:ci
+      - run: pnpm -r check-types
+      - run: pnpm knip
+      # Text only here; public-check.yml reads images and video frames on pull requests.
+      - name: Public check
+        env:
+          DENYLIST: ${{ secrets.PUBLIC_DENYLIST }}
+        run: |
+          if [ -n "$DENYLIST" ]; then
+            printf '%s\n' "$DENYLIST" > "$RUNNER_TEMP/denylist.txt"
+            export PUBLIC_DENYLIST="$RUNNER_TEMP/denylist.txt"
+          fi
+          node scripts/check-public.mjs --ci
+          rm -f "$RUNNER_TEMP/denylist.txt"
 
+  test:
+    needs: resolve
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm rebuild better-sqlite3
+      # Boundary tests use synthetic homes and local capture servers, never a real login.
+      - name: Install the tested Codex CLI
+        run: |
+          mkdir -p "$RUNNER_TEMP/codex-tests"
+          pnpm --dir "$RUNNER_TEMP/codex-tests" add @openai/codex@0.166.0 --ignore-scripts
+          node scripts/codex-test-path.mjs "$RUNNER_TEMP/codex-tests/node_modules" >> "$GITHUB_PATH"
+      - name: Unit tests
+        run: pnpm test
+
+  e2e:
+    needs: resolve
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      # With install scripts: Electron downloads its binary, which the tests launch.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      # Electron's binary, if its install script left it to first use (idempotent).
+      - name: Electron
+        working-directory: apps/desktop
+        run: node node_modules/electron/install.js
+      # In the background (never on screen, never the active app), each failing test retried once.
+      - name: Desktop end-to-end tests
+        env:
+          OFFERFINCH_TEST_BACKGROUND: "1"
+        run: pnpm --filter @offerfinch/desktop e2e --retries=1
+      - name: Keep the traces (failures)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: apps/desktop/test-results
+          retention-days: 7
+
+  build:
+    needs: [resolve, quality, test, e2e]
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+      DRY_RUN: ${{ needs.resolve.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
 
-      # Install scripts are skipped: the root postinstall generates server env typings this
-      # build does not use, better-sqlite3 ships N-API prebuilds for both Mac arches, and
-      # electron-builder downloads its own Electron for each arch.
+      # Install scripts are skipped: better-sqlite3 ships N-API prebuilds for both Mac arches,
+      # and electron-builder downloads its own Electron for each arch.
       - name: Install
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Check the version matches the tag
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          version=$(node -p "require('./apps/desktop/package.json').version")
-          test "v$version" = "${GITHUB_REF_NAME}" || { echo "Tag ${GITHUB_REF_NAME} does not match version $version"; exit 1; }
-
-      - name: Tests
-        run: |
-          pnpm --filter @offerfinch/core test
-          pnpm --filter @offerfinch/db test
-          pnpm --filter @offerfinch/runner test
-          pnpm --filter @offerfinch/desktop test
+      # The version goes into the build here: package.json, and for a stable release from the
+      # button the dated changelog the app bundles (finalize commits the same change).
+      - name: Stamp the version
+        env:
+          RELEASE_DATE: ${{ needs.resolve.outputs.date }}
+        run: node scripts/release-plan.mjs apply "$VERSION" --date "$RELEASE_DATE"
 
       # The App Store Connect key is written to a file for notarization and removed afterwards.
-      - name: Signing and notarization credentials
+      - name: Notarization key
+        if: env.DRY_RUN == 'false'
         env:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
-          test -n "$APPLE_API_KEY_P8" || { echo "::error::APPLE_API_KEY_P8 is not set (docs/releasing.md)"; exit 1; }
           key="$RUNNER_TEMP/AuthKey.p8"
           printf '%s' "$APPLE_API_KEY_P8" > "$key"
           echo "APPLE_API_KEY=$key" >> "$GITHUB_ENV"
 
       - name: Build, sign and notarize
+        if: env.DRY_RUN == 'false'
         working-directory: apps/desktop
         env:
           CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
@@ -70,10 +248,22 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
           node scripts/build.mjs --production
-          # Stamped so the app turns on updates; local builds lack it (main/index.ts releaseBuild).
+          # Stamped so the app turns on updates; local builds lack it (main/app-updates.ts releaseBuild).
           pnpm exec electron-builder --mac --arm64 --x64 --publish never -c.extraMetadata.offerfinchRelease=true
 
+      # As `pnpm dist` builds locally: ad-hoc signed (arm64 needs a signature to launch at all),
+      # not notarized, and without the release stamp, so it never tries to update itself.
+      - name: Build (dry run, ad-hoc signed)
+        if: env.DRY_RUN == 'true'
+        working-directory: apps/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          node scripts/build.mjs --production
+          pnpm exec electron-builder --mac --arm64 --x64 --publish never -c.mac.identity=- -c.mac.notarize=false -c.mac.hardenedRuntime=false
+
       - name: Verify the signature and notarization
+        if: env.DRY_RUN == 'false'
         working-directory: apps/desktop/dist
         run: |
           for app in mac/OfferFinch.app mac-arm64/OfferFinch.app; do
@@ -83,27 +273,169 @@ jobs:
             xcrun stapler validate "$app"
           done
 
-      - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
+      # The packaged arm64 app opens its window in background test mode against a temporary
+      # data folder (the runner is arm64; the x64 build shares everything but the binaries).
+      - name: Launch check
+        working-directory: apps/desktop
+        run: node scripts/smoke-packaged.mjs dist/mac-arm64/OfferFinch.app
+
+      - name: The update file
         working-directory: apps/desktop/dist
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            OfferFinch-*.dmg OfferFinch-*-mac.zip OfferFinch-*-mac.zip.blockmap latest-mac.yml \
-            --title "OfferFinch ${GITHUB_REF_NAME#v}" \
-            --generate-notes
+          count=$(find . -maxdepth 1 -name '*-mac.yml' | wc -l | tr -d ' ')
+          test "$count" = 1 || { echo "::error::Expected one *-mac.yml, found $count"; ls; exit 1; }
+          cat ./*-mac.yml
 
-      - name: Keep the build (manual runs)
-        if: "!startsWith(github.ref, 'refs/tags/')"
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: offerfinch-mac
+          retention-days: 14
+          if-no-files-found: error
           path: |
-            apps/desktop/dist/*.dmg
-            apps/desktop/dist/*-mac.zip
-            apps/desktop/dist/latest-mac.yml
+            apps/desktop/dist/OfferFinch-*.dmg
+            apps/desktop/dist/OfferFinch-*-mac.zip
+            apps/desktop/dist/OfferFinch-*-mac.zip.blockmap
+            apps/desktop/dist/*-mac.yml
 
       - name: Remove the key
         if: always()
         run: rm -f "$RUNNER_TEMP/AuthKey.p8"
+
+  # The button only: commit "Release X.Y.Z" (stable) and push it with the tag, atomically. It
+  # pushes the commit this run built, so it fails rather than release if main moved meanwhile.
+  finalize:
+    needs: [resolve, build]
+    if: github.event_name == 'workflow_dispatch' && needs.resolve.outputs.dry_run == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+      TAG: ${{ needs.resolve.outputs.tag }}
+      CHANNEL: ${{ needs.resolve.outputs.channel }}
+      RELEASE_DATE: ${{ needs.resolve.outputs.date }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Commit, tag and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ "$CHANNEL" = "stable" ]; then
+            node scripts/release-plan.mjs apply "$VERSION" --date "$RELEASE_DATE"
+            git add apps/desktop/package.json apps/desktop/CHANGELOG.md
+            git commit -m "Release $VERSION"
+            git tag -a "$TAG" -m "OfferFinch $VERSION"
+            git push --atomic origin "HEAD:refs/heads/main" "refs/tags/$TAG"
+          else
+            # Previews never change main: the tag marks the commit that was built.
+            git tag -a "$TAG" -m "OfferFinch $VERSION"
+            git push origin "refs/tags/$TAG"
+          fi
+
+  publish:
+    needs: [resolve, build, finalize]
+    if: >-
+      !cancelled() && needs.build.result == 'success' && needs.resolve.outputs.dry_run == 'false' &&
+      (needs.finalize.result == 'success' || needs.finalize.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: offerfinch-mac
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: notes
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          PRERELEASE: ${{ needs.resolve.outputs.prerelease }}
+        working-directory: dist
+        # A draft first, every file uploaded and checked, then published: installed apps never see a
+        # release with missing update files, and a re-run resumes the same draft instead of failing.
+        run: |
+          set -euo pipefail
+          if [ "$PRERELEASE" = "true" ]; then
+            # Installed stable apps read the latest release, which a prerelease never is.
+            channel=(--prerelease --latest=false)
+          else
+            channel=(--latest)
+          fi
+          shopt -s nullglob
+          files=(OfferFinch-*.dmg OfferFinch-*-mac.zip OfferFinch-*-mac.zip.blockmap ./*-mac.yml)
+          # Two arches: a DMG, a zip and a blockmap each, and one updater manifest.
+          if [ "${#files[@]}" -lt 7 ]; then
+            echo "::error::Expected 7 release files, found ${#files[@]}"; ls -la; exit 1
+          fi
+          repo=(-R "$GITHUB_REPOSITORY")
+          if state=$(gh release view "$TAG" "${repo[@]}" --json isDraft,tagName 2>/dev/null); then
+            if [ "$(jq -r .tagName <<<"$state")" != "$TAG" ]; then
+              echo "::error::A release exists that is not for $TAG"; exit 1
+            fi
+            echo "Resuming the release for $TAG (draft: $(jq -r .isDraft <<<"$state"))."
+          else
+            gh release create "$TAG" "${repo[@]}" --verify-tag --draft \
+              --title "OfferFinch $VERSION" --notes-file ../notes/release-notes.md
+          fi
+          gh release upload "$TAG" "${repo[@]}" --clobber "${files[@]}"
+          for f in "${files[@]}"; do
+            name=$(basename "$f")
+            size=$(stat -c %s "$f")
+            got=$(gh release view "$TAG" "${repo[@]}" --json assets \
+              --jq ".assets[] | select(.name == \"$name\") | .size")
+            if [ "$got" != "$size" ]; then
+              echo "::error::$name is not attached in full (${got:-0} of $size bytes)"; exit 1
+            fi
+          done
+          gh release edit "$TAG" "${repo[@]}" --draft=false \
+            --title "OfferFinch $VERSION" --notes-file ../notes/release-notes.md "${channel[@]}"
+          echo "Published https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"
+
+  # One message per run. The topic comes from the NTFY_TOPIC secret: in a public repository a
+  # topic in the workflow file would let anyone post to it. Nothing private goes in the message.
+  notify:
+    needs: [resolve, quality, test, e2e, build, finalize, publish]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Notify
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          VERSION: ${{ needs.resolve.outputs.version || 'unknown version' }}
+          CHANNEL: ${{ needs.resolve.outputs.channel || 'release' }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          DRY_RUN: ${{ needs.resolve.outputs.dry_run }}
+          FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+          PUBLISHED: ${{ needs.publish.result == 'success' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.resolve.outputs.tag }}
+        run: |
+          if [ -z "$NTFY_TOPIC" ]; then
+            echo "::notice::NTFY_TOPIC is not set: no notification."
+            exit 0
+          fi
+          if [ "$FAILED" = "true" ]; then
+            title="OfferFinch $VERSION release failed"; tags="x"; priority=5; url="$RUN_URL"
+            body="The **$CHANNEL** release stopped. The run shows which job."
+          elif [ "$PUBLISHED" = "true" ]; then
+            title="OfferFinch $VERSION released"; tags="rocket,white_check_mark"; priority=3; url="$RELEASE_URL"
+            body="**$TAG** ($CHANNEL) is published."
+          else
+            title="OfferFinch $VERSION dry run passed"; tags="test_tube"; priority=2; url="$RUN_URL"
+            body="Dry run: nothing published. The build is a run artifact."
+          fi
+          curl -sS --max-time 20 \
+            -H "Title: $title" -H "Tags: $tags" -H "Priority: $priority" -H "Markdown: yes" \
+            -H "Click: $url" -H "Actions: view, Open, $url" \
+            -d "$body" "https://ntfy.sh/$NTFY_TOPIC" > /dev/null || echo "::warning::ntfy did not accept the message"

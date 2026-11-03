@@ -75,6 +75,15 @@ describe("the bundled changelog", () => {
 		expect(compareVersions("1.0.0", "1.0.0")).toBe(0);
 		expect(compareVersions("0.9.9", "1.0.0")).toBeLessThan(0);
 	});
+
+	it("puts a preview after the version before it and before its release", () => {
+		expect(compareVersions("1.2.1-preview.1", "1.2.0")).toBeGreaterThan(0);
+		expect(compareVersions("1.2.1-preview.1", "1.2.1")).toBeLessThan(0);
+		expect(compareVersions("1.2.1-preview.2", "1.2.1-preview.10")).toBeLessThan(
+			0,
+		);
+		expect(compareVersions("1.2.1-preview.3", "1.2.1-preview.3")).toBe(0);
+	});
 });
 
 describe("what's new after an update", () => {
@@ -136,5 +145,11 @@ describe("Settings › What's new", () => {
 			"1.2.0",
 			"1.1.0",
 		]);
+	});
+
+	it("a preview shows the upcoming notes and the releases before it", () => {
+		expect(
+			notesUpTo("1.2.1-preview.1", sections).map((s) => s.version),
+		).toEqual(["Unreleased", "1.2.0", "1.1.0"]);
 	});
 });

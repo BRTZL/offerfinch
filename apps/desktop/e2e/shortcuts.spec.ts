@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 
 import { SHORTCUTS } from "../src/shared/shortcuts";
 import { startFixtureBoards } from "./fixture-boards";
-import { APP_DIR, launchApp, tempUserData } from "./launch";
+import { APP_DIR, launchApp, tempUserData, toastsGone } from "./launch";
 import {
 	countIn,
 	onboardWithFakes,
@@ -42,9 +42,7 @@ test("the shortcut sheet lists every shortcut, and the Inbox keys move and prepa
 		await onboardWithFakes(page);
 		await scanOnce(page, userData);
 		const rows = await openMatches(page);
-		await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
-			timeout: 15_000,
-		});
+		await toastsGone(page, 15_000);
 
 		// ⌘/ opens the sheet: every registered shortcut, once, in its screen's group.
 		await page.keyboard.press("Meta+/");

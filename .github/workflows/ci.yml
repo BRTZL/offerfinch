@@ -1,11 +1,11 @@
 name: CI
 
-# Pushes to main, and every pull request; a PR's own branch is not built twice (macOS runners
-# bill at 10x on a private repository).
+# Every pull request, and on demand. Not on pushes to main: what lands there was checked in its
+# pull request, and a release runs these checks again (desktop-release.yml). macOS runners bill
+# at 10x on a private repository.
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

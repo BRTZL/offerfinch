@@ -180,7 +180,9 @@ export function App() {
 			<OverlayScrollbar />
 			<Toaster
 				theme="system"
-				position="bottom-right"
+				// Bottom centre: bottom-right sat on the footers' primary button (onboarding's
+				// Continue), and a pointer resting on a toast keeps it open.
+				position="bottom-center"
 				toastOptions={{
 					className:
 						"rounded-xl border border-border bg-popover text-sm text-popover-foreground shadow-lg",
