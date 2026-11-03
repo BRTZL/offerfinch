@@ -21,6 +21,7 @@ const STEP_LABEL: Record<string, string> = {
 	scrape: "Reading careers pages",
 	"chat-application": "Chat about applications",
 	"chat-profile": "Profile chat",
+	"answer-helper": "Answer helper on Questions",
 };
 
 /** A model's or step's share: its cost, and its subscription calls. */

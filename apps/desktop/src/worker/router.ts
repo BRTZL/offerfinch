@@ -1,3 +1,4 @@
+import { answerHelperRouter } from "./answer-helper";
 import { chatRouter } from "./chat";
 import { dismissalRouter } from "./dismissals";
 import { jobSearchSettingsRouter } from "./job-search";
@@ -31,6 +32,8 @@ export const desktopAppRouter = {
 	 * the open matches again.
 	 */
 	settings: { ...pipelineRouter.settings, ...jobSearchSettingsRouter(worker) },
+	/** Questions, with the answer helper (Suggest and Improve) beside Save answer. */
+	questions: { ...pipelineRouter.questions, ...answerHelperRouter(worker) },
 	/** Scan history: what each scan searched, found and set aside, and why. */
 	scanHistory: scanHistoryRouter(worker),
 	/** Not interested on matches, its undo, the Inbox's view counts and hidden companies. */
