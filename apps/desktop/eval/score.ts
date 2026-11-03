@@ -46,7 +46,7 @@ export const CLICHES: { label: string; pattern: RegExp }[] = [
 	},
 	{
 		label: "what excites me",
-		pattern: /\bwhat (?:excites|draws|attracts) me\b/i,
+		pattern: /\bwhat (?:excites|attracts) me\b/i,
 	},
 	{
 		label: "would welcome",

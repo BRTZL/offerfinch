@@ -11,6 +11,7 @@ import {
 	type ClaimsInput,
 	type ClaimsReport,
 	checkClaims,
+	checkRulesOnly,
 	segmentDocuments,
 	verifyClaims,
 } from "@offerfinch/core/tailor/claims";
@@ -50,6 +51,7 @@ import { type DocScore, scoreDocuments } from "./score";
  *   EVAL_RUN=baseline pnpm eval:tailor            # draft + check every posting
  *   EVAL_RUN=baseline EVAL_ONLY=tallyway-platform pnpm eval:tailor
  *   EVAL_RUN=baseline EVAL_REDRAFT=1 …            # also the app's one automatic redraft
+ *   EVAL_RUN=baseline EVAL_CLAIMS=rules …         # drafts and fixed rules only, no claims model
  *   EVAL_RUN=baseline EVAL_MODE=replay …          # re-verify saved checker output, no model call
  *   EVAL_RUN=baseline EVAL_MODE=score …           # scorecard only, from saved output
  *
@@ -65,6 +67,9 @@ const DIR = path.join(ROOT, RUN.replace(/[^\w.-]/g, "-"));
 const MODE = process.env.EVAL_MODE || "run";
 const ONLY = process.env.EVAL_ONLY?.split(",").filter(Boolean);
 const REDRAFT = process.env.EVAL_REDRAFT === "1";
+/** "rules": skip the claims model and run only the deterministic rules (a paused Codex plan). */
+const CLAIMS = process.env.EVAL_CLAIMS || "model";
+const RULES_ONLY = "rules only (claims model not run)";
 const MAX_CALLS = Number(process.env.EVAL_MAX_CALLS || 55);
 const LEDGER = path.join(ROOT, "calls.log");
 const OWNER = "eval-owner";
@@ -243,6 +248,34 @@ function saveAttempt(dir: string, n: number, posting: EvalPosting, a: Attempt) {
 	);
 }
 
+/**
+ * The claims check, or the fixed rules alone when it is turned off or its plan is paused (a
+ * usage window near its limit): the drafts are still scored, and the report says the model
+ * check did not run.
+ */
+async function claimsReport(
+	llm: LlmProvider,
+	input: ClaimsInput,
+): Promise<ClaimsReport> {
+	const rulesOnly = (): ClaimsReport => {
+		const issues = checkRulesOnly(input);
+		return {
+			passed: issues.length === 0,
+			provider: RULES_ONLY,
+			claims: [],
+			issues,
+		};
+	};
+	if (CLAIMS === "rules") return rulesOnly();
+	try {
+		return await checkClaims(llm, input);
+	} catch (error) {
+		if (!(error instanceof LlmPausedError)) throw error;
+		console.error(`claims check paused, rules only: ${String(error)}`);
+		return rulesOnly();
+	}
+}
+
 async function runPosting(posting: EvalPosting): Promise<void> {
 	const dir = path.join(DIR, posting.slug);
 	const { tailor, claims } = models();
@@ -268,7 +301,7 @@ async function runPosting(posting: EvalPosting): Promise<void> {
 		});
 		docs.notes = notesWithDropped(docs.notes, selection.dropped);
 		const input = claimsInput(posting, docs);
-		const report = await checkClaims(
+		const report = await claimsReport(
 			new Recorder(claims, dir, `claims-${n}`),
 			input,
 		);
@@ -340,7 +373,7 @@ function scorecard(): string {
 		rows.push(
 			`## ${posting.slug} (${posting.kind})`,
 			"",
-			`- Claims check: ${a.report.passed ? "passed" : "flagged"}, ${a.flags.length} flags${redraft ? " (a redraft followed)" : ""}`,
+			`- Claims check (${a.report.provider}): ${a.report.passed ? "passed" : "flagged"}, ${a.flags.length} flags${redraft ? " (a redraft followed)" : ""}`,
 			...Object.entries(byDoc).map(
 				([doc, list]) => `  - ${doc}: ${list.join(", ")}`,
 			),
