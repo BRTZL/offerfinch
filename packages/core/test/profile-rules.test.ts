@@ -5,6 +5,7 @@ import { loadProfileFromDir } from "../src/profile/load-node";
 import {
 	bannedTerms,
 	checkDocumentRules,
+	checkExperienceRecords,
 	checkQuote,
 	experienceRecords,
 	ruleSet,
@@ -288,5 +289,41 @@ describe("the cover letter's length", () => {
 			"Cover letter has 219 words; it must be 220 to 400.",
 		]);
 		expect(length(401)).toHaveLength(1);
+	});
+});
+
+describe("two roles at one company", () => {
+	const stint = (id: string, title: string, dates: string) => ({
+		path: `experience/${id}.md`,
+		content: `# Quayside Labs B.V. — ${title}\n\n- **Dates:** ${dates}\n- **Location:** Remote\n`,
+	});
+	const records = experienceRecords({
+		files: [
+			stint("later", "Senior Software Engineer", "Apr 2025 – Sep 2026"),
+			stint("early", "Frontend Developer", "Mar 2021 – Sep 2021"),
+		],
+	});
+	const cv = (title: string, dates: string) =>
+		`## Experience\n\n### ${title} — Quayside Labs B.V.\n*Remote · ${dates}*\n`;
+
+	it("checks each role against its own file", () => {
+		expect(
+			checkExperienceRecords(
+				cv("Frontend Developer", "Mar 2021 – Sep 2021") +
+					cv("Senior Software Engineer", "Apr 2025 – Sep 2026"),
+				records,
+			),
+		).toEqual([]);
+	});
+
+	it("names the right file's title when the title is off", () => {
+		expect(
+			checkExperienceRecords(
+				cv("First Time Frontend Developer", "Mar 2021 – Sep 2021"),
+				records,
+			).map((i) => i.message),
+		).toEqual([
+			'Quayside Labs B.V. title must be "Frontend Developer" (experience/early.md header).',
+		]);
 	});
 });

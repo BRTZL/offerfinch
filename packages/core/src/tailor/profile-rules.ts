@@ -520,6 +520,22 @@ export function nameKey(text: string): string {
 		.trim();
 }
 
+/**
+ * The experience records a CV role (`### Title — Company`) can be: those of its company, and when
+ * the company has several (two stints there, years apart), those with the role's title. A title
+ * that matches none keeps them all: which one it is is then unknown.
+ */
+export function roleRecords(
+	records: ExperienceRecord[],
+	company: string,
+	title?: string,
+): ExperienceRecord[] {
+	const stints = records.filter((r) => nameKey(r.company) === nameKey(company));
+	if (stints.length < 2 || title === undefined) return stints;
+	const own = stints.filter((r) => nameKey(r.title) === nameKey(title));
+	return own.length > 0 ? own : stints;
+}
+
 const DATE_RANGE =
 	/^(?:[A-Z][a-z]{2} \d{4}|\d{4}) – (?:[A-Z][a-z]{2} \d{4}|\d{4}|Present)$/;
 
@@ -539,7 +555,12 @@ export function checkExperienceRecords(
 		const heading = line.match(/^###\s+(.+?)\s+[—–-]\s+(.+)$/);
 		if (!heading?.[1] || !heading[2]) continue;
 		const [title, company] = [heading[1].trim(), heading[2].trim()];
-		const record = records.find((r) => nameKey(r.company) === nameKey(company));
+		const meta = (lines[i + 1] ?? "").replace(/^\*|\*$/g, "").trim();
+		const parts = meta.split("·").map((p) => p.trim());
+		const dates = parts.map(normalizeDates).find((p) => DATE_RANGE.test(p));
+		// Two stints at one company: the one with this title, else the one with these dates.
+		const stints = roleRecords(records, company, title);
+		const record = stints.find((r) => r.dates === dates) ?? stints[0];
 		if (!record) {
 			issues.push({
 				rule: "experience_record",
@@ -556,9 +577,6 @@ export function checkExperienceRecords(
 				message: `${record.company} title must be "${record.title}" (${record.file} header).`,
 				excerpt: line,
 			});
-		const meta = (lines[i + 1] ?? "").replace(/^\*|\*$/g, "").trim();
-		const parts = meta.split("·").map((p) => p.trim());
-		const dates = parts.map(normalizeDates).find((p) => DATE_RANGE.test(p));
 		if (dates !== record.dates)
 			issues.push({
 				rule: "experience_record",
