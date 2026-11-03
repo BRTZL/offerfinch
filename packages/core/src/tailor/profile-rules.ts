@@ -680,6 +680,10 @@ function excerptAround(text: string, index: number): string {
 	return line.length > 200 ? `${line.slice(0, 199)}…` : line;
 }
 
+/** The cover letter's word range (the owner's decision, 2026-11-03: 220, was 250). */
+export const LETTER_MIN_WORDS = 220;
+export const LETTER_MAX_WORDS = 400;
+
 /** Every deterministic rule for one document. Notes are private, so only placeholders apply there. */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Profile rules keep evidence and issue emission in order so each finding retains its source context.
 export function checkDocumentRules(
@@ -733,11 +737,11 @@ export function checkDocumentRules(
 
 	if (kind === "cover_letter") {
 		const words = wordCount(text);
-		if (words < 250 || words > 400)
+		if (words < LETTER_MIN_WORDS || words > LETTER_MAX_WORDS)
 			issues.push({
 				rule: "length",
 				document: kind,
-				message: `Cover letter has ${words} words; it must be 250 to 400.`,
+				message: `Cover letter has ${words} words; it must be ${LETTER_MIN_WORDS} to ${LETTER_MAX_WORDS}.`,
 			});
 	}
 	if (kind === "cv" && wordCount(text) > 1100)

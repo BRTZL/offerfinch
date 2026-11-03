@@ -69,7 +69,7 @@ describe("flags", () => {
 			{
 				rule: "length",
 				document: "cover_letter",
-				message: "Cover letter has 40 words; it must be 250 to 400.",
+				message: "Cover letter has 40 words; it must be 220 to 400.",
 			},
 			{
 				rule: "unsupported_number",

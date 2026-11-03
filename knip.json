@@ -12,13 +12,16 @@
 				"src/worker/index.ts",
 				"src/renderer/main.tsx",
 				"scripts/**/*.{mjs,ts}",
-				"e2e/**/*.spec.ts"
+				"e2e/**/*.spec.ts",
+				"eval/**/*.eval.ts",
+				"eval/vitest.config.ts"
 			],
 			"project": [
 				"src/**/*.{ts,tsx,css}",
 				"test/**/*.ts",
 				"e2e/**/*.ts",
-				"scripts/**/*.{mjs,ts}"
+				"scripts/**/*.{mjs,ts}",
+				"eval/**/*.ts"
 			]
 		},
 		"packages/local-llm": {
@@ -64,6 +67,7 @@
 		"packages/db/src/spend.ts": ["exports", "types"],
 		"packages/local-llm/src/{claude,codex}.ts": ["exports", "types"],
 		"apps/desktop/src/main/site-browser.ts": ["exports", "types"],
-		"apps/desktop/src/worker/checks.ts": ["exports", "types"]
+		"apps/desktop/src/worker/checks.ts": ["exports", "types"],
+		"apps/desktop/eval/vitest.config.ts": ["exports"]
 	}
 }

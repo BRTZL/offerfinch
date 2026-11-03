@@ -18,7 +18,7 @@ import {
 import type { AskedQuestion } from "./questions";
 
 /**
- * Port of my-profile's `tailor-application` skill: fit notes, an ATS-safe CV, a 250-400 word
+ * Port of my-profile's `tailor-application` skill: fit notes, an ATS-safe CV, a 220-400 word
  * cover letter and form answers, written only from profile facts. Facts the profile lacks come
  * back as questions, never guesses.
  */
@@ -41,11 +41,11 @@ const tailorOutputSchema = z.object({
 		.describe("The tailored CV in Markdown, following the template"),
 	coverLetter: z
 		.string()
-		.describe("The cover letter in Markdown, 250 to 400 words in total"),
+		.describe("The cover letter in Markdown, 220 to 400 words in total"),
 	formAnswers: z
 		.array(z.object({ question: z.string(), answer: z.string() }))
 		.describe(
-			"Answers (60 to 120 words for an open question, one line for a single value; the first sentence answers it) to the posting's application questions, plus why this company and why this role",
+			"Answers (40 to 100 words for an open question, one line for a single value; the first sentence answers it) to the posting's application questions, plus why this company and why this role",
 		),
 	missingFacts: z
 		.array(
@@ -143,6 +143,10 @@ No invented facts:
 - answers.md holds the candidate's own answers, dated: only the "Answer:" line is their words, read within the scope of its question line. A "Confirmed as true by the user" line is a sentence the candidate confirmed word for word; it may be used as written, and when it names a CV role, only under that role. A negative or vague answer ("no", "not really") means the topic is a gap: leave it out of the documents.
 - Never write a negative about the candidate ("I have not done X", "I have no Kafka experience") in the cover letter or the form answers, and never list technologies or skills the candidate lacks. The only exception is a form question that asks it directly (a yes/no about a requirement): answer it in the words of the profile line or answer that records it, within its scope.
 - No proportion or frequency words about the candidate (mainly, primarily, mostly, largely, daily, weekly, regularly, several times a week) unless the profile states that exact share or frequency for that fact.
+- Keep every fact at the profile's exact scope. Keep its qualifiers ("mostly in Next.js", "about 40,000", "60+"), its verbs ("designed and built" is not "runs" or "owns"; "most recently" is not "mostly") and its durations: count them from the dates and round down ("over two years" for Jun 2019 – Feb 2022, never "three years").
+- Never give the candidate a feeling, preference, lesson, habit, intention or trait the profile does not state: no "the work I enjoy most", "which taught me to …", "both were aimed at …", "keeps me practised at …", "clear writing is part of my job".
+- Keep each fact with its employer and its time. A sentence that names one employer holds only that employer's facts. Work from a role that ended stays in the past tense ("worked on Java 8 and Spring Boot", never "works with Java"). No order or timing the profile does not state ("my first job", "after nine years in software engineering"), and no effect of the work it does not state ("so the interfaces work for everyone").
+- Never turn the posting's words into a fact about the candidate. "Clean code", "no project manager in between", "remote across Europe" or "async-first" describe what the posting wants until a profile line says them about the candidate.
 
 Questions (missingFacts):
 - Settled topics are never asked again, in any wording: anything answers.md answers, every question listed in <asked_questions>, and anything the profile settles, including recorded negatives ("No invoicing work") and notes that a detail isn't recorded (that detail stays unknown).
@@ -159,11 +163,14 @@ Fixed rules:
 CV (Markdown, ATS-safe), following this template:
 # Full Name
 
-Headline written for this role\\
+Current title · 2 to 4 skills this role asks for\\
 Location · {{email}} · {{phone}} · linkedin.com/in/handle · website · github.com/handle
 
 ## Summary
 2 to 3 lines for this role.
+
+- Headline: the candidate's own current or most recent title as the profile records it, then skills from the profile that the posting asks for ("Senior Software Engineer · React, TypeScript, design systems"). Never the posting's title unless the profile records it as the candidate's title.
+- Summary: profile facts at their exact scope only; no focus, specialization or trait the profile doesn't state.
 
 ## Experience
 ### Title — Company
@@ -186,7 +193,7 @@ Location · {{email}} · {{phone}} · linkedin.com/in/handle · website · githu
 - One page by default; two only for a senior role with enough relevant material.
 - Angle-bracket text renders as HTML, so never write <...>. End a line with \\ when a line break matters.
 
-Cover letter (Markdown), 250 to 400 words in total, 3 to 4 paragraphs:
+Cover letter (Markdown), 220 to 400 words in total: the header, date and greeting, then 4 body paragraphs of 3 to 5 sentences and 60 to 90 words each (about 300 words for the whole letter; one under 220 words in total is rejected, so no paragraph under 60 words), a one-line close and the sign-off:
 Full Name\\
 {{email}} · {{phone}} · linkedin.com/in/handle
 
@@ -194,16 +201,22 @@ Month D, YYYY
 
 Dear Hiring Team at Company,
 
-- Opening: the exact role and one concrete reason for this company or team, taken from the posting. No "I am writing to apply" clichés.
-- Keep sentences about the company or the role apart from sentences about the candidate: a sentence that praises the company states no fact about the candidate, and a sentence with a fact about the candidate says nothing about the company. Motivation sentences use no fact words (built, led, own, years).
-- Middle: 2 or 3 proof points from the profile mapped to the posting's top needs, with numbers.
+- Opening (2 or 3 sentences): the exact role and one or two specific reasons for this company or team, taken from the posting (its product, users, or a problem the team is working on). Write it as a person would: "I'm applying for the Backend Engineer, Payments role because …" or "What draws me to Company is …". Never open with a summary of the posting ("The X role centres on …", "The X role caught my attention because …"), and no "I am writing to apply" clichés.
+- Keep sentences about the company or the role apart from sentences about the candidate: a sentence that praises the company states no fact about the candidate, and a sentence with a fact about the candidate says nothing about the company. Motivation sentences use no fact words (built, led, own, years), no words from the candidate's profile, no scope words (fully, all, every, most, only) and no clause that could read as the candidate's action ("Being one of three engineers …", "…, rebuilt with a designer"). The simple forms work: "I'm applying because …", "What draws me to Company is …", "… is work I'd like to do."
+- Middle (2 paragraphs): 2 or 3 proof points, each one profile fact tied to one need the posting names, said once, with its number. Say what it means for this role in a few words, then give the fact; vary how the paragraphs open (not "You also need …" every time). Not every CV bullet: at most four numbers in the whole letter, and never the CV's sentences copied in order.
 - Gaps stay in the fit notes. Mention one in the letter only when the posting makes it a hard requirement, and then inside a sentence about what the candidate does bring, never as a sentence of its own ("One honest gap: …").
+- Fourth paragraph: one more point the posting cares about (how the candidate works with others, a smaller match), with practical facts (where the candidate lives, work rights, office days) only when the posting asks about them; never a stray line before the close.
 - Close: one short line asking the reader for a conversation, with no fact in it, such as "I'd welcome a conversation about the role." or "Please let me know a convenient time to talk.", then sign off "Best regards,\\" and the name.
-- Tone: plain, specific and human, like a capable engineer writing to a peer. Vary how sentences open; not every sentence starts with "I". No clichés or filler: never "stands out", "I am excited to", "thrive", "passionate", "leverage", "synergy", "fast-paced", "I believe I would be a great fit". No colon-led set-ups ("The culture is stated clearly: …"); say the point directly.
+- Tone: plain, specific and human, like a capable engineer writing to a peer. Vary sentence length and openers: at most a third of the sentences start with "I", and no chains of "I also". No sentences about the letter or the candidate's way of thinking ("which shows how I think about …", "Both pieces of work …"). No em dashes in the letter or the answers; use a comma or a full stop. No clichés or filler: never "stands out", "I am excited to", "thrive", "passionate", "leverage", "synergy", "fast-paced", "I believe I would be a great fit", "resonates", "aligns with", "track record", "deeply", "genuinely". No colon-led set-ups ("The culture is stated clearly: …"); say the point directly.
 
 Fit notes (Markdown) with these sections: Role summary (3 lines), Must-haves vs. nice-to-haves, Match map (each requirement, the evidence file, strong / partial / missing), Gaps (and how each is handled), Keywords, Fit verdict (strong / reasonable / stretch, one sentence), Status ("Drafted <date>").
 
-Form answers: answer each application question the posting states, plus "Why do you want to work at <company>?" and "Why are you a good fit for this role?", from profile facts only. The first sentence answers the question; never restate or paraphrase the question. Open questions take 60 to 120 words; a question asking for a single value (notice period, salary, a yes or no) takes one short line. The letter's tone rules apply here too.`;
+Form answers: answer each application question the posting states, plus "Why do you want to work at <company>?" and "Why are you a good fit for this role?", from profile facts only, in the candidate's own voice: first person, plain, brief.
+- The first sentence answers exactly what was asked; never restate or paraphrase the question, and don't start every answer the same way.
+- A question asking for a single value (notice period, salary, start date, a yes or no) takes one short line in the profile's words ("One month from signing an offer."). When the profile states no value, never invent one, and no number at all: for salary write "I'd like to discuss salary in a first conversation."; for anything else say plainly that the candidate will confirm it in a first conversation. Ask it as a missing fact when questions are allowed.
+- "Why do you want to work at <company>?": 2 or 3 sentences giving one or two reasons specific to this company or role, from the posting, in the motivation forms above. Add a profile fact only when it explains the reason in the same sentence, never one tacked on at the end. Don't summarise the posting back to its reader, and don't reuse the letter's sentences.
+- "Why are you a good fit for this role?": open with the profile fact that best matches the posting's main requirement (not a sentence announcing it, such as "X is the strongest match"), then one or two more with their numbers, preferably not the ones the letter leads with.
+- Open questions take 40 to 100 words. The letter's tone and grounding rules apply here too.`;
 
 function rulesForPrompt(rules: RuleSet): string {
 	const banned = promptText(rules.banned.map((b) => b.term).join(", "));
