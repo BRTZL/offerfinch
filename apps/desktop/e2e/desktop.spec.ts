@@ -1222,8 +1222,13 @@ test("a scan reads every source from the shared plan, LinkedIn's Top picks first
 		await expect.poll(scansDone, { timeout: 90_000 }).toBe(scansBefore + 1);
 		await sidebar(page, "Home").click();
 		await page.getByTestId("scan-status").click();
-		await page.getByTestId("scan-row").first().click();
 		const picks = page.getByTestId("scan-source-linkedin-top-picks");
+		// The list can still be loading the scan that just finished: until it does, the first row
+		// is the scan before it. Open the newest row until it is this scan.
+		await expect(async () => {
+			await page.getByTestId("scan-row").first().click();
+			await expect(picks).toBeVisible({ timeout: 2_000 });
+		}).toPass({ timeout: 30_000 });
 		await expect(picks).toContainText("LinkedIn Top picks");
 		await expect(picks).toContainText("Top job picks for you");
 		await expect(page.getByTestId("scan-source-linkedin")).toContainText(
