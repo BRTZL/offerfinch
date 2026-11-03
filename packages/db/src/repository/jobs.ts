@@ -5,7 +5,6 @@ import type {
 	SourceHealth,
 } from "@offerfinch/core/domain/types";
 import { normalizeUrl } from "@offerfinch/core/domain/url";
-import { FEEDS } from "@offerfinch/core/feeds/feeds";
 import type { ApplicationRecord } from "@offerfinch/core/pipeline/ports";
 import {
 	and,
@@ -26,63 +25,7 @@ import {
 	companies,
 	jobs,
 } from "../schema/pipeline";
-import { titleKey } from "../title-key";
 import type { DrizzlePipelineRepositoryContext } from "./context";
-
-/** Job sources read from public remote-job feeds (core/feeds). */
-const FEED_SOURCES: ReadonlySet<string> = new Set(FEEDS.map((f) => f.source));
-/** A posting that may be the remote listing a feed shows: remote, or its place unstated. */
-const remoteOrUnstated = (workplace: string | null) =>
-	workplace === null || workplace === "remote" || workplace === "unknown";
-
-type Tx = Parameters<
-	Parameters<DrizzlePipelineRepositoryContext["db"]["transaction"]>[0]
->[0];
-
-/**
- * The same role at the same employer (normalized company name and title) stored from another
- * source, when one of the two came from a remote feed, so a feed's job found later on its board
- * (or the other way round) is one job. Conservative: the other posting must be remote or say no
- * place, as a feed's listing is; two postings neither from a feed are never merged by title (one
- * employer may post the same title for Berlin and for Munich).
- */
-async function sameRoleAcrossFeed(
-	tx: Tx,
-	userId: string,
-	companyId: string,
-	job: NormalizedJob,
-): Promise<{ id: string } | undefined> {
-	const fromFeed = FEED_SOURCES.has(job.source);
-	const [company] = await tx
-		.select({ nameKey: companies.nameKey })
-		.from(companies)
-		.where(and(eq(companies.id, companyId), eq(companies.userId, userId)));
-	if (!company?.nameKey) return undefined;
-	const rows = await tx
-		.select({
-			id: jobs.id,
-			source: jobs.source,
-			title: jobs.title,
-			workplaceType: jobs.workplaceType,
-		})
-		.from(jobs)
-		.innerJoin(companies, eq(companies.id, jobs.companyId))
-		.where(
-			and(
-				eq(jobs.userId, userId),
-				eq(companies.userId, userId),
-				eq(companies.nameKey, company.nameKey),
-				ne(jobs.source, job.source),
-			),
-		);
-	const title = titleKey(job.title);
-	return rows.find((r) => {
-		if (titleKey(r.title) !== title) return false;
-		const otherFeed = FEED_SOURCES.has(r.source);
-		if (fromFeed) return otherFeed || remoteOrUnstated(r.workplaceType);
-		return otherFeed && remoteOrUnstated(job.workplaceType);
-	});
-}
 
 /** A date a source gave, or null when it gave none or one that doesn't parse. */
 const validDate = (date: Date | undefined) =>
@@ -172,8 +115,6 @@ export const jobsMethods = {
 						j.applyUrl !== null && normalizeUrl(j.applyUrl) === urlNormalized,
 				);
 			}
-			if (!existing)
-				existing = await sameRoleAcrossFeed(tx, userId, companyId, job);
 			if (existing) {
 				await tx
 					.update(jobs)

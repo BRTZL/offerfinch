@@ -115,6 +115,30 @@ function partKind(part: string): "location" | "employment" | "role" | "other" {
 	return "other";
 }
 
+/** Where a role's own words say it is: a remote, on-site or hybrid word, or a place. */
+const saysWhere = (text: string) =>
+	WORKPLACE.test(text) || isPlace(text) || /\bonly\b/i.test(text);
+
+/**
+ * A role part's place text, taken out of the title into the locations: in brackets ("Senior
+ * Frontend Engineer (Remote, US only)") or after a dash ("Backend Engineer - Berlin, Germany").
+ * Brackets that say something else ("(Kubernetes)") stay in the title.
+ */
+function splitRole(part: string): { title: string; where: string[] } {
+	const where: string[] = [];
+	let title = part.replace(/\s*\(([^()]*)\)/g, (whole, inner: string) => {
+		if (!saysWhere(inner) || ROLE_WORDS.test(inner)) return whole;
+		where.push(inner.trim());
+		return "";
+	});
+	const dash = title.match(/^(.*\S)\s+[-–—]\s+([^-–—]+)$/);
+	if (dash?.[1] && dash[2] && saysWhere(dash[2]) && !ROLE_WORDS.test(dash[2])) {
+		title = dash[1];
+		where.push(dash[2].trim());
+	}
+	return { title: title.replace(/\s+/g, " ").trim(), where };
+}
+
 interface HeaderLine {
 	company: string;
 	title: string;
@@ -151,9 +175,12 @@ export function parseHiringLine(line: string): HeaderLine | null {
 		else if (kind === "role") roles.push(part);
 	}
 	// Only a part that reads like a role is the title ("Series B" never is).
-	const title = roles[0]?.replace(/\s+/g, " ").slice(0, 200);
+	if (!roles[0]) return null;
+	const role = splitRole(roles[0]);
+	const title = role.title.slice(0, 200);
 	if (!title) return null;
-	const where = [...locations, WORKPLACE.exec(title)?.[0] ?? ""].join(" ");
+	locations.push(...role.where);
+	const where = locations.join(" ");
 	const workplaceType = /\bremote\b/i.test(where)
 		? "remote"
 		: /\bhybrid\b/i.test(where)

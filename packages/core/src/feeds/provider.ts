@@ -83,8 +83,28 @@ export const FEED_NEW_CAP = 25;
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 
-/** The feed provider's view of the database: dedupe and stops as web search's, plus its reads. */
-export interface FeedStore extends WebSearchStore {
+/** What a feed posting is matched on against the jobs the app has. */
+export interface FeedDuplicateQuery {
+	/** Its feed page, and the employer's link when the feed gives one. */
+	urls: string[];
+	applyUrl?: string;
+	company: string;
+	title: string;
+	workplaceType: WorkplaceType;
+	locations: string[];
+}
+
+/**
+ * The feed provider's view of the database: web search's posting, company and stop store, its
+ * own duplicate check, and its reads.
+ */
+export interface FeedStore extends Omit<WebSearchStore, "isDuplicate"> {
+	/**
+	 * The same job is stored already: a stored job's URL or apply link is one of `urls`; or the
+	 * company and title match, both postings are remote or name no place, the stored one is not
+	 * closed, and the two don't name different apply links. Or the user removed the company.
+	 */
+	sameJobStored(userId: string, posting: FeedDuplicateQuery): Promise<boolean>;
 	/** When the feed was read in the last 24 hours (or more), oldest first. */
 	reads(userId: string, feed: string): Promise<Date[]>;
 	/** Records a read, before its request is made. */
@@ -273,10 +293,13 @@ export class FeedProvider implements ScanProvider {
 			const urls = [p.url, ...(p.applyUrl ? [p.applyUrl] : [])];
 			if (
 				(await this.store.hasPosting(userId, this.feed.source, p.externalId)) ||
-				(await this.store.isDuplicate(userId, {
+				(await this.store.sameJobStored(userId, {
 					urls,
+					...(p.applyUrl ? { applyUrl: p.applyUrl } : {}),
 					company: p.company,
 					title: p.title,
+					workplaceType: p.workplaceType,
+					locations: p.locations,
 				}))
 			) {
 				out.duplicates++;

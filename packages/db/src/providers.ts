@@ -1,6 +1,9 @@
 import type { JobSourceKind } from "@offerfinch/core/domain/types";
 import { companyNameKey, normalizeUrl } from "@offerfinch/core/domain/url";
-import type { FeedStore } from "@offerfinch/core/feeds/provider";
+import type {
+	FeedDuplicateQuery,
+	FeedStore,
+} from "@offerfinch/core/feeds/provider";
 import type {
 	ProviderRun,
 	SearchStore,
@@ -293,8 +296,25 @@ export async function clearProviderStop(
 	const { stop: _cleared, ...config } = state.config;
 	await updateProvider(db, userId, provider, { config });
 	// A remote feed keeps its last run: the scan Retry now starts finds it not due (its pace
-	// still holds) and records nothing, which would leave it reading "Not run yet".
-	if (options.keepLastRun) return;
+	// still holds) and records nothing, which would leave it reading "Not run yet". A run that
+	// read nothing (no results: the refused one) loses the problem and status it reported, so
+	// the row doesn't go on saying "Paused after … refused" once the stop is lifted.
+	if (options.keepLastRun) {
+		const last = state.lastRun;
+		if (last && last.results === undefined && (last.problem || last.status)) {
+			const { problem: _p, status: _s, retryAt: _r, ...kept } = last;
+			await db
+				.update(sourceProviders)
+				.set({ lastRun: kept })
+				.where(
+					and(
+						eq(sourceProviders.userId, userId),
+						eq(sourceProviders.provider, provider),
+					),
+				);
+		}
+		return;
+	}
 	// The stopped run's note goes with it: the source reads as not run until the next scan.
 	await db
 		.update(sourceProviders)
@@ -368,6 +388,21 @@ export class SqliteWebStore extends SqliteSiteStore implements WebSearchStore {
 	}
 }
 
+/**
+ * A posting that may be the same job as a feed's remote listing: remote, or naming neither a
+ * kind of work nor a place. An office or hybrid posting, or one that names a place without
+ * saying remote, may be another office's job with the same title.
+ */
+function remoteOrUnstated(
+	workplace: string | null,
+	locations: readonly string[],
+): boolean {
+	if (workplace === "remote") return true;
+	return (
+		(workplace === null || workplace === "unknown") && locations.length === 0
+	);
+}
+
 /** Reads older than this are dropped from a feed's record (the pace looks back a day). */
 const FEED_READS_KEPT_MS = 2 * 24 * 3_600_000;
 
@@ -389,6 +424,72 @@ export function feedReads(config: Record<string, unknown>): Date[] {
 export class SqliteFeedStore extends SqliteWebStore implements FeedStore {
 	constructor(private readonly feeds: Database) {
 		super(feeds);
+	}
+
+	async sameJobStored(
+		userId: string,
+		posting: FeedDuplicateQuery,
+	): Promise<boolean> {
+		const nameKey = companyNameKey(posting.company);
+		const urls = new Set(posting.urls.map(normalizeUrl));
+		const rows = await this.feeds
+			.select({
+				urlNormalized: jobs.urlNormalized,
+				applyUrl: jobs.applyUrl,
+				title: jobs.title,
+				workplaceType: jobs.workplaceType,
+				locations: jobs.locations,
+				closedAt: jobs.closedAt,
+				nameKey: companies.nameKey,
+				status: companies.status,
+			})
+			.from(jobs)
+			.innerJoin(
+				companies,
+				and(eq(companies.id, jobs.companyId), eq(companies.userId, userId)),
+			)
+			.where(
+				and(
+					eq(jobs.userId, userId),
+					or(
+						nameKey ? eq(companies.nameKey, nameKey) : undefined,
+						inArray(jobs.urlNormalized, [...urls]),
+						isNotNull(jobs.applyUrl),
+					),
+				),
+			);
+		if (nameKey) {
+			const [removed] = await this.feeds
+				.select({ id: companies.id })
+				.from(companies)
+				.where(
+					and(
+						eq(companies.userId, userId),
+						eq(companies.nameKey, nameKey),
+						eq(companies.status, "removed"),
+					),
+				)
+				.limit(1);
+			if (removed) return true;
+		}
+		const title = titleKey(posting.title);
+		const apply = posting.applyUrl ? normalizeUrl(posting.applyUrl) : null;
+		return rows.some((r) => {
+			// The same posting: its URL, or another source's apply link to it.
+			if (r.urlNormalized !== null && urls.has(r.urlNormalized)) return true;
+			if (r.applyUrl !== null && urls.has(normalizeUrl(r.applyUrl)))
+				return true;
+			// The same role by name only when it can't be another office's posting.
+			if (!nameKey || r.nameKey !== nameKey || titleKey(r.title) !== title)
+				return false;
+			if (r.closedAt) return false;
+			if (apply && r.applyUrl && normalizeUrl(r.applyUrl) !== apply)
+				return false;
+			return (
+				remoteOrUnstated(posting.workplaceType, posting.locations) &&
+				remoteOrUnstated(r.workplaceType, r.locations ?? [])
+			);
+		});
 	}
 
 	async reads(userId: string, feed: string): Promise<Date[]> {

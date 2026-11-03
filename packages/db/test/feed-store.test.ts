@@ -1,6 +1,7 @@
 import type { NormalizedJob } from "@offerfinch/core/domain/types";
 import { FEED_IDS } from "@offerfinch/core/feeds/feeds";
 import { nextFeedRead } from "@offerfinch/core/feeds/provider";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
 	clearProviderStop,
@@ -12,6 +13,7 @@ import {
 	SqliteFeedStore,
 	updateProvider,
 } from "../src/index";
+import { jobs } from "../src/schema/pipeline";
 import { testDb } from "./setup";
 
 let db: Database;
@@ -210,84 +212,139 @@ describe("the remote feeds' store", () => {
 	});
 });
 
-describe("the same role from a feed and from a board is one job, in either order (review #7)", () => {
-	const job = (
-		source: "remotive" | "greenhouse" | "lever",
+describe("a feed posting is a duplicate by company and title only when it is surely the same job (re-check C)", () => {
+	const board = async (
+		name: string,
 		id: string,
 		over: Partial<NormalizedJob> = {},
-	): NormalizedJob => ({
-		source,
-		externalId: id,
-		url: `https://${source}.example/jobs/${id}`,
+	) => {
+		const store = new SqliteFeedStore(db);
+		const companyId = await store.companyFor("u1", {
+			name,
+			source: "greenhouse",
+			sourceKey: name.toLowerCase().replace(/\W+/g, ""),
+		});
+		return new DashboardRepository(db).upsertJob("u1", companyId, {
+			source: "greenhouse",
+			externalId: id,
+			url: `https://job-boards.greenhouse.io/x/jobs/${id}`,
+			title: "Platform Engineer",
+			locations: ["Remote"],
+			workplaceType: "remote",
+			descriptionText: "Run the platform.",
+			...over,
+		});
+	};
+	const feedPosting = (
+		company: string,
+		over: Record<string, unknown> = {},
+	) => ({
+		urls: [`https://remotive.com/remote-jobs/${company}`],
+		company,
 		title: "Platform Engineer",
-		locations: ["Remote"],
-		workplaceType: "remote",
-		descriptionText: "Run the platform.",
+		workplaceType: "remote" as const,
+		locations: ["Remote (Worldwide)"],
 		...over,
 	});
-	const company = (
-		name: string,
-		source: "remotive" | "greenhouse" | "lever",
-		key: string,
-	) =>
-		new SqliteFeedStore(db).companyFor("u1", { name, source, sourceKey: key });
+	const dup = (p: ReturnType<typeof feedPosting>) =>
+		new SqliteFeedStore(db).sameJobStored("u1", p);
 
-	it("feed first, then the board", async () => {
-		const repo = new DashboardRepository(db);
-		const feed = await repo.upsertJob(
-			"u1",
-			await company("Orchid Grid", "remotive", "remotive:orchidgrid"),
-			job("remotive", "r-1"),
-		);
-		const board = await repo.upsertJob(
-			"u1",
-			await company("Orchid Grid", "greenhouse", "orchidgrid"),
-			job("greenhouse", "g-1", { title: "Platform engineer" }),
-		);
-		expect(board).toEqual({ jobId: feed.jobId, inserted: false });
+	it("an office job in Berlin and a remote feed job with that company and title are both kept", async () => {
+		await board("Orchid Grid", "501", {
+			locations: ["Berlin, Germany"],
+			workplaceType: "onsite",
+		});
+		expect(await dup(feedPosting("Orchid Grid"))).toBe(false);
 	});
 
-	it("board first, then the feed", async () => {
-		const repo = new DashboardRepository(db);
-		const board = await repo.upsertJob(
-			"u1",
-			await company("Saffron Loop", "lever", "saffronloop"),
-			job("lever", "l-1"),
-		);
-		const feed = await repo.upsertJob(
-			"u1",
-			await company("Saffron Loop", "remotive", "remotive:saffronloop"),
-			job("remotive", "r-2"),
-		);
-		expect(feed).toEqual({ jobId: board.jobId, inserted: false });
+	it("a remote feed job duplicating a remote board job is skipped", async () => {
+		await board("Saffron Loop", "502");
+		expect(await dup(feedPosting("Saffron Loop"))).toBe(true);
+		// A posting naming no place and no kind of work counts as remote-or-unstated too.
+		expect(
+			await dup(
+				feedPosting("Saffron Loop", {
+					workplaceType: "unknown",
+					locations: [],
+				}),
+			),
+		).toBe(true);
+		// A place named but no kind of work: not surely the same job.
+		expect(
+			await dup(
+				feedPosting("Saffron Loop", {
+					workplaceType: "unknown",
+					locations: ["Austin, TX"],
+				}),
+			),
+		).toBe(false);
 	});
 
-	it("conservative: an office posting, or two board postings, with that title stay apart", async () => {
-		const repo = new DashboardRepository(db);
-		const office = await repo.upsertJob(
-			"u1",
-			await company("Juniper Mesa", "greenhouse", "junipermesa"),
-			job("greenhouse", "g-10", {
-				locations: ["Berlin, Germany"],
-				workplaceType: "onsite",
-			}),
+	it("never against a closed job, nor when the two name different apply links", async () => {
+		const closed = await board("Juniper Mesa", "503");
+		await db
+			.update(jobs)
+			.set({ closedAt: new Date(), closedReason: "gone" })
+			.where(eq(jobs.id, closed.jobId));
+		expect(await dup(feedPosting("Juniper Mesa"))).toBe(false);
+		await board("Copper Fern", "504", {
+			applyUrl: "https://copperfern.example/jobs/platform-1",
+		});
+		expect(
+			await dup(
+				feedPosting("Copper Fern", {
+					applyUrl: "https://copperfern.example/jobs/platform-2",
+				}),
+			),
+		).toBe(false);
+	});
+
+	it("the URL and apply-link checks are unchanged", async () => {
+		await board("Lantern Bay", "505", {
+			locations: ["Berlin, Germany"],
+			workplaceType: "onsite",
+		});
+		expect(
+			await dup(
+				feedPosting("Someone Else", {
+					urls: [
+						"https://news.ycombinator.com/item?id=5",
+						"https://job-boards.greenhouse.io/x/jobs/505",
+					],
+				}),
+			),
+		).toBe(true);
+	});
+});
+
+describe("Retry now after a refused read (re-check D)", () => {
+	it("keeps the last run but not the refusal it reported", async () => {
+		await updateProvider(db, "u1", "remotive", { enabled: true });
+		await recordProviderRun(db, "u1", {
+			provider: "remotive",
+			queries: 0,
+			found: 0,
+			fetched: 0,
+			newJobIds: [],
+			pagesRead: 1,
+			problem:
+				"Paused after: remotive.com refused the request (HTTP 429). Tries again with the first scan after 3 Nov, 16:00.",
+		});
+		await new SqliteFeedStore(db).stop("u1", "remotive", {
+			kind: "blocked",
+			reason: "remotive.com refused the request (HTTP 429)",
+			at: new Date().toISOString(),
+			failures: 1,
+			retryAt: new Date(Date.now() + 6 * 3_600_000).toISOString(),
+		});
+		await clearProviderStop(db, "u1", "remotive", { keepLastRun: true });
+		const state = (await listProviders(db, "u1")).find(
+			(p) => p.provider === "remotive",
 		);
-		const feed = await repo.upsertJob(
-			"u1",
-			await company("Juniper Mesa", "remotive", "remotive:junipermesa"),
-			job("remotive", "r-10"),
-		);
-		expect(feed.inserted).toBe(true);
-		expect(feed.jobId).not.toBe(office.jobId);
-		const second = await repo.upsertJob(
-			"u1",
-			await company("Juniper Mesa", "lever", "junipermesa"),
-			job("lever", "l-10", {
-				locations: ["Munich, Germany"],
-				workplaceType: "onsite",
-			}),
-		);
-		// Neither from a feed: two boards' postings are not merged by their title.
-		expect(second.inserted).toBe(true);
+		expect(state?.config.stop).toBeUndefined();
+		expect(state?.lastRunAt).not.toBeNull();
+		expect(state?.lastRun?.problem).toBeUndefined();
+		expect(state?.lastRun?.status).toBeUndefined();
+		expect(state?.lastRun).toMatchObject({ pagesRead: 1 });
 	});
 });

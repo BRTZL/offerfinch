@@ -33,6 +33,7 @@ import {
 	parseWeWorkRemotely,
 	weWorkRemotelyFeed,
 } from "../src/feeds/weworkremotely";
+import { evaluateHardRequirements } from "../src/filter/rules";
 import { parseFilterSettings } from "../src/filter/settings";
 import { NoopNotifier } from "../src/notify/ntfy";
 import { LocalStep, LocalWorkflowStarter } from "../src/pipeline/local";
@@ -325,12 +326,16 @@ function memoryStore(repo: MemoryRepo, state = new FeedState()): FeedStore {
 				repo.companies.find((x) => x.sourceKey === c.sourceKey) ??
 				repo.addCompany(c, userId)
 			).id,
-		isDuplicate: async (_u, job) =>
+		// As the database's: by URL or apply link, or company and title when both are remote.
+		sameJobStored: async (_u, job) =>
 			repo.jobs.some(
 				(j) =>
 					job.urls.includes(j.job.url) ||
 					(j.job.applyUrl !== undefined && job.urls.includes(j.job.applyUrl)) ||
-					(j.job.companyName === job.company && j.job.title === job.title),
+					(j.job.companyName === job.company &&
+						j.job.title === job.title &&
+						j.job.workplaceType === "remote" &&
+						job.workplaceType === "remote"),
 			),
 		stopped: async (_u, s) => state.stops.get(s) ?? null,
 		stop: async (_u, s, r) => {
@@ -736,7 +741,8 @@ describe("review: HN header parts (#6)", () => {
 				"Acme Robotics | Senior Frontend Engineer (Remote) | Full-time",
 			),
 		).toMatchObject({
-			title: "Senior Frontend Engineer (Remote)",
+			title: "Senior Frontend Engineer",
+			locations: ["Remote"],
 			workplaceType: "remote",
 		});
 	});
@@ -798,6 +804,54 @@ describe("review: an address in angle brackets is text, not a tag (#8)", () => {
 		);
 		expect(wwr.postings[0]?.descriptionText).toBe(
 			"Mail <jobs@acme.example> now.",
+		);
+	});
+});
+
+describe("HN: where a role segment says it is (re-check E)", () => {
+	it("bracketed or trailing place text in the role goes to the locations, the title stays clean", () => {
+		expect(
+			parseHiringLine(
+				"Acme Robotics | Senior Frontend Engineer (Remote, US only) | Full-time",
+			),
+		).toMatchObject({
+			title: "Senior Frontend Engineer",
+			locations: ["Remote, US only"],
+			workplaceType: "remote",
+		});
+		expect(
+			parseHiringLine("Acme Robotics | Backend Engineer - Berlin, Germany"),
+		).toMatchObject({
+			title: "Backend Engineer",
+			locations: ["Berlin, Germany"],
+		});
+		// Brackets that say something else stay in the title.
+		expect(
+			parseHiringLine(
+				"Acme Robotics | Platform Engineer (Kubernetes) | REMOTE",
+			),
+		).toMatchObject({
+			title: "Platform Engineer (Kubernetes)",
+			locations: ["REMOTE"],
+		});
+	});
+
+	it("a US-only role is set aside for someone who may work only in Turkey", () => {
+		const { postings } = parseHiringThread(
+			JSON.stringify({
+				children: [
+					{
+						id: 77,
+						type: "comment",
+						text: "Acme Robotics | Senior Frontend Engineer (Remote, US only) | Full-time<p>React.",
+					},
+				],
+			}),
+		);
+		const [p] = postings;
+		expect(p?.locations).toEqual(["Remote, US only"]);
+		expect(evaluateHardRequirements(p as FeedPosting, SETTINGS).decision).toBe(
+			"reject",
 		);
 	});
 });
