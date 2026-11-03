@@ -1,5 +1,6 @@
 {
 	"name": "@offerfinch/desktop",
+	"license": "MIT",
 	"productName": "OfferFinch",
 	"version": "0.1.0",
 	"private": true,
