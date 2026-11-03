@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	type QueryClient,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import { ChevronLeft, LoaderCircle } from "lucide-react";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -231,6 +236,16 @@ function FirstScan({ onDone }: { onDone: () => void }) {
 }
 
 /**
+ * Finish later. Home sends a user with nothing done straight into setup unless setup was
+ * dismissed, and it reads the cached state: refresh that first, or this bounces right back.
+ */
+async function finishLater(queryClient: QueryClient, goHome: () => void) {
+	await client.onboarding.dismiss({ dismissed: true });
+	await queryClient.invalidateQueries({ queryKey: orpc.onboarding.key() });
+	goHome();
+}
+
+/**
  * The first run, full window: one centred column over a faint animated field, a minimal step
  * indicator, and a footer whose Back and primary action never move. Each step is skippable;
  * progress is stored, so it resumes where it was left, from Home or after a restart.
@@ -258,8 +273,7 @@ export default function OnboardingPage() {
 			queryClient.invalidateQueries({ queryKey: orpc.onboarding.key() }),
 	});
 	const dismiss = useMutation({
-		mutationFn: () => client.onboarding.dismiss({ dismissed: true }),
-		onSuccess: () => router.push("/"),
+		mutationFn: () => finishLater(queryClient, () => router.push("/")),
 	});
 	const scratch = useMutation({
 		// Start from scratch: an empty About record, then the roles and skills are added by hand.

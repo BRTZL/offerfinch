@@ -1,3 +1,4 @@
+import { app } from "electron";
 import type { SiteTabId } from "../shared/bridge";
 import type { NativeNotice } from "../shared/worker-protocol";
 import { noticeActionDeps } from "./notice-action-deps";
@@ -20,6 +21,9 @@ export const testHooks = {
 	 * show none): the same routing a real button's `action` event runs.
 	 */
 	noticeAction: (n: number, index: number) => {
+		// It acts on data (Not interested dismisses a match): unpackaged test runs only, never a
+		// shipped build started with OFFERFINCH_TEST (its launch checks don't need it).
+		if (app.isPackaged) return Promise.resolve(false);
 		const notice = testHooks.notices[n];
 		if (!notice) return Promise.resolve(false);
 		return runNoticeAction(notice, index, noticeActionDeps).then(() => true);
