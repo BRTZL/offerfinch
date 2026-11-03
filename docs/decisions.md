@@ -570,4 +570,6 @@ Review fixes (2026-11-03, Gemini's review of the branch):
 | Feed descriptions are parsed as HTML before entities are decoded; an RSS field's XML escapes are undone once first | "&lt;jobs@acme.example&gt;" was read as a tag and removed |
 | The scan history names every source as Sources does (one list) and lists a source that is not due before the ones that are off; a scan where the only sources on were not due says "Nothing searched: Remotive is not due yet" | Off feeds showed their raw ids, and waiting feeds read as "every source is off" |
 
+After these fixes, the same real responses (kept from the earlier read, no new request) give Remotive 12 read, 3 kept; Remote OK 99, 8; We Work Remotely 100, 7; HN 84 posts with a role in the header, 5 kept; no item skipped.
+
 Verified: unit tests on fabricated fixtures in each feed's shape (parsers, the plan match, the pace across restarts, refusals, the cap, dedupe), a database test of the stored reads, an e2e against a local stand-in, and one read of each real feed on 2026-11-03 (Remotive 12 read, 3 kept; Remote OK 99, 9; We Work Remotely 100, 9 with 1 duplicate; HN 94 posts with a header line, 5 kept, after the header fixes; with a fabricated four-title plan for someone in Turkey). Re-read is refused for feed jobs (the feed gave the whole posting; its page there is never read).
