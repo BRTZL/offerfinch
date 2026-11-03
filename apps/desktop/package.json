@@ -15,7 +15,8 @@
 		"test": "vitest run",
 		"e2e": "node scripts/build.mjs && playwright test -c e2e/playwright.config.ts",
 		"dist": "node scripts/build.mjs --production && electron-builder --mac --arm64 --x64 --publish never -c.mac.identity=- -c.mac.notarize=false -c.mac.hardenedRuntime=false",
-		"release": "node scripts/release.mjs"
+		"release": "node scripts/release.mjs",
+		"eval:tailor": "vitest run --config eval/vitest.config.ts"
 	},
 	"dependencies": {
 		"better-sqlite3": "13.0.3",

@@ -14,6 +14,7 @@
 		"src/worker/**/*.ts",
 		"src/shared/**/*.ts",
 		"test/**/*.ts",
-		"e2e/**/*.ts"
+		"e2e/**/*.ts",
+		"eval/**/*.ts"
 	]
 }

@@ -12,13 +12,16 @@
 				"src/worker/index.ts",
 				"src/renderer/main.tsx",
 				"scripts/**/*.{mjs,ts}",
-				"e2e/**/*.spec.ts"
+				"e2e/**/*.spec.ts",
+				"eval/**/*.eval.ts",
+				"eval/vitest.config.ts"
 			],
 			"project": [
 				"src/**/*.{ts,tsx,css}",
 				"test/**/*.ts",
 				"e2e/**/*.ts",
-				"scripts/**/*.{mjs,ts}"
+				"scripts/**/*.{mjs,ts}",
+				"eval/**/*.ts"
 			]
 		},
 		"packages/local-llm": {
