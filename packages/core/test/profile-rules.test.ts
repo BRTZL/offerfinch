@@ -185,7 +185,7 @@ describe("text rules", () => {
 		const short =
 			"Dear Hiring Team at Acme Robotics, I want the Senior Engineer role.";
 		expect(check("cover_letter", short).map((i) => i.message)).toEqual(
-			expect.arrayContaining([expect.stringMatching(/250 to 400/)]),
+			expect.arrayContaining([expect.stringMatching(/220 to 400/)]),
 		);
 		expect(
 			check("form_answers", "I admire acme robotics.").map((i) => i.message),
@@ -269,5 +269,24 @@ describe("rules come from each user's own profile", () => {
 		expect(check("cv", "graduated in 2025").map((i) => i.rule)).toContain(
 			"banned_term",
 		);
+	});
+});
+
+describe("the cover letter's length", () => {
+	const letter = (words: number) =>
+		Array.from({ length: words }, (_, i) => `word${i}`).join(" ");
+	const length = (words: number) =>
+		check("cover_letter", letter(words)).filter((i) => i.rule === "length");
+
+	it("accepts 220 to 400 words (the owner's decision, 2026-11-03)", () => {
+		expect(length(220)).toEqual([]);
+		expect(length(400)).toEqual([]);
+	});
+
+	it("rejects 219 and 401 words", () => {
+		expect(length(219).map((i) => i.message)).toEqual([
+			"Cover letter has 219 words; it must be 220 to 400.",
+		]);
+		expect(length(401)).toHaveLength(1);
 	});
 });

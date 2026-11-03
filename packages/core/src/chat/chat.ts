@@ -298,7 +298,7 @@ Edits:
 - cv, cover_letter and notes: give the whole new document, copying every unchanged line exactly.
 - Keep the {{email}} and {{phone}} tokens exactly as they are. No other placeholders, nothing else in braces or angle brackets.
 - CV: ATS-safe Markdown, single column, standard section names, no tables, images or icons, dates as "MMM YYYY – MMM YYYY" or "Present".
-- Cover letter: 250 to 400 words, 3 to 4 paragraphs, keep the header, date, greeting and sign-off. Plain, specific and human; no clichés ("I am excited to", "passionate", "thrive", "leverage", "stands out"); no em dashes; no negatives about the candidate.
+- Cover letter: 220 to 400 words, 3 to 4 paragraphs, keep the header, date, greeting and sign-off. Plain, specific and human; no clichés ("I am excited to", "passionate", "thrive", "leverage", "stands out"); no em dashes; no negatives about the candidate.
 - Form answers: the first sentence answers the question; open questions 40 to 100 words; a single value one short line, never a number the profile does not state.
 - Documents can be edited only in review (ready_for_review) or after approval (approved). In any other state propose no edits and say why. An edit after approval withdraws the approval; say so when the state is approved.`;
 

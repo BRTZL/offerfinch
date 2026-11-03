@@ -18,7 +18,7 @@ import {
 import type { AskedQuestion } from "./questions";
 
 /**
- * Port of my-profile's `tailor-application` skill: fit notes, an ATS-safe CV, a 250-400 word
+ * Port of my-profile's `tailor-application` skill: fit notes, an ATS-safe CV, a 220-400 word
  * cover letter and form answers, written only from profile facts. Facts the profile lacks come
  * back as questions, never guesses.
  */
@@ -41,7 +41,7 @@ const tailorOutputSchema = z.object({
 		.describe("The tailored CV in Markdown, following the template"),
 	coverLetter: z
 		.string()
-		.describe("The cover letter in Markdown, 250 to 400 words in total"),
+		.describe("The cover letter in Markdown, 220 to 400 words in total"),
 	formAnswers: z
 		.array(z.object({ question: z.string(), answer: z.string() }))
 		.describe(
@@ -192,7 +192,7 @@ Location · {{email}} · {{phone}} · linkedin.com/in/handle · website · githu
 - One page by default; two only for a senior role with enough relevant material.
 - Angle-bracket text renders as HTML, so never write <...>. End a line with \\ when a line break matters.
 
-Cover letter (Markdown), 250 to 400 words in total: the header, date and greeting, then 4 body paragraphs of 3 to 5 sentences and 60 to 90 words each (about 300 words for the whole letter; one under 250 words in total is rejected, so no paragraph under 60 words), a one-line close and the sign-off:
+Cover letter (Markdown), 220 to 400 words in total: the header, date and greeting, then 4 body paragraphs of 3 to 5 sentences and 60 to 90 words each (about 300 words for the whole letter; one under 220 words in total is rejected, so no paragraph under 60 words), a one-line close and the sign-off:
 Full Name\\
 {{email}} · {{phone}} · linkedin.com/in/handle
 

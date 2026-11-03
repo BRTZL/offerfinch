@@ -220,7 +220,7 @@ describe("stale flags cleared at startup", () => {
 		const length: RuleIssue = {
 			rule: "length",
 			document: "cover_letter",
-			message: "The letter is 120 words; it must be 250 to 400.",
+			message: "The letter is 120 words; it must be 220 to 400.",
 		};
 		const { appId } = await flaggedApp("1b", [CLOSER], { unflagged: [length] });
 		const { cleared, events } = await repo.clearStaleFlags("u1");

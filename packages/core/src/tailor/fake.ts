@@ -13,6 +13,7 @@ import {
 	checkQuote,
 	evidenceProfile,
 	experienceRecords,
+	LETTER_MIN_WORDS as MIN,
 	normalizeForMatch,
 	ruleSet,
 	wordCount,
@@ -219,7 +220,7 @@ export function fakeTailorResponder(
 			body.length = 0;
 		}
 	}
-	if (summary && wordCount(letterText()) < 250) paragraphs.unshift(summary);
+	if (summary && wordCount(letterText()) < MIN) paragraphs.unshift(summary);
 	const coverLetter = [
 		`${name}\\`,
 		`{{email}} · {{phone}} · ${field("LinkedIn")}`,

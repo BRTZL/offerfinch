@@ -378,7 +378,7 @@ function scorecard(): string {
 				([doc, list]) => `  - ${doc}: ${list.join(", ")}`,
 			),
 			`- Questions the app would ask: ${a.asked.map((q) => q.question).join(" | ") || "none"}`,
-			`- Letter: ${s.letterWords} words (250–400), ${s.letterParagraphs} body paragraphs, longest ${s.longestParagraphWords} words; ${s.letterStartsI}/${s.letterSentences} sentences open with "I"; top opener "${s.letterTopOpener}"; em dashes ${s.letterEmDashes}`,
+			`- Letter: ${s.letterWords} words (220–400), ${s.letterParagraphs} body paragraphs, longest ${s.longestParagraphWords} words; ${s.letterStartsI}/${s.letterSentences} sentences open with "I"; top opener "${s.letterTopOpener}"; em dashes ${s.letterEmDashes}`,
 			`- Letter clichés: ${s.letterCliches.join("; ") || "none"}`,
 			`- Names company: ${s.namesCompany}; names role exactly: ${s.namesRole}`,
 			`- Answers (${s.answers.length}; same opener ×${s.answersSameOpener}; missing form questions: ${s.missingFormQuestions.join(", ") || "none"}):`,

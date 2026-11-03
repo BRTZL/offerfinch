@@ -61,7 +61,7 @@ describe("the tailoring prompt's grounding rules", () => {
 describe("the tailoring prompt's letter and answer rules", () => {
 	it("asks for short paragraphs, a human opening and no clichés or em dashes", async () => {
 		const system = await systemPrompt();
-		expect(system).toContain("250 to 400 words in total");
+		expect(system).toContain("220 to 400 words in total");
 		expect(system).toContain(
 			"4 body paragraphs of 3 to 5 sentences and 60 to 90 words each",
 		);
