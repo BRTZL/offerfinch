@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Notification } from "electron";
 import type { NotificationSound, NotificationState } from "../shared/bridge";
+import { type ActionableNotice, noticeButtons } from "./notice-actions";
 
 /** OfferFinch's chirp, in the app bundle's Resources (electron-builder mac.extraResources). */
 export const CHIRP_SOUND = "chirp.aiff";
@@ -39,6 +40,8 @@ export class Notifier {
 	private readonly file: string;
 	/** Shown notifications, held until closed: a collected one would lose its click handler. */
 	private readonly live = new Set<Notification>();
+	/** A button in Notification Center was pressed: its index in the notification's `actions`. */
+	onAction: (notice: ActionableNotice, index: number) => void = () => {};
 
 	constructor(
 		userData: string,
@@ -94,11 +97,9 @@ export class Notifier {
 	 * Shows a notification; resolves with what macOS did with it (within 6 seconds), and records
 	 * it as the current state.
 	 */
-	show(input: {
-		title: string;
-		body: string;
-		path: string;
-	}): Promise<"delivered" | "blocked" | "unknown"> {
+	show(
+		input: ActionableNotice & { title: string; body: string },
+	): Promise<"delivered" | "blocked" | "unknown"> {
 		if (this.standIn) {
 			this.save({
 				status: "delivered",
@@ -112,12 +113,18 @@ export class Notifier {
 			title: input.title,
 			body: input.body,
 			...soundOptions(this.state.sound),
+			actions: noticeButtons(input.actions),
 		});
 		this.live.add(n);
 		const forget = () => this.live.delete(n);
 		n.on("click", () => {
 			forget();
 			this.onClick(input.path);
+		});
+		// Main holds the notification and its handlers, so a button works with the window closed.
+		n.on("action", (event) => {
+			forget();
+			this.onAction(input, event.actionIndex);
 		});
 		n.on("close", forget);
 		return new Promise((resolve) => {

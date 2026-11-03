@@ -87,6 +87,8 @@ export type Notice = {
 	title: string;
 	body: string;
 	path: string;
+	actions?: string[];
+	applicationId?: string;
 };
 
 export function notices(app: ElectronApplication): Promise<Notice[]> {
@@ -94,6 +96,28 @@ export function notices(app: ElectronApplication): Promise<Notice[]> {
 		() =>
 			(globalThis as unknown as { __offerfinchTest: { notices: Notice[] } })
 				.__offerfinchTest.notices,
+	);
+}
+
+/**
+ * Presses button `index` of the `n`th notice shown, as Notification Center would; resolves once
+ * the action ran (false when there is no such notice).
+ */
+export function pressNoticeAction(
+	app: ElectronApplication,
+	n: number,
+	index: number,
+): Promise<boolean> {
+	return app.evaluate(
+		(_e, [i, button]) =>
+			(
+				globalThis as unknown as {
+					__offerfinchTest: {
+						noticeAction: (n: number, index: number) => Promise<boolean>;
+					};
+				}
+			).__offerfinchTest.noticeAction(i as number, button as number),
+		[n, index],
 	);
 }
 

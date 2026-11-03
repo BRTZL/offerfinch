@@ -629,3 +629,16 @@ the claims check, so the helper may only reorganize the user's words and the pro
 | Nothing is saved by the helper: Use this puts the text in the box, still editable; Dismiss discards it; Save answer works as before and is blocked, with "Fill in or remove [ … ] first.", while a bracket blank is in the box | Rule 1: the user approves every fact in their own profile; a placeholder never becomes evidence |
 | A paused or limited model (subscription pause, spending cap, no model) shows its reason and leaves the box untouched; the spending cap's message names no amount | Costs are not shown anywhere (the owner's rule) |
 
+
+## 2026-11-03: Notification actions (issue #50)
+
+Match notifications get buttons in Notification Center (`worker/notices.ts` decides them,
+`main/notice-actions.ts` labels and runs them, `worker/dismissals.ts` `dismissFromNotice`).
+
+| Decision | Why |
+| --- | --- |
+| One new match: Open and Not interested. Several: Open only (opens Matches). Other kinds: no buttons. The only actions that exist are `open` and `dismiss` (a closed type) | Rule 1: nothing approves, prepares or sends without the user in the app; one button dismissing several jobs would surprise |
+| The button reads "Not interested", as in the app; it runs the same store call as the app's button with no reasons, then shows nothing more | One dismiss path; a quiet result like the app's own |
+| A match already dismissed, prepared or gone is a no-op with one log line (the store's own refusal, no pre-check that could race) | A notification can outlive its match |
+| Main holds each notification and its handlers, so buttons work with the window closed; after the app quits, buttons on old notifications in Notification Center do nothing (Electron cannot reattach them) | Electron's limit; the app usually keeps running in the menu bar |
+| No `NSUserNotificationAlertStyle` change: notifications stay banners. Electron 45 shows notifications through UNUserNotificationCenter with a `UNNotificationCategory` per action set; macOS shows those actions for banners too, under the banner's Options on hover. The Electron doc's "alert style" requirement belongs to the older NSUserNotification API | Persistent alerts would be a product change for the owner to decide |

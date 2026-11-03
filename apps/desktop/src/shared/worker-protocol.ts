@@ -95,7 +95,8 @@ export type WorkerMethod =
 	| "status"
 	| "scanNow"
 	| "setPaused"
-	| "diagnostics";
+	| "diagnostics"
+	| "dismissMatch";
 
 export interface TrayStatus {
 	state: "idle" | "scanning" | "paused" | "starting" | "error";
@@ -125,7 +126,17 @@ export interface NativeNotice {
 	onlyIfUnfocused?: boolean;
 	/** Set when the worker needs to know what macOS did with it: main answers `noticeResult`. */
 	id?: string;
+	/**
+	 * Buttons in Notification Center, in order. Only these two exist: nothing a notification
+	 * offers approves, prepares or sends (that is always done in the app).
+	 */
+	actions?: NoticeActionId[];
+	/** The one match a "dismiss" button is about. */
+	applicationId?: string;
 }
+
+/** Open: what a click does. Dismiss: Not interested on one match, as in the app. */
+export type NoticeActionId = "open" | "dismiss";
 
 /** What became of a notification: shown, refused by macOS, no answer, or not shown at all. */
 export type NoticeOutcome = "delivered" | "blocked" | "unknown" | "skipped";

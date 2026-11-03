@@ -64,7 +64,7 @@ export function summarize(kind: NoticeKind, items: NoticeItem[]): NativeNotice {
 				: kind === "stopped" || kind === "followup"
 					? (item.detail ?? item.title)
 					: `${item.title}${where}`;
-		return {
+		const notice: NativeNotice = {
 			kind,
 			title: one[0]?.toUpperCase() + one.slice(1),
 			body,
@@ -72,18 +72,28 @@ export function summarize(kind: NoticeKind, items: NoticeItem[]): NativeNotice {
 				? itemPath(kind, item.applicationId)
 				: LIST_PATH[kind],
 		};
+		// One match: Open, and Not interested on that match.
+		if (kind === "match" && item.applicationId)
+			return {
+				...notice,
+				actions: ["open", "dismiss"],
+				applicationId: item.applicationId,
+			};
+		return kind === "match" ? { ...notice, actions: ["open"] } : notice;
 	}
 	const names = items
 		.slice(0, 3)
 		.map((i) => (i.company ? `${i.title} (${i.company})` : i.title))
 		.join(", ");
 	const rest = items.length > 3 ? ` and ${items.length - 3} more` : "";
-	return {
+	const notice: NativeNotice = {
 		kind,
 		title: `${items.length} ${many}`,
 		body: `${names}${rest}`,
 		path: LIST_PATH[kind],
 	};
+	// Several matches: Open (the list) only; one button never dismisses several jobs.
+	return kind === "match" ? { ...notice, actions: ["open"] } : notice;
 }
 
 /**

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
 	NoticeBatcher,
 	type NoticeItem,
-	type summarize,
+	summarize,
 } from "../src/worker/notices";
 import {
 	DEFAULT_NOTIFICATIONS,
@@ -169,5 +169,36 @@ describe("a kind turned off while it waited", () => {
 		advance(1_000);
 		expect(sent).toEqual([]);
 		expect(batcher.pending()).toBe(0);
+	});
+});
+
+describe("notification actions", () => {
+	const oneMatch = (id: string): NoticeItem => ({
+		kind: "match",
+		applicationId: id,
+		title: "Engineer",
+		company: "Acme",
+		score: 82,
+	});
+
+	it("one match gets Open and Not interested, on that match", () => {
+		const notice = summarize("match", [oneMatch("a1")]);
+		expect(notice.actions).toEqual(["open", "dismiss"]);
+		expect(notice.applicationId).toBe("a1");
+		expect(notice.path).toBe("/applications/a1");
+	});
+
+	it("several matches get Open only (the list), never a dismiss of several jobs", () => {
+		const notice = summarize("match", [oneMatch("a1"), oneMatch("a2")]);
+		expect(notice.actions).toEqual(["open"]);
+		expect(notice.applicationId).toBeUndefined();
+		expect(notice.path).toBe("/inbox?view=matches");
+	});
+
+	it("other kinds get no buttons", () => {
+		for (const kind of ["question", "review", "stopped", "followup"] as const)
+			expect(
+				summarize(kind, [{ ...oneMatch("a1"), kind }]).actions,
+			).toBeUndefined();
 	});
 });
