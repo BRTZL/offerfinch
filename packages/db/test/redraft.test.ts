@@ -375,17 +375,41 @@ describe("Redraft", () => {
 		expect((await view()).redraft).toBeNull();
 	});
 
-	it("runs a redraft paused by a limit again when the spending limit changes", async () => {
+	it("a redraft paused by a subscription waits for Try again, also when the spending limit changes", async () => {
 		paused = true;
 		await a.rpc.application.redraft({ id: appId, scope: "cv" });
 		await deliver();
 		expect((await view()).redraft?.problem?.kind).toBe("paused");
 		paused = false;
-		const { events } = await new DashboardRepository(t.db).setSpendingCap(
-			a.id,
-			{ enabled: true, monthlyCapMicros: 50_000_000 },
-		);
-		expect(events.map((e) => e.userId)).toContain(a.id);
+		await new DashboardRepository(t.db).setSpendingCap(a.id, {
+			enabled: true,
+			monthlyCapMicros: 50_000_000,
+		});
+		await deliver();
+		expect((await view()).redraft?.problem?.kind).toBe("paused");
+		// Try again runs it.
+		const before = (await docs()).cv?.version ?? 0;
+		await a.rpc.application.retryRedraft({ id: appId });
+		await deliver();
+		expect((await docs()).cv?.version).toBe(before + 1);
+		expect((await view()).redraft).toBeNull();
+	});
+
+	it("a redraft paused by the spending limit runs again when the limit changes", async () => {
+		await a.rpc.application.redraft({ id: appId, scope: "cv" });
+		const request = await repo.pendingRedraft(a.id, appId);
+		if (!request) throw new Error("no request");
+		await repo.setRedraftProblem(a.id, appId, request.id, {
+			kind: "paused",
+			message: "Monthly spending limit reached",
+			at: new Date().toISOString(),
+			spendingCap: true,
+		});
+		await new DashboardRepository(t.db).setSpendingCap(a.id, {
+			enabled: true,
+			monthlyCapMicros: 60_000_000,
+		});
+		expect((await view()).redraft?.problem).toBeUndefined();
 		const before = (await docs()).cv?.version ?? 0;
 		await deliver();
 		expect((await docs()).cv?.version).toBe(before + 1);

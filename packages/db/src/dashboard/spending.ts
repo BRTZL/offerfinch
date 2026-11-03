@@ -135,7 +135,8 @@ export const spendingMethods = {
 						inArray(applications.state, ["scored", "preparing"]),
 					),
 				);
-			// A redraft paused by the limit runs again too (core `pipeline/redraft.ts`).
+			// A redraft paused by the spending limit runs again too (core `pipeline/redraft.ts`); one
+			// paused by a subscription waits for Try again.
 			const redrafts = await tx
 				.select({ id: applications.id, redraft: applications.redraft })
 				.from(applications)
@@ -147,7 +148,11 @@ export const spendingMethods = {
 					),
 				);
 			for (const app of redrafts) {
-				if (app.redraft?.problem?.kind !== "paused") continue;
+				if (
+					app.redraft?.problem?.kind !== "paused" ||
+					!app.redraft.problem.spendingCap
+				)
+					continue;
 				const { problem: _paused, ...rest } = app.redraft;
 				await tx
 					.update(applications)

@@ -55,11 +55,15 @@ async function redraftStep(
 	if (app.state !== "ready_for_review") return { outcome: "none" };
 	const request = await repo.pendingRedraft(userId, app.applicationId);
 	if (!request || request.problem) return { outcome: "none" };
-	const pause = async (reason: string): Promise<RedraftOutcome> => {
+	const pause = async (
+		reason: string,
+		spendingCap = false,
+	): Promise<RedraftOutcome> => {
 		await repo.setRedraftProblem?.(userId, app.applicationId, request.id, {
 			kind: "paused",
 			message: reason.slice(0, 500),
 			at: nowIso(deps),
+			...(spendingCap ? { spendingCap: true } : {}),
 		});
 		return { outcome: "paused", reason };
 	};
@@ -76,7 +80,7 @@ async function redraftStep(
 				provider: tailoring.name,
 				error: capped.message,
 			});
-		return pause(capped.message);
+		return pause(capped.message, capped instanceof SpendingCapReachedError);
 	}
 	const profile = await repo.getProfile(userId);
 	if (!profile) throw new Error(`No profile for ${userId}`);

@@ -54,6 +54,8 @@ export interface RedraftRequest {
 		kind: "paused" | "error" | "conflict";
 		message: string;
 		at: string;
+		/** A pause by the spending limit: changing the limit runs it again; any other waits for Try again. */
+		spendingCap?: boolean;
 	};
 }
 
