@@ -154,6 +154,8 @@ export function DocumentTabs({
 	older,
 	setOlder,
 }: DocumentContext) {
+	// Reading an earlier version: Edit and the PDF and copy menu would act on the current one.
+	const reading = !(older?.appId === loaded.id && older.kind === tab);
 	return (
 		<>
 			<Tabs
@@ -191,7 +193,7 @@ export function DocumentTabs({
 					setOlder={setOlder}
 				/>
 			) : null}
-			{canEdit && editing !== tab && current ? (
+			{canEdit && editing !== tab && current && reading ? (
 				<Button
 					size="sm"
 					variant="ghost"
@@ -202,7 +204,7 @@ export function DocumentTabs({
 					Edit
 				</Button>
 			) : null}
-			{current && editing !== tab ? (
+			{current && editing !== tab && reading ? (
 				<span data-testid="view-toggle">
 					<Button
 						size="icon-sm"

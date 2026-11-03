@@ -176,6 +176,11 @@ test("Redraft the letter with an instruction: version 2 of the letter, the CV un
 			"Version 1, read only",
 		);
 		await expect(page.getByTestId("doc-cover_letter-v1")).toBeVisible();
+		// Read only: no Edit, and no PDF or copy menu that would act on version 2.
+		await expect(
+			page.getByRole("button", { name: "Edit Cover letter" }),
+		).toHaveCount(0);
+		await expect(page.getByTestId("view-toggle")).toHaveCount(0);
 		await shots(app, page, "redraft-version-1");
 		await page
 			.getByTestId("earlier-version")
