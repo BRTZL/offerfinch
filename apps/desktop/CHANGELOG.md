@@ -21,7 +21,7 @@ version it tags (docs/releasing.md). Only what is merged into main belongs here.
 
 - Sources no longer have settings of their own. One search plan, written each day from your
   profile and Job search, feeds every source. Edit it once, in Settings › Job search.
-- LinkedIn joins your scans, at most every 6 hours and 10 pages a day, reading Top job picks
+- LinkedIn joins your scans, at most every 3 hours and 30 pages a day, reading Top job picks
   first.
 - Settings › Sources is calmer: each source shows whether it is on, its last result or what
   stopped it, and offers Sign in even while it is off.

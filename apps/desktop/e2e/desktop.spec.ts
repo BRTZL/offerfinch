@@ -1188,9 +1188,9 @@ test("a scan reads every source from the shared plan, LinkedIn's Top picks first
 		}>(
 			"select outcome, pages_used, jobs_inserted from linkedin_runs where trigger = 'scan'",
 		);
-		// Its share of the day: 5 pages. Top picks and its two new jobs, then the plan's first
-		// search (the user's own) and its first new job.
-		expect(run).toMatchObject({ outcome: "done", pages_used: 5 });
+		// Its share of a read: 6 pages. Top picks and its two new jobs, then the plan's first
+		// search (the user's own) and its new jobs.
+		expect(run).toMatchObject({ outcome: "done", pages_used: 6 });
 		const paths = fixture.requests.map((r) => r.path);
 		expect(paths[0]).toBe("/jobs/collections/recommended/");
 		expect(paths.slice(1, 3)).toEqual([
@@ -1232,7 +1232,7 @@ test("a scan reads every source from the shared plan, LinkedIn's Top picks first
 		await settingsNav(page, "Sources").click();
 		// Sources refreshes its list every few seconds.
 		await expect(page.getByTestId("source-linkedin")).toContainText(
-			/Next read in ~[56] h/,
+			/Next read in ~[23] h/,
 			{ timeout: 20_000 },
 		);
 		await expect(page.getByTestId("source-linkedin-status")).toContainText(
@@ -1240,7 +1240,7 @@ test("a scan reads every source from the shared plan, LinkedIn's Top picks first
 		);
 		await shot(page, "settings-sources");
 
-		// The next scan within 6 hours does not read LinkedIn, and says when it will.
+		// The next scan within 3 hours does not read LinkedIn, and says when it will.
 		const opened = fixture.requests.length;
 		await sidebar(page, "Home").click();
 		await expect(page.getByTestId("scan-now")).toBeEnabled({ timeout: 60_000 });
@@ -1259,7 +1259,7 @@ test("a scan reads every source from the shared plan, LinkedIn's Top picks first
 				},
 				{ timeout: 30_000 },
 			)
-			.toMatch(/Next LinkedIn read in ~[56] h/);
+			.toMatch(/Next LinkedIn read in ~[23] h/);
 		await sidebar(page, "Settings").click();
 		await settingsNav(page, "Sources").click();
 		await page.getByTestId("source-linkedin-enabled").click();

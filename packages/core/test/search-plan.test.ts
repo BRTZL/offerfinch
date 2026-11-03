@@ -498,17 +498,18 @@ const plan: PlanResult = {
 };
 
 describe("LinkedIn in scans", () => {
-	it("reads at most once every 6 hours and says when the next read is", async () => {
+	it("reads at most once every few hours (LINKEDIN_PACE) and says when the next read is", async () => {
 		const { store, runs } = linkedinStore({
-			lastReadAt: new Date(NOW.getTime() - 2 * 3_600_000),
+			lastReadAt: new Date(NOW.getTime() - 1 * 3_600_000),
 		});
 		const { provider, opened } = linkedinProvider(store);
 		const run = await provider.run(pipeline, "u1", undefined, plan);
+		const wait = LINKEDIN_PACE.everyHours - 1;
 		expect(run).toMatchObject({
 			status: "waiting",
-			retryAt: "2026-11-03T14:00:00.000Z",
+			retryAt: new Date(NOW.getTime() + wait * 3_600_000).toISOString(),
 		});
-		expect(run.problem).toBe("Next LinkedIn read in ~4 h.");
+		expect(run.problem).toBe(`Next LinkedIn read in ~${wait} h.`);
 		expect(opened).toEqual([]);
 		expect(runs).toEqual([]);
 		// Retry now reads at once (the daily cap still holds).
@@ -534,14 +535,15 @@ describe("LinkedIn in scans", () => {
 		const { provider, opened } = linkedinProvider(store, true);
 		const run = await provider.run(pipeline, "u1", undefined, plan);
 		expect(run.status).toBe("waiting");
-		expect(run.problem).toMatch(/10 pages a day/);
+		expect(run.problem).toMatch(/30 pages a day/);
 		expect(opened).toEqual([]);
 		expect(inAbout(35 * 60_000)).toBe("~35 min");
 	});
 
 	it("reads Top picks first, then the plan's search, within its share of pages, each reported on its own", async () => {
+		// 3 pages left in the day.
 		const pages = Array.from(
-			{ length: 7 },
+			{ length: LINKEDIN_PACE.dailyPageCap - 3 },
 			() => new Date(NOW.getTime() - 3_600_000 * 12),
 		);
 		const { store, runs } = linkedinStore({
@@ -582,11 +584,12 @@ describe("LinkedIn in scans", () => {
 		expect(full.opened[3]).toBe(
 			`${ORIGIN}/jobs/search/?keywords=Frontend+Engineer&location=Poland&f_WT=2&sortBy=DD`,
 		);
+		// The search's share: its list page and its two new jobs (at most 2 opened a list).
 		expect(whole).toMatchObject({
 			searches: ["Frontend Engineer · remote, Poland"],
-			pagesRead: 2,
+			pagesRead: 3,
 			results: 2,
-			newJobIds: ["job-1"],
+			newJobIds: ["job-1", "job-2"],
 			// One search opened from 4: the next read starts at 5.
 			cursor: 5,
 		});
