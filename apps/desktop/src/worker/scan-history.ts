@@ -168,10 +168,14 @@ export async function scanProgressOf(
 	if (!row) return null;
 	const isIdle = (s: SourceReport) =>
 		s.status === "off" || s.status === "not_set_up";
-	const all = (await listProviders(db, run.userId)).length;
-	const total = all - row.sources.filter(isIdle).length;
+	// Only providers count: a part of one (LinkedIn's Top picks) reports too, under its own id.
+	const providers = new Set(
+		(await listProviders(db, run.userId)).map((s) => s.provider as string),
+	);
+	const reports = row.sources.filter((s) => providers.has(s.id));
+	const total = providers.size - reports.filter(isIdle).length;
 	if (total <= 0) return null;
-	const done = Math.min(total, row.sources.filter((s) => !isIdle(s)).length);
+	const done = reports.filter((s) => !isIdle(s)).length;
 	const p = row.progress;
 	const label = p ? (p.label ?? labelOf(p.source)) : null;
 	const line = p

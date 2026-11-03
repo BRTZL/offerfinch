@@ -522,6 +522,18 @@ describe("scheduling", () => {
 		// A scan is running already: a manual one is not added on top.
 		expect(manual.started).toBe(false);
 	});
+
+	it("starts one scan when the timer and Scan now ask at the same moment", async () => {
+		const db = await openTestDb();
+		const at = new Date("2026-11-02T09:00:30Z");
+		const [hourly, manual] = await Promise.all([
+			ensureHourlyScan(db, null, "u1", at),
+			startManualScan(db, null, "u1", at),
+		]);
+		expect([hourly !== null, manual.started].filter(Boolean)).toHaveLength(1);
+		const runs = await db.select().from(flowRuns);
+		expect(runs).toHaveLength(1);
+	});
 });
 
 describe("attempts that ignore their stop (stalled)", () => {

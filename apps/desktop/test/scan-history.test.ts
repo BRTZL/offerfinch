@@ -364,6 +364,11 @@ describe("a running scan's progress", () => {
 			{ provider: "job-board-search", queries: 1, fetched: 3, newJobIds: [] },
 			"Job-board search",
 		);
+		// A part of a provider (LinkedIn's Top picks) reports under its own id: not a source done.
+		await log.source(
+			{ provider: "linkedin-top-picks", queries: 1, fetched: 0, newJobIds: [] },
+			"LinkedIn Top picks",
+		);
 		await log.progress({ source: "indeed", label: "Indeed" });
 		expect(await scanProgressOf(db, run)).toEqual({
 			total: 2,

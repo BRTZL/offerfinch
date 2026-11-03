@@ -248,31 +248,34 @@ export async function ensureHourlyScan(
 	userId: string,
 	now: Date = new Date(),
 ): Promise<string | null> {
-	// A scan still queued or running (one that ran past the hour, or waits for a site check) is
-	// not joined by a second: two at once take both queue slots and read the same sites together.
-	if (await busyScan(db, userId)) return null;
 	const id = hourlyScanId(userId, now);
-	const inserted = await db
-		.insert(flowRuns)
-		.values({
-			id,
-			userId,
-			kind: SCAN_KIND,
-			params: { userId, trigger: "cron" } satisfies ScanWorkflowParams,
-			status: "queued",
-			priority: PRIORITY.scan,
-			runAfter: now,
-			createdAt: now,
-		})
-		.onConflictDoNothing()
-		.returning({ id: flowRuns.id });
+	// The check and the insert share one transaction, so two callers at once start one scan.
+	const inserted = await db.transaction(async (tx) => {
+		// A scan still queued or running (one that ran past the hour, or waits for a site check)
+		// is not joined by a second: two at once take both queue slots and read the same sites.
+		if (await busyScan(tx, userId)) return [];
+		return tx
+			.insert(flowRuns)
+			.values({
+				id,
+				userId,
+				kind: SCAN_KIND,
+				params: { userId, trigger: "cron" } satisfies ScanWorkflowParams,
+				status: "queued",
+				priority: PRIORITY.scan,
+				runAfter: now,
+				createdAt: now,
+			})
+			.onConflictDoNothing()
+			.returning({ id: flowRuns.id });
+	});
 	if (inserted.length > 0) runner?.poke();
 	return inserted.length > 0 ? id : null;
 }
 
 /** The user's scan that is queued or running now, if any. */
 async function busyScan(
-	db: Database,
+	db: Pick<Database, "select">,
 	userId: string,
 ): Promise<{ id: string } | undefined> {
 	const [busy] = await db
@@ -299,25 +302,28 @@ export async function startManualScan(
 	now: Date = new Date(),
 	companyIds?: string[],
 ): Promise<{ id: string; started: boolean }> {
-	const busy = await busyScan(db, userId);
-	if (busy) return { id: busy.id, started: false };
 	const id = `scan-${userId}-manual-${now.getTime()}`;
-	await db.insert(flowRuns).values({
-		id,
-		userId,
-		kind: SCAN_KIND,
-		params: {
+	const started = await db.transaction(async (tx) => {
+		const busy = await busyScan(tx, userId);
+		if (busy) return { id: busy.id, started: false };
+		await tx.insert(flowRuns).values({
+			id,
 			userId,
-			trigger: "manual",
-			...(companyIds?.length ? { companyIds } : {}),
-		} satisfies ScanWorkflowParams,
-		status: "queued",
-		priority: PRIORITY.event,
-		runAfter: now,
-		createdAt: now,
+			kind: SCAN_KIND,
+			params: {
+				userId,
+				trigger: "manual",
+				...(companyIds?.length ? { companyIds } : {}),
+			} satisfies ScanWorkflowParams,
+			status: "queued",
+			priority: PRIORITY.event,
+			runAfter: now,
+			createdAt: now,
+		});
+		return { id, started: true };
 	});
-	runner?.poke();
-	return { id, started: true };
+	if (started.started) runner?.poke();
+	return started;
 }
 
 /** The latest scan runs of a user, newest first. */
