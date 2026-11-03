@@ -108,8 +108,27 @@ describe("codex-subscription boundary, production layers", () => {
 			);
 			expect(result.status).not.toBe("completed");
 			expect(result.boundary).toBeNull();
-			// Aborted before Codex could send the tool's output back to the model.
-			expect(posts).toHaveLength(1);
+			// Aborted before Codex could act on the tool. The abort lands asynchronously, so on a
+			// slow machine Codex can still send one more request, carrying the declined call,
+			// before it does (issue #85; never seen locally in 100 tries under load, seen on CI
+			// runners). That request may exist; the leak check above proves it carries no output
+			// of the tool, and nothing may follow it. Its shape is logged to settle #85.
+			expect(posts.length).toBeLessThanOrEqual(2);
+			if (posts.length === 2)
+				console.warn(
+					`#85: second request after a forged ${name}:`,
+					JSON.stringify(
+						(
+							(posts[1] as { body?: { input?: Record<string, unknown>[] } })
+								.body?.input ?? []
+						)
+							.slice(-2)
+							.map((item) => ({
+								type: item.type,
+								output: String(item.output ?? "").slice(0, 160),
+							})),
+					),
+				);
 		}, 90_000);
 
 	it("offers only the tested, inert tools and loads no instructions or tools of the user's", async () => {
