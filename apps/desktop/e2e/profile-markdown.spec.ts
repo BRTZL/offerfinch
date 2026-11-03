@@ -3,7 +3,13 @@ import { expect, test } from "@playwright/test";
 import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
-import { launchApp, RESUME, tempUserData } from "./launch";
+import {
+	launchApp,
+	openRoute,
+	RESUME,
+	skipRestOfSetup,
+	tempUserData,
+} from "./launch";
 
 /** Long profile fields are Markdown: they render as headings, lists and bold, not as source. */
 const userData = tempUserData();
@@ -30,7 +36,7 @@ test("profile summary renders as Markdown", async () => {
 		await page.getByTestId("onboarding-text").fill(RESUME);
 		await page.getByTestId("onboarding-structure").click();
 		await page.getByTestId("onboarding-save").click({ timeout: 60_000 });
-		await page.getByTestId("onboarding-later").click();
+		await skipRestOfSetup(page);
 
 		// The About record's summary, written as Markdown.
 		const db = new Database(path.join(userData, DB_FILE), {
@@ -49,15 +55,7 @@ test("profile summary renders as Markdown", async () => {
 		}
 		// The record changed behind the app's back: start the page afresh, then open Profile.
 		await page.reload();
-		await app.evaluate(
-			(_e, to) =>
-				(
-					globalThis as unknown as {
-						__offerfinchTest: { open: (p: string) => void };
-					}
-				).__offerfinchTest.open(to),
-			"/profile/about",
-		);
+		await openRoute(app, page, "/profile/about");
 		await expect
 			.poll(() => new URL(page.url()).pathname, { timeout: 30_000 })
 			.toBe("/profile/about");

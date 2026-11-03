@@ -11,7 +11,13 @@ import {
 } from "@playwright/test";
 
 import { startFixtureBoards } from "./fixture-boards";
-import { launchApp, notices, RESUME, tempUserData } from "./launch";
+import {
+	launchApp,
+	notices,
+	RESUME,
+	skipRestOfSetup,
+	tempUserData,
+} from "./launch";
 
 /**
  * Add job from link, against local stand-ins only: a Greenhouse link (the fixture board), an
@@ -135,7 +141,7 @@ test("add a job from a link: a board, an unknown site, a wall, a filter miss kep
 		await page.getByTestId("onboarding-text").fill(RESUME);
 		await page.getByTestId("onboarding-structure").click();
 		await page.getByTestId("onboarding-save").click({ timeout: 60_000 });
-		await page.getByTestId("onboarding-later").click();
+		await skipRestOfSetup(page);
 
 		// Where the user lives, as onboarding fills it from a profile's location (this fabricated
 		// resume has none). Without a country no place rules a job out, so step 4 needs one.

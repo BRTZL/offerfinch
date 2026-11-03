@@ -12,6 +12,7 @@ import {
 	fakeChrome,
 	launchApp,
 	notices,
+	openRoute,
 	overlaySiteView,
 	RESUME,
 	siteTabs,
@@ -261,18 +262,7 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 			/^\/(applications\/[0-9a-f-]{36}|inbox\?view=review)$/,
 		);
 		await sidebar(page, "Home").click();
-		await app.evaluate(
-			(_e, to) =>
-				(
-					globalThis as unknown as {
-						__offerfinchTest: { open: (p: string) => void };
-					}
-				).__offerfinchTest.open(to),
-			review?.path ?? "",
-		);
-		await expect
-			.poll(() => new URL(page.url()).pathname)
-			.toBe(new URL(`app://local${review?.path}`).pathname);
+		await openRoute(app, page, review?.path ?? "");
 		await expect(page.getByText(/Ready for review/).first()).toBeVisible();
 		if (!review?.path.startsWith("/applications/")) await row.click();
 		await expect(page.getByTestId("approve")).toBeVisible();

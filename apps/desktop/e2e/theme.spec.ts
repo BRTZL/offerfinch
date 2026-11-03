@@ -9,7 +9,7 @@ import {
 	test,
 } from "@playwright/test";
 
-import { launchApp, tempUserData } from "./launch";
+import { launchApp, openRoute, tempUserData } from "./launch";
 
 /**
  * The sidebar over the real window's vibrancy, in every theme combination: the window is captured
@@ -164,19 +164,6 @@ async function measure(
 	);
 }
 
-/** The app's own navigation (main's test hook), as a click in the menu would do. */
-async function open(app: ElectronApplication, to: string) {
-	await app.evaluate(
-		(_e, path) =>
-			(
-				globalThis as unknown as {
-					__offerfinchTest: { open: (p: string) => void };
-				}
-			).__offerfinchTest.open(path),
-		to,
-	);
-}
-
 async function box(page: Page, selector: string): Promise<Box> {
 	const b = await page.locator(selector).first().boundingBox();
 	if (!b) throw new Error(`no box for ${selector}`);
@@ -222,7 +209,7 @@ async function check(app: ElectronApplication, page: Page, combo: string) {
 		results[name] = Math.round(contrast(bg, ink) * 100) / 100;
 	}
 	// The Settings section column sits on the page, not the material: it must read too.
-	await open(app, "/settings/models");
+	await openRoute(app, page, "/settings/models");
 	const column = page.getByRole("navigation", { name: "Settings" });
 	await expect(column).toBeVisible();
 	await page.waitForTimeout(500);
@@ -243,7 +230,7 @@ async function check(app: ElectronApplication, page: Page, combo: string) {
 		);
 		results["settings column"] = Math.round(contrast(bg, ink) * 100) / 100;
 	}
-	await open(app, "/settings/general");
+	await openRoute(app, page, "/settings/general");
 	console.log(combo, JSON.stringify({ native, results }));
 
 	for (const [name, ratio] of Object.entries(results))
@@ -273,7 +260,7 @@ test("the sidebar is readable over the real window in every theme combination", 
 			await expect
 				.poll(() => new URL(page.url()).pathname, { timeout: 30_000 })
 				.toBe("/onboarding");
-		await open(app, "/settings/general");
+		await openRoute(app, page, "/settings/general");
 		await expect(page.locator('[data-ds="sidebar"]')).toBeVisible({
 			timeout: 30_000,
 		});

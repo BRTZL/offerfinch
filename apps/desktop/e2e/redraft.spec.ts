@@ -9,7 +9,14 @@ import {
 import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
-import { APP_DIR, launchApp, RESUME, tempUserData, toastsGone } from "./launch";
+import {
+	APP_DIR,
+	launchApp,
+	RESUME,
+	skipRestOfSetup,
+	tempUserData,
+	toastsGone,
+} from "./launch";
 
 /**
  * Redraft, with fake models (OFFERFINCH_FAKE_MODELS=1), in the background: a prepared
@@ -80,7 +87,7 @@ test("Redraft the letter with an instruction: version 2 of the letter, the CV un
 		await page.getByTestId("onboarding-text").fill(RESUME);
 		await page.getByTestId("onboarding-structure").click();
 		await page.getByTestId("onboarding-save").click({ timeout: 60_000 });
-		await page.getByTestId("onboarding-later").click();
+		await skipRestOfSetup(page);
 
 		// A pasted posting (no network), prepared to review.
 		await page.getByTestId("search-button").click();

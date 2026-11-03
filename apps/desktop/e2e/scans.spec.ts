@@ -12,6 +12,7 @@ import {
 	fakeChrome,
 	launchApp,
 	RESUME,
+	skipRestOfSetup,
 	tempUserData,
 	toastsGone,
 } from "./launch";
@@ -99,7 +100,7 @@ test("the scan history: found, set aside with reasons, and a paused source", asy
 		await page.getByTestId("onboarding-text").fill(RESUME);
 		await page.getByTestId("onboarding-structure").click();
 		await page.getByTestId("onboarding-save").click({ timeout: 60_000 });
-		await page.getByTestId("onboarding-later").click();
+		await skipRestOfSetup(page);
 
 		// Before any scan: the sidebar's scan line opens the history, which says what to set up.
 		await page.getByTestId("scan-status").click();

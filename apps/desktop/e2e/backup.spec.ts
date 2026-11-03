@@ -12,7 +12,14 @@ import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
 import { startFixtureBoards } from "./fixture-boards";
-import { launchApp, RESUME, tempUserData, toastsGone } from "./launch";
+import {
+	launchApp,
+	openRoute,
+	RESUME,
+	skipRestOfSetup,
+	tempUserData,
+	toastsGone,
+} from "./launch";
 
 /**
  * Backup and restore, in the background: an instance with a profile and a scan's jobs exports a
@@ -40,17 +47,6 @@ function count(userData: string, table: string): number {
 	}
 }
 
-const open = (app: ElectronApplication, to: string) =>
-	app.evaluate(
-		(_e, p) =>
-			(
-				globalThis as unknown as {
-					__offerfinchTest: { open: (p: string) => void };
-				}
-			).__offerfinchTest.open(p),
-		to,
-	);
-
 /** The next save or open dialog answers with this file, as if the user picked it. */
 const answerDialogs = (app: ElectronApplication, file: string) =>
 	app.evaluate(({ dialog }, f) => {
@@ -65,16 +61,7 @@ const answerDialogs = (app: ElectronApplication, file: string) =>
 	}, file);
 
 async function yourData(app: ElectronApplication, page: Page) {
-	// Asked again until the page has loaded and taken the navigation (a fresh start redirects).
-	await expect
-		.poll(
-			async () => {
-				await open(app, "/settings/your-data");
-				return new URL(page.url()).pathname;
-			},
-			{ timeout: 30_000, intervals: [500, 1_000] },
-		)
-		.toBe("/settings/your-data");
+	await openRoute(app, page, "/settings/your-data");
 	await expect(page.getByTestId("storage-summary")).toBeVisible({
 		timeout: 30_000,
 	});
@@ -125,7 +112,7 @@ test.describe
 				await page.getByTestId("onboarding-text").fill(RESUME);
 				await page.getByTestId("onboarding-structure").click();
 				await page.getByTestId("onboarding-save").click({ timeout: 60_000 });
-				await page.getByTestId("onboarding-later").click();
+				await skipRestOfSetup(page);
 				await page.getByTestId("scan-status").click();
 				await page.getByTestId("scan-now").first().click();
 				await expect
@@ -235,11 +222,11 @@ test.describe
 				).toBe("from A");
 
 				// The screens read the restored data: the profile, and the Inbox's matches.
-				await open(b.app, "/profile/experience");
+				await openRoute(b.app, page, "/profile/experience");
 				await expect(page.getByText("Tidewater Health").first()).toBeVisible({
 					timeout: 30_000,
 				});
-				await open(b.app, "/inbox");
+				await openRoute(b.app, page, "/inbox");
 				await expect(
 					page
 						.getByTestId("inbox-group")

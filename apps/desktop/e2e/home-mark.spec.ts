@@ -3,7 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 
-import { APP_DIR, launchApp, RESUME } from "./launch";
+import {
+	APP_DIR,
+	launchApp,
+	openRoute,
+	RESUME,
+	skipRestOfSetup,
+} from "./launch";
 
 /**
  * Home's mark is a frame sheet stepped like a GIF: at chosen moments of its loop the strip sits
@@ -40,16 +46,8 @@ test("Home's mark steps through its frame sheet", async () => {
 		await page.getByTestId("onboarding-text").fill(RESUME);
 		await page.getByTestId("onboarding-structure").click();
 		await page.getByTestId("onboarding-save").click({ timeout: 60_000 });
-		await page.getByTestId("onboarding-later").click();
-		await app.evaluate(
-			(_e, to) =>
-				(
-					globalThis as unknown as {
-						__offerfinchTest: { open: (p: string) => void };
-					}
-				).__offerfinchTest.open(to),
-			"/",
-		);
+		await skipRestOfSetup(page);
+		await openRoute(app, page, "/");
 		const mark = page.getByTestId("animated-mark");
 		await expect(mark).toBeVisible({ timeout: 30_000 });
 		const strip = mark.locator("svg");
