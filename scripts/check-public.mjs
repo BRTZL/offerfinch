@@ -9,6 +9,7 @@
 //   frames (one every 2 s, through ffmpeg); a file it still cannot read fails the check (slow).
 //   --ci: a missing or empty denylist is a warning, not a failure (CI without the secret).
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -107,12 +108,37 @@ const MARKER = "public-ok";
 const findings = [];
 /** Files of a kind this script cannot read (video, archives, documents): listed, never passed. */
 const unread = [];
-function scan(file, text) {
+/**
+ * Images whose OCR text may skip named patterns (scripts/public-ok-images.json), each pinned by
+ * its content hash so any change to the image brings every check back. Only for screenshots of
+ * fabricated test data that OCR misreads (a 555 number read as another).
+ */
+const OK_IMAGES = (() => {
+	try {
+		return JSON.parse(
+			fs.readFileSync(path.join(root, "scripts/public-ok-images.json"), "utf8"),
+		);
+	} catch {
+		return {};
+	}
+})();
+function imageSkips(file) {
+	const entry = OK_IMAGES[file];
+	if (!entry || typeof entry !== "object" || !Array.isArray(entry.skip))
+		return new Set();
+	const hash = createHash("sha256")
+		.update(fs.readFileSync(path.join(root, file)))
+		.digest("hex");
+	return hash === entry.sha256 ? new Set(entry.skip) : new Set();
+}
+
+function scan(file, text, skip = new Set()) {
 	const lines = text.split("\n");
 	const generated = GENERATED.test(file);
 	lines.forEach((line, n) => {
 		for (const p of PATTERNS) {
 			if (generated && p.name === "email address") continue;
+			if (skip.has(p.name)) continue;
 			for (const m of line.matchAll(p.re))
 				if (!p.ok(m[0], line, m.index ?? 0))
 					findings.push(`${file}:${n + 1}: ${p.name}`);
@@ -190,6 +216,7 @@ for (const file of files) {
 			scan(
 				`${file} (image text)`,
 				execFileSync(ocr, [full], { encoding: "utf8" }),
+				imageSkips(file),
 			);
 		} catch {}
 	}
