@@ -235,6 +235,7 @@ export function fakeTailorResponder(
 	const proof = roles
 		.flatMap((r) => r.variants)
 		.sort((a, b) => relevance(b, posting) - relevance(a, posting));
+	if (variant) proof.reverse();
 	const opening = `I am applying for the ${title} role at ${company}. What draws me to ${company} is the work the posting describes.`;
 	const close = `I would welcome a conversation about the ${title} role at ${company}.`;
 	const paragraphs: string[] = [];
@@ -250,7 +251,6 @@ export function fakeTailorResponder(
 		}
 	}
 	if (summary && wordCount(letterText()) < MIN) paragraphs.unshift(summary);
-	if (variant) paragraphs.reverse();
 	const coverLetter = [
 		`${name}\\`,
 		`{{email}} · {{phone}} · ${field("LinkedIn")}`,
@@ -272,7 +272,7 @@ export function fakeTailorResponder(
 	const formAnswers: TailorOutput["formAnswers"] = [
 		{
 			question: `Why do you want to work at ${company}?`,
-			answer: `The ${title} role at ${company} is the work I want to do next. ${(variant ? proof[1] : undefined) ?? proof[0] ?? summary}`,
+			answer: `The ${title} role at ${company} is the work I want to do next. ${proof[0] ?? summary}`,
 		},
 	];
 	if (/notice period/i.test(posting)) {

@@ -368,10 +368,12 @@ export const pipelineRouter = {
 		cancelRedraft: protectedProcedure
 			.input(z.object({ id: z.string().uuid() }))
 			.handler(({ context, input }) =>
-				repoOf(context).cancelRedraft({
-					userId: context.session.user.id,
-					applicationId: input.id,
-				}),
+				refusal(() =>
+					repoOf(context).cancelRedraft({
+						userId: context.session.user.id,
+						applicationId: input.id,
+					}),
+				),
 			),
 		/** One earlier (or the current) version of a document, read only. */
 		documentVersion: protectedProcedure
