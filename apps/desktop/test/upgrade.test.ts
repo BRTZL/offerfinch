@@ -53,6 +53,7 @@ const POINTS = [
 	"20261102213756_match_rank", // before the shared search plan
 	"20261103021635_search_plans", // before closed postings
 	"20261103032954_closed_postings", // before stages and notes after Applied
+	"20261103074940_after_applied", // before Redraft (applications.redraft)
 	LATEST,
 ];
 

@@ -36,8 +36,8 @@ function EarlierVersion({
 			>
 				<History className="text-muted-foreground size-4 shrink-0" />
 				<span className="min-w-0 flex-1">
-					Version {older.version}, read only. The current version, the one
-					checked and approved, is version {current}.
+					Version {older.version}, read only. Only the current version,{" "}
+					{current}, is checked and can be approved.
 				</span>
 				<Button size="sm" variant="outline" onClick={onBack}>
 					Back to version {current}
