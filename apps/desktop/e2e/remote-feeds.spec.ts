@@ -206,8 +206,11 @@ test("remote feeds: off at first, on with one switch, read once, matches linked 
 		const stored = read<{ source: string; title: string; url: string }>(
 			"select source, title, url from jobs order by source, title",
 		);
+		// Nimbus Cloud's Senior Frontend Engineer is on HN and Remotive with no shared link: kept
+		// twice, since a company and title alone never prove one vacancy (decisions.md, 2026-11-03).
 		expect(stored.map((j) => `${j.source}: ${j.title}`)).toEqual([
 			"hackernews: Frontend Engineer, Backend Engineer",
+			"hackernews: Senior Frontend Engineer",
 			"remoteok: Front End Engineer",
 			"remoteok: Software Engineer",
 			"remotive: Senior Frontend Engineer",
