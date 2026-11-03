@@ -13,8 +13,8 @@
 #          -> finalize (button only) -> publish -> notify
 #
 # Two environments hold the secrets (docs/releasing.md):
-# - release: the five signing secrets. Only a real build runs in it, so every release waits for
-#   the owner's approval there. Deployment refs: main and v*.*.* tags.
+# - release: the five signing secrets. Only a real build runs in it, and only from main or a
+#   v*.*.* tag (its deployment refs); no reviewer: the Release button is the owner's decision.
 # - release-push: RELEASE_DEPLOY_KEY, the deploy key finalize pushes with. Deployment ref: main.
 #
 # A dry run happens only when the button's dry_run is ticked (a tag push never is one): an ad-hoc
@@ -238,9 +238,8 @@ jobs:
           path: apps/desktop/test-results
           retention-days: 7
 
-  # A real build runs in the release environment (the signing secrets, the owner's approval); a
-  # dry run in none: an empty environment name means no environment, so no approval and no
-  # deployment.
+  # A real build runs in the release environment (the signing secrets); a dry run in none: an
+  # empty environment name means no environment, so no signing secret and no deployment.
   build:
     needs: [resolve, quality, test, e2e]
     runs-on: macos-15
