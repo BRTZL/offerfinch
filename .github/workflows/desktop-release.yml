@@ -265,12 +265,22 @@ jobs:
       - name: Verify the signature and notarization
         if: env.DRY_RUN == 'false'
         working-directory: apps/desktop/dist
+        # spctl and stapler ask Apple's servers; a dropped connection there is not a bad build,
+        # so those two get three tries. The local codesign checks get one.
         run: |
+          online() {
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              echo "::warning::'$*' failed (try $attempt of 3)"
+              sleep $((attempt * 15))
+            done
+            return 1
+          }
           for app in mac/OfferFinch.app mac-arm64/OfferFinch.app; do
             codesign --verify --deep --strict "$app"
             codesign -dvv "$app" 2>&1 | grep -q "Authority=Developer ID Application"
-            spctl --assess --type execute -v "$app"
-            xcrun stapler validate "$app"
+            online spctl --assess --type execute -v "$app"
+            online xcrun stapler validate "$app"
           done
 
       # The packaged arm64 app opens its window in background test mode against a temporary
