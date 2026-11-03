@@ -50,7 +50,6 @@ pnpm biome ci .
 pnpm knip
 pnpm --filter @offerfinch/core test:browser
 E2E_FOREGROUND=0 pnpm --filter @offerfinch/desktop e2e
-node scripts/check-public.mjs --images
 ```
 
 `pnpm test` runs core, SQLite, runner, local-LLM, and desktop unit suites. Browser safety
@@ -68,9 +67,9 @@ case is skipped in this mode. Never point tests, measurements, or screenshots at
 data. CI runs lint, types, unit tests, headless browser safety tests, and Knip on `macos-15`;
 desktop e2e runs locally and in the release workflow.
 
-The public-data checker scans tracked text and, with `--images`, image text using macOS
-Vision. Accepted pre-existing findings and each cleanup gate are recorded in
-[cleanup verification](docs/cleanup-baseline.md); the cleanup must introduce none.
+`node scripts/check-public.mjs --images` scans tracked text and image text for personal data.
+It is an optional local check, no longer run in CI; its accepted findings are recorded in
+[cleanup verification](docs/cleanup-baseline.md).
 
 ## Build and release
 
