@@ -7,7 +7,7 @@ changed for them, in plain words. Add to "Unreleased"; the release script rename
 version it tags (docs/releasing.md). Only what is merged into main belongs here.
 -->
 
-## Unreleased
+## 0.1.1 (2026-11-03)
 
 ### Help with answers on Questions
 
