@@ -1188,9 +1188,9 @@ test("a scan reads every source from the shared plan, LinkedIn's Top picks first
 		}>(
 			"select outcome, pages_used, jobs_inserted from linkedin_runs where trigger = 'scan'",
 		);
-		// Its share of the day: 5 pages. Top picks and its two new jobs, then the plan's first
-		// search (the user's own) and its first new job.
-		expect(run).toMatchObject({ outcome: "done", pages_used: 5 });
+		// Its share of a read: 6 pages. Top picks and its two new jobs, then the plan's first
+		// search (the user's own) and its new jobs.
+		expect(run).toMatchObject({ outcome: "done", pages_used: 6 });
 		const paths = fixture.requests.map((r) => r.path);
 		expect(paths[0]).toBe("/jobs/collections/recommended/");
 		expect(paths.slice(1, 3)).toEqual([
