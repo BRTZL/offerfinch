@@ -1,5 +1,7 @@
 import type { SiteTabId } from "../shared/bridge";
 import type { NativeNotice } from "../shared/worker-protocol";
+import { noticeActionDeps } from "./notice-action-deps";
+import { runNoticeAction } from "./notice-actions";
 import { mainState } from "./state";
 import { showWindow } from "./window";
 
@@ -13,6 +15,15 @@ export const testHooks = {
 	savedFiles: [] as string[],
 	updateNotices: [] as { title: string; body: string; path: string }[],
 	workerPid: () => mainState.worker?.pid,
+	/**
+	 * Presses button `index` of the `n`th notice shown, as Notification Center would (test runs
+	 * show none): the same routing a real button's `action` event runs.
+	 */
+	noticeAction: (n: number, index: number) => {
+		const notice = testHooks.notices[n];
+		if (!notice) return Promise.resolve(false);
+		return runNoticeAction(notice, index, noticeActionDeps).then(() => true);
+	},
 	open: (p: string) => showWindow(p),
 	/** The site tabs: which exist, which run, which sheet shows them and where. */
 	siteTabs: () => mainState.sites.describe(),

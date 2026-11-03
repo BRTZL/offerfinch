@@ -29,6 +29,46 @@ async function sendAll(
 	for (const event of events) await send(event);
 }
 
+type DismissInput = Parameters<DismissalStore["dismiss"]>[0];
+
+/**
+ * Not interested: commits the dismissal, then sends the events that end each match's waiting
+ * run. The one path for the app's button and a notification's.
+ */
+async function dismissMatches(
+	db: Database,
+	sendEvent: (event: PendingEvent) => Promise<void>,
+	input: DismissInput,
+) {
+	const { events, ...result } = await new DismissalStore(db).dismiss(input);
+	await sendAll(sendEvent, events);
+	return result;
+}
+
+/**
+ * A notification's Not interested, on the one match it was about, with no reasons (as the
+ * app's popover with none ticked). A match already decided, or gone, is left as it is: the
+ * store refuses it and nothing changes.
+ */
+export async function dismissFromNotice(
+	db: Database,
+	sendEvent: (event: PendingEvent) => Promise<void>,
+	input: { userId: string; applicationId: string },
+): Promise<"dismissed" | "stale"> {
+	try {
+		await dismissMatches(db, sendEvent, {
+			userId: input.userId,
+			applicationIds: [input.applicationId],
+			reasons: [],
+		});
+		return "dismissed";
+	} catch (error) {
+		if (error instanceof Error && /^Refusing/.test(error.message))
+			return "stale";
+		throw error;
+	}
+}
+
 /**
  * Not interested on matches, its undo, and hidden companies (Settings). Each change commits
  * first, then wakes the applications it moved: a dismissal ends a match's waiting run; an undo
@@ -53,19 +93,17 @@ export function dismissalRouter(worker: () => { db: Database }) {
 					hideCompanyId: z.string().uuid().optional(),
 				}),
 			)
-			.handler(async ({ context, input }) => {
-				const { events, ...result } = await refuse(() =>
-					new DismissalStore(worker().db).dismiss({
+			.handler(({ context, input }) =>
+				refuse(() =>
+					dismissMatches(worker().db, context.sendEvent, {
 						userId: context.session.user.id,
 						applicationIds: input.ids,
 						reasons: input.reasons,
 						note: input.note,
 						hideCompanyId: input.hideCompanyId,
 					}),
-				);
-				await sendAll(context.sendEvent, events);
-				return result;
-			}),
+				),
+			),
 		/** Undo of dismiss: those matches come back, and the company it hid is shown again. */
 		undo: protectedProcedure
 			.input(

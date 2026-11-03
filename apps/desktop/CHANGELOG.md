@@ -22,6 +22,8 @@ at the top, above the newest version. Only what is merged into main belongs here
 
 ### Easier to use
 
+- A notification about one new match has Open and Not interested buttons (hover it and choose
+  Options); one about several matches has Open. Nothing is prepared or sent from a notification.
 - Home and an application's details no longer show costs; an application lists its model calls
   instead. Spending limits for API keys stay in Settings › Spending.
 

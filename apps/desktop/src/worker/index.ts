@@ -15,6 +15,7 @@ import type {
 } from "../shared/worker-protocol";
 import { WorkerApp } from "./app";
 import { diagnosticsSummary } from "./diagnostics";
+import { dismissFromNotice } from "./dismissals";
 import { bindApp, desktopAppRouter } from "./router";
 import { LOCAL_USER_EMAIL, LOCAL_USER_ID } from "./settings";
 
@@ -194,6 +195,11 @@ async function answer(method: WorkerMethod, args: unknown[]): Promise<unknown> {
 			return app.setPaused(Boolean(args[0]));
 		case "diagnostics":
 			return diagnosticsSummary(app);
+		case "dismissMatch":
+			return dismissFromNotice(app.db, app.sendEvent, {
+				userId: LOCAL_USER_ID,
+				applicationId: String(args[0]),
+			});
 	}
 }
 

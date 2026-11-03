@@ -17,6 +17,8 @@ import { recoverInterruptedRestore } from "./backup";
 import { moveDatabaseOnce } from "./database-file";
 import { registerIpc } from "./ipc";
 import { buildMenu } from "./menu";
+import { noticeActionDeps } from "./notice-action-deps";
+import { runNoticeAction } from "./notice-actions";
 import { showNotice } from "./notices";
 import { CHIRP_SOUND, chirpPlayer, Notifier } from "./notifications";
 import { registerAppScheme } from "./protocol";
@@ -140,6 +142,8 @@ async function main() {
 			log,
 		),
 	);
+	mainState.notifier.onAction = (notice, index) =>
+		void runNoticeAction(notice, index, noticeActionDeps);
 
 	mainState.sites = new SiteBrowser({
 		testOrigins: TEST_MODE ? testSiteOrigins() : undefined,
