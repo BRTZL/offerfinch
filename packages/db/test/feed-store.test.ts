@@ -1,7 +1,6 @@
 import type { NormalizedJob } from "@offerfinch/core/domain/types";
 import { FEED_IDS } from "@offerfinch/core/feeds/feeds";
 import { nextFeedRead } from "@offerfinch/core/feeds/provider";
-import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
 	clearProviderStop,
@@ -13,7 +12,6 @@ import {
 	SqliteFeedStore,
 	updateProvider,
 } from "../src/index";
-import { jobs } from "../src/schema/pipeline";
 import { testDb } from "./setup";
 
 let db: Database;
@@ -257,10 +255,16 @@ describe("a feed posting is a duplicate by company and title only when it is sur
 		expect(await dup(feedPosting("Orchid Grid"))).toBe(false);
 	});
 
-	it("a remote feed job duplicating a remote board job is skipped", async () => {
-		await board("Saffron Loop", "502");
-		expect(await dup(feedPosting("Saffron Loop"))).toBe(true);
-		// A posting naming no place and no kind of work counts as remote-or-unstated too.
+	it("two remote postings with the same company and title are both kept: only a shared URL or apply link is one vacancy", async () => {
+		await board("Saffron Loop", "502", {
+			locations: ["Remote - US"],
+			workplaceType: "remote",
+		});
+		expect(
+			await dup(
+				feedPosting("Saffron Loop", { locations: ["Remote (Turkey)"] }),
+			),
+		).toBe(false);
 		expect(
 			await dup(
 				feedPosting("Saffron Loop", {
@@ -268,35 +272,18 @@ describe("a feed posting is a duplicate by company and title only when it is sur
 					locations: [],
 				}),
 			),
-		).toBe(true);
-		// A place named but no kind of work: not surely the same job.
+		).toBe(false);
+		// The same vacancy: the feed links the board's own posting.
 		expect(
 			await dup(
 				feedPosting("Saffron Loop", {
-					workplaceType: "unknown",
-					locations: ["Austin, TX"],
+					urls: [
+						"https://remotive.com/remote-jobs/saffron-loop",
+						"https://job-boards.greenhouse.io/x/jobs/502",
+					],
 				}),
 			),
-		).toBe(false);
-	});
-
-	it("never against a closed job, nor when the two name different apply links", async () => {
-		const closed = await board("Juniper Mesa", "503");
-		await db
-			.update(jobs)
-			.set({ closedAt: new Date(), closedReason: "gone" })
-			.where(eq(jobs.id, closed.jobId));
-		expect(await dup(feedPosting("Juniper Mesa"))).toBe(false);
-		await board("Copper Fern", "504", {
-			applyUrl: "https://copperfern.example/jobs/platform-1",
-		});
-		expect(
-			await dup(
-				feedPosting("Copper Fern", {
-					applyUrl: "https://copperfern.example/jobs/platform-2",
-				}),
-			),
-		).toBe(false);
+		).toBe(true);
 	});
 
 	it("the URL and apply-link checks are unchanged", async () => {

@@ -388,21 +388,6 @@ export class SqliteWebStore extends SqliteSiteStore implements WebSearchStore {
 	}
 }
 
-/**
- * A posting that may be the same job as a feed's remote listing: remote, or naming neither a
- * kind of work nor a place. An office or hybrid posting, or one that names a place without
- * saying remote, may be another office's job with the same title.
- */
-function remoteOrUnstated(
-	workplace: string | null,
-	locations: readonly string[],
-): boolean {
-	if (workplace === "remote") return true;
-	return (
-		(workplace === null || workplace === "unknown") && locations.length === 0
-	);
-}
-
 /** Reads older than this are dropped from a feed's record (the pace looks back a day). */
 const FEED_READS_KEPT_MS = 2 * 24 * 3_600_000;
 
@@ -472,24 +457,14 @@ export class SqliteFeedStore extends SqliteWebStore implements FeedStore {
 				.limit(1);
 			if (removed) return true;
 		}
-		const title = titleKey(posting.title);
-		const apply = posting.applyUrl ? normalizeUrl(posting.applyUrl) : null;
-		return rows.some((r) => {
-			// The same posting: its URL, or another source's apply link to it.
-			if (r.urlNormalized !== null && urls.has(r.urlNormalized)) return true;
-			if (r.applyUrl !== null && urls.has(normalizeUrl(r.applyUrl)))
-				return true;
-			// The same role by name only when it can't be another office's posting.
-			if (!nameKey || r.nameKey !== nameKey || titleKey(r.title) !== title)
-				return false;
-			if (r.closedAt) return false;
-			if (apply && r.applyUrl && normalizeUrl(r.applyUrl) !== apply)
-				return false;
-			return (
-				remoteOrUnstated(posting.workplaceType, posting.locations) &&
-				remoteOrUnstated(r.workplaceType, r.locations ?? [])
-			);
-		});
+		// The same posting only: its URL, or another source's apply link to it. A company and title
+		// alone never prove one vacancy (two remote openings may differ by region or team), so a
+		// feed job a board also lists may be stored twice (decisions.md, 2026-11-03).
+		return rows.some(
+			(r) =>
+				(r.urlNormalized !== null && urls.has(r.urlNormalized)) ||
+				(r.applyUrl !== null && urls.has(normalizeUrl(r.applyUrl))),
+		);
 	}
 
 	async reads(userId: string, feed: string): Promise<Date[]> {
