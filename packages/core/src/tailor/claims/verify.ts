@@ -99,29 +99,11 @@ function lineEnv(profile: ProfileSnapshot, input: ClaimsInput): LineEnv {
  * and PostgreSQL that handles 40,000 refunds a day without duplicate payouts" states Node.js and
  * PostgreSQL, not payouts.
  */
-function statedTokens(
-	sentence: string,
-	acronymPlurals: Set<string>,
-): Set<string> {
+function statedTokens(sentence: string): Set<string> {
 	const said = factTokens(sentence);
-	const stated = said.has(NEGATED)
-		? factTokens(sentence.split(/\bwithout\b/i)[0] ?? "")
-		: said;
-	if (stated.has(NEGATED)) return new Set();
-	// An acronym's plural states the acronym: "headless CMSs" states CMS.
-	for (const t of [...stated])
-		if (acronymPlurals.has(t)) stated.add(t.slice(0, -1));
-	return stated;
-}
-
-/** The acronym plurals a file writes ("CMSs", "APIs"), lowercased as tokens are: "cmss". */
-function acronymPluralsIn(profile: ProfileSnapshot, file: string): Set<string> {
-	const content = profile.files.find((f) => f.path === file)?.content ?? "";
-	return new Set(
-		[...content.matchAll(/\b([A-Z][A-Z\d]+s)\b/g)].map((m) =>
-			(m[1] ?? "").toLowerCase(),
-		),
-	);
+	if (!said.has(NEGATED)) return said;
+	const before = factTokens(sentence.split(/\bwithout\b/i)[0] ?? "");
+	return before.has(NEGATED) ? new Set() : before;
 }
 
 /**
@@ -154,13 +136,11 @@ function lineIssue(
 		// A name stated next to a negation is not stated: "yes. No Kubernetes." sources no
 		// Kubernetes. Read per sentence of the cited files' citable text.
 		const inSources = new Set<string>();
-		for (const file of evidence?.files ?? []) {
-			const plurals = acronymPluralsIn(profile, file);
+		for (const file of evidence?.files ?? [])
 			for (const sentence of citableText(profile, file).split(
 				/\n|(?<=[.!?;])\s+/,
 			))
-				for (const t of statedTokens(sentence, plurals)) inSources.add(t);
-		}
+				for (const t of statedTokens(sentence)) inSources.add(t);
 		for (const source of evidence?.sources ?? [])
 			for (const t of answerTopic(
 				profile,

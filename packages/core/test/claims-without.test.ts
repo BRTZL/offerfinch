@@ -110,28 +110,3 @@ describe("a profile sentence with 'without' still states what comes before it", 
 		expect(issues).toHaveLength(1);
 	});
 });
-
-/**
- * Tailoring eval, final run: "Senior Software Engineer · Next.js, React, Node.js, headless CMS"
- * failed with "Not in the profile files its claims cite: CMS" while the cited line said "headless
- * CMSs". An acronym's plural states the acronym; nothing else is singularised.
- */
-describe("an acronym's plural in the profile states the acronym", () => {
-	it("passes CMS against a line that says CMSs", () => {
-		expect(
-			check(
-				"Built client sites on a headless CMS.",
-				"Built client sites on headless CMSs (Contentful, Sanity).",
-			),
-		).toEqual([]);
-	});
-
-	it("still fails an acronym the line does not name", () => {
-		const issues = check(
-			"Built client sites on a headless CMS with an ORM.",
-			"Built client sites on headless CMSs.",
-		);
-		expect(issues).toHaveLength(1);
-		expect(issues[0]?.message).toMatch(/ORM/);
-	});
-});
