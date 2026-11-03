@@ -11,9 +11,9 @@ import type { Feed, FeedPosting } from "./provider";
  * way posters write it ("Company | Role | Location | REMOTE | ..."), by rules, never by a model;
  * a comment without that line is not a posting. Commenters' names are never kept.
  */
-export const HN_SEARCH_URL =
+const HN_SEARCH_URL =
 	"https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=10";
-export const HN_ITEM_URL = "https://hn.algolia.com/api/v1/items/";
+const HN_ITEM_URL = "https://hn.algolia.com/api/v1/items/";
 const HN_POST_URL = "https://news.ycombinator.com/item?id=";
 
 /** A thread older than this is last month's: the new one is not up yet, or none was found. */

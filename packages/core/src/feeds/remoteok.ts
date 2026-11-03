@@ -7,7 +7,7 @@ import type { Feed, FeedPosting } from "./provider";
  * URL (a followed link, no nofollow) and name Remote OK as the source; its logo is not to be
  * used. No rate is stated; it is read at the same pace as the other feeds.
  */
-export const REMOTEOK_URL = "https://remoteok.com/api";
+const REMOTEOK_URL = "https://remoteok.com/api";
 
 interface RemoteOkJob {
 	id?: string | number;

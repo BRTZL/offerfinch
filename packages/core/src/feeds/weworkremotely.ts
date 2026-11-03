@@ -7,7 +7,7 @@ import type { Feed, FeedPosting } from "./provider";
  * check). Its terms: "Anyone can use the feed, all we ask is that you attribute the links back to
  * We Work Remotely." The all-jobs feed holds the newest jobs of every category in one GET.
  */
-export const WWR_URL = "https://weworkremotely.com/remote-jobs.rss";
+const WWR_URL = "https://weworkremotely.com/remote-jobs.rss";
 
 /** "Company: Job title" (the company is everything before the first colon). */
 function splitTitle(raw: string): { company: string; title: string } | null {
