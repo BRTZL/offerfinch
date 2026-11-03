@@ -136,7 +136,7 @@ const COMMON = new Set(
 
 /**
  * Spelled-out numbers: "three years" can inflate as easily as "3 years". "one" is left out: in
- * "one of the tools I use" it is rarely a count.
+ * "one of the tools I use" it is rarely a count, and "a team" says "one team" anyway.
  */
 const NUMBER_WORDS = new Set(
 	"zero two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety hundred thousand million billion dozen dozens hundreds thousands millions".split(
@@ -144,29 +144,67 @@ const NUMBER_WORDS = new Set(
 	),
 );
 
-/** Words and numbers: "Next.js", "C#", "C++", "DevTools" and "1,200" each stay one token. */
-const TOKEN = /[\p{L}\d][\p{L}\d+#.,'’]*/gu;
+/** Names written more than one way: a source holding one form supports the others. */
+const ALIASES = [
+	["javascript", "js"],
+	["typescript", "ts"],
+	["postgresql", "postgres"],
+	["kubernetes", "k8s"],
+	["golang", "go"],
+];
+const ALIAS = new Map(
+	ALIASES.flatMap((group) => group.map((name) => [name, group] as const)),
+);
 
-function tokens(text: string): string[] {
-	return [...text.matchAll(TOKEN)].map((m) =>
-		m[0]
-			.replace(/’/g, "'")
-			// Punctuation that ends a sentence or a clause is not part of the word.
-			.replace(/[.,']+$/, ""),
-	);
+/** Words and numbers: "Next.js", "C#", "C++", "DevTools" and "1,200" each stay one token. */
+const TOKEN = /[\p{L}\p{N}][\p{L}\p{N}+#.,'’]*/gu;
+
+/**
+ * The tokens of a text, each with whether it starts a sentence, a line or a list item. NFKC first,
+ * so full-width digits and letters read as plain ones and "½" reads as "1⁄2".
+ */
+function tokens(text: string): { token: string; start: boolean }[] {
+	const normal = text.normalize("NFKC");
+	return [...normal.matchAll(TOKEN)].map((m) => {
+		const index = m.index ?? 0;
+		const before = normal
+			.slice(Math.max(0, index - 40), index)
+			.replace(/[ \t"'“”‘’()*•–—-]+$/u, "");
+		return {
+			token: m[0]
+				.replace(/’/g, "'")
+				// Punctuation that ends a sentence or a clause is not part of the word.
+				.replace(/[.,']+$/, ""),
+			start: before === "" || /[.!?:;\n]$/.test(before),
+		};
+	});
 }
 
-const isNumber = (token: string) => /^\d/.test(token);
-/** "1,200" and "1200" are the same number; "40%" reads as "40". */
-const numberKey = (token: string) =>
-	token.replace(/,(?=\d{3}\b)/g, "").replace(/[^\d.]+$/, "");
-/** "React's" names React; "APIs" names an API. */
-const wordKeys = (token: string): string[] => {
-	const lower = token.toLowerCase().replace(/'s$/, "");
-	return lower.endsWith("s") && lower.length > 3
-		? [lower, lower.slice(0, -1)]
-		: [lower];
-};
+/** Any digit, in any script: a quantity, a version or a size, and never let through unsourced. */
+const isNumeric = (token: string) => /\p{N}/u.test(token);
+/** A capital and lower-case letters only ("Experienced"), as an ordinary word starting a sentence. */
+const isPlainWord = (token: string) => /^\p{Lu}\p{Ll}+$/u.test(token);
+
+/**
+ * The forms a token may be found under: "React's" names React, "APIs" an API, "React.js" and
+ * "ReactJS" are React, "1,200" is 1200 and "3+" is 3. A number keeps its unit ("5million" is
+ * not 5).
+ */
+function keysOf(token: string): string[] {
+	const lower = token
+		.toLowerCase()
+		.replace(/'s$/, "")
+		.replace(/,(?=\d{3}\b)/g, "")
+		.replace(/\+$/, "");
+	const keys = new Set([lower]);
+	if (!isNumeric(lower) && lower.endsWith("s") && lower.length > 3)
+		keys.add(lower.slice(0, -1));
+	const base = lower.replace(/(\.?js|\.ts)$/, "");
+	if (base !== lower && base.length >= 2) keys.add(base);
+	for (const key of [...keys])
+		for (const alias of ALIAS.get(key) ?? []) keys.add(alias);
+	return [...keys];
+}
 
 export interface GuardSources {
 	/** The user's draft; empty for a suggestion. */
@@ -174,6 +212,11 @@ export interface GuardSources {
 	/** The question; left out for a suggestion, whose facts come from the profile only. */
 	question: string | null;
 	profile: ProfileSnapshot;
+	/**
+	 * Text the model saw that is not evidence: the posting, the "why" line, and the question when
+	 * suggesting. Its names are where an invented fact most likely comes from.
+	 */
+	context?: string;
 }
 
 /** The profile's evidence text, as the claims check reads it (no Don't claim list, no questions). */
@@ -185,36 +228,51 @@ function profileEvidence(profile: ProfileSnapshot): string {
 
 /**
  * The names and numbers in `proposal` that none of the sources holds. Conservative and simple:
- * every number (digits or spelled out) and every word with a capital letter must appear, as a
- * whole word in any case, in the draft, the question or the profile's evidence. Blanks in square
- * brackets are questions to the user, not claims, and are skipped. The posting and the "why"
+ * every number (any digit, or spelled out) and every word with a capital letter must appear, as
+ * a whole word in any case, in the draft, the question or the profile's evidence. Blanks in
+ * square brackets are questions to the user, not claims: they are skipped in the proposal and in
+ * the draft alike, so "[Kubernetes?]" never supports "Kubernetes". The posting and the "why"
  * text are never sources: a posting's words are not facts about the user.
+ *
+ * One allowance: a plain capitalized word starting a sentence ("Experienced with React") is
+ * usually an ordinary word, so there it is rejected only when the context names it mid-sentence
+ * (the posting's "Lighthouse"). Names with inner capitals, digits or symbols are always checked.
  */
 export function unsupportedTerms(
 	proposal: string,
 	sources: GuardSources,
 ): string[] {
 	const sourceText = [
-		sources.draft,
-		sources.question ?? "",
+		sources.draft.replace(BLANK, " "),
+		(sources.question ?? "").replace(BLANK, " "),
 		profileEvidence(sources.profile),
 	].join("\n");
-	const words = new Set<string>();
-	const numbers = new Set<string>();
-	for (const token of tokens(sourceText)) {
-		if (isNumber(token)) numbers.add(numberKey(token));
-		for (const key of wordKeys(token)) words.add(key);
-	}
+	const known = new Set(
+		tokens(sourceText).flatMap(({ token }) => keysOf(token)),
+	);
+	const contextNames = new Set(
+		tokens(sources.context ?? "")
+			.filter(
+				({ token, start }) =>
+					/\p{Lu}/u.test(token) &&
+					!COMMON.has(token.toLowerCase()) &&
+					!(start && isPlainWord(token)),
+			)
+			.flatMap(({ token }) => keysOf(token)),
+	);
 	const out = new Set<string>();
-	for (const token of tokens(proposal.replace(BLANK, " "))) {
+	for (const { token, start } of tokens(proposal.replace(BLANK, " "))) {
 		const lower = token.toLowerCase();
-		if (isNumber(token)) {
-			if (!numbers.has(numberKey(token))) out.add(token);
+		const keys = keysOf(token);
+		if (keys.some((key) => known.has(key))) continue;
+		if (isNumeric(token) || NUMBER_WORDS.has(lower)) {
+			out.add(token);
 			continue;
 		}
-		const isName = /\p{Lu}/u.test(token) && !COMMON.has(lower);
-		if (!isName && !NUMBER_WORDS.has(lower)) continue;
-		if (!wordKeys(token).some((key) => words.has(key))) out.add(token);
+		if (!/\p{Lu}/u.test(token) || COMMON.has(lower)) continue;
+		if (start && isPlainWord(token) && !keys.some((k) => contextNames.has(k)))
+			continue;
+		out.add(token);
 	}
 	return [...out];
 }
@@ -244,6 +302,15 @@ export async function runAnswerHelper(
 		draft: input.draft,
 		question: mode === "improve" ? input.question : null,
 		profile: input.profile,
+		context: [
+			input.posting?.companyName,
+			input.posting?.title,
+			input.posting?.text,
+			input.why,
+			mode === "suggest" ? input.question : null,
+		]
+			.filter(Boolean)
+			.join("\n"),
 	});
 	if (unsupported.length) return { status: "rejected", mode, unsupported };
 	return {

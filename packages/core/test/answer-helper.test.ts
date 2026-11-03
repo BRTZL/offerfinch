@@ -123,6 +123,54 @@ describe("answer helper guard", () => {
 		).toEqual([]);
 	});
 
+	it("never takes a fact from a blank in the draft", () => {
+		// Suggest, Use this, then Improve: the blank is a question, not something the user said.
+		expect(improve("I used Kubernetes.", "I used [Kubernetes?]")).toEqual([
+			"Kubernetes",
+		]);
+		expect(
+			improve("I used [Kubernetes?] daily.", "I used [Kubernetes?]"),
+		).toEqual([]);
+	});
+
+	it("checks numbers in every form: units, other scripts, fractions", () => {
+		const draft = "I managed a team of 5";
+		expect(improve("I managed 5million people.", draft)).toEqual(["5million"]);
+		expect(improve("I managed 5 million people.", draft)).toEqual(["million"]);
+		expect(improve("I managed 5k people.", draft)).toEqual(["5k"]);
+		expect(improve("I managed ٥ people.", draft)).toEqual(["٥"]);
+		expect(improve("I managed ½ of it.", draft)).not.toEqual([]);
+		// A full-width 5 is the user's 5, and "3+" is the profile's 3.
+		expect(improve("I managed a team of ５.", draft)).toEqual([]);
+		expect(improve("I managed 5+ people.", draft)).toEqual([]);
+	});
+
+	it("lets ordinary words start a sentence, unless the posting or question names them", () => {
+		const suggest = (proposal: string) =>
+			unsupportedTerms(proposal, {
+				draft: "",
+				question: null,
+				profile,
+				context: `Experienced engineers wanted.\n- Strong Lighthouse skills\n${QUESTION}`,
+			});
+		expect(suggest("Experienced with React and TypeScript.")).toEqual([]);
+		expect(suggest("Comfortable profiling with React Profiler.")).toEqual([]);
+		// A name the posting or question uses is still checked at a sentence's start.
+		expect(suggest("Lighthouse is what I used most.")).toEqual(["Lighthouse"]);
+		// Inner capitals, digits and symbols are names wherever they stand.
+		expect(suggest("DevTools mostly.")).toEqual(["DevTools"]);
+	});
+
+	it("knows the common spellings of a technology's name", () => {
+		expect(
+			improve("I used React and Postgres.", "ReactJS, PostgreSQL"),
+		).toEqual([]);
+		expect(improve("Mostly React.js.", "React mostly")).toEqual([]);
+		expect(improve("I used Next.js and TS.", "TypeScript")).toEqual([
+			"Next.js",
+		]);
+	});
+
 	it("skips bracket blanks and common sentence starters", () => {
 		expect(
 			improve(
