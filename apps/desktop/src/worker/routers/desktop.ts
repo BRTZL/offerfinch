@@ -1,7 +1,11 @@
 import { DashboardRepository, DrizzleSpendStore } from "@offerfinch/db";
 import { flowRuns } from "@offerfinch/db/schema/jobs";
 import { applications, companies, jobs } from "@offerfinch/db/schema/pipeline";
-import { hourlyScanId, recentScans } from "@offerfinch/runner";
+import {
+	APPLICATION_KIND,
+	hourlyScanId,
+	recentScans,
+} from "@offerfinch/runner";
 import { ORPCError } from "@orpc/server";
 import {
 	and,
@@ -12,6 +16,7 @@ import {
 	isNotNull,
 	isNull,
 	or,
+	sql,
 } from "drizzle-orm";
 import { z } from "zod";
 import { findChrome } from "../browser";
@@ -196,6 +201,38 @@ export const desktopStatusRouter = {
 				subscriptionRoles: subscriptionRoles.map((r) => r.role),
 			},
 		};
+	}),
+	/**
+	 * Scoring still to come: application runs not ended for a job not scored yet (queued,
+	 * running, or paused for the model, which scores after a later scan). A scan ends before its
+	 * jobs are scored, so setup's first search waits on this, not on the scan: a paused score
+	 * never reads as "no matches".
+	 */
+	scoring: protectedProcedure.handler(async ({ context }) => {
+		const userId = context.session.user.id;
+		// A queued run may not have made its application row yet: no row counts as not scored.
+		const [row] = await worker()
+			.db.select({ n: sql<number>`count(*)` })
+			.from(flowRuns)
+			.leftJoin(
+				applications,
+				and(
+					eq(applications.userId, userId),
+					eq(
+						applications.jobId,
+						sql`json_extract(${flowRuns.params}, '$.jobId')`,
+					),
+				),
+			)
+			.where(
+				and(
+					eq(flowRuns.userId, userId),
+					eq(flowRuns.kind, APPLICATION_KIND),
+					inArray(flowRuns.status, ["queued", "running", "waiting"]),
+					or(isNull(applications.id), eq(applications.state, "found")),
+				),
+			);
+		return { pending: Number(row?.n ?? 0) };
 	}),
 	/** The latest scans with their outcome, for Home and the first-scan progress. */
 	scans: protectedProcedure.handler(async ({ context }) => {

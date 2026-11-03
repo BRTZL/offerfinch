@@ -75,6 +75,7 @@ const bridge: DesktopBridge = {
 		openSettings: () => ipcRenderer.invoke(IPC.notifyOpenSettings),
 		clearMissed: () => ipcRenderer.invoke(IPC.notifyClearMissed),
 		setSound: (sound) => ipcRenderer.invoke(IPC.notifySetSound, sound),
+		chirp: () => ipcRenderer.invoke(IPC.notifyChirp),
 	},
 	updates: {
 		state: () => ipcRenderer.invoke(IPC.updateState),

@@ -17,15 +17,40 @@ export function soundOptions(sound: NotificationSound): { silent?: boolean } {
 	return sound === "default" ? {} : { silent: true };
 }
 
-/** Plays the chirp file with macOS's player, without waiting for it; a failure is only logged. */
+/** The least time between two chirps: a burst of calls plays one. */
+export const CHIRP_COOLDOWN_MS = 1_500;
+
+/**
+ * Plays the chirp file with macOS's player, without waiting for it; a failure is only logged.
+ * At most one player at a time, and none within `CHIRP_COOLDOWN_MS` of the last start, however
+ * often it is called (the window can ask for one). Returns whether this call played it.
+ */
 export function chirpPlayer(
 	file: string,
 	log: (message: string, data?: unknown) => void,
-): () => void {
+	deps: {
+		now?: () => number;
+		play?: (file: string, done: (error: Error | null) => void) => void;
+	} = {},
+): () => boolean {
+	const now = deps.now ?? Date.now;
+	const play =
+		deps.play ??
+		((f, done) => {
+			execFile("/usr/bin/afplay", [f], (error) => done(error));
+		});
+	let playing = false;
+	let lastStart = Number.NEGATIVE_INFINITY;
 	return () => {
-		execFile("/usr/bin/afplay", [file], (error) => {
+		const at = now();
+		if (playing || at - lastStart < CHIRP_COOLDOWN_MS) return false;
+		playing = true;
+		lastStart = at;
+		play(file, (error) => {
+			playing = false;
 			if (error) log("chirp not played", { error: String(error) });
 		});
+		return true;
 	};
 }
 
@@ -50,7 +75,7 @@ export class Notifier {
 		/** Test runs: count as delivered without asking macOS (its permission is the user's). */
 		private readonly standIn = false,
 		/** Plays the chirp, for a notification macOS has shown with the chirp chosen. */
-		private readonly playChirp: () => void = () => {},
+		private readonly playChirp: () => boolean = () => false,
 	) {
 		this.file = path.join(userData, "notifications.json");
 		this.state = {
@@ -78,6 +103,15 @@ export class Notifier {
 	setSound(sound: NotificationSound): NotificationState {
 		this.save({ sound });
 		return this.get();
+	}
+
+	/**
+	 * The chirp on its own, for a moment in the app, only when the chirp is the chosen sound and
+	 * the player is free (`chirpPlayer`'s cooldown). Test runs count it without playing anything.
+	 */
+	chirp(): boolean {
+		if (this.state.sound !== "chirp") return false;
+		return this.standIn ? true : this.playChirp();
 	}
 
 	/** Clears the missed count (the user has seen the in-app notice). */

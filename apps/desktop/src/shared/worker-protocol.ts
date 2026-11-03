@@ -33,6 +33,11 @@ export interface WorkerInit {
 		checkTimeoutMs?: number;
 		/** A flow whose step stalls (ignores its stop) until a file says otherwise. */
 		stallProbe?: boolean;
+		/**
+		 * Claude Code and Codex from `fake-clis.json` instead of this Mac's (worker/fake-clis.ts).
+		 * Unpackaged builds only.
+		 */
+		fakeClis?: boolean;
 	};
 }
 

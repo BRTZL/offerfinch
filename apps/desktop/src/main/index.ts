@@ -91,6 +91,9 @@ async function workerInit(): Promise<WorkerInit> {
 				checkTimeoutMs:
 					Number(process.env.OFFERFINCH_CHECK_TIMEOUT_MS) || undefined,
 				stallProbe: process.env.OFFERFINCH_TEST_STALL === "1",
+				// The CLI stand-in (worker/fake-clis.ts) reads a file in the data folder: never in a
+				// shipped build, even one launched in test mode (the release launch check).
+				fakeClis: !app.isPackaged,
 			}
 		: undefined;
 	return {

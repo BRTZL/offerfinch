@@ -2,6 +2,7 @@ import type { Database } from "@offerfinch/db";
 import { appSettings } from "@offerfinch/db/schema/jobs";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { STORED_STEPS, type StoredStep } from "../shared/setup-steps";
 
 /** The one local user every row belongs to (PLAN rule 6 keeps user_id columns). */
 export const LOCAL_USER_ID = "local";
@@ -59,21 +60,13 @@ export const DEFAULT_NOTIFICATIONS: NotificationSettings = {
 	followup: true,
 };
 
-export const ONBOARDING_STEPS = [
-	"ai",
-	"resume",
-	"profile",
-	"rules",
-	"watchlist",
-	"notifications",
-	"login",
-	"scan",
-] as const;
-
 const onboardingSchema = z.object({
-	/** Steps finished or skipped; the wizard resumes at the first one left. */
-	done: z.array(z.enum(ONBOARDING_STEPS)),
-	skipped: z.array(z.enum(ONBOARDING_STEPS)),
+	/**
+	 * Steps finished or skipped; the wizard resumes at the first one left. Either version's keys:
+	 * progress from the eight-step setup reads through `setupProgress` (shared/setup-steps.ts).
+	 */
+	done: z.array(z.enum(STORED_STEPS as [StoredStep, ...StoredStep[]])),
+	skipped: z.array(z.enum(STORED_STEPS as [StoredStep, ...StoredStep[]])),
 	/** The user left the wizard ("finish later"); it is offered again from Home. */
 	dismissed: z.boolean(),
 	completedAt: z.string().nullable(),

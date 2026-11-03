@@ -8,6 +8,7 @@ import {
 	APP_DIR,
 	launchApp,
 	openRoute,
+	pickFakeModels,
 	RESUME,
 	skipRestOfSetup,
 	tempUserData,
@@ -55,10 +56,7 @@ test("answer helper: Help me remember composes ticks, Improve proposes from the 
 	try {
 		// A profile and test models, as onboarding does; the rest of setup is put off.
 		await page.getByTestId("welcome-start").click();
-		for (const role of ["scoring", "tailoring", "claims"]) {
-			await page.getByTestId(`role-${role}-mode`).click();
-			await page.getByTestId(`role-${role}-fake`).click();
-		}
+		await pickFakeModels(page);
 		await page.getByTestId("step-continue").click();
 		await page.getByTestId("resume-option-paste").click();
 		await page.getByTestId("onboarding-text").fill(RESUME);

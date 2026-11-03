@@ -15,6 +15,7 @@ import {
 	launchApp,
 	notices,
 	openRoute,
+	pickFakeModels,
 	RESUME,
 	skipRestOfSetup,
 	tempUserData,
@@ -76,10 +77,7 @@ test("After Applied: Ghosted, a follow-up reminder, stage chips, a move with not
 	try {
 		const { page } = launched;
 		await page.getByTestId("welcome-start").click();
-		for (const role of ["scoring", "tailoring", "claims"]) {
-			await page.getByTestId(`role-${role}-mode`).click();
-			await page.getByTestId(`role-${role}-fake`).click();
-		}
+		await pickFakeModels(page);
 		await page.getByTestId("step-continue").click();
 		await page.getByTestId("resume-option-paste").click();
 		await page.getByTestId("onboarding-text").fill(RESUME);

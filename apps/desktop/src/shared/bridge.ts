@@ -278,6 +278,11 @@ export interface DesktopBridge {
 		clearMissed(): Promise<NotificationState>;
 		/** Chooses the notification sound. */
 		setSound(sound: NotificationSound): Promise<NotificationState>;
+		/**
+		 * Plays the chirp for a moment worth one (setup: AI connected, the first matches), when
+		 * the chirp is the chosen sound. Resolves with whether it played.
+		 */
+		chirp(): Promise<boolean>;
 	};
 	updates: {
 		state(): Promise<UpdateState>;
@@ -356,6 +361,7 @@ export const IPC = {
 	notifyOpenSettings: "notify:open-settings",
 	notifyClearMissed: "notify:clear-missed",
 	notifySetSound: "notify:set-sound",
+	notifyChirp: "notify:chirp",
 	rpcConnect: "rpc:connect",
 	rpcPort: "rpc:port",
 	navigate: "app:navigate",

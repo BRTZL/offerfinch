@@ -50,6 +50,7 @@ const app = await electron.launch({
 		// Slow enough to see drafting in progress.
 		OFFERFINCH_FAKE_DELAY_MS: "6000",
 		OFFERFINCH_FETCH_REWRITE: JSON.stringify(boards.rewrite),
+		OFFERFINCH_SITE_ORIGINS: JSON.stringify(boards.siteOrigins),
 	},
 });
 const page = await app.firstWindow();
@@ -94,8 +95,9 @@ try {
 	await shot("welcome");
 
 	await page.getByTestId("welcome-start").click();
-	await page.getByText("Step 1 of 8").waitFor();
+	await page.getByTestId("setup-ai").waitFor();
 	await shot("connect-ai");
+	await page.getByTestId("models-manual").getByRole("button").first().click();
 	for (const role of ["scoring", "tailoring", "claims"]) {
 		await page.getByTestId(`role-${role}-mode`).click();
 		await page.getByTestId(`role-${role}-fake`).click();
@@ -126,32 +128,21 @@ try {
 	await shot("review-draft");
 	await page.getByTestId("onboarding-save").click();
 
-	await page.getByText("Step 4 of 8").waitFor();
-	await shot("job-rules");
+	// What you want: the rules and job-board search (the fixture boards' stand-in).
+	await page.getByTestId("setup-sources").waitFor();
+	await shot("what-you-want");
 	await page.getByTestId("step-continue").click();
 
-	await page.getByTestId("backend-searxng").waitFor();
-	await shot("where-to-look");
-	await page.getByTestId("backend-searxng").click();
-	await page.getByTestId("searxng-url").fill(boards.base);
-	await page.getByTestId("searxng-save").click();
-	await page.getByTestId("source-status").getByText("Not run yet").waitFor();
-	await shot("where-to-look-ready");
-	await page.getByTestId("step-continue").click();
-
-	await page.getByText("Step 6 of 8").waitFor();
+	// Stay in the loop: notifications, then open at login.
+	await page.getByTestId("notify-test").waitFor();
 	await page.waitForTimeout(800);
 	await shot("notifications-needs-permission");
 	await page.getByTestId("notify-test").click();
 	await page
 		.locator('[data-testid="notify-status"][data-status="delivered"]')
 		.waitFor();
-	await shot("notifications-allowed");
+	await shot("stay-in-the-loop");
 	await page.getByTestId("step-continue").click();
-
-	await page.getByText("Step 7 of 8").waitFor();
-	await shot("open-at-login");
-	await page.getByTestId("step-skip").click();
 
 	await page.getByTestId("first-scan-start").waitFor();
 	await shot("first-search");

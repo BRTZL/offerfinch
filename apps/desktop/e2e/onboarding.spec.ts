@@ -107,13 +107,26 @@ test("onboarding: centred, steady footer, keyboard and drag and drop on the resu
 		}
 
 		await page.getByTestId("welcome-start").click();
-		await expect(page.getByText("Step 1 of 8")).toBeVisible();
+		await expect(page.getByTestId("step-count")).toContainText("Step 1 of 5");
+		await expect(page.getByTestId("setup-ai")).toBeVisible();
 		await frames(app, page, "connect-ai");
 		// Back and the primary action stay where they are from step to step.
 		const back1 = await boxOf(page, "step-back");
 		const primary1 = await boxOf(page, "step-continue");
 		await page.getByTestId("step-skip").click();
-		await expect(page.getByText("Step 2 of 8")).toBeVisible();
+		await expect(page.getByTestId("step-count")).toContainText("Step 2 of 5");
+		// The finch stands over the current step. Under reduced motion it moves without a hop.
+		const finch = page.getByTestId("setup-finch");
+		await expect(finch).toHaveAttribute("data-step", "1");
+		await page.emulateMedia({ reducedMotion: "reduce" });
+		await page.getByTestId("step-ai").click();
+		await expect(finch).toHaveAttribute("data-step", "0");
+		await expect(finch).not.toHaveAttribute("data-hopping", /.*/);
+		await expect(finch.locator("svg")).toHaveAttribute("data-frame", "idle");
+		await page.getByTestId("step-profile").click();
+		await expect(finch).toHaveAttribute("data-step", "1");
+		await expect(finch).not.toHaveAttribute("data-hopping", /.*/);
+		await page.emulateMedia({ reducedMotion: "no-preference" });
 		expect(await boxOf(page, "step-back")).toEqual(back1);
 		expect(await boxOf(page, "onboarding-structure")).toEqual(primary1);
 
@@ -136,9 +149,9 @@ test("onboarding: centred, steady footer, keyboard and drag and drop on the resu
 		await page.getByTestId("resume-back").click();
 		await expect(page.getByTestId("resume-option-paste")).toBeVisible();
 
-		// Drag and drop a file onto "Upload a file": a chip with its name, size and words read.
+		// Drag and drop a file anywhere on the step: a chip with its name, size and words read.
 		const drop = async (name: string, type: string, body: string) =>
-			page.getByTestId("resume-option-upload").evaluate(
+			page.getByTestId("resume-drop").evaluate(
 				(el, [n, t, b]) => {
 					const data = new DataTransfer();
 					data.items.add(

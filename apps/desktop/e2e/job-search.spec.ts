@@ -8,6 +8,7 @@ import { DB_FILE } from "../src/main/database-file";
 import {
 	APP_DIR,
 	launchApp,
+	pickFakeModels,
 	RESUME,
 	skipRestOfSetup,
 	tempUserData,
@@ -88,10 +89,7 @@ test("job search pickers: filled from the profile, changed with the keyboard, ke
 	let run = await launchApp({ userData });
 	try {
 		await run.page.getByTestId("welcome-start").click();
-		for (const role of ["scoring", "tailoring", "claims"]) {
-			await run.page.getByTestId(`role-${role}-mode`).click();
-			await run.page.getByTestId(`role-${role}-fake`).click();
-		}
+		await pickFakeModels(run.page);
 		await run.page.getByTestId("step-continue").click();
 		await run.page.getByTestId("resume-option-paste").click();
 		await run.page.getByTestId("onboarding-text").fill(RESUME);

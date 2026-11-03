@@ -147,7 +147,7 @@ async function startWorker(userData: string, dbFile: string) {
 		version: "0.0.0-upgrade-test",
 		claudeHost: path.join(userData, "no-claude-host.js"),
 		secrets: {},
-		test: { fakeModels: true, noSchedule: true },
+		test: { fakeModels: true, noSchedule: true, fakeClis: true },
 	};
 	const app = await WorkerApp.open(init, {
 		exit: (code) => logs.push({ level: "error", message: `exit ${code}` }),

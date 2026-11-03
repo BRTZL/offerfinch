@@ -14,6 +14,7 @@ import { startFixtureBoards } from "./fixture-boards";
 import {
 	launchApp,
 	notices,
+	pickFakeModels,
 	RESUME,
 	skipRestOfSetup,
 	tempUserData,
@@ -132,10 +133,7 @@ test("add a job from a link: a board, an unknown site, a wall, a filter miss kep
 	try {
 		// A profile and test models first (as onboarding does), then setup is put off.
 		await page.getByTestId("welcome-start").click();
-		for (const role of ["scoring", "tailoring", "claims"]) {
-			await page.getByTestId(`role-${role}-mode`).click();
-			await page.getByTestId(`role-${role}-fake`).click();
-		}
+		await pickFakeModels(page);
 		await page.getByTestId("step-continue").click();
 		await page.getByTestId("resume-option-paste").click();
 		await page.getByTestId("onboarding-text").fill(RESUME);

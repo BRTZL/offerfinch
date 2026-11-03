@@ -36,6 +36,8 @@ export async function launchApp(options: {
 	env?: Record<string, string>;
 	/** Take focus like a real launch (tests that check the focused window). Default: background. */
 	foreground?: boolean;
+	/** Records the window to a .webm in this folder (Playwright's recordVideo). */
+	recordVideoDir?: string;
 }): Promise<{ app: ElectronApplication; page: Page; errors: string[] }> {
 	const env = Object.fromEntries(
 		Object.entries(process.env).filter(
@@ -50,6 +52,14 @@ export async function launchApp(options: {
 		args: options.executablePath ? [] : [APP_DIR],
 		executablePath: options.executablePath,
 		cwd: APP_DIR,
+		...(options.recordVideoDir
+			? {
+					recordVideo: {
+						dir: options.recordVideoDir,
+						size: { width: 1280, height: 800 },
+					},
+				}
+			: {}),
 		env: {
 			...env,
 			OFFERFINCH_USER_DATA: options.userData,
@@ -323,4 +333,47 @@ export async function skipRestOfSetup(page: Page): Promise<void> {
 	await page.getByTestId("onboarding-later").click();
 	await expect.poll(() => pathnameOf(page), { timeout: 30_000 }).toBe("/");
 	await expect(page.getByTestId("home")).toBeVisible({ timeout: 30_000 });
+}
+
+/**
+ * Setup's Connect AI with the test models: Claude Code and Codex read as not installed in a
+ * test run (unless `fakeClis` says otherwise), so the step offers API keys, folded away; this
+ * opens them and picks the test models for every role.
+ */
+export async function pickFakeModels(page: Page): Promise<void> {
+	await expect(page.getByTestId("setup-ai")).toBeVisible({ timeout: 30_000 });
+	const mode = page.getByTestId("role-scoring-mode");
+	if (!(await mode.isVisible()))
+		await page.getByTestId("models-manual").getByRole("button").first().click();
+	for (const role of ["scoring", "tailoring", "claims"]) {
+		await page.getByTestId(`role-${role}-mode`).click();
+		await page.getByTestId(`role-${role}-fake`).click();
+	}
+}
+
+export type FakeCli =
+	| "logged_in"
+	| "logged_out"
+	| "not_subscription"
+	| "missing";
+
+/**
+ * What Claude Code and Codex read as in a test run (src/worker/fake-clis.ts): written to the
+ * data folder, read on every check, so it can change while the app runs (Check again).
+ */
+export function fakeClis(
+	userData: string,
+	clis: { claude: FakeCli; codex: FakeCli },
+): void {
+	fs.mkdirSync(userData, { recursive: true });
+	fs.writeFileSync(path.join(userData, "fake-clis.json"), JSON.stringify(clis));
+}
+
+/** When each chirp the window asked for was played (setup's two moments), in a test run. */
+export function chirps(app: ElectronApplication): Promise<number[]> {
+	return app.evaluate(
+		() =>
+			(globalThis as unknown as { __offerfinchTest: { chirps: number[] } })
+				.__offerfinchTest.chirps,
+	);
 }

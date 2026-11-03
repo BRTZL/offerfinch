@@ -124,6 +124,27 @@ function NavigationBridge() {
 	return null;
 }
 
+/** Setup's footer is 64 px high: its toasts sit above Back and Continue, not on them. */
+const SETUP_FOOTER_OFFSET = 64 + 16;
+
+function AppToaster() {
+	const [location] = useLocation();
+	const setup = location.startsWith("/onboarding");
+	return (
+		<Toaster
+			theme="system"
+			// Bottom centre: bottom-right sat on the footers' primary button (onboarding's
+			// Continue), and a pointer resting on a toast keeps it open.
+			position="bottom-center"
+			offset={setup ? { bottom: SETUP_FOOTER_OFFSET } : undefined}
+			toastOptions={{
+				className:
+					"rounded-xl border border-border bg-popover text-sm text-popover-foreground shadow-lg",
+			}}
+		/>
+	);
+}
+
 function Shell() {
 	const [location] = useLocation();
 	const bare = location.startsWith("/onboarding");
@@ -174,20 +195,11 @@ export function App() {
 						<ShortcutsHost />
 						<DiagnosticsHost />
 						<WhatsNewHost />
+						<AppToaster />
 					</Router>
 				</QueryClientProvider>
 			</LoadingProvider>
 			<OverlayScrollbar />
-			<Toaster
-				theme="system"
-				// Bottom centre: bottom-right sat on the footers' primary button (onboarding's
-				// Continue), and a pointer resting on a toast keeps it open.
-				position="bottom-center"
-				toastOptions={{
-					className:
-						"rounded-xl border border-border bg-popover text-sm text-popover-foreground shadow-lg",
-				}}
-			/>
 		</>
 	);
 }

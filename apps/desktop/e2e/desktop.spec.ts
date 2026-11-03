@@ -9,11 +9,13 @@ import Database from "better-sqlite3";
 import { DB_FILE, EARLIER_DB_FILE } from "../src/main/database-file";
 import { startFixtureBoards } from "./fixture-boards";
 import {
+	chirps,
 	fakeChrome,
 	launchApp,
 	notices,
 	openRoute,
 	overlaySiteView,
+	pickFakeModels,
 	RESUME,
 	siteTabs,
 	standInClick,
@@ -79,35 +81,57 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 		await expect(page.getByTestId("welcome")).toBeVisible();
 		await shot(page, "onboarding-welcome");
 		await page.getByTestId("welcome-start").click();
-		await expect(page.getByText("Step 1 of 8")).toBeVisible();
+		await expect(page.getByTestId("step-count")).toContainText("Step 1 of 5");
 		await shot(page, "onboarding-ai");
 
-		// 1. Connect AI: test models in this run; each role tested live.
-		for (const role of ["scoring", "tailoring", "claims"]) {
-			await chooseMode(page, role, "fake");
+		// 1. Connect AI: Claude Code and Codex read as not installed in this run, so the step
+		// shows how to install them and offers API keys; test models here, each role tested live.
+		await expect(page.getByTestId("setup-cli-claude")).toHaveAttribute(
+			"data-state",
+			"missing",
+		);
+		await pickFakeModels(page);
+		for (const role of ["scoring", "tailoring", "claims"])
 			await expect(page.getByTestId(`role-${role}-state`)).toHaveText(/fake/);
-		}
 		await page.getByTestId("role-scoring-test").click();
 		await expect(page.getByTestId("role-scoring-test-result")).toContainText(
 			"Works",
 		);
+		await expect(page.getByTestId("setup-ai-summary")).toHaveAttribute(
+			"data-all-set",
+			"true",
+		);
+		// Connected: one chirp (the default notification sound).
+		await expect.poll(async () => (await chirps(app)).length).toBe(1);
 		await page.getByTestId("step-continue").click();
 
-		// 2-3. Resume: paste, draft, review, save.
+		// 2. Your resume: paste, draft, then review in the same step, and save.
+		await expect(page.getByTestId("step-count")).toContainText("Step 2 of 5");
 		await page.getByTestId("resume-option-paste").click();
 		await expect(page.getByTestId("onboarding-structure")).toBeDisabled();
 		await page.getByTestId("onboarding-text").fill(RESUME);
 		await page.getByTestId("onboarding-structure").click();
 		await expect(page.getByTestId("onboarding-draft")).toBeVisible();
+		await expect(page.getByTestId("step-count")).toContainText("Step 2 of 5");
 		await shot(page, "onboarding-review");
 		await page.getByTestId("onboarding-save").click();
-		await expect(page.getByText("Step 4 of 8")).toBeVisible();
+		await expect(page.getByTestId("step-count")).toContainText("Step 3 of 5");
 
-		// 4. Rules: the defaults (no country; remote roles open worldwide are kept). Continue saves
-		// what is on screen, a field still being typed in included.
+		// 3. What you want: the rules (the defaults: no country; remote roles open worldwide are
+		// kept), and where to look: job-board search through DuckDuckGo (a local stand-in here),
+		// with nothing to set up. No companies.
+		await expect(page.getByTestId("source-job-board-search-status")).toHaveText(
+			"Not run yet",
+		);
+		await expect(
+			page.getByTestId("source-job-board-search").locator("[title]").first(),
+		).toHaveAttribute("title", /found with DuckDuckGo/);
+		await expect(page.getByTestId("backend-brave")).toHaveCount(0);
+		await shot(page, "onboarding-sources");
+		// Continue saves what is on screen, a field still being typed in included.
 		await page.locator("#f-searchTitles").fill("Senior Frontend Engineer");
 		await page.getByTestId("step-continue").click();
-		await expect(page.getByText(/Step 5 of 8/)).toBeVisible();
+		await expect(page.getByTestId("step-count")).toContainText("Step 4 of 5");
 		const rules = readDb<{ settings: string }>(
 			"select settings from filter_settings",
 		);
@@ -118,20 +142,8 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 			languages: ["English"],
 		});
 
-		// 5. Where to look: job-board search through DuckDuckGo (a local stand-in here), with
-		// nothing to set up. No companies.
-		await expect(page.getByTestId("source-job-board-search-status")).toHaveText(
-			"Not run yet",
-		);
-		await expect(
-			page.getByTestId("source-job-board-search").locator("[title]").first(),
-		).toHaveAttribute("title", /found with DuckDuckGo/);
-		await expect(page.getByTestId("backend-brave")).toHaveCount(0);
-		await shot(page, "onboarding-sources");
-		await page.getByTestId("step-continue").click();
-
-		// 6. Notifications: a test one is shown (captured in test runs).
-		// Not done until a notification was really delivered (or the step is skipped).
+		// 4. Stay in the loop: a test notification is shown (captured in test runs). Not done
+		// until one was really delivered (or the step is skipped). Open at login stays off.
 		await expect(page.getByTestId("step-continue")).toBeDisabled();
 		await page.getByTestId("notify-test").click();
 		await expect(page.getByTestId("notify-status")).toHaveAttribute(
@@ -143,11 +155,9 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 			.poll(async () => (await notices(app)).length)
 			.toBeGreaterThanOrEqual(1);
 		await page.getByTestId("step-continue").click();
+		await expect(page.getByTestId("step-count")).toContainText("Step 5 of 5");
 
-		// 7. Login item: skipped (resumable later from Settings > General).
-		await page.getByTestId("step-skip").click();
-
-		// 8. First scan, with progress.
+		// 5. First search, with progress; the first matches arrive with a chirp.
 		await page.getByTestId("first-scan-start").click();
 		await expect(page.getByTestId("first-scan-progress")).toContainText(
 			"Done:",
@@ -157,6 +167,12 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 		await expect(page.getByTestId("first-scan-progress")).toContainText(
 			"3 jobs read, 3 new",
 		);
+		// The first scored match: "Your first matches are in", with the second chirp.
+		await expect(page.getByTestId("first-scan-progress")).toContainText(
+			/first .*in\./,
+			{ timeout: 90_000 },
+		);
+		await expect.poll(async () => (await chirps(app)).length).toBe(2);
 		// The searches came from the profile's role titles; no company board was listed by name.
 		expect(boards.searches.length).toBeGreaterThan(0);
 		expect(

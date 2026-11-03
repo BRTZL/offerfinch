@@ -9,6 +9,7 @@ import {
 	APP_DIR,
 	launchApp,
 	openRoute,
+	pickFakeModels,
 	RESUME,
 	skipRestOfSetup,
 	tempUserData,
@@ -49,10 +50,7 @@ test("a long location list is one line; the posting is dark in dark mode", async
 	try {
 		await page.setViewportSize({ width: 1280, height: 800 });
 		await page.getByTestId("welcome-start").click();
-		for (const role of ["scoring", "tailoring", "claims"]) {
-			await page.getByTestId(`role-${role}-mode`).click();
-			await page.getByTestId(`role-${role}-fake`).click();
-		}
+		await pickFakeModels(page);
 		await page.getByTestId("step-continue").click();
 		await page.getByTestId("resume-option-paste").click();
 		await page.getByTestId("onboarding-text").fill(RESUME);

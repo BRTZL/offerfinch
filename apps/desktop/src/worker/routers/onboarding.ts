@@ -1,6 +1,6 @@
 import { DashboardRepository } from "@offerfinch/db";
 import { z } from "zod";
-import { ONBOARDING_STEPS } from "../settings";
+import { SETUP_STEPS, setupProgress } from "../../shared/setup-steps";
 import { protectedProcedure } from "./procedure";
 import { providerStatus, worker } from "./shared";
 
@@ -13,16 +13,18 @@ export const onboardingRouter = {
 		const sources = await providerStatus(w, context.session.user.id);
 		return {
 			...state,
+			// The five steps, also when the progress was stored by the eight-step setup.
+			...setupProgress(state),
 			hasProfile: Boolean(profile),
 			/** Sources set up and on: a scan needs at least one. */
 			sources: sources.filter((p) => p.ready).length,
-			steps: ONBOARDING_STEPS,
+			steps: SETUP_STEPS,
 		};
 	}),
 	mark: protectedProcedure
 		.input(
 			z.object({
-				step: z.enum(ONBOARDING_STEPS),
+				step: z.enum(SETUP_STEPS),
 				outcome: z.enum(["done", "skipped"]),
 			}),
 		)
@@ -34,7 +36,11 @@ export const onboardingRouter = {
 			done.add(input.step);
 			if (input.outcome === "skipped") skipped.add(input.step);
 			else skipped.delete(input.step);
-			const all = ONBOARDING_STEPS.every((s) => done.has(s));
+			const progress = setupProgress({
+				done: [...done],
+				skipped: [...skipped],
+			});
+			const all = SETUP_STEPS.every((s) => progress.done.includes(s));
 			const next = {
 				...state,
 				done: [...done],
