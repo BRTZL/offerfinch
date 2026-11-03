@@ -87,7 +87,7 @@ export const sourcesRouter = {
 		}),
 	/**
 	 * Retry now: the source's stop is lifted and a scan starts at once. LinkedIn is read in that
-	 * scan without waiting out its 6 hours (its 10 pages a day still hold).
+	 * scan without waiting out its 3 hours (its 30 pages a day still hold).
 	 */
 	retry: protectedProcedure
 		.input(z.object({ provider: z.enum(PROVIDER_IDS) }))

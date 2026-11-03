@@ -1,8 +1,12 @@
 import type { LinkedInListing } from "@offerfinch/core/linkedin/parse";
 import {
+	LINKEDIN_PACE,
 	type LinkedInBrowser,
 	runLinkedIn,
 } from "@offerfinch/core/linkedin/runner";
+
+const CAP = LINKEDIN_PACE.dailyPageCap;
+
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -230,14 +234,14 @@ describe("LinkedIn page cap across runs", () => {
 		await ensureUser(db, { id: "mon", name: "Mon", email: "mon@example.test" });
 		const clock = { now: new Date("2026-10-26T10:00:00Z") };
 		const timed = new DrizzleLinkedInStore(db, () => clock.now);
-		// Monday: the day's ten pages, 60 s apart, 10:00 to 10:09.
-		const monday = browser(ids(5100, 9));
+		// Monday: the day's pages (the cap), 60 s apart from 10:00.
+		const monday = browser(ids(5100, CAP - 1));
 		expect(await run(timed, "mon", monday.value, clock, 1)).toMatchObject({
 			outcome: "done",
-			pagesUsed: 10,
+			pagesUsed: CAP,
 		});
-		// Tuesday 10:01, 20 s apart: nine of Monday's pages are inside the window, then eight
-		// beside Tuesday's first, then eight beside Tuesday's two: the cap.
+		// Tuesday 10:01, 20 s apart: all but Monday's first page are inside the window, then one
+		// fewer beside Tuesday's first, then that many beside Tuesday's two: the cap.
 		clock.now = new Date("2026-10-27T10:01:00Z");
 		const tuesday = browser(ids(5200, 10));
 		expect(await run(timed, "mon", tuesday.value, clock)).toMatchObject({
@@ -249,17 +253,18 @@ describe("LinkedIn page cap across runs", () => {
 
 	it("shares one allowance between runners started at the same time", async () => {
 		await ensureUser(db, { id: "two", name: "Two", email: "two@example.test" });
-		const a = browser(ids(5300, 8));
-		const b = browser(ids(5400, 8));
+		// Each could read most of the day's pages alone; together they hold to one cap.
+		const a = browser(ids(5300, CAP - 2));
+		const b = browser(ids(5400, CAP - 2));
 		const results = await Promise.all([
 			run(new DrizzleLinkedInStore(db), "two", a.value),
 			run(new DrizzleLinkedInStore(db), "two", b.value),
 		]);
-		expect(a.opened.length + b.opened.length).toBe(10);
-		expect(results.map((r) => r.pagesUsed).reduce((x, y) => x + y)).toBe(10);
+		expect(a.opened.length + b.opened.length).toBe(CAP);
+		expect(results.map((r) => r.pagesUsed).reduce((x, y) => x + y)).toBe(CAP);
 		expect(
 			await store.pagesUsedSince("two", new Date(Date.now() - 86_400_000)),
-		).toBe(10);
+		).toBe(CAP);
 	});
 
 	it("opens no further page once another runner has stopped", async () => {

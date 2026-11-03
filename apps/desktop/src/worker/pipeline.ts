@@ -356,7 +356,7 @@ async function scanProviders(
 				sharedDuckDuckGoStops(new SqliteSiteStore(db)),
 			),
 		);
-	// In every scan while on; it reads only when due (every 6 hours, 10 pages a day).
+	// In every scan while on; it reads only when due (every 3 hours, 30 pages a day).
 	if (enabled("linkedin") && input.linkedin)
 		out.push(new LinkedInScanProvider(input.linkedin));
 	for (const site of SITE_IDS) {

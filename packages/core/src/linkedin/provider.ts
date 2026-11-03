@@ -55,11 +55,11 @@ export interface LinkedInScanDeps {
 	/** Test runs: the local stand-in. */
 	origin?: string;
 	now?: () => Date;
-	/** True once after Retry now: this read does not wait out the 6 hours (the cap still holds). */
+	/** True once after Retry now: this read does not wait out the 3 hours (the cap still holds). */
 	takeReadNow?: () => boolean;
 }
 
-/** When LinkedIn may be read again: 6 hours after the last read, and once the cap has room. */
+/** When LinkedIn may be read again: 3 hours after the last read, and once the cap has room. */
 export async function nextLinkedInRead(
 	store: Pick<LinkedInScanStore, "lastReadAt" | "pagesSince">,
 	userId: string,
@@ -95,7 +95,7 @@ function statusOf(kind: string): SourceStatus {
 }
 
 /**
- * LinkedIn in scans (2026-11-03): at most one read every 6 hours, at most 5 pages a read and 10
+ * LinkedIn in scans (2026-11-03): at most one read every 3 hours, at most 6 pages a read and 30
  * in any 24 hours (Retry now and a linked job count too), 20 to 60 s between pages. A read opens
  * "Top job picks for you" first, then two searches from the shared plan (the next read takes the
  * next two). A check, sign-in wall or warning stops LinkedIn and tells the user, as before;

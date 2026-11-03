@@ -171,7 +171,7 @@ export async function providerStatus(w: WorkerApp, userId: string) {
 			// Nothing to set up for any of them (job-board search reads DuckDuckGo in its own tab).
 			ready: p.enabled && (!record || retryDue(record, now)),
 			/**
-			 * LinkedIn and the remote feeds: when a scan reads it next (LinkedIn every 6 hours, 10
+			 * LinkedIn and the remote feeds: when a scan reads it next (LinkedIn every 3 hours, 30
 			 * pages a day; a feed every 6 hours, 4 reads a day).
 			 */
 			nextReadAt: record

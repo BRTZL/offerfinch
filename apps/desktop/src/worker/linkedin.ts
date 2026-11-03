@@ -25,7 +25,7 @@ import { saveDebugSnapshot } from "./site-debug";
  * user), reading in LinkedIn's hidden tab inside OfferFinch (its own session,
  * `persist:site-linkedin`, signed in through the sign-in sheet). Electron's defaults, nothing
  * hidden (PLAN rule 4). A check the user can clear (CAPTCHA, security check, sign-in wall)
- * pauses the read for them; anything else stops it. Scans read it at most every 6 hours
+ * pauses the read for them; anything else stops it. Scans read it at most every 3 hours
  * (core `LinkedInScanProvider`); a linked job is one page.
  */
 
@@ -62,7 +62,7 @@ async function openLinkedIn(
 
 /** One LinkedIn read at a time in this worker: a scan's, or a linked job's. */
 let busy = false;
-/** Retry now: the next scan reads LinkedIn without waiting out the 6 hours (the cap holds). */
+/** Retry now: the next scan reads LinkedIn without waiting out the 3 hours (the cap holds). */
 let readNow = false;
 
 export function readLinkedInNow() {

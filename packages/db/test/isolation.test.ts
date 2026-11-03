@@ -452,7 +452,7 @@ const CASES: Record<string, (b: TestUser) => Promise<unknown>> = {
 	"linkedin.status": async (u) => {
 		const status = await u.rpc.linkedin.status();
 		expect(status.blocked).toBeNull();
-		expect(status.dailyPageCap).toBe(10);
+		expect(status.dailyPageCap).toBe(30);
 		return status;
 	},
 };

@@ -117,7 +117,7 @@ const SOURCES: {
 		tab: "linkedin",
 		signIn: true,
 		about:
-			"Your Top job picks and your searches, read at most every 6 hours, 10 pages a day. LinkedIn's terms ban automated access, even to your own account.",
+			"Your Top job picks and your searches, read at most every 3 hours, 30 pages a day. LinkedIn's terms ban automated access, even to your own account.",
 	},
 	{
 		id: "indeed",

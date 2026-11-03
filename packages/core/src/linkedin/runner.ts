@@ -25,15 +25,16 @@ import {
 export const LINKEDIN_ORIGIN = "https://www.linkedin.com";
 
 /**
- * LinkedIn's pace (2026-11-03, the user's decision): at most 10 pages in any 24 hours, by every
- * run (scans, Retry now and a linked job together); a scan reads LinkedIn at most once every 6
- * hours, at most 5 pages a read; 20 to 60 s between pages; at most 2 new jobs opened per list.
+ * LinkedIn's pace (2026-11-03, the user's decision; raised the same day from 10 pages, every 6
+ * hours, 5 a read): at most 30 pages in any 24 hours, by every run (scans, Retry now and a linked
+ * job together); a scan reads LinkedIn at most once every 3 hours, at most 6 pages a read; 20 to
+ * 60 s between pages; at most 2 new jobs opened per list.
  * Fixed in code: there are no per-source settings.
  */
 export const LINKEDIN_PACE = {
-	dailyPageCap: 10,
-	runPages: 5,
-	everyHours: 6,
+	dailyPageCap: 30,
+	runPages: 6,
+	everyHours: 3,
 	minGapSeconds: 20,
 	maxGapSeconds: 60,
 	perList: 2,

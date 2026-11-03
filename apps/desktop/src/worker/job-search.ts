@@ -63,7 +63,7 @@ export function movedSearchesNote(moved: RetiredSourceSettings): string | null {
 		);
 	if (moved.dropped.length)
 		parts.push(
-			`${moved.dropped.join(", ")} no longer apply: LinkedIn reads at most 10 pages a day, 20 to 60 seconds apart.`,
+			`${moved.dropped.join(", ")} no longer apply: LinkedIn reads at most 30 pages a day, 20 to 60 seconds apart.`,
 		);
 	return parts.length ? parts.join(" ") : null;
 }

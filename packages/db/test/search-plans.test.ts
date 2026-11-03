@@ -1,4 +1,5 @@
 import { parseFilterSettings } from "@offerfinch/core/filter/settings";
+import { LINKEDIN_PACE } from "@offerfinch/core/linkedin/runner";
 import { searchKey } from "@offerfinch/core/search/plan";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -170,13 +171,14 @@ describe("LinkedIn's pace in the database", () => {
 			new Date("2026-11-03T08:00:00Z"),
 			new Date("2026-11-03T09:00:00Z"),
 		]);
-		// The cap is core's 10 a day, whatever an earlier version stored.
-		for (let i = 0; i < 8; i++)
+		// The cap is core's, whatever an earlier version stored.
+		const cap = LINKEDIN_PACE.dailyPageCap;
+		for (let i = 0; i < cap - 2; i++)
 			expect(await store.reservePage("u1", scan)).toEqual({ ok: true });
 		expect(await store.reservePage("u1", scan)).toEqual({
 			ok: false,
 			reason: "cap",
-			cap: 10,
+			cap,
 		});
 	});
 });
