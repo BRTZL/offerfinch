@@ -1,5 +1,6 @@
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { cva, type VariantProps } from "class-variance-authority";
+import { LoaderCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -42,19 +43,69 @@ const buttonVariants = cva(
 	},
 );
 
+/**
+ * `pending` shows a spinner over the label and turns the button off. The label stays in place,
+ * transparent, so the button keeps its width and its accessible name while it works: never swap
+ * the label for "Saving…", which makes the button jump.
+ */
 function Button({
 	className,
 	variant = "default",
 	size = "default",
+	pending = false,
+	disabled,
+	children,
 	...props
-}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+}: ButtonPrimitive.Props &
+	VariantProps<typeof buttonVariants> & { pending?: boolean }) {
 	return (
 		<ButtonPrimitive
 			data-slot="button"
 			className={cn(buttonVariants({ variant, size, className }))}
+			disabled={disabled || pending}
+			aria-busy={pending || undefined}
+			data-pending={pending || undefined}
 			{...props}
-		/>
+		>
+			{pending ? (
+				<>
+					<span className="inline-flex items-center gap-[inherit] opacity-0">
+						{children}
+					</span>
+					<span
+						className="absolute inset-0 grid place-items-center"
+						aria-hidden
+					>
+						<LoaderCircle className="animate-spin" />
+					</span>
+				</>
+			) : (
+				children
+			)}
+		</ButtonPrimitive>
 	);
 }
 
-export { Button, buttonVariants };
+/**
+ * A label that changes with state ("Suggest" or "Improve"): every option is laid out in the same
+ * cell and only `show` is visible, so the button is always as wide as the widest and never jumps.
+ */
+function SwapLabel({ labels, show }: { labels: string[]; show: string }) {
+	return (
+		<span className="inline-grid">
+			{labels.map((label) => (
+				<span
+					key={label}
+					className={cn(
+						"col-start-1 row-start-1 text-center",
+						label !== show && "invisible",
+					)}
+				>
+					{label}
+				</span>
+			))}
+		</span>
+	);
+}
+
+export { Button, buttonVariants, SwapLabel };

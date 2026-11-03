@@ -321,10 +321,11 @@ export function RecordDialog({
 					<Button
 						type="submit"
 						form="record-form"
-						disabled={missing || save.isPending}
+						disabled={missing}
+						pending={save.isPending}
 						data-testid="record-save"
 					>
-						{save.isPending ? "Saving…" : record ? "Save" : "Add"}
+						{record ? "Save" : "Add"}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

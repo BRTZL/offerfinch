@@ -29,11 +29,11 @@
 	},
 	"apps/desktop/src/renderer/components/desktop/resume-import.tsx :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
 		"count": 1,
-		"max": 176
+		"max": 177
 	},
 	"apps/desktop/src/renderer/components/pipeline/add-job.tsx :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
 		"count": 1,
-		"max": 233
+		"max": 234
 	},
 	"apps/desktop/src/renderer/components/pipeline/application/detail.tsx :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
 		"count": 1,

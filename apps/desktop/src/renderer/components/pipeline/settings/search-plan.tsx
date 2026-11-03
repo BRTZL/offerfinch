@@ -199,10 +199,10 @@ export function SearchPlanSection({ embedded }: { embedded: boolean }) {
 						<Button
 							variant="outline"
 							onClick={() => regenerate.mutate()}
-							disabled={regenerate.isPending}
+							pending={regenerate.isPending}
 							data-testid="search-plan-regenerate"
 						>
-							{regenerate.isPending ? "Writing…" : "Regenerate"}
+							Regenerate
 						</Button>
 					</FormRow>
 				)}

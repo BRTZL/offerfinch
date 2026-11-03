@@ -37,7 +37,6 @@ const EMPTY: Pasted = { title: "", company: "", location: "", description: "" };
  * and scored in the background. The posting's text can be pasted instead, for a new link or
  * for one whose page could not be read (`pasteFor`).
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keep link and pasted-text submission states together so validation and pending actions share one flow.
 export function AddJobDialog({
 	open,
 	onOpenChange,
@@ -346,10 +345,11 @@ export function AddJobDialog({
 					<Button
 						type="submit"
 						form="add-job-form"
-						disabled={!ready || pending}
+						disabled={!ready}
+						pending={pending}
 						data-testid="add-job-submit"
 					>
-						{pending ? "Adding…" : pasteFor ? "Save" : "Add"}
+						{pasteFor ? "Save" : "Add"}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

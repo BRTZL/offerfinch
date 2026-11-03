@@ -4,8 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
 	blankProblem,
+	ChoicesButton,
+	ChoicesCard,
 	HelperButton,
 	HelperResult,
+	useAnswerChoices,
 	useAnswerHelper,
 } from "@/components/pipeline/answer-helper";
 import { ago, StateBadge } from "@/components/pipeline/bits";
@@ -120,14 +123,15 @@ export default function QuestionsPage() {
 }
 
 /**
- * One question: what it is for, the answer box, and the answer helper (Suggest or Improve) beside
- * Save. ⌘↩ saves. Blanks the helper left in [ brackets ] block Save until they are filled in.
+ * One question: what it is for, the answer box, and the answer helper (Help me remember, Suggest
+ * or Improve) beside Save. ⌘↩ saves. Blanks the helper left in [ brackets ] block Save until they are filled in.
  */
 function Answer({ q, onAnswered }: { q: Question; onAnswered: () => void }) {
 	const queryClient = useQueryClient();
 	const [text, setText] = useState("");
 	const box = useRef<HTMLTextAreaElement>(null);
 	const helper = useAnswerHelper(q.id);
+	const choices = useAnswerChoices(q.id);
 	const blocked = blankProblem(text);
 	const answer = useMutation({
 		mutationFn: () =>
@@ -204,6 +208,7 @@ function Answer({ q, onAnswered }: { q: Question; onAnswered: () => void }) {
 						<span className="text-muted-foreground flex items-center gap-1 text-xs">
 							<Kbd>{keyHint("question-save")}</Kbd>
 						</span>
+						<ChoicesButton choices={choices} disabled={answer.isPending} />
 						<HelperButton
 							helper={helper}
 							text={text}
@@ -211,12 +216,23 @@ function Answer({ q, onAnswered }: { q: Question; onAnswered: () => void }) {
 						/>
 						<Button
 							onClick={submit}
-							disabled={!text.trim() || Boolean(blocked) || answer.isPending}
+							disabled={!text.trim() || Boolean(blocked)}
+							pending={answer.isPending}
 							title={`Save answer (${keyHint("question-save")})`}
 						>
 							Save answer
 						</Button>
 					</div>
+					<ChoicesCard
+						choices={choices}
+						onCompose={(picked) => {
+							// After what is already typed; then Improve turns the picks into sentences.
+							const next = text.trim() ? `${text.trim()}\n${picked}` : picked;
+							setText(next);
+							helper.help.mutate(next);
+							box.current?.focus();
+						}}
+					/>
 					<HelperResult
 						helper={helper}
 						text={text}

@@ -175,7 +175,12 @@ function FirstScan({ onDone }: { onDone: () => void }) {
 					testId: "onboarding-finish",
 				}
 			: runId
-				? { label: "Searching…", onClick: () => {}, disabled: true, busy: true }
+				? {
+						label: "Start the first search",
+						onClick: () => {},
+						disabled: true,
+						busy: true,
+					}
 				: {
 						label: "Start the first search",
 						onClick: () => start.mutate(),
@@ -552,12 +557,10 @@ export default function OnboardingPage() {
 							className="min-w-36"
 							onClick={primary.onClick}
 							disabled={primary.disabled}
+							pending={primary.busy}
 							title={primary.title}
 							data-testid={primary.testId}
 						>
-							{primary.busy ? (
-								<LoaderCircle className="animate-spin" aria-hidden />
-							) : null}
 							{primary.label}
 						</Button>
 					</div>

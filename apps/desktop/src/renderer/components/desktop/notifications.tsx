@@ -8,7 +8,7 @@ import {
 import { Notice } from "@/components/system/bits";
 import { Group, Section } from "@/components/system/layout";
 import { FormRow } from "@/components/system/rows";
-import { Button } from "@/components/ui/button";
+import { Button, SwapLabel } from "@/components/ui/button";
 import {
 	Select,
 	SelectContent,
@@ -95,14 +95,13 @@ export function NotificationStatus() {
 		<Button
 			variant={status === "delivered" ? "outline" : "default"}
 			onClick={() => test.mutate()}
-			disabled={test.isPending}
+			pending={test.isPending}
 			data-testid="notify-test"
 		>
-			{test.isPending
-				? "Sending…"
-				: status === "unknown"
-					? "Send a test notification"
-					: "Send test"}
+			<SwapLabel
+				labels={["Send a test notification", "Send test"]}
+				show={status === "unknown" ? "Send a test notification" : "Send test"}
+			/>
 		</Button>
 	);
 	return (

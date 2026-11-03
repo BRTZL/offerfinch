@@ -277,10 +277,10 @@ export function JobFilterSettings() {
 					<div>
 						<Button
 							type="submit"
-							disabled={save.isPending}
+							pending={save.isPending}
 							data-testid="save-settings"
 						>
-							{save.isPending ? "Saving…" : "Save"}
+							Save
 						</Button>
 					</div>
 				</form>

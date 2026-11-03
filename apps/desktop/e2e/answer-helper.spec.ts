@@ -50,7 +50,7 @@ async function shot(page: Page, name: string) {
 	await page.screenshot({ path: path.join(SHOTS, `${name}.png`) });
 }
 
-test("answer helper: Improve proposes from the user's words, Use this fills the box, blanks block Save", async () => {
+test("answer helper: Help me remember composes ticks, Improve proposes from the user's words, Use this fills the box, blanks block Save", async () => {
 	const { app, page, errors } = await launchApp({ userData });
 	try {
 		// A profile and test models, as onboarding does; the rest of setup is put off.
@@ -84,12 +84,90 @@ test("answer helper: Improve proposes from the user's words, Use this fills the 
 			timeout: 30_000,
 		});
 
-		// An empty box offers Suggest; typing turns it into Improve.
-		const box = question.getByRole("textbox");
+		const box = question.getByRole("textbox", { name: QUESTION });
+		const width = async (testId: string) =>
+			(await page.getByTestId(testId).boundingBox())?.width ?? 0;
+
+		// Help me remember: the question as choices; only what is ticked reaches the box.
+		await page.getByTestId("answer-choices").click();
+		const card = page.getByTestId("answer-choices-card");
+		await expect(card).toBeVisible({ timeout: 30_000 });
+		const groups = card.getByTestId("answer-choice-group");
+		await expect(groups).toHaveCount(2);
+		const tools = groups.nth(0);
+		for (const tool of ["Lighthouse", "Chrome DevTools", "WebPageTest"])
+			await expect(tools.getByTestId("answer-choice")).toContainText([tool]);
+		// Nothing here is in the profile (it names React, not React Profiler): no chip is marked
+		// as the user's. The mark itself is unit-tested against the profile's evidence.
+		await expect(tools.getByText("in profile")).toHaveCount(0);
+		const use = card.getByTestId("answer-choices-use");
+		await expect(use).toBeDisabled();
+		// Ticking never changes a chip's width.
+		const chip = tools
+			.getByTestId("answer-choice")
+			.filter({ hasText: "Lighthouse" });
+		const chipWidth = (await chip.boundingBox())?.width;
+		await chip.click();
+		await expect(chip).toHaveAttribute("aria-pressed", "true");
+		expect((await chip.boundingBox())?.width).toBe(chipWidth);
+		// Asking again starts the new asks empty: a tick never carries over to another ask.
+		await page.getByTestId("answer-choices").click();
+		await expect(groups).toHaveCount(2, { timeout: 30_000 });
+		await expect(
+			card
+				.getByTestId("answer-choice")
+				.and(page.locator('[aria-pressed="true"]')),
+		).toHaveCount(0);
+		await expect(use).toBeDisabled();
+		await chip.click();
+		await expect(chip).toHaveAttribute("aria-pressed", "true");
+		await tools
+			.getByTestId("answer-choice")
+			.filter({ hasText: "WebPageTest" })
+			.click();
+		await groups
+			.nth(1)
+			.getByTestId("answer-choice")
+			.filter({ hasText: "No" })
+			.click();
+		await box.blur();
+		await app.evaluate(({ nativeTheme }) => {
+			nativeTheme.themeSource = "light";
+		});
+		await expect(page.locator("html")).not.toHaveClass(/dark/);
+		await shot(page, "choices-light");
+		await app.evaluate(({ nativeTheme }) => {
+			nativeTheme.themeSource = "dark";
+		});
+		await expect(page.locator("html")).toHaveClass(/dark/);
+		await shot(page, "choices-dark");
+		await app.evaluate(({ nativeTheme }) => {
+			nativeTheme.themeSource = "system";
+		});
+		await use.click();
+		await expect(card).toHaveCount(0);
+		const picked =
+			"Which profiling tools have you used to diagnose frontend performance? Lighthouse and WebPageTest.\nHave you worked to a JS bundle-size budget? No.";
+		await expect(box).toHaveValue(picked);
+		// Improve runs on the picks at once; nothing is saved until Save answer.
+		await expect(page.getByTestId("answer-proposal")).toBeVisible({
+			timeout: 30_000,
+		});
+		await page.getByTestId("answer-dismiss").click();
+		expect(
+			readDb("select 1 from profile_facts where question = ?", QUESTION),
+		).toEqual([]);
+		await box.fill("");
+
+		// An empty box offers Suggest; typing turns it into Improve, at the same width.
 		await expect(page.getByTestId("answer-suggest")).toBeVisible();
+		const suggestWidth = await width("answer-suggest");
 		await box.fill("All of them and more");
 		await expect(page.getByTestId("answer-suggest")).toHaveCount(0);
+		expect(await width("answer-improve")).toBe(suggestWidth);
+		// Pressed, it shows a spinner and keeps its width.
 		await page.getByTestId("answer-improve").click();
+		expect(await width("answer-improve")).toBe(suggestWidth);
 
 		const proposal = page.getByTestId("answer-proposal");
 		await expect(proposal).toBeVisible({ timeout: 30_000 });
@@ -157,12 +235,15 @@ test("answer helper: Improve proposes from the user's words, Use this fills the 
 				QUESTION,
 			).map((r) => r.answer),
 		).toEqual([final]);
-		// One call, metered like every other model call.
-		expect(
+		// Each call metered like every other model call: Improve twice (once on the picks), and
+		// Help me remember twice (asked again once).
+		const calls = (task: string) =>
 			readDb<{ n: number }>(
-				"select count(*) n from llm_usage where task = 'answer-helper'",
-			)[0]?.n,
-		).toBe(1);
+				"select count(*) n from llm_usage where task = ?",
+				task,
+			)[0]?.n;
+		expect(calls("answer-helper")).toBe(2);
+		expect(calls("answer-choices")).toBe(2);
 		expect(errors).toEqual([]);
 	} finally {
 		await app.close();
