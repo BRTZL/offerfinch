@@ -47,6 +47,12 @@ describe("the tailoring prompt's grounding rules", () => {
 			/Never give the candidate a feeling, preference, lesson, habit, intention or trait/,
 		);
 		expect(system).toMatch(/Never turn the posting's words into a fact/);
+		// Final eval run: an answer put one employer's project template at another, a CV summary
+		// said "Works with Java" for a role that ended in 2019, and drafts wrote "my first job" and
+		// "after nine years in software engineering".
+		expect(system).toContain("Keep each fact with its employer and its time");
+		expect(system).toMatch(/never "works with Java"/);
+		expect(system).toMatch(/No order or timing the profile does not state/);
 	});
 
 	it("keeps the posting's title out of the CV headline", async () => {

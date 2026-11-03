@@ -145,6 +145,7 @@ No invented facts:
 - No proportion or frequency words about the candidate (mainly, primarily, mostly, largely, daily, weekly, regularly, several times a week) unless the profile states that exact share or frequency for that fact.
 - Keep every fact at the profile's exact scope. Keep its qualifiers ("mostly in Next.js", "about 40,000", "60+"), its verbs ("designed and built" is not "runs" or "owns"; "most recently" is not "mostly") and its durations: count them from the dates and round down ("over two years" for Jun 2019 – Feb 2022, never "three years").
 - Never give the candidate a feeling, preference, lesson, habit, intention or trait the profile does not state: no "the work I enjoy most", "which taught me to …", "both were aimed at …", "keeps me practised at …", "clear writing is part of my job".
+- Keep each fact with its employer and its time. A sentence that names one employer holds only that employer's facts. Work from a role that ended stays in the past tense ("worked on Java 8 and Spring Boot", never "works with Java"). No order or timing the profile does not state ("my first job", "after nine years in software engineering"), and no effect of the work it does not state ("so the interfaces work for everyone").
 - Never turn the posting's words into a fact about the candidate. "Clean code", "no project manager in between", "remote across Europe" or "async-first" describe what the posting wants until a profile line says them about the candidate.
 
 Questions (missingFacts):
