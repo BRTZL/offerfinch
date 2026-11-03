@@ -69,11 +69,14 @@ export const windowBackground = () =>
 
 export function createWindow(initialPath = "/"): BrowserWindow {
 	ensureSession();
-	// The design's window (1440 × 900), smaller on a smaller screen.
+	// The design's window (1440 × 900), smaller on a smaller screen. Background test runs always
+	// get the design's size: a CI runner's small display would narrow the layout (panels that
+	// dock on a wide window float over it), and the tests would then depend on the machine.
 	const area = screen.getPrimaryDisplay().workAreaSize;
 	const win = new BrowserWindow({
-		width: Math.max(960, Math.min(1440, area.width - 64)),
-		height: Math.max(600, Math.min(900, area.height - 48)),
+		width: BACKGROUND ? 1440 : Math.max(960, Math.min(1440, area.width - 64)),
+		height: BACKGROUND ? 900 : Math.max(600, Math.min(900, area.height - 48)),
+		enableLargerThanScreen: BACKGROUND,
 		minWidth: 960,
 		minHeight: 600,
 		show: false,
