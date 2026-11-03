@@ -22,6 +22,8 @@ at the top, above the newest version. Only what is merged into main belongs here
 
 ### Easier to use
 
+- Finish later on the first setup screen now opens Home, instead of sending you straight back to
+  setup.
 - Home and an application's details no longer show costs; an application lists its model calls
   instead. Spending limits for API keys stay in Settings › Spending.
 
