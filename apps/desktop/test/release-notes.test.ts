@@ -54,6 +54,9 @@ describe("the bundled changelog", () => {
 					(s.version === v || s.version === "Unreleased") && s.body.length > 0,
 			);
 		expect(ready(text, version)).toBe(true);
+		// Right after a release nothing waits under Unreleased (the release dated it): there is no
+		// next bump to rehearse until a change adds the heading back with its notes.
+		if (!/^## Unreleased[ \t]*$/m.test(text)) return;
 		// What scripts/release.mjs does to it on a bump: the notes become that version's.
 		const dated = text.replace(
 			/^## Unreleased[ \t]*$/m,
