@@ -473,6 +473,14 @@ and end to end (`e2e/backup.spec.ts`).
 | No "erase everything and quit" button (issue #63's option): the guide lists the steps, and the existing Erase everything stays as it is | The task's rule; deleting the Keychain item and the app itself is the user's own step |
 | Not built: restoring from onboarding's first step (issue #53 "import on first run"). A fresh install reaches it through Settings › Your data | Kept to the screens the task named; the Settings menu item works from onboarding |
 
+## 2026-11-03: No costs shown
+
+The owner mostly uses subscriptions and asked that no cost be shown anywhere. The Prepare cost
+estimate (issue #66: the hover figure and the total beside Prepare N, `db/prepare-estimate.ts`)
+was removed; Prepare's hover says what it does, and Prepare N still prepares a selection. Calls
+are still metered in `llm_usage` for the spending limit and the subscription guards. The rows
+below about the estimate describe what was removed.
+
 ## 2026-11-03: Closed postings
 
 A match can wait for days; preparing or applying to a posting the employer took down wastes model

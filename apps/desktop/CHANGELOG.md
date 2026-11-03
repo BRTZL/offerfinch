@@ -21,7 +21,6 @@ version it tags (docs/releasing.md). Only what is merged into main belongs here.
 
 ### Prepare
 
-- Before Prepare runs, you see what it will likely cost.
 - Select several matches in the Inbox and prepare them together from the selection summary.
 
 ### After you apply

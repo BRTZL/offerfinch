@@ -3,10 +3,7 @@ import { Building2, ListChecks } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { StateBadge } from "@/components/pipeline/bits";
-import {
-	PrepareEstimate,
-	PrepareTip,
-} from "@/components/pipeline/prepare-estimate";
+import { PrepareTip } from "@/components/pipeline/prepare-tip";
 import { Fit, IconTile } from "@/components/system/bits";
 import { Group, Page, PageIntro, Section } from "@/components/system/layout";
 import { Row } from "@/components/system/rows";
@@ -111,7 +108,7 @@ export function CompanySummary({
 
 /**
  * Prepare for the open matches of a selection, one request after another: the user pressed
- * the selection's own button, with the total estimate beside it. Each job then runs under the
+ * the selection's own button. Each job then runs under the
  * spending limit and the plan's call budget like any other.
  */
 function usePrepareMany(onPrepared: (ids: string[]) => void) {
@@ -196,9 +193,10 @@ export function SelectionSummary({
 						</PrepareTip>
 					}
 				>
-					<div className="text-xs" data-testid="prepare-selection-estimate">
-						<PrepareEstimate jobs={canDismiss} />
-					</div>
+					<p className="text-muted-foreground text-xs">
+						Drafts a CV, letter and answers for each, then checks them against
+						your profile.
+					</p>
 				</Section>
 			) : null}
 			<Section title="Selected" end={action(`Not interested in ${canDismiss}`)}>
