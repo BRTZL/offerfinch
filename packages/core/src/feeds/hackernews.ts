@@ -1,5 +1,14 @@
 import { countriesInLocation } from "../filter/places";
-import { FeedReadError, feedDate, feedLine, feedText } from "./http";
+import {
+	type FeedParse,
+	FeedReadError,
+	feedDate,
+	feedLine,
+	feedText,
+	field,
+	parseEach,
+	record,
+} from "./http";
 import type { Feed, FeedPosting } from "./provider";
 
 /**
@@ -44,21 +53,12 @@ export function hiringThread(json: string, now: Date): string | null {
 	return newest.objectID;
 }
 
-interface HnItem {
-	id?: number | string;
-	type?: string;
-	text?: string | null;
-	created_at?: string;
-	children?: HnItem[];
-}
-
 const ROLE_WORDS =
-	/\b(engineer|engineering|developer|programmer|designer|manager|scientist|lead|architect|analyst|director|head of|sre|devops|researcher|consultant|specialist|founding|cto|vp|product|marketing|sales|recruiter|writer|administrator|technician|operator|intern|swe|sde|staff|principal|full[- ]?stack|front[- ]?end|back[- ]?end|mobile|ios|android|ml|ai)\b/i;
+	/\b(engineer|engineering|developer|programmer|designer|manager|scientist|lead|architect|analyst|director|head of|sre|devops|researcher|consultant|specialist|founding|cto|vp|product|marketing|sales|recruiter|writer|administrator|technician|operator|intern|swe|sde|staff|principal|full[- ]?stack|front[- ]?end|back[- ]?end|mobile|ios|android|ml|ai)s?\b/i;
 const WORKPLACE = /\b(remote|on[- ]?site|in[- ]office|hybrid)\b/i;
 const SALARY = /[$€£]\s?\d|\b\d{2,3}\s?k\b|\bequity\b|\bsalary\b/i;
 const EMPLOYMENT =
 	/^(?:full[- ]?time|part[- ]?time|contract(?:or)?|freelance|intern(?:ship)?|permanent|ft|pt)\b/i;
-const VISA = /\bvisa\b|\bsponsor/i;
 const URL_LIKE = /https?:\/\/|\bwww\.|\.(?:com|io|ai|co|dev|org|net)\b\/?/i;
 
 /** A place: a country the gazetteer knows, a "City, ST" pair, or a city in a known country. */
@@ -70,27 +70,49 @@ function firstLine(html: string): string {
 	return feedLine(head);
 }
 
-/** The employer's own link in a comment: the first one not on Hacker News. */
+/**
+ * A company's home or careers index ("https://acme.example/", "/careers", "/jobs"): no one posting.
+ * Taken as an apply link it would make every role the company posts one job in the dedupe.
+ */
+function companyWide(url: URL): boolean {
+	const path = url.pathname.replace(/\/+$/, "").toLowerCase();
+	return (
+		path === "" ||
+		/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:about\/|company\/)?(?:careers?|jobs|join(?:-us)?|work-with-us|hiring|open-positions|openings|positions)$/.test(
+			path,
+		)
+	);
+}
+
+/** The employer's own link to the posting in a comment: the first specific one off Hacker News. */
 function employerLink(html: string): string | undefined {
 	for (const m of html.matchAll(/href="([^"]+)"/gi)) {
 		const url = feedLine(m[1] ?? "");
-		if (/^https?:\/\//i.test(url) && !/ycombinator\.com/i.test(url)) return url;
+		if (!/^https?:\/\//i.test(url) || /ycombinator\.com/i.test(url)) continue;
+		try {
+			if (!companyWide(new URL(url))) return url;
+		} catch {
+			// Not a link that parses: skipped.
+		}
 	}
 	return undefined;
 }
 
-/** What one part of the first line is. */
+/**
+ * What one part of the first line is. A role word wins over a place or a workplace word: "Senior
+ * Frontend Engineer (Remote)" is the role (its "Remote" is read as where, too).
+ */
 function partKind(part: string): "location" | "employment" | "role" | "other" {
 	// A header field is short; a long part is the post's prose run into the line (no break
 	// after the header), never a place or a role.
 	if (part.length > 80) return "other";
+	const role = ROLE_WORDS.test(part);
 	// Pay first: "$150K, or local average outside the US" names a country, not a place.
-	if (SALARY.test(part) && !WORKPLACE.test(part)) return "other";
-	if (WORKPLACE.test(part) || (isPlace(part) && !ROLE_WORDS.test(part)))
-		return "location";
+	if (SALARY.test(part) && !WORKPLACE.test(part) && !role) return "other";
 	if (EMPLOYMENT.test(part)) return "employment";
-	if (VISA.test(part) || URL_LIKE.test(part)) return "other";
-	return "role";
+	if (role && !URL_LIKE.test(part)) return "role";
+	if (WORKPLACE.test(part) || isPlace(part)) return "location";
+	return "other";
 }
 
 interface HeaderLine {
@@ -103,9 +125,9 @@ interface HeaderLine {
 
 /**
  * The conventional first line, read by rules: the first part is the company (its tags in
- * brackets dropped); parts naming remote, on-site or hybrid work, or a place, are the locations;
- * pay, employment type, visa notes and links are set aside; the role is the first remaining part
- * that reads like one. Null when the line has no `|` or names no role.
+ * brackets dropped); a part with a role word is a role (the first is the title); other parts
+ * naming remote, on-site or hybrid work, or a place, are the locations; pay, employment type,
+ * visa notes and links are set aside. Null when the line has no `|` or names no role.
  */
 export function parseHiringLine(line: string): HeaderLine | null {
 	if (!line.includes("|")) return null;
@@ -128,11 +150,10 @@ export function parseHiringLine(line: string): HeaderLine | null {
 		else if (kind === "employment") employmentType ??= part.slice(0, 60);
 		else if (kind === "role") roles.push(part);
 	}
-	const title = (roles.find((r) => ROLE_WORDS.test(r)) ?? roles[0])
-		?.replace(/\s+/g, " ")
-		.slice(0, 200);
+	// Only a part that reads like a role is the title ("Series B" never is).
+	const title = roles[0]?.replace(/\s+/g, " ").slice(0, 200);
 	if (!title) return null;
-	const where = locations.join(" ");
+	const where = [...locations, WORKPLACE.exec(title)?.[0] ?? ""].join(" ");
 	const workplaceType = /\bremote\b/i.test(where)
 		? "remote"
 		: /\bhybrid\b/i.test(where)
@@ -143,30 +164,36 @@ export function parseHiringLine(line: string): HeaderLine | null {
 	return { company, title, locations, workplaceType, employmentType };
 }
 
-/** The thread's top-level comments as postings (replies, deleted and free-form comments skipped). */
-export function parseHiringThread(json: string): FeedPosting[] {
-	const thread = JSON.parse(json) as HnItem;
-	const out: FeedPosting[] = [];
-	for (const comment of Array.isArray(thread.children) ? thread.children : []) {
-		if (comment.type && comment.type !== "comment") continue;
-		const html = comment.text ?? "";
-		if (!html || comment.id === undefined) continue;
-		const header = parseHiringLine(firstLine(html));
-		if (!header) continue;
-		out.push({
-			externalId: String(comment.id),
-			url: `${HN_POST_URL}${comment.id}`,
-			title: header.title,
-			company: header.company,
-			locations: header.locations,
-			workplaceType: header.workplaceType,
-			employmentType: header.employmentType,
-			descriptionText: feedText(html),
-			applyUrl: employerLink(html),
-			publishedAt: feedDate(comment.created_at),
-		});
-	}
-	return out;
+/** One top-level comment: null for a deleted or free-form one, "bad" when it can't be read. */
+function hiringComment(item: unknown): FeedPosting | null | "bad" {
+	const comment = record(item);
+	if (!comment) return "bad";
+	if (comment.type !== undefined && comment.type !== "comment") return null;
+	const id = comment.id;
+	const html = field(comment.text);
+	const created = field(comment.created_at);
+	if (html === null || created === null) return "bad";
+	if (typeof id !== "number" && typeof id !== "string") return "bad";
+	if (!html) return null;
+	const header = parseHiringLine(firstLine(html));
+	if (!header) return null;
+	return {
+		externalId: String(id),
+		url: `${HN_POST_URL}${id}`,
+		title: header.title,
+		company: header.company,
+		locations: header.locations,
+		workplaceType: header.workplaceType,
+		employmentType: header.employmentType,
+		descriptionText: feedText(html),
+		applyUrl: employerLink(html),
+		publishedAt: feedDate(created || undefined),
+	};
+}
+
+/** The thread's top-level comments as postings (replies, deleted and free-form ones are none). */
+export function parseHiringThread(json: string): FeedParse<FeedPosting> {
+	return parseEach(record(JSON.parse(json))?.children, hiringComment);
 }
 
 export const hackerNewsFeed: Feed = {
@@ -185,7 +212,7 @@ export const hackerNewsFeed: Feed = {
 				false,
 			);
 		return {
-			postings: parseHiringThread(
+			...parseHiringThread(
 				await fetchFeed(`${HN_ITEM_URL}${thread}`, "json", signal),
 			),
 			requests: 2,

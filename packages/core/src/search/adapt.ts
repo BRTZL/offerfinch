@@ -230,7 +230,10 @@ export function webQueries(
 
 /* ------------------------------------------------------------ Remote feeds */
 
-/** Words that name the kind of role, any one standing for the others ("Frontend Developer"). */
+/**
+ * Words that name the kind of role, any one standing for the others ("Frontend Developer",
+ * "Frontend Lead"). Never enough on their own: a search must also name a specialty.
+ */
 const ROLE_NOUNS = new Set([
 	"engineer",
 	"developer",
@@ -238,13 +241,15 @@ const ROLE_NOUNS = new Set([
 	"swe",
 	"sde",
 	"dev",
+	"lead",
 ]);
+/** Words that make a title no more specific ("Software Engineer"): its feed tags may say more. */
+const GENERIC = new Set(["software", "web", "application", "app"]);
 /** Left out of matching: the fit score weighs seniority; these words say nothing else. */
 const IGNORED = new Set([
 	"senior",
 	"sr",
 	"staff",
-	"lead",
 	"principal",
 	"junior",
 	"jr",
@@ -283,23 +288,31 @@ function matchWords(text: string): string[] {
 }
 
 /**
- * A feed posting is what a search asks for: every telling word of the search's keywords is in
- * the title (or the feed's tags), and when the search names a kind of role (engineer, developer),
- * the title names one of them. Seniority is left to the fit score.
+ * A feed posting is what a search asks for. The search must name a specialty (a word beyond role
+ * words and seniority: "Staff Engineer" alone finds nothing), and every one of its specialty words
+ * must be in the title. The feed's tags may supply them only when the title is a generic role
+ * ("Software Engineer", "Engineer") with no specialty of its own to conflict with. When the
+ * search names a kind of role (engineer, developer, lead), the title names one of them.
+ * Seniority is left to the fit score.
  */
 export function feedKeywordsMatch(
 	posting: { title: string; tags?: string[] },
 	s: PlanSearch,
 ): boolean {
 	const wanted = matchWords(s.keywords).filter((w) => !IGNORED.has(w));
-	if (wanted.length === 0) return false;
-	const title = new Set(matchWords(posting.title));
-	const tags = new Set(matchWords((posting.tags ?? []).join(" , ")));
 	const core = wanted.filter((w) => !ROLE_NOUNS.has(w));
+	if (core.length === 0) return false;
+	const titleWords = matchWords(posting.title);
+	const title = new Set(titleWords);
 	const role = wanted.some((w) => ROLE_NOUNS.has(w));
-	if (!core.every((w) => title.has(w) || tags.has(w))) return false;
 	if (role && ![...ROLE_NOUNS].some((w) => title.has(w))) return false;
-	return core.length > 0 || role;
+	if (core.every((w) => title.has(w))) return true;
+	const generic = titleWords.every(
+		(w) => IGNORED.has(w) || ROLE_NOUNS.has(w) || GENERIC.has(w),
+	);
+	if (!generic) return false;
+	const tags = new Set(matchWords((posting.tags ?? []).join(" , ")));
+	return core.every((w) => title.has(w) || tags.has(w));
 }
 
 /**

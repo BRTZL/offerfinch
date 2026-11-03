@@ -14,8 +14,8 @@ import type { WebSearchStore } from "@offerfinch/core/web/provider";
 import { and, eq, inArray, isNotNull, or } from "drizzle-orm";
 
 import type { Database } from "./client";
-import { titleKey } from "./linkedin";
 import { companies, jobs, sourceProviders } from "./schema/pipeline";
+import { titleKey } from "./title-key";
 
 export const PROVIDER_IDS = [
 	"job-board-search",
@@ -284,6 +284,7 @@ export async function clearProviderStop(
 	db: Database,
 	userId: string,
 	provider: ProviderId,
+	options: { keepLastRun?: boolean } = {},
 ): Promise<void> {
 	const state = (await listProviders(db, userId)).find(
 		(p) => p.provider === provider,
@@ -291,6 +292,9 @@ export async function clearProviderStop(
 	if (!state?.config.stop) return;
 	const { stop: _cleared, ...config } = state.config;
 	await updateProvider(db, userId, provider, { config });
+	// A remote feed keeps its last run: the scan Retry now starts finds it not due (its pace
+	// still holds) and records nothing, which would leave it reading "Not run yet".
+	if (options.keepLastRun) return;
 	// The stopped run's note goes with it: the source reads as not run until the next scan.
 	await db
 		.update(sourceProviders)
@@ -399,8 +403,14 @@ export class SqliteFeedStore extends SqliteWebStore implements FeedStore {
 			(p) => p.provider === feed,
 		);
 		if (!state) throw new Error(`unknown feed ${feed}`);
+		// A read "after" this one was recorded before the clock went back: dropped, so the pace
+		// counts from now (core `nextFeedRead` ignores it too).
 		const reads = [...feedReads(state.config), at]
-			.filter((d) => at.getTime() - d.getTime() < FEED_READS_KEPT_MS)
+			.filter(
+				(d) =>
+					d.getTime() <= at.getTime() &&
+					at.getTime() - d.getTime() < FEED_READS_KEPT_MS,
+			)
 			.map((d) => d.toISOString());
 		await updateProvider(this.feeds, userId, state.provider, {
 			config: { ...state.config, reads },

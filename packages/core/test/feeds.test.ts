@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { submissionModeForSource } from "../src/apply/modes";
+import { decodeEntities } from "../src/domain/text";
 import { FEEDS } from "../src/feeds/feeds";
 import {
 	hackerNewsFeed,
@@ -10,7 +11,12 @@ import {
 	parseHiringLine,
 	parseHiringThread,
 } from "../src/feeds/hackernews";
-import { FeedReadError, feedFetcher, fixMojibake } from "../src/feeds/http";
+import {
+	FeedReadError,
+	feedFetcher,
+	feedLine,
+	fixMojibake,
+} from "../src/feeds/http";
 import {
 	FEED_NEW_CAP,
 	FEED_PACE,
@@ -22,11 +28,7 @@ import {
 	plausible,
 } from "../src/feeds/provider";
 import { parseRemoteOk, remoteOkFeed } from "../src/feeds/remoteok";
-import {
-	parseRemotive,
-	REMOTIVE_URL,
-	remotiveFeed,
-} from "../src/feeds/remotive";
+import { parseRemotive, remotiveFeed } from "../src/feeds/remotive";
 import {
 	parseWeWorkRemotely,
 	weWorkRemotelyFeed,
@@ -46,6 +48,7 @@ import { fakeExporter } from "./helpers";
 import { MemoryRepo } from "./memory-repo";
 
 /** Fabricated fixtures in each feed's published shape (no real people, companies made up). */
+const REMOTIVE_URL = "https://remotive.com/api/remote-jobs";
 const fixture = (name: string) =>
 	fs.readFileSync(path.join(__dirname, "fixtures/feeds", name), "utf8");
 const NOW = new Date("2026-11-03T10:00:00Z");
@@ -72,7 +75,7 @@ const PLAN: PlanResult = {
 
 describe("feed parsers, on fabricated fixtures in each feed's shape", () => {
 	it("Remotive: every listing with its Remotive URL, company, place and plain-text description", () => {
-		const postings = parseRemotive(fixture("remotive.json"));
+		const postings = parseRemotive(fixture("remotive.json")).postings;
 		expect(postings.map((p) => p.externalId)).toEqual([
 			"1001",
 			"1002",
@@ -99,7 +102,7 @@ describe("feed parsers, on fabricated fixtures in each feed's shape", () => {
 	});
 
 	it("Remote OK: skips its legal notice, repairs its UTF-8 read as Latin-1, links to remoteok.com", () => {
-		const postings = parseRemoteOk(fixture("remoteok.json"));
+		const postings = parseRemoteOk(fixture("remoteok.json")).postings;
 		expect(postings.map((p) => p.externalId)).toEqual(["2001", "2002", "2003"]);
 		const [first, second, third] = postings;
 		expect(first).toMatchObject({
@@ -119,7 +122,9 @@ describe("feed parsers, on fabricated fixtures in each feed's shape", () => {
 	});
 
 	it("We Work Remotely: company and title from the item title, the region as the place, never the headquarters", () => {
-		const postings = parseWeWorkRemotely(fixture("weworkremotely-rss.txt"));
+		const postings = parseWeWorkRemotely(
+			fixture("weworkremotely-rss.txt"),
+		).postings;
 		expect(postings.map((p) => `${p.company} | ${p.title}`)).toEqual([
 			"Fernhill Analytics | Senior Front-End Engineer",
 			"Brightwater Health | Frontend Engineer",
@@ -152,7 +157,7 @@ describe("feed parsers, on fabricated fixtures in each feed's shape", () => {
 	});
 
 	it("HN: reads each top-level comment's first line; replies, deleted and free-form comments are no postings", () => {
-		const postings = parseHiringThread(fixture("hn-thread.json"));
+		const postings = parseHiringThread(fixture("hn-thread.json")).postings;
 		expect(postings.map((p) => p.externalId)).toEqual(["9101", "9102", "9106"]);
 		const [nimbus, tessera, harbor] = postings;
 		expect(nimbus).toMatchObject({
@@ -232,6 +237,8 @@ describe("the shared plan, applied to a feed", () => {
 			["Software Engineers", "Software Engineer"],
 			["Frontend Engineer", "Software Engineer", ["frontend"]],
 			["Design Systems Engineer", "Design System Engineer"],
+			// Lead is a role word (review #2): any role word stands for the others.
+			["Frontend Engineer", "Frontend Lead"],
 		];
 		for (const [keywords, title, tags] of yes)
 			expect(
@@ -240,7 +247,6 @@ describe("the shared plan, applied to a feed", () => {
 			).toBe(true);
 		const no: [string, string][] = [
 			["Frontend Engineer", "Marketing Manager"],
-			["Frontend Engineer", "Frontend Lead"],
 			["Backend Developer", "Frontend Developer"],
 			["Senior", "Senior Accountant"],
 		];
@@ -271,8 +277,8 @@ describe("the shared plan, applied to a feed", () => {
 
 	it("keeps only plausible matches, newest first, and says why the others were set aside", () => {
 		const postings = [
-			...parseRemotive(fixture("remotive.json")),
-			...parseWeWorkRemotely(fixture("weworkremotely-rss.txt")),
+			...parseRemotive(fixture("remotive.json")).postings,
+			...parseWeWorkRemotely(fixture("weworkremotely-rss.txt")).postings,
 		];
 		const drops = new DropLog();
 		const kept = plausible(postings, SETTINGS, SEARCHES, NOW, drops);
@@ -298,7 +304,7 @@ describe("the shared plan, applied to a feed", () => {
 describe("the pace", () => {
 	const hours = (n: number) => new Date(NOW.getTime() + n * 3_600_000);
 
-	it("every 6 hours, 4 reads a day, and never longer than the pace after a clock set back", () => {
+	it("every 6 hours, 4 reads a day", () => {
 		expect(nextFeedRead([], NOW)).toEqual(NOW);
 		expect(nextFeedRead([hours(-1)], NOW)).toEqual(hours(5));
 		expect(nextFeedRead([hours(-7)], NOW)).toEqual(NOW);
@@ -306,8 +312,6 @@ describe("the pace", () => {
 		expect(
 			nextFeedRead([hours(-18), hours(-12), hours(-7), hours(-6.5)], NOW),
 		).toEqual(hours(6));
-		// A read "in the future" (the clock went back): at most one pace away.
-		expect(nextFeedRead([hours(30)], NOW)).toEqual(hours(FEED_PACE.everyHours));
 	});
 });
 
@@ -571,5 +575,229 @@ describe("a feed provider in a scan", () => {
 		});
 		// Each feed read once, two requests for HN.
 		expect(h.net.requests).toHaveLength(5);
+	});
+});
+
+/* ------------------------------------------------- review fixes (2026-11-03) */
+
+describe("review: the plan match is not over-broad (#2)", () => {
+	const search = (keywords: string): PlanSearch => ({
+		keywords,
+		where: "remote-worldwide",
+	});
+	const match = (keywords: string, title: string, tags?: string[]) =>
+		feedKeywordsMatch({ title, tags }, search(keywords));
+
+	it("never matches on a role word and seniority alone", () => {
+		expect(match("Staff Engineer", "QA Automation Engineer")).toBe(false);
+		expect(match("Engineer", "Senior Engineer")).toBe(false);
+		expect(match("Senior Developer", "Developer")).toBe(false);
+	});
+
+	it("lead is a role word, not a word to ignore", () => {
+		expect(match("Frontend Lead", "Account Executive", ["frontend"])).toBe(
+			false,
+		);
+		expect(match("Frontend Lead", "Frontend Lead")).toBe(true);
+		expect(match("Frontend Lead", "Lead Frontend Engineer")).toBe(true);
+	});
+
+	it("tags supply a specialty only for a generic title, never against the title's own", () => {
+		expect(match("Backend Engineer", "Frontend Engineer", ["backend"])).toBe(
+			false,
+		);
+		expect(match("Frontend Engineer", "Software Engineer", ["frontend"])).toBe(
+			true,
+		);
+		expect(match("Frontend Engineer", "Engineer", ["frontend"])).toBe(true);
+		expect(
+			match("Design Systems Engineer", "Design Engineer", ["systems"]),
+		).toBe(false);
+	});
+});
+
+describe("review: one bad item never costs the read (#3)", () => {
+	it("an out-of-range character reference is a replacement character, not a crash", () => {
+		expect(decodeEntities("a &#99999999; b")).toBe("a � b");
+		expect(feedLine("a &#x110000; b &#xD800; c")).toBe("a � b � c");
+	});
+
+	it("Remotive and Remote OK skip items that are not objects, lack strings or have no web URL, and count them", () => {
+		const good = {
+			id: 1,
+			url: "https://remotive.com/remote-jobs/x-1",
+			title: "Frontend Engineer",
+			company_name: "Nimbus Cloud",
+			description: "<p>Build &#99999999; things.</p>",
+		};
+		const remotive = parseRemotive(
+			JSON.stringify({
+				jobs: [
+					null,
+					5,
+					{ ...good, id: 2, url: "javascript:alert(1)" },
+					{ ...good, id: 3, title: { text: "x" } },
+					{ ...good, id: 4, candidate_required_location: 7 },
+					good,
+				],
+			}),
+		);
+		expect(remotive.postings.map((p) => p.externalId)).toEqual(["1"]);
+		expect(remotive.skipped).toBe(5);
+		const remoteok = parseRemoteOk(
+			JSON.stringify([
+				{ legal: "notice" },
+				"text",
+				{ id: "9", position: "Engineer", company: "Kestrel", url: "ftp://x" },
+				{
+					id: "10",
+					position: ["x"],
+					company: "Kestrel",
+					url: "https://remoteok.com/a",
+				},
+				{
+					id: "11",
+					position: "Frontend Engineer",
+					company: "Kestrel Works",
+					url: "https://remoteok.com/remote-jobs/11",
+					tags: "frontend",
+				},
+			]),
+		);
+		expect(remoteok.postings.map((p) => p.externalId)).toEqual(["11"]);
+		expect(remoteok.postings[0]?.tags).toEqual([]);
+		expect(remoteok.skipped).toBe(3);
+	});
+
+	it("We Work Remotely and HN skip a broken item and keep the rest", () => {
+		const wwr = parseWeWorkRemotely(
+			`<rss><channel><item><title>Acme: Frontend Engineer</title><link>javascript:x</link></item>${fixture("weworkremotely-rss.txt").match(/<item>[\s\S]*?<\/item>/)?.[0]}</channel></rss>`,
+		);
+		expect(wwr.postings).toHaveLength(1);
+		expect(wwr.skipped).toBe(1);
+		const thread = JSON.parse(fixture("hn-thread.json"));
+		thread.children.unshift(7, { id: 1, type: "comment", text: 42 });
+		const hn = parseHiringThread(JSON.stringify(thread));
+		expect(hn.postings.map((p) => p.externalId)).toEqual([
+			"9101",
+			"9102",
+			"9106",
+		]);
+		expect(hn.skipped).toBe(2);
+	});
+
+	it("skipped items are a note on the run, which still stores the rest", async () => {
+		const partly: Feed = {
+			...remotiveFeed,
+			read: async () => ({
+				requests: 1,
+				skipped: 2,
+				postings: parseRemotive(fixture("remotive.json")).postings,
+			}),
+		};
+		const [run] = await harness({ feeds: [partly] }).scan();
+		expect(run?.newJobIds).toHaveLength(2);
+		expect(run?.status).toBe("ok");
+		expect(run?.problem).toBe(
+			"2 items in the feed could not be read and were skipped",
+		);
+	});
+});
+
+describe("review: a clock set back never holds a feed (#4)", () => {
+	const hours = (n: number) => new Date(NOW.getTime() + n * 3_600_000);
+	it("a read recorded in the future is ignored, so the wait does not slide forward", () => {
+		expect(nextFeedRead([hours(30)], NOW)).toEqual(NOW);
+		expect(nextFeedRead([hours(30)], hours(6))).toEqual(hours(6));
+		expect(nextFeedRead([hours(-1), hours(30)], NOW)).toEqual(hours(5));
+	});
+});
+
+describe("review: stops, counts and the pace agree (#5)", () => {
+	it("a refusal's retry time is never before the pace allows the next read", async () => {
+		const h = harness({ fail: 429 });
+		await h.scan();
+		expect(h.state.stops.get("remotive")?.retryAt).toBe(
+			new Date(NOW.getTime() + FEED_PACE.everyHours * 3_600_000).toISOString(),
+		);
+	});
+
+	it("a failed read reports no searches", async () => {
+		const [run] = await harness({ fail: 503 }).scan();
+		expect(run?.queries).toBe(0);
+		expect(run?.searches).toBeUndefined();
+	});
+});
+
+describe("review: HN header parts (#6)", () => {
+	it("a role with its workplace in brackets is the role, and says where", () => {
+		expect(
+			parseHiringLine(
+				"Acme Robotics | Senior Frontend Engineer (Remote) | Full-time",
+			),
+		).toMatchObject({
+			title: "Senior Frontend Engineer (Remote)",
+			workplaceType: "remote",
+		});
+	});
+
+	it("a line naming no role is no posting", () => {
+		expect(
+			parseHiringLine("Acme Robotics | Series B | Berlin, Germany | ONSITE"),
+		).toBeNull();
+	});
+
+	it("a company's home or careers page is no apply link; a posting's page is", () => {
+		const thread = (href: string) =>
+			JSON.stringify({
+				children: [
+					{
+						id: 1,
+						type: "comment",
+						text: `Acme | Frontend Engineer | REMOTE | <a href="${href}">link</a>`,
+					},
+				],
+			});
+		for (const href of [
+			"https://acme.example",
+			"https://acme.example/",
+			"https://www.acme.example/careers",
+			"https://acme.example/jobs/",
+		])
+			expect(
+				parseHiringThread(thread(href)).postings[0]?.applyUrl,
+				href,
+			).toBeUndefined();
+		expect(
+			parseHiringThread(thread("https://acme.example/careers/frontend-42"))
+				.postings[0]?.applyUrl,
+		).toBe("https://acme.example/careers/frontend-42");
+	});
+});
+
+describe("review: an address in angle brackets is text, not a tag (#8)", () => {
+	it("in a JSON feed's HTML, and in an RSS feed's escaped HTML", () => {
+		const remotive = parseRemotive(
+			JSON.stringify({
+				jobs: [
+					{
+						id: 1,
+						url: "https://remotive.com/remote-jobs/x-1",
+						title: "Frontend Engineer",
+						company_name: "Nimbus Cloud",
+						description: "<p>Write to &lt;jobs@nimbus.example&gt; today.</p>",
+					},
+				],
+			}),
+		);
+		expect(remotive.postings[0]?.descriptionText).toBe(
+			"Write to <jobs@nimbus.example> today.",
+		);
+		const wwr = parseWeWorkRemotely(
+			"<rss><channel><item><title>Acme: Frontend Engineer</title><link>https://weworkremotely.com/remote-jobs/acme-1</link><description>&lt;p&gt;Mail &amp;lt;jobs@acme.example&amp;gt; now.&lt;/p&gt;</description></item></channel></rss>",
+		);
+		expect(wwr.postings[0]?.descriptionText).toBe(
+			"Mail <jobs@acme.example> now.",
+		);
 	});
 });

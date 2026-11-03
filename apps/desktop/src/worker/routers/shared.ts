@@ -34,6 +34,7 @@ import type { WorkerApp } from "../app";
 import { siteActivity } from "../checks";
 import { DUCKDUCKGO_PROVIDERS } from "../pipeline";
 import { siteOrigins } from "../sites";
+import { PROVIDER_LABEL } from "../source-labels";
 
 export const pastedSchema = z.object({
 	title: z.string().trim().min(1, "Add the job title").max(300),
@@ -80,18 +81,6 @@ export function worker(): WorkerApp {
 }
 
 export const stateSchema = z.enum(APPLICATION_STATES);
-
-const PROVIDER_LABEL: Record<ProviderId, string> = {
-	"job-board-search": "Job-board search",
-	linkedin: "LinkedIn",
-	indeed: "Indeed",
-	glassdoor: "Glassdoor",
-	remotive: "Remotive",
-	remoteok: "Remote OK",
-	weworkremotely: "We Work Remotely",
-	"hn-hiring": "HN Who is hiring",
-	"web-search": "Web search",
-};
 
 /**
  * Each site tab (LinkedIn, Indeed, Glassdoor): its sign-in as last seen, whether a run reads it
@@ -221,7 +210,9 @@ export async function clearStops(
 	).includes(provider)
 		? DUCKDUCKGO_PROVIDERS
 		: [provider];
-	for (const id of ids) await clearProviderStop(w.db, userId, id);
+	const keepLastRun = (FEED_IDS as readonly string[]).includes(provider);
+	for (const id of ids)
+		await clearProviderStop(w.db, userId, id, { keepLastRun });
 }
 
 /** A domain refusal ("Refusing: …") as a 409 the app shows as-is. */

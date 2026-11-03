@@ -1,4 +1,16 @@
-import { feedDate, feedLine, feedText, fixMojibake, workplaceOf } from "./http";
+import {
+	type FeedParse,
+	feedDate,
+	feedLine,
+	feedText,
+	field,
+	fixMojibake,
+	parseEach,
+	record,
+	tagList,
+	webUrl,
+	workplaceOf,
+} from "./http";
 import type { Feed, FeedPosting } from "./provider";
 
 /**
@@ -9,50 +21,52 @@ import type { Feed, FeedPosting } from "./provider";
  */
 const REMOTEOK_URL = "https://remoteok.com/api";
 
-interface RemoteOkJob {
-	id?: string | number;
-	epoch?: number | string;
-	date?: string;
-	company?: string;
-	position?: string;
-	tags?: unknown;
-	description?: string;
-	location?: string;
-	url?: string;
-	legal?: string;
+/** One Remote OK listing; null for its legal notice, "bad" when the fields are not text. */
+function remoteOkJob(item: unknown): FeedPosting | null | "bad" {
+	const job = record(item);
+	if (!job) return "bad";
+	if (job.legal !== undefined) return null;
+	const id = job.id;
+	const fields = {
+		url: field(job.url),
+		position: field(job.position),
+		company: field(job.company),
+		location: field(job.location),
+		description: field(job.description),
+		date: field(job.date),
+	};
+	if (Object.values(fields).some((v) => v === null)) return "bad";
+	const f = fields as Record<keyof typeof fields, string>;
+	const title = feedLine(fixMojibake(f.position));
+	const company = feedLine(fixMojibake(f.company));
+	if (
+		(typeof id !== "number" && typeof id !== "string") ||
+		!webUrl(f.url) ||
+		!title ||
+		!company
+	)
+		return "bad";
+	const place = feedLine(fixMojibake(f.location));
+	const remote = !place || /^remote$/i.test(place);
+	return {
+		externalId: String(id),
+		// Its host is written "remoteOK.com"; the same page either way.
+		url: f.url.replace(/^https:\/\/remoteok\.com\//i, "https://remoteok.com/"),
+		title,
+		company,
+		locations: [remote ? "Remote" : place],
+		// A Remote OK listing is remote unless its place says otherwise.
+		workplaceType: remote ? "remote" : workplaceOf(place, "remote"),
+		descriptionText: feedText(fixMojibake(f.description)),
+		tags: tagList(job.tags),
+		publishedAt:
+			feedDate(f.date || undefined) ?? feedDate(Number(job.epoch) || undefined),
+	};
 }
 
-/** Remote OK's answer as postings; the legal notice and anything incomplete are skipped. */
-export function parseRemoteOk(json: string): FeedPosting[] {
-	const data = JSON.parse(json) as RemoteOkJob[];
-	const out: FeedPosting[] = [];
-	for (const job of Array.isArray(data) ? data : []) {
-		if (!job || typeof job !== "object" || job.legal !== undefined) continue;
-		const title = feedLine(fixMojibake(job.position ?? ""));
-		const company = feedLine(fixMojibake(job.company ?? ""));
-		if (job.id === undefined || !job.url || !title || !company) continue;
-		const place = feedLine(fixMojibake(job.location ?? ""));
-		const remote = !place || /^remote$/i.test(place);
-		out.push({
-			externalId: String(job.id),
-			// Its host is written "remoteOK.com"; the same page either way.
-			url: job.url.replace(
-				/^https:\/\/remoteok\.com\//i,
-				"https://remoteok.com/",
-			),
-			title,
-			company,
-			locations: [remote ? "Remote" : place],
-			// A Remote OK listing is remote unless its place says otherwise.
-			workplaceType: remote ? "remote" : workplaceOf(place, "remote"),
-			descriptionText: feedText(fixMojibake(job.description ?? "")),
-			tags: Array.isArray(job.tags)
-				? job.tags.filter((t): t is string => typeof t === "string")
-				: [],
-			publishedAt: feedDate(job.date) ?? feedDate(Number(job.epoch)),
-		});
-	}
-	return out;
+/** Remote OK's answer as postings; the legal notice is no posting, a broken item is counted. */
+export function parseRemoteOk(json: string): FeedParse<FeedPosting> {
+	return parseEach(JSON.parse(json), remoteOkJob);
 }
 
 export const remoteOkFeed: Feed = {
@@ -61,7 +75,7 @@ export const remoteOkFeed: Feed = {
 	source: "remoteok",
 	async read(fetchFeed, signal) {
 		return {
-			postings: parseRemoteOk(await fetchFeed(REMOTEOK_URL, "json", signal)),
+			...parseRemoteOk(await fetchFeed(REMOTEOK_URL, "json", signal)),
 			requests: 1,
 		};
 	},

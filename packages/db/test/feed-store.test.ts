@@ -1,13 +1,14 @@
+import type { NormalizedJob } from "@offerfinch/core/domain/types";
 import { FEED_IDS } from "@offerfinch/core/feeds/feeds";
 import { nextFeedRead } from "@offerfinch/core/feeds/provider";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-
 import {
 	clearProviderStop,
 	DashboardRepository,
 	type Database,
 	listProviders,
 	openSqlite,
+	recordProviderRun,
 	SqliteFeedStore,
 	updateProvider,
 } from "../src/index";
@@ -174,5 +175,119 @@ describe("the remote feeds' store", () => {
 			descriptionText: "Logistics software.",
 		});
 		expect(found).toEqual({ jobId: hn.jobId, inserted: false });
+	});
+
+	it("drops a read recorded in the future when it records the next (review #4)", async () => {
+		const store = new SqliteFeedStore(db);
+		await updateProvider(db, "u1", "remoteok", { enabled: true });
+		const now = new Date("2026-11-03T08:00:00Z");
+		await store.markRead("u1", "remoteok", new Date("2026-11-04T14:00:00Z"));
+		await store.markRead("u1", "remoteok", now);
+		expect(await store.reads("u1", "remoteok")).toEqual([now]);
+	});
+
+	it("Retry now on a feed keeps its last run, so a waiting scan doesn't read as never run (review #5)", async () => {
+		await updateProvider(db, "u1", "weworkremotely", { enabled: true });
+		await recordProviderRun(db, "u1", {
+			provider: "weworkremotely",
+			queries: 2,
+			found: 1,
+			fetched: 100,
+			newJobIds: ["j1"],
+		});
+		await new SqliteFeedStore(db).stop("u1", "weworkremotely", {
+			kind: "blocked",
+			reason: "refused",
+			at: new Date().toISOString(),
+		});
+		await clearProviderStop(db, "u1", "weworkremotely", { keepLastRun: true });
+		const state = (await listProviders(db, "u1")).find(
+			(p) => p.provider === "weworkremotely",
+		);
+		expect(state?.config.stop).toBeUndefined();
+		expect(state?.lastRun).toMatchObject({ fetched: 100, newJobs: 1 });
+		expect(state?.lastRunAt).not.toBeNull();
+	});
+});
+
+describe("the same role from a feed and from a board is one job, in either order (review #7)", () => {
+	const job = (
+		source: "remotive" | "greenhouse" | "lever",
+		id: string,
+		over: Partial<NormalizedJob> = {},
+	): NormalizedJob => ({
+		source,
+		externalId: id,
+		url: `https://${source}.example/jobs/${id}`,
+		title: "Platform Engineer",
+		locations: ["Remote"],
+		workplaceType: "remote",
+		descriptionText: "Run the platform.",
+		...over,
+	});
+	const company = (
+		name: string,
+		source: "remotive" | "greenhouse" | "lever",
+		key: string,
+	) =>
+		new SqliteFeedStore(db).companyFor("u1", { name, source, sourceKey: key });
+
+	it("feed first, then the board", async () => {
+		const repo = new DashboardRepository(db);
+		const feed = await repo.upsertJob(
+			"u1",
+			await company("Orchid Grid", "remotive", "remotive:orchidgrid"),
+			job("remotive", "r-1"),
+		);
+		const board = await repo.upsertJob(
+			"u1",
+			await company("Orchid Grid", "greenhouse", "orchidgrid"),
+			job("greenhouse", "g-1", { title: "Platform engineer" }),
+		);
+		expect(board).toEqual({ jobId: feed.jobId, inserted: false });
+	});
+
+	it("board first, then the feed", async () => {
+		const repo = new DashboardRepository(db);
+		const board = await repo.upsertJob(
+			"u1",
+			await company("Saffron Loop", "lever", "saffronloop"),
+			job("lever", "l-1"),
+		);
+		const feed = await repo.upsertJob(
+			"u1",
+			await company("Saffron Loop", "remotive", "remotive:saffronloop"),
+			job("remotive", "r-2"),
+		);
+		expect(feed).toEqual({ jobId: board.jobId, inserted: false });
+	});
+
+	it("conservative: an office posting, or two board postings, with that title stay apart", async () => {
+		const repo = new DashboardRepository(db);
+		const office = await repo.upsertJob(
+			"u1",
+			await company("Juniper Mesa", "greenhouse", "junipermesa"),
+			job("greenhouse", "g-10", {
+				locations: ["Berlin, Germany"],
+				workplaceType: "onsite",
+			}),
+		);
+		const feed = await repo.upsertJob(
+			"u1",
+			await company("Juniper Mesa", "remotive", "remotive:junipermesa"),
+			job("remotive", "r-10"),
+		);
+		expect(feed.inserted).toBe(true);
+		expect(feed.jobId).not.toBe(office.jobId);
+		const second = await repo.upsertJob(
+			"u1",
+			await company("Juniper Mesa", "lever", "junipermesa"),
+			job("lever", "l-10", {
+				locations: ["Munich, Germany"],
+				workplaceType: "onsite",
+			}),
+		);
+		// Neither from a feed: two boards' postings are not merged by their title.
+		expect(second.inserted).toBe(true);
 	});
 });

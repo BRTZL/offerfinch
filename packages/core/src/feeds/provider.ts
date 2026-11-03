@@ -68,7 +68,7 @@ export interface Feed {
 		fetchFeed: FeedFetch,
 		signal: AbortSignal | undefined,
 		now: Date,
-	): Promise<{ postings: FeedPosting[]; requests: number }>;
+	): Promise<{ postings: FeedPosting[]; requests: number; skipped?: number }>;
 }
 
 /**
@@ -91,12 +91,17 @@ export interface FeedStore extends WebSearchStore {
 	markRead(userId: string, feed: string, at: Date): Promise<void>;
 }
 
-/** When a feed may be read next, from its recorded reads. */
+/**
+ * When a feed may be read next, from its recorded reads. A read recorded in the future (the clock
+ * was set back) is ignored: kept, it would hold the feed a pace past "now" on every scan, a wait
+ * that slides forward and never ends. The next read records the clock's time again.
+ */
 export function nextFeedRead(reads: Date[], now: Date): Date {
-	const recent = reads
+	const past = reads.filter((r) => r.getTime() <= now.getTime());
+	const recent = past
 		.filter((r) => now.getTime() - r.getTime() < DAY_MS)
 		.sort((a, b) => a.getTime() - b.getTime());
-	const last = reads.reduce<Date | null>((m, r) => (!m || r > m ? r : m), null);
+	const last = past.reduce<Date | null>((m, r) => (!m || r > m ? r : m), null);
 	let at = last
 		? new Date(last.getTime() + FEED_PACE.everyHours * HOUR_MS)
 		: now;
@@ -108,9 +113,6 @@ export function nextFeedRead(reads: Date[], now: Date): Date {
 		);
 		if (frees > at) at = frees;
 	}
-	// A clock set back must not hold a feed for longer than its pace.
-	const latest = new Date(now.getTime() + FEED_PACE.everyHours * HOUR_MS);
-	if (at > latest) at = latest;
 	return at > now ? at : now;
 }
 
@@ -182,14 +184,14 @@ export class FeedProvider implements ScanProvider {
 			out.problem = NO_SEARCHES;
 			return out;
 		}
-		out.queries = searches.length;
-		out.searches = searches.map(describeSearch);
 		deps.scanProgress?.(userId, { source: this.id, label: this.label });
 		await this.store.markRead(userId, this.id, now);
 		let postings: FeedPosting[];
+		let skipped = 0;
 		try {
 			const read = await this.feed.read(this.fetchFeed, signal, now);
 			postings = read.postings;
+			skipped = read.skipped ?? 0;
 			out.pagesRead = read.requests;
 		} catch (error) {
 			signal?.throwIfAborted();
@@ -197,15 +199,26 @@ export class FeedProvider implements ScanProvider {
 			return out;
 		}
 		if (stopped) await this.store.clearStop(userId, this.id);
+		// Counted once the feed was read: a failed read searched nothing.
+		out.queries = searches.length;
+		out.searches = searches.map(describeSearch);
 		out.results = postings.length;
 		out.fetched = postings.length;
 		const drops = new DropLog();
 		const kept = plausible(postings, settings, searches, now, drops);
 		const waiting = await this.save(deps, userId, kept, out, signal);
 		out.dropped = drops.report();
-		if (waiting > 0) {
-			// A note, not a failure: the source ran (as web search's caps).
-			out.problem = `Cap of ${this.options.cap} new postings a read reached; ${waiting} more wait for the next read`;
+		// Notes, not failures: the source ran (as web search's caps).
+		const notes = [
+			waiting > 0
+				? `Cap of ${this.options.cap} new postings a read reached; ${waiting} more wait for the next read`
+				: "",
+			skipped > 0
+				? `${skipped} ${skipped === 1 ? "item" : "items"} in the feed could not be read and ${skipped === 1 ? "was" : "were"} skipped`
+				: "",
+		].filter(Boolean);
+		if (notes.length > 0) {
+			out.problem = notes.join("; ");
 			out.status = "ok";
 		}
 		return out;
@@ -225,11 +238,18 @@ export class FeedProvider implements ScanProvider {
 		).slice(0, 200);
 		if (!(error instanceof FeedReadError && error.refused))
 			return `Could not read the feed: ${message}.`;
-		const record = stopRecord(
+		const backoff = stopRecord(
 			{ kind: "blocked", reason: message },
 			stopped,
 			now,
 		);
+		// Never before the pace allows the next read (this one counted): a retry time the pace
+		// overrules would show a stale stop and offer a Retry now that can't read.
+		const paced = nextFeedRead(await this.store.reads(userId, this.id), now);
+		const record =
+			backoff.retryAt && new Date(backoff.retryAt) >= paced
+				? backoff
+				: { ...backoff, retryAt: paced.toISOString() };
 		await this.store.stop(userId, this.id, record);
 		return `Paused after: ${record.reason}. Tries again with the first scan after ${clock(record.retryAt ?? now.toISOString())}.`;
 	}

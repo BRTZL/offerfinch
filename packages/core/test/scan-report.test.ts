@@ -533,3 +533,32 @@ describe("the scan flow records each source", () => {
 		expect(result).toBeDefined();
 	});
 });
+
+describe("sources that are only waiting (review #1)", () => {
+	const waiting = (id: string, label: string) =>
+		source(report(id, label, { status: "waiting", queries: 0 }));
+	const off = (id: string, label: string) =>
+		source(report(id, label, { status: "off", queries: 0 }));
+
+	it("says the sources on are not due yet, never that every source is off", () => {
+		expect(
+			scanOutcome(
+				[waiting("remotive", "Remotive"), off("indeed", "Indeed")],
+				done,
+			),
+		).toBe("Nothing searched: Remotive is not due yet");
+		expect(
+			scanOutcome(
+				[
+					waiting("remotive", "Remotive"),
+					waiting("remoteok", "Remote OK"),
+					off("indeed", "Indeed"),
+				],
+				done,
+			),
+		).toBe("Nothing searched: Remotive and Remote OK are not due yet");
+		expect(scanOutcome([off("indeed", "Indeed")], done)).toBe(
+			"Nothing searched: every source is off",
+		);
+	});
+});

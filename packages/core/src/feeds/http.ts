@@ -1,4 +1,4 @@
-import { decodeEntities, htmlToText } from "../domain/text";
+import { codePoint, decodeEntities, htmlToText } from "../domain/text";
 import type { WorkplaceType } from "../domain/types";
 import { type FetchLike, USER_AGENT } from "../sources/types";
 
@@ -83,13 +83,30 @@ export function feedFetcher(fetchImpl: FetchLike): FeedFetch {
 	};
 }
 
+/** Hex references (`&#x2F;`, as HN writes) as decimal ones, which the decoders read. */
+const hexToDecimal = (text: string) =>
+	text.replace(
+		/&#x([0-9a-f]+);/gi,
+		(_, hex: string) => `&#${Number.parseInt(hex, 16)};`,
+	);
+
 /** `&#x2F;` and the other hex references HN writes, then the usual entities. */
 function decodeAll(text: string): string {
-	return decodeEntities(
-		text.replace(/&#x([0-9a-f]+);/gi, (_, hex: string) =>
-			String.fromCodePoint(Number.parseInt(hex, 16)),
-		),
-	);
+	return decodeEntities(hexToDecimal(text));
+}
+
+/**
+ * XML's escapes undone once (an RSS field's text: its HTML arrives escaped), each character
+ * reference range-checked; `&amp;` last, so "&amp;lt;" stays the text "&lt;".
+ */
+function xmlText(text: string): string {
+	return hexToDecimal(text)
+		.replace(/&lt;/g, "<")
+		.replace(/&gt;/g, ">")
+		.replace(/&quot;/g, '"')
+		.replace(/&apos;/g, "'")
+		.replace(/&#(\d+);/g, (_, code: string) => codePoint(Number(code)))
+		.replace(/&amp;/g, "&");
 }
 
 /**
@@ -103,9 +120,17 @@ export function fixMojibake(text: string): string {
 	});
 }
 
-/** A feed's HTML description as the plain text the filter and the scorer read. */
+/**
+ * A feed's HTML description (as HTML: an RSS field is unescaped by `rssItems` first) as the plain
+ * text the filter and the scorer read. Entities are decoded after the HTML is parsed, so an
+ * escaped "&lt;jobs@acme.example&gt;" stays text instead of being read as a tag.
+ */
 export function feedText(html: string): string {
-	return htmlToText(decodeAll(html).replace(/&(?![a-z#0-9]+;)/gi, "&amp;"));
+	// `htmlToText` decodes the whole input first when it sees "&lt;" + a letter (Greenhouse
+	// escapes its HTML); feeds don't, so their escaped brackets go in as numeric references.
+	return htmlToText(
+		hexToDecimal(html).replace(/&lt;/g, "&#60;").replace(/&gt;/g, "&#62;"),
+	);
 }
 
 /** One line of text from a feed field: entities decoded, tags and extra spaces gone. */
@@ -147,9 +172,61 @@ export function rssItems(xml: string): Record<string, string>[] {
 			if (name in fields) continue;
 			const raw = f[2] ?? "";
 			const cdata = raw.match(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/);
-			fields[name] = cdata ? (cdata[1] ?? "") : raw;
+			// The field's own text: CDATA as it is, anything else with XML's escapes undone once.
+			fields[name] = cdata ? (cdata[1] ?? "") : xmlText(raw);
 		}
 		items.push(fields);
 	}
 	return items;
 }
+
+/** A feed's postings, and how many of its items could not be read (skipped, never fatal). */
+export interface FeedParse<P> {
+	postings: P[];
+	skipped: number;
+}
+
+/**
+ * Reads each item on its own: `read` returns the posting, null for an item that is no posting
+ * (a legal notice, a reply, a deleted comment), or "bad" for one that can't be read; a throw is
+ * bad too. One broken item never costs the rest of a read the pace allows only so often.
+ */
+export function parseEach<P>(
+	items: unknown,
+	read: (item: unknown) => P | null | "bad",
+): FeedParse<P> {
+	const out: FeedParse<P> = { postings: [], skipped: 0 };
+	for (const item of Array.isArray(items) ? items : []) {
+		let posting: P | null | "bad";
+		try {
+			posting = read(item);
+		} catch {
+			posting = "bad";
+		}
+		if (posting === "bad") out.skipped++;
+		else if (posting) out.postings.push(posting);
+	}
+	return out;
+}
+
+/** A field's text: "" when absent, null when it is there but not text (the item is bad). */
+export function field(value: unknown): string | null {
+	if (value === undefined || value === null) return "";
+	return typeof value === "string" ? value : null;
+}
+
+/** An object item's fields, or null for anything else (a number, a string, null). */
+export function record(item: unknown): Record<string, unknown> | null {
+	return item && typeof item === "object" && !Array.isArray(item)
+		? (item as Record<string, unknown>)
+		: null;
+}
+
+/** A link a job may carry: http(s) only, never `javascript:` or a file. */
+export const webUrl = (url: string) => /^https?:\/\/[^\s/]+/i.test(url);
+
+/** A feed's tags: its strings, nothing when it gives no list. */
+export const tagList = (value: unknown): string[] =>
+	Array.isArray(value)
+		? value.filter((t): t is string => typeof t === "string")
+		: [];
