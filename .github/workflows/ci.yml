@@ -1,7 +1,10 @@
 name: CI
 
+# Pushes to main, and every pull request; a PR's own branch is not built twice (macOS runners
+# bill at 10x on a private repository).
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
