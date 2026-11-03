@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { startFixtureBoards } from "./fixture-boards";
-import { APP_DIR, launchApp, tempUserData } from "./launch";
+import { APP_DIR, launchApp, tempUserData, toastsGone } from "./launch";
 import {
 	countIn,
 	onboardWithFakes,
@@ -41,9 +41,7 @@ test("Prepare says what it does, with no cost, and Prepare N prepares a selectio
 		await rows.first().click();
 		const prepare = page.getByTestId("prepare");
 		await expect(prepare).toBeVisible();
-		await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
-			timeout: 15_000,
-		});
+		await toastsGone(page, 15_000);
 
 		await prepare.hover();
 		const tip = page.getByTestId("prepare-tip");

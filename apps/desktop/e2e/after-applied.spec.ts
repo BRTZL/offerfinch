@@ -10,7 +10,14 @@ import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
 import { startFixtureBoards } from "./fixture-boards";
-import { APP_DIR, launchApp, notices, RESUME, tempUserData } from "./launch";
+import {
+	APP_DIR,
+	launchApp,
+	notices,
+	RESUME,
+	tempUserData,
+	toastsGone,
+} from "./launch";
 
 /**
  * After Applied, in the background against the fixture boards: three jobs are marked sent (1,
@@ -57,9 +64,7 @@ async function open(app: ElectronApplication, to: string) {
 async function shot(page: Page, name: string) {
 	fs.mkdirSync(SHOTS, { recursive: true });
 	// Toasts gone and the theme's colour transition finished.
-	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
-		timeout: 15_000,
-	});
+	await toastsGone(page, 15_000);
 	await page.waitForTimeout(600);
 	await page.screenshot({ path: path.join(SHOTS, `${name}.png`) });
 }

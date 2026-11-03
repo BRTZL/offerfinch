@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
 import { startFixtureBoards } from "./fixture-boards";
-import { APP_DIR, launchApp, RESUME, tempUserData } from "./launch";
+import { APP_DIR, launchApp, RESUME, tempUserData, toastsGone } from "./launch";
 
 /**
  * The Inbox as a decision list, in the background against the fixture boards: it opens on
@@ -131,9 +131,7 @@ test("Inbox: matches first, grouped by company, Not interested with reasons, hid
 			"Not interested in all",
 		);
 		fs.mkdirSync(SHOTS, { recursive: true });
-		await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
-			timeout: 15_000,
-		});
+		await toastsGone(page, 15_000);
 		await page.screenshot({ path: path.join(SHOTS, "matches-group.png") });
 
 		// ⌘-click picks several: their summary offers Not interested for all of them.
@@ -159,9 +157,7 @@ test("Inbox: matches first, grouped by company, Not interested with reasons, hid
 		await children.first().click();
 		await expect(page).toHaveURL(/\/applications\//);
 		const picked = page.url().match(/applications\/([^?]+)/)?.[1] ?? "";
-		await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
-			timeout: 15_000,
-		});
+		await toastsGone(page, 15_000);
 		const trigger = page.getByTestId("not-interested");
 		await trigger.click();
 		const popover = page.getByTestId("not-interested-popover");

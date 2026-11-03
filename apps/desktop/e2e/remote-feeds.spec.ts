@@ -6,7 +6,7 @@ import { expect, type Page, test } from "@playwright/test";
 import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
-import { APP_DIR, launchApp, tempUserData } from "./launch";
+import { APP_DIR, launchApp, tempUserData, toastsGone } from "./launch";
 
 /**
  * The remote feeds end to end, against a local stand-in only: the worker's fetch sends
@@ -237,9 +237,7 @@ test("remote feeds: off at first, on with one switch, read once, matches linked 
 			await expect(detail.getByTestId(`scan-source-${id}`)).toContainText(
 				"Ran",
 			);
-		await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
-			timeout: 15_000,
-		});
+		await toastsGone(page, 15_000);
 		fs.mkdirSync(SHOTS, { recursive: true });
 		await page.screenshot({ path: path.join(SHOTS, "scan-history.png") });
 

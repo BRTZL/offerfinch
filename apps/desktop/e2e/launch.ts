@@ -4,6 +4,7 @@ import path from "node:path";
 import {
 	type ElectronApplication,
 	_electron as electron,
+	expect,
 	type Page,
 } from "@playwright/test";
 
@@ -233,4 +234,13 @@ export async function overlaySiteView(
 	}, png);
 	await page.waitForTimeout(100);
 	return true;
+}
+
+/**
+ * Waits until no toast shows. The pointer moves off first: a toast under the pointer pauses its
+ * timer, and on a busy runner a click that lands there holds it open for good.
+ */
+export async function toastsGone(page: Page, timeout = 15_000): Promise<void> {
+	await page.mouse.move(1, 1);
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout });
 }

@@ -9,7 +9,7 @@ import {
 import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
-import { APP_DIR, launchApp, RESUME, tempUserData } from "./launch";
+import { APP_DIR, launchApp, RESUME, tempUserData, toastsGone } from "./launch";
 
 /**
  * Redraft, with fake models (OFFERFINCH_FAKE_MODELS=1), in the background: a prepared
@@ -46,9 +46,7 @@ function readDb<T>(query: string, ...params: unknown[]): T[] {
 /** The page in light and dark, as the app draws it when macOS asks for either. */
 async function shots(app: ElectronApplication, page: Page, name: string) {
 	fs.mkdirSync(SHOTS, { recursive: true });
-	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
-		timeout: 15_000,
-	});
+	await toastsGone(page, 15_000);
 	for (const theme of ["light", "dark"] as const) {
 		await app.evaluate(({ nativeTheme }, t) => {
 			nativeTheme.themeSource = t;

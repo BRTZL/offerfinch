@@ -12,7 +12,7 @@ import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
 import { startFixtureBoards } from "./fixture-boards";
-import { launchApp, RESUME, tempUserData } from "./launch";
+import { launchApp, RESUME, tempUserData, toastsGone } from "./launch";
 
 /**
  * Backup and restore, in the background: an instance with a profile and a scan's jobs exports a
@@ -89,9 +89,7 @@ const summaryText = (page: Page) =>
 
 /** A screenshot once toasts are gone and dialogs have finished opening. */
 const shot = async (page: Page, name: string) => {
-	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
-		timeout: 15_000,
-	});
+	await toastsGone(page, 15_000);
 	await page.waitForTimeout(500);
 	fs.mkdirSync(SHOTS, { recursive: true });
 	await page.screenshot({ path: path.join(SHOTS, name) });
