@@ -139,4 +139,40 @@ describe("the remote feeds' store", () => {
 		expect(await store.hasPosting("u1", "remotive", "1004")).toBe(true);
 		expect(await store.hasPosting("u1", "remoteok", "1004")).toBe(false);
 	});
+
+	it("in the other order too: a board posting an HN post linked to, found later, is the same job", async () => {
+		const repo = new DashboardRepository(db);
+		const store = new SqliteFeedStore(db);
+		const hnCompany = await store.companyFor("u1", {
+			name: "Harbor Mills",
+			source: "hackernews",
+			sourceKey: "hackernews:harbormills",
+		});
+		const hn = await repo.upsertJob("u1", hnCompany, {
+			source: "hackernews",
+			externalId: "9106",
+			url: "https://news.ycombinator.com/item?id=9106",
+			applyUrl:
+				"https://jobs.lever.co/harbormills/4c1f2a7e-0000-4000-8000-000000000001",
+			title: "Frontend Engineer",
+			locations: ["REMOTE (Turkey, EU)"],
+			workplaceType: "remote",
+			descriptionText: "Logistics software.",
+		});
+		const board = await store.companyFor("u1", {
+			name: "Harbor Mills",
+			source: "lever",
+			sourceKey: "harbormills",
+		});
+		const found = await repo.upsertJob("u1", board, {
+			source: "lever",
+			externalId: "4c1f2a7e-0000-4000-8000-000000000001",
+			url: "https://jobs.lever.co/harbormills/4c1f2a7e-0000-4000-8000-000000000001",
+			title: "Frontend Engineer",
+			locations: ["Remote"],
+			workplaceType: "remote",
+			descriptionText: "Logistics software.",
+		});
+		expect(found).toEqual({ jobId: hn.jobId, inserted: false });
+	});
 });

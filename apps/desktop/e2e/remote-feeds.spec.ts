@@ -88,6 +88,23 @@ const settingsNav = (page: Page, name: string) =>
 		.getByRole("navigation", { name: "Settings" })
 		.getByRole("link", { name: new RegExp(`^${name}`) });
 
+/** The theme set and every transition finished, so a capture shows the settled page. */
+async function theme(
+	app: Awaited<ReturnType<typeof launchApp>>["app"],
+	page: Page,
+	source: "light" | "dark",
+) {
+	await app.evaluate(({ nativeTheme }, s) => {
+		nativeTheme.themeSource = s;
+	}, source);
+	if (source === "dark") await expect(page.locator("html")).toHaveClass(/dark/);
+	else await expect(page.locator("html")).not.toHaveClass(/dark/);
+	await page.evaluate(async () => {
+		await Promise.all(document.getAnimations().map((a) => a.finished));
+		await new Promise((r) => requestAnimationFrame(() => r(null)));
+	});
+}
+
 function read<T>(sql: string): T[] {
 	const d = new Database(path.join(userData, DB_FILE));
 	try {
@@ -234,19 +251,11 @@ test("remote feeds: off at first, on with one switch, read once, matches linked 
 			/Next read in ~(6|5) h/,
 		);
 		await page.getByTestId("source-hn-hiring").scrollIntoViewIfNeeded();
-		await app.evaluate(({ nativeTheme }) => {
-			nativeTheme.themeSource = "light";
-		});
-		await expect(page.locator("html")).not.toHaveClass(/dark/);
+		await theme(app, page, "light");
 		await page.screenshot({ path: path.join(SHOTS, "sources-light.png") });
-		await app.evaluate(({ nativeTheme }) => {
-			nativeTheme.themeSource = "dark";
-		});
-		await expect(page.locator("html")).toHaveClass(/dark/);
+		await theme(app, page, "dark");
 		await page.screenshot({ path: path.join(SHOTS, "sources-dark.png") });
-		await app.evaluate(({ nativeTheme }) => {
-			nativeTheme.themeSource = "light";
-		});
+		await theme(app, page, "light");
 
 		// A second scan within the pace makes no request: the feeds are not due.
 		const before = requests.length;
@@ -278,12 +287,11 @@ test("remote feeds: off at first, on with one switch, read once, matches linked 
 			"https://remotive.com/remote-jobs/software-development/senior-frontend-engineer-1001",
 		);
 		await expect(link).not.toHaveAttribute("rel", /nofollow/);
-		await expect(page.locator("html")).not.toHaveClass(/dark/);
+		// The feed gave the whole posting: nothing reads its page there again.
+		await expect(page.getByText("Re-read posting")).toHaveCount(0);
+		await theme(app, page, "light");
 		await page.screenshot({ path: path.join(SHOTS, "posting-light.png") });
-		await app.evaluate(({ nativeTheme }) => {
-			nativeTheme.themeSource = "dark";
-		});
-		await expect(page.locator("html")).toHaveClass(/dark/);
+		await theme(app, page, "dark");
 		await page.screenshot({ path: path.join(SHOTS, "posting-dark.png") });
 		expect(errors).toEqual([]);
 	} finally {

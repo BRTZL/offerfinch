@@ -6,7 +6,7 @@ import {
 	RereadPosting,
 } from "@/components/pipeline/application/posting";
 import { StatusStrip } from "@/components/pipeline/application/status";
-import { postingLinkLabel } from "@/components/pipeline/bits";
+import { fromFeed, postingLinkLabel } from "@/components/pipeline/bits";
 import { ChatPanel } from "@/components/pipeline/chat/chat-panel";
 import { ErrorLine } from "@/components/system/bits";
 import { ReadingColumn, ReadingPage } from "@/components/system/document";
@@ -98,7 +98,11 @@ export function ApplicationDetail(props: ApplicationDetailProps) {
 			/>
 			<div className="flex h-12 shrink-0 items-center justify-between px-5">
 				<h3 className="text-foreground text-sm font-semibold">Posting</h3>
-				<RereadPosting id={loaded.id} className="ml-auto" />
+				{fromFeed(loaded.job.source) ? (
+					<span className="ml-auto" />
+				) : (
+					<RereadPosting id={loaded.id} className="ml-auto" />
+				)}
 				<a
 					href={loaded.job.url}
 					target="_blank"
@@ -239,7 +243,11 @@ export function ApplicationDetail(props: ApplicationDetailProps) {
 									<h3 className="text-foreground text-sm font-semibold">
 										Posting
 									</h3>
-									<RereadPosting id={loaded.id} className="ml-auto" />
+									{fromFeed(loaded.job.source) ? (
+										<span className="ml-auto" />
+									) : (
+										<RereadPosting id={loaded.id} className="ml-auto" />
+									)}
 									<a
 										href={loaded.job.url}
 										target="_blank"

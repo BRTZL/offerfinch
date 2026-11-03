@@ -176,6 +176,11 @@ const LINK_BACK = new Set([
 	"hackernews",
 ]);
 
+/** A job from a remote feed: its whole posting came from the feed, never read again. */
+export function fromFeed(source?: string | null): boolean {
+	return Boolean(source && LINK_BACK.has(source));
+}
+
 /** The posting's link text: "Open on Remotive" for a feed's job, "Open original" otherwise. */
 export function postingLinkLabel(source?: string | null): string {
 	return source && LINK_BACK.has(source)
