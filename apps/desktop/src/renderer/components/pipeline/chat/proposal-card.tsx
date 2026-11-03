@@ -46,7 +46,7 @@ const STATUS: Record<
 const CONTEXT = 2;
 
 /** Removed and added lines, with a +/− gutter; long unchanged runs folded. */
-function DiffView({
+export function DiffView({
 	lines,
 }: {
 	lines: { op: "same" | "add" | "del"; text: string }[];

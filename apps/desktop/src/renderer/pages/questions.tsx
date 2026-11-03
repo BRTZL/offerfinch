@@ -1,7 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MessageCircleQuestion } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import {
+	blankProblem,
+	HelperButton,
+	HelperResult,
+	useAnswerHelper,
+} from "@/components/pipeline/answer-helper";
 import { ago, StateBadge } from "@/components/pipeline/bits";
 import { EmptyState, ErrorLine, Kbd } from "@/components/system/bits";
 import { Page, PageHeader, PageIntro } from "@/components/system/layout";
@@ -113,10 +119,16 @@ export default function QuestionsPage() {
 	);
 }
 
-/** One question: what it is for, and the answer box. ⌘↩ saves. */
+/**
+ * One question: what it is for, the answer box, and the answer helper (Suggest or Improve) beside
+ * Save. ⌘↩ saves. Blanks the helper left in [ brackets ] block Save until they are filled in.
+ */
 function Answer({ q, onAnswered }: { q: Question; onAnswered: () => void }) {
 	const queryClient = useQueryClient();
 	const [text, setText] = useState("");
+	const box = useRef<HTMLTextAreaElement>(null);
+	const helper = useAnswerHelper(q.id);
+	const blocked = blankProblem(text);
 	const answer = useMutation({
 		mutationFn: () =>
 			client.questions.answer({ id: q.id, answer: text.trim() }),
@@ -134,7 +146,7 @@ function Answer({ q, onAnswered }: { q: Question; onAnswered: () => void }) {
 		onError: (error) => toast.error(error.message),
 	});
 	const submit = () => {
-		if (text.trim() && !answer.isPending) answer.mutate();
+		if (text.trim() && !blocked && !answer.isPending) answer.mutate();
 	};
 	return (
 		<Page width="form">
@@ -165,6 +177,7 @@ function Answer({ q, onAnswered }: { q: Question; onAnswered: () => void }) {
 						{q.question}
 					</label>
 					<Textarea
+						ref={box}
 						id={`answer-${q.id}`}
 						autoFocus
 						value={text}
@@ -179,17 +192,39 @@ function Answer({ q, onAnswered }: { q: Question; onAnswered: () => void }) {
 						className="min-h-28"
 					/>
 					<div className="flex items-center justify-end gap-3">
+						{blocked ? (
+							<p
+								className="text-warning mr-auto text-sm"
+								role="status"
+								data-testid="answer-blank"
+							>
+								{blocked}
+							</p>
+						) : null}
 						<span className="text-muted-foreground flex items-center gap-1 text-xs">
 							<Kbd>{keyHint("question-save")}</Kbd>
 						</span>
+						<HelperButton
+							helper={helper}
+							text={text}
+							disabled={answer.isPending}
+						/>
 						<Button
 							onClick={submit}
-							disabled={!text.trim() || answer.isPending}
+							disabled={!text.trim() || Boolean(blocked) || answer.isPending}
 							title={`Save answer (${keyHint("question-save")})`}
 						>
 							Save answer
 						</Button>
 					</div>
+					<HelperResult
+						helper={helper}
+						text={text}
+						onUse={(proposed) => {
+							setText(proposed);
+							box.current?.focus();
+						}}
+					/>
 				</div>
 			</section>
 		</Page>
