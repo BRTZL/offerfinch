@@ -1,0 +1,1 @@
+ALTER TABLE `review_checks` ADD `cited` text DEFAULT '[]' NOT NULL;

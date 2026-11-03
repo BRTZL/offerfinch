@@ -1,0 +1,87 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it, vi } from "vitest";
+
+const shown: Record<string, unknown>[] = [];
+/** macOS shows the last notification (its "show" event). */
+let showLast = () => {};
+vi.mock("electron", () => {
+	class Notification {
+		constructor(options: Record<string, unknown>) {
+			shown.push(options);
+		}
+		static isSupported() {
+			return true;
+		}
+		on() {}
+		once(event: string, handler: () => void) {
+			if (event === "show") showLast = handler;
+		}
+		show() {}
+	}
+	return { Notification };
+});
+
+const { CHIRP_SOUND, Notifier, soundOptions } = await import(
+	"../src/main/notifications"
+);
+
+describe("notification sound", () => {
+	it("maps each choice to Electron's options: macOS plays only its own sounds", () => {
+		expect(soundOptions("chirp")).toEqual({ silent: true });
+		expect(soundOptions("default")).toEqual({});
+		expect(soundOptions("none")).toEqual({ silent: true });
+	});
+
+	it("defaults to the chirp, plays it once macOS shows the notification, and keeps the choice", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "offerfinch-sound-"));
+		const chirp = vi.fn();
+		const notifier = new Notifier(
+			dir,
+			() => {},
+			() => {},
+			false,
+			chirp,
+		);
+		expect(notifier.get().sound).toBe("chirp");
+		void notifier.show({ title: "A", body: "b", path: "/" });
+		expect(shown.at(-1)).toMatchObject({ silent: true });
+		expect(shown.at(-1)).not.toHaveProperty("sound");
+		expect(chirp).not.toHaveBeenCalled();
+		showLast();
+		expect(chirp).toHaveBeenCalledTimes(1);
+
+		notifier.setSound("none");
+		void notifier.show({ title: "B", body: "c", path: "/" });
+		expect(shown.at(-1)).toMatchObject({ silent: true });
+		showLast();
+
+		notifier.setSound("default");
+		void notifier.show({ title: "C", body: "d", path: "/" });
+		expect(shown.at(-1)).not.toHaveProperty("silent");
+		showLast();
+		expect(chirp).toHaveBeenCalledTimes(1);
+		notifier.setSound("none");
+
+		// Remembered across restarts.
+		expect(
+			new Notifier(
+				dir,
+				() => {},
+				() => {},
+			).get().sound,
+		).toBe("none");
+	});
+
+	it("ships the chirp in the app bundle's Resources", () => {
+		const builder = fs.readFileSync(
+			path.join(import.meta.dirname, "../electron-builder.yml"),
+			"utf8",
+		);
+		expect(builder).toContain(`to: ${CHIRP_SOUND}`);
+		expect(
+			fs.statSync(path.join(import.meta.dirname, "../build", CHIRP_SOUND)).size,
+		).toBeGreaterThan(1000);
+	});
+});

@@ -1,0 +1,245 @@
+{
+ "jobs": [
+  {
+   "absolute_url": "https://www.modemobile.com/open-role?gh_jid=8785529002",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": false
+    }
+   ],
+   "education": "education_optional",
+   "internal_job_id": 6514644002,
+   "location": {
+    "name": "Remote"
+   },
+   "metadata": null,
+   "id": 8785529002,
+   "updated_at": "2026-10-26T13:51:46-04:00",
+   "requisition_id": "243",
+   "title": "Ad Monetization Manager (Remote)",
+   "company_name": "Mode Mobile",
+   "first_published": "2026-09-07T18:50:04-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;p&gt;&lt;span style=&quot;font-family: helvetica, arial, sans-serif;&quot;&gt;&lt;strong&gt;Who We Are (&lt;a href=&quot;http://www.modemobile.com/&quot; target=&quot;_blank&quot;&gt;Mode.Inc&lt;/a&gt;)&lt;/strong&gt;&lt;/span&gt;&lt;/p&gt;\n&lt;p&gt;Mode is a fast-growing technology company building businesses at the intersection of AI, data, mobile apps, and digital experiences. Our portfolio of mobile apps and digital products reaches 100M+ monthly active users across a global audience. We continue to accelerate growth through product innovation, strategic acquisitions, and emerging business opportunities.&lt;/p&gt;\n&lt;p&gt;Mode was recognized by Deloitte as the &lt;strong&gt;#1 fastest-growing software company in North America&lt;/strong&gt; on the 2023 Technology Fast 500. Today, we are building our next phase of growth, including expanding Mode&#39;s AI and data business and developing direct relationships with companies that can benefit from the data and capabilities we have built.&lt;/p&gt;\n&lt;p&gt;&lt;span style=&quot;font-family: helvetica, arial, sans-serif;&quot;&gt;&lt;strong&gt;Our Team and Culture Drive Our Success&lt;/strong&gt;&lt;/span&gt;&lt;/p&gt;\n&lt;p&gt;&lt;span style=&quot;font-weight: 400; font-family: helvetica, arial, sans-serif;&quot;&gt;Our team is the heart of our culture.&amp;nbsp; We value innovation, collaboration, and curiosity, with a passion for getting things done.&amp;nbsp; We strive to hire and cultivate the best team members and foster a culture of open communication and transparency.&amp;nbsp; We are driven and hard-working but also committed to having fun along the way.&amp;nbsp; We allow OKRs to guide us, assume positive intent, sometimes agree to disagree and commit, honor our commitments, seek to accomplish more with less, and encourage everyone to speak up as our team owns our company’s success.&lt;/span&gt;&lt;/p&gt;\n&lt;p&gt;&lt;span style=&quot;font-family: helvetica, arial, sans-serif;&quot;&gt;&lt;span style=&quot;font-weight: 400;&quot;&gt;You can read more about our team and how we work &lt;/span&gt;&lt;a href=&quot;https://www.modemobile.com/team&quot; target=&quot;_blank&quot;&gt;here&lt;/a&gt;.&lt;/span&gt;&lt;/p&gt;\n&lt;p&gt;&lt;span style=&quot;font-family: helvetica, arial, sans-serif;&quot;&gt;&lt;strong&gt;The Role&lt;/strong&gt;&lt;/span&gt;&lt;/p&gt;\n&lt;p&gt;We&#39;re hiring an &lt;strong&gt;Ad Monetization Manager&lt;/strong&gt; to optimize monetization and revenue yield across our growing portfolio of mobile apps, with a primary focus on ad monetization. This is a highly strategic and analytical role, working cross-functionally with product, data and analytics, growth, and advertising partners to ensure Mode is maximizing revenue across our inventory, offers, and audiences.&lt;/p&gt;\n&lt;p&gt;The Ad Monetization Manager will own and grow our ad monetization surfaces, managing ad providers and demand sources, managing pricing floors, analyzing performance, and driving data-informed decisions that grow total and per-user revenue.&lt;/p&gt;\n&lt;p&gt;This is a high-impact, high-autonomy, fully remote role with significant visibility and upside, ideal for someone with strong adtech experience, an AI-native way of working, and a bias for driving measurable results.&lt;/p&gt;\n&lt;p&gt;&lt;strong&gt;What You’ll Do&lt;/strong&gt;&lt;/p&gt;\n&lt;ul&gt;\n&lt;li&gt;Develop and own Mode&#39;s monetization and yield strategy including waterfall management, mediation setup, ad placement configuration across the portfolio&lt;/li&gt;\n&lt;li&gt;Design and optimize in-app ad placements, formats and user segmentation strategies to improve ARPDAU, eCPM, fill rate and overall LTV.&amp;nbsp;&lt;/li&gt;\n&lt;li&gt;Build and maintain relationships with ad network partners and account managers to maximise performance.&amp;nbsp;&lt;/li&gt;\n&lt;li&gt;",
+   "departments": [
+    {
+     "id": 4141002002,
+     "name": "Monetization",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 4140301002,
+     "name": "Remote",
+     "location": "Remote",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": "<p><strong>We use Greenhouse's AI-powered Talent Matching tool to compare your application against our job requirements. To opt out, click \"Learn more\" and use the match score settings at the bottom of the page.</strong></p>",
+   "include_ai_disclaimer": true,
+   "ai_opt_out_request_url": "http://app2.greenhouse.io/ai_opt_out_request/job_post/8785529002/ai_opt_out"
+  },
+  {
+   "absolute_url": "https://www.modemobile.com/open-role?gh_jid=8525468002",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": false
+    }
+   ],
+   "internal_job_id": 6405080002,
+   "location": {
+    "name": "Remote"
+   },
+   "metadata": null,
+   "id": 8525468002,
+   "updated_at": "2026-09-23T13:59:04-04:00",
+   "requisition_id": "221",
+   "title": "Chief of Network Effects & Growth - NGL  (Remote)",
+   "company_name": "Mode Mobile",
+   "first_published": "2026-07-27T10:58:57-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;p&gt;&lt;strong&gt;The Story&lt;/strong&gt;&lt;/p&gt;\n&lt;p&gt;This isn’t a “build it from scratch” play. The rocket’s already off the pad. We’re talking about NGL, a viral Gen-Z social platform with 100+ million monthly active users, a raw, unfiltered space where people can be real, curious, and connected.&lt;/p&gt;\n&lt;p&gt;Recently joined Mode’s rocket-fuel portfolio, this app is already a cultural phenomenon; now it’s time to turn momentum into mastery. The business already generates mid-eight-figure annual revenue, with headroom to grow profitability through subscriptions, ads, global expansion, and new formats. It’s the next evolution of anonymous, authentic connection.&lt;/p&gt;\n&lt;p&gt;We’re looking for a General Manager who sees the matrix, a product-obsessed builder who can scale something massive without killing its magic. Someone who instinctively understands why people share secrets online, why virality strikes at 2 a.m., and how to turn that energy into a thriving business. You know how to translate engagement into sustainable revenue growth through ad innovation, conversion optimization, and scalable monetization models.&lt;/p&gt;\n&lt;p&gt;&lt;strong&gt;The Mission&lt;/strong&gt;&lt;/p&gt;\n&lt;p&gt;Take what’s already winning and make it legendary. Lead this app like it’s your own company, owning strategy, product, growth, and revenue end-to-end. You’ll have full license to move fast, experiment hard, and make the decisions that shape culture.&lt;/p&gt;\n&lt;p&gt;&lt;strong&gt;This Role’s for Someone Who&lt;/strong&gt;&lt;/p&gt;\n&lt;ul&gt;\n&lt;li&gt;Thinks like a founder, moves like an operator, and executes like a hacker.&lt;/li&gt;\n&lt;li&gt;Thrives on feedback loops over hierarchies.&lt;/li&gt;\n&lt;li&gt;Knows how to turn chaos into compounding growth.&lt;/li&gt;\n&lt;li&gt;You’ll report directly to the CEO, leading a cross-functional crew that’s half startup, half strike team, and scaling one of the most viral platforms into its next phase of dominance.&lt;/li&gt;\n&lt;/ul&gt;\n&lt;p&gt;&lt;strong&gt;What You&#39;ll Do&lt;/strong&gt;&lt;/p&gt;\n&lt;ul&gt;\n&lt;li&gt;Own the universe. P&amp;amp;L, team, and strategy, it’s yours.&lt;/li&gt;\n&lt;li&gt;Turn good into unstoppable. Take a thriving app and evolve it into a long-term cultural force.&lt;/li&gt;\n&lt;li&gt;Monetize creatively. Build smarter ad ecosystems, better subscription experiences, and new revenue plays we haven’t dreamed up yet.&lt;/li&gt;\n&lt;li&gt;Identify high-ROI monetization opportunities that increase LTV without compromising user experience and retention.&lt;/li&gt;\n&lt;li&gt;Ship constantly. Hypothesize → test → ship → learn → repeat.&lt;/li&gt;\n&lt;li&gt;Stay dangerously curious. Watch what Gen-Z does next and build ahead of it.&lt;/li&gt;\n&lt;li&gt;Grow the tribe. Recruit top talent, build the culture, protect the weirdness.&lt;/li&gt;\n&lt;li&gt;Scale with soul. Keep the app’s authenticity intact as we expand globally.&lt;/li&gt;\n&lt;li&gt;Be the bridge. Connect your scrappy team with Mode’s shared growth, data, and product firepower.&lt;/li&gt;\n&lt;/ul&gt;\n&lt;p&gt;&lt;strong&gt;What You Bring&amp;nbsp;&lt;/strong&gt;&lt;/p&gt;\n&lt;ul&gt;\n&lt;li&gt;5+ years running product, growth, or GM roles at viral consumer apps, and social, creator, or messaging DNA required.&lt;/li&gt;\n&lt;li&gt;A proven record of scaling and evolving, not just chasing downloads, but building real engagement.&lt;/li&gt;\n&lt;li&gt;Experience driving monetization strategy, especially across ad-based and subscription-driven models, with measurable impact on revenue and profit.&lt;/li&gt;\n&lt;li&gt;Deep empathy for online communities and the messy beauty of human behavior.&lt;/li&gt;\n&lt;li&gt;Strong instincts backed by data fluency, you love retention curves, funnel drop-offs, and aha-moments.&lt;/li&gt;\n&lt;li&gt;Comfort in ambiguity. Grit under pressure. Confidence without ego.&lt;/li&gt;\n&lt;li&gt;",
+   "departments": [
+    {
+     "id": 4105240002,
+     "name": "Executive",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 4140301002,
+     "name": "Remote",
+     "location": "Remote",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": "<p><strong>We use Greenhouse's AI-powered Talent Matching tool to compare your application against our job requirements. To opt out, click \"Learn more\" and use the match score settings at the bottom of the page.</strong></p>",
+   "include_ai_disclaimer": true,
+   "ai_opt_out_request_url": "http://app2.greenhouse.io/ai_opt_out_request/job_post/8525468002/ai_opt_out"
+  },
+  {
+   "absolute_url": "https://www.modemobile.com/open-role?gh_jid=8685684002",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": false
+    }
+   ],
+   "education": "education_optional",
+   "internal_job_id": 6470076002,
+   "location": {
+    "name": "Remote"
+   },
+   "metadata": null,
+   "id": 8685684002,
+   "updated_at": "2026-10-09T11:32:54-04:00",
+   "requisition_id": "236",
+   "title": "Creative Strategist (Remote)",
+   "company_name": "Mode Mobile",
+   "first_published": "2026-08-05T15:39:55-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;p&gt;&lt;span style=&quot;font-family: helvetica, arial, sans-serif;&quot;&gt;&lt;strong&gt;Who We Are (&lt;a href=&quot;http://www.modemobile.com/&quot; target=&quot;_blank&quot;&gt;Mode.Inc&lt;/a&gt;)&lt;/strong&gt;&lt;/span&gt;&lt;/p&gt;\n&lt;p&gt;Mode is a fast-growing technology company building businesses at the intersection of AI, data, mobile apps, and digital experiences. Our portfolio of mobile apps and digital products reaches 100M+ monthly active users across a global audience. We continue to accelerate growth through product innovation, strategic acquisitions, and emerging business opportunities.&lt;/p&gt;\n&lt;p&gt;Mode was recognized by Deloitte as the &lt;strong&gt;#1 fastest-growing software company in North America&lt;/strong&gt; on the 2023 Technology Fast 500. Today, we are building our next phase of growth, including expanding Mode&#39;s AI and data business and developing direct relationships with companies that can benefit from the data and capabilities we have built.&lt;/p&gt;\n&lt;p&gt;&lt;span style=&quot;font-family: helvetica, arial, sans-serif;&quot;&gt;&lt;strong&gt;Our Team and Culture Drive Our Success&lt;/strong&gt;&lt;/span&gt;&lt;/p&gt;\n&lt;p&gt;&lt;span style=&quot;font-weight: 400; font-family: helvetica, arial, sans-serif;&quot;&gt;Our team is the heart of our culture.&amp;nbsp; We value innovation, collaboration, and curiosity, with a passion for getting things done.&amp;nbsp; We strive to hire and cultivate the best team members and foster a culture of open communication and transparency.&amp;nbsp; We are driven and hard-working but also committed to having fun along the way.&amp;nbsp; We allow OKRs to guide us, assume positive intent, sometimes agree to disagree and commit, honor our commitments, seek to accomplish more with less, and encourage everyone to speak up as our team owns our company’s success.&lt;/span&gt;&lt;/p&gt;\n&lt;p&gt;&lt;span style=&quot;font-family: helvetica, arial, sans-serif;&quot;&gt;&lt;span style=&quot;font-weight: 400;&quot;&gt;You can read more about our team and how we work &lt;/span&gt;&lt;a href=&quot;https://www.modemobile.com/team&quot; target=&quot;_blank&quot;&gt;here&lt;/a&gt;.&lt;/span&gt;&lt;/p&gt;\n&lt;p&gt;&lt;span style=&quot;font-family: helvetica, arial, sans-serif;&quot;&gt;&lt;strong&gt;The Role&lt;/strong&gt;&lt;/span&gt;&lt;/p&gt;\n&lt;p&gt;We&#39;re looking for a mid-senior UA Creative Strategist to help scale creative production for a fast-growing portfolio of consumer apps spanning rewarded/earn, utility, and viral/social categories. You&#39;ll partner closely with our Ad Creative Lead, on creative vision and brand, and with our UA Managers, to translate performance data and growth priorities into concepts, briefs, and scripts. You&#39;ll own creative strategy for a dedicated vertical of the portfolio (Rewarded / Earn Apps), working alongside our other Strategists/Designers, and distill your concepts into briefs that a production team of in-house producers and contractors can execute at scale. This is a mid-senior individual contributor role reporting to the Director of UA &amp;amp; Growth, with day-to-day creative direction from our Ad Creative Lead.&lt;/p&gt;\n&lt;p&gt;&lt;strong&gt;Who You Are and What You&#39;ll Do&lt;/strong&gt;&lt;/p&gt;\n&lt;ul&gt;\n&lt;li&gt;Own creative strategy for a dedicated app vertical (Rewarded / Earn Apps), developing concepts, briefs, and scripts that translate performance data and growth priorities into testable creative&lt;/li&gt;\n&lt;li&gt;Partner with our Ad Creative Lead on overall creative vision, brand consistency, and team brainstorms, while driving vertical-specific execution&amp;nbsp;&lt;/li&gt;\n&lt;li&gt;Write briefs and scripts that scale — targeting 15-20 net-new concepts per week with 4-5 variations each, handed off to our producer/editor team and contractor network for execution&lt;/li&gt;\n&lt;li&gt;",
+   "departments": [
+    {
+     "id": 4005457002,
+     "name": "Marketing",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 4140301002,
+     "name": "Remote",
+     "location": "Remote",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": "<p><strong>We use Greenhouse's AI-powered Talent Matching tool to compare your application against our job requirements. To opt out, click \"Learn more\" and use the match score settings at the bottom of the page.</strong></p>",
+   "include_ai_disclaimer": true,
+   "ai_opt_out_request_url": "http://app2.greenhouse.io/ai_opt_out_request/job_post/8685684002/ai_opt_out"
+  },
+  {
+   "absolute_url": "https://www.modemobile.com/open-role?gh_jid=8917889002",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": false
+    }
+   ],
+   "education": "education_optional",
+   "internal_job_id": 6573172002,
+   "location": {
+    "name": "Remote"
+   },
+   "metadata": null,
+   "id": 8917889002,
+   "updated_at": "2026-10-29T12:17:56-04:00",
+   "requisition_id": "258",
+   "title": "Customer Success Associate (Remote)",
+   "company_name": "Mode Mobile",
+   "first_published": "2026-10-26T16:08:59-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;p&gt;&lt;span style=&quot;font-family: helvetica, arial, sans-serif;&quot;&gt;&lt;strong&gt;Who We Are (&lt;a href=&quot;http://www.modemobile.com/&quot; target=&quot;_blank&quot;&gt;Mode.Inc&lt;/a&gt;)&lt;/strong&gt;&lt;/span&gt;&lt;/p&gt;\n&lt;p&gt;Mode is a fast-growing technology company building businesses at the intersection of AI, data, mobile apps, and digital experiences. Our portfolio of mobile apps and digital products reaches 100M+ monthly active users across a global audience. We continue to accelerate growth through product innovation, strategic acquisitions, and emerging business opportunities.&lt;/p&gt;\n&lt;p&gt;Mode was recognized by Deloitte as the &lt;strong&gt;#1 fastest-growing software company in North America&lt;/strong&gt; on the 2023 Technology Fast 500. Today, we are building our next phase of growth, including expanding Mode&#39;s AI and data business and developing direct relationships with companies that can benefit from the data and capabilities we have built.&lt;/p&gt;\n&lt;p&gt;&lt;span style=&quot;font-family: helvetica, arial, sans-serif;&quot;&gt;&lt;strong&gt;Our Team and Culture Drive Our Success&lt;/strong&gt;&lt;/span&gt;&lt;/p&gt;\n&lt;p&gt;&lt;span style=&quot;font-weight: 400; font-family: helvetica, arial, sans-serif;&quot;&gt;Our team is the heart of our culture.&amp;nbsp; We value innovation, collaboration, and curiosity, with a passion for getting things done.&amp;nbsp; We strive to hire and cultivate the best team members and foster a culture of open communication and transparency.&amp;nbsp; We are driven and hard-working but also committed to having fun along the way.&amp;nbsp; We allow OKRs to guide us, assume positive intent, sometimes agree to disagree and commit, honor our commitments, seek to accomplish more with less, and encourage everyone to speak up as our team owns our company’s success.&lt;/span&gt;&lt;/p&gt;\n&lt;p&gt;&lt;span style=&quot;font-family: helvetica, arial, sans-serif;&quot;&gt;&lt;span style=&quot;font-weight: 400;&quot;&gt;You can read more about our team and how we work &lt;/span&gt;&lt;a href=&quot;https://www.modemobile.com/team&quot; target=&quot;_blank&quot;&gt;here&lt;/a&gt;.&lt;/span&gt;&lt;/p&gt;\n&lt;p&gt;&lt;strong&gt;The Role&lt;/strong&gt;&lt;/p&gt;\n&lt;p&gt;We are looking for an outgoing Customer Service Associate to assist our customers with product/app/offers related inquiries in a swift, proficient, and friendly manner. The Customer Service Associate will be instrumental in customer retention by addressing their concerns and issues via email, chat, and social media, with a professional, positive approach. To ensure success in this position you will have the ability to maintain a sound knowledge of the product, app, and offers and be an effective communicator.&amp;nbsp;&lt;/p&gt;\n&lt;p&gt;This position will support our Customer Success team&#39;s efforts to expand customer support coverage, including weekends&lt;strong&gt;.&lt;/strong&gt; &lt;strong&gt;Candidates should be available to work a consistent five-day schedule that includes weekend shifts, either Tuesday through Saturday &lt;/strong&gt;&lt;strong&gt;or&lt;/strong&gt;&lt;strong&gt; Friday through Tuesday.&lt;/strong&gt;&lt;/p&gt;\n&lt;h4&gt;&lt;strong&gt;Who You Are and What You’ll Do:&lt;/strong&gt;&lt;/h4&gt;\n&lt;ul&gt;\n&lt;li&gt;Provide highest-level, personalized support to customers, responding to and resolving issues promptly and appropriately&lt;/li&gt;\n&lt;li&gt;Attend training sessions to grow and maintain knowledge of products, services, offers, policies, and to develop customer service skills&lt;/li&gt;\n&lt;li&gt;Identify customer needs, help customers find solutions to their unique scenarios&lt;/li&gt;\n&lt;li&gt;Resolve email, chat, and social media customer inquiries&lt;/li&gt;\n&lt;li&gt;Forward and escalate inquiries to relevant individuals and departments&lt;/li&gt;\n&lt;li&gt;Update customer information as required&lt;/li&gt;\n&lt;li&gt;",
+   "departments": [
+    {
+     "id": 4071515002,
+     "name": "Customer Success",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 4140301002,
+     "name": "Remote",
+     "location": "Remote",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": "<p><strong>We use Greenhouse's AI-powered Talent Matching tool to compare your application against our job requirements. To opt out, click \"Learn more\" and use the match score settings at the bottom of the page.</strong></p>",
+   "include_ai_disclaimer": true,
+   "ai_opt_out_request_url": "http://app2.greenhouse.io/ai_opt_out_request/job_post/8917889002/ai_opt_out"
+  },
+  {
+   "absolute_url": "https://www.modemobile.com/open-role?gh_jid=8882451002",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": false
+    }
+   ],
+   "internal_job_id": 6557086002,
+   "location": {
+    "name": "Remote"
+   },
+   "metadata": null,
+   "id": 8882451002,
+   "updated_at": "2026-10-29T12:09:43-04:00",
+   "requisition_id": "253",
+   "title": "Data Partnerships | $50K+ Sign-Up Bonus Referral Opportunity",
+   "company_name": "Mode Mobile",
+   "first_published": "2026-10-09T17:35:37-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;h4 style=&quot;text-align: center;&quot;&gt;&lt;span style=&quot;text-decoration: underline;&quot;&gt;&lt;strong&gt;Global Opportunity | No Cap on Qualified Referrals | No Exclusivity Required&lt;/strong&gt;&lt;/span&gt;&lt;/h4&gt;\n&lt;p&gt;&lt;strong&gt;OUR NETWORK COULD BE WORTH $50K+.&lt;/strong&gt;&lt;/p&gt;\n&lt;p&gt;Know a U.S. company with 20+ full-time employees and at least three years of operating history that could be a strong customer for Mode? Make the introduction. If Mode closes the deal with the customer, you can earn &lt;strong&gt;$50,000 or a 6% customer sign-up bonus - whichever is greater.&lt;/strong&gt;&lt;/p&gt;\n&lt;p&gt;There is no cap on the number of companies you can refer. You do not need to leave your current role, commit to working for Mode, or take on a full-time position.&lt;/p&gt;\n&lt;p&gt;Mode is expanding its relationships across the AI and data ecosystem. We are looking for exceptional networkers, relationship builders, and business development professionals who can open doors to U.S.-based companies and help us accelerate new customer relationships.&lt;/p&gt;\n&lt;p&gt;&lt;strong&gt;ABOUT MODE&lt;/strong&gt;&lt;/p&gt;\n&lt;p&gt;Mode is a fast-growing technology company building businesses at the intersection of AI, data, mobile apps, and digital experiences. Our portfolio of mobile apps and digital products reaches 100M+ monthly active users across a global audience. We continue to accelerate growth through product innovation, strategic acquisitions, and emerging business opportunities.&lt;/p&gt;\n&lt;p&gt;Mode was recognized by Deloitte as the &lt;strong&gt;#1 fastest-growing software company in North America&lt;/strong&gt; on the 2023 Technology Fast 500. Today, we are building our next phase of growth, including expanding Mode&#39;s AI and data business and developing direct relationships with companies that can benefit from the data and capabilities we have built.&lt;/p&gt;\n&lt;p&gt;We are ambitious about where we are headed, with a targeted IPO in Q1 2028. This referral opportunity is one way to participate in that growth, whether you simply make valuable introductions or ultimately build a deeper relationship with Mode.&lt;/p&gt;\n&lt;p&gt;&lt;strong&gt;How It Works&lt;/strong&gt;&lt;/p&gt;\n&lt;ol&gt;\n&lt;li&gt;&lt;strong&gt; JOIN. &lt;/strong&gt;Sign up for Mode&#39;s affiliate program at &lt;a href=&quot;http://bizbuydata.com/50k&quot;&gt;bizbuydata.com/50k&lt;/a&gt;.&amp;nbsp;&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt; REFER. &lt;/strong&gt;Introduce us to one or more U.S.-based companies with the following criteria:&lt;/li&gt;\n&lt;/ol&gt;\n&lt;ul&gt;\n&lt;li&gt;U.S.-based companies with at least 20 employees and a minimum of three years of operating experience.&lt;/li&gt;\n&lt;li&gt;Accounting, Law firms, IT, sales, and other businesses with a high volume of desk work.&lt;/li&gt;\n&lt;li&gt;The more years of operating history and desk office employees, the stronger the fit.&amp;nbsp;&lt;/li&gt;\n&lt;/ul&gt;\n&lt;p&gt;You’ll provide your customer referral information during the Affiliate Program sign-up process.&lt;/p&gt;\n&lt;ol&gt;\n&lt;li&gt;&lt;strong&gt; WE EVALUATE &amp;amp; CLOSE. &lt;/strong&gt;Mode reviews the opportunity and, if there is a fit, takes it from there.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt; YOU EARN. &lt;/strong&gt;If Mode closes your qualifying referral, you receive $50,000 or 6% customer sign-up bonus, whichever is greater. Payment will be made within 30 days of Mode receiving payment from the applicable customer.&amp;nbsp; subject to the terms of the affiliate program. The 6% bonus will be calculated on net revenue received by Mode from the customer.&lt;/li&gt;\n&lt;/ol&gt;\n&lt;p&gt;&lt;strong&gt;One referral. $50K+. Multiple successful referrals? Multiple earning opportunities. There is no cap.&lt;/strong&gt;&lt;/p&gt;\n&lt;p&gt;&lt;strong&gt;You Might Be Perfect for This If...&lt;/strong&gt;&lt;/p&gt;\n&lt;p&gt;You know people, and the right people know you.&lt;/p&gt;",
+   "departments": [
+    {
+     "id": 4099629002,
+     "name": "Revenue",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 4140301002,
+     "name": "Remote",
+     "location": "Remote",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": "<p><strong>We use Greenhouse's AI-powered Talent Matching tool to compare your application against our job requirements. To opt out, click \"Learn more\" and use the match score settings at the bottom of the page.</strong></p>",
+   "include_ai_disclaimer": true,
+   "ai_opt_out_request_url": "http://app2.greenhouse.io/ai_opt_out_request/job_post/8882451002/ai_opt_out"
+  }
+ ],
+ "meta": {
+  "total": 5
+ }
+}

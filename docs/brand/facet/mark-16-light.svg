@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 32 32"><title>OfferFinch</title><mask id="m-facet-16" maskUnits="userSpaceOnUse" x="0" y="0" width="32" height="32"><rect width="32" height="32" fill="#000"/>
+	<path d="M24 8 20 4 14 6 4 18 0 28 8 25 14 28 22 24 26 15Z" fill="#fff"/>
+	<path d="M24 8 32 12 26 15Z" fill="#fff"/>
+	<rect x="18" y="8" width="2" height="2" fill="#000"/></mask><g mask="url(#m-facet-16)">
+	<path d="M24 8 20 4 14 6 4 18 0 28 8 25 14 28 22 24 26 15Z" fill="#111113"/>
+	<path d="M24 8 32 12 26 15Z" fill="#15803d"/>
+	<rect x="18" y="8" width="2" height="2" fill="none"/></g></svg>

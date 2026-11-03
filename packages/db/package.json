@@ -1,0 +1,30 @@
+{
+	"name": "@offerfinch/db",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./*": "./src/*.ts"
+	},
+	"scripts": {
+		"check-types": "tsc --noEmit",
+		"db:generate": "drizzle-kit generate && node scripts/migrations-index.mjs",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@offerfinch/core": "workspace:*",
+		"better-sqlite3": "13.0.3",
+		"drizzle-orm": "catalog:",
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@offerfinch/config": "workspace:*",
+		"@types/better-sqlite3": "9.6.0",
+		"@types/node": "catalog:",
+		"drizzle-kit": "1.0.0-rc.5",
+		"typescript": "catalog:",
+		"vitest": "^5.0.5",
+		"@orpc/client": "catalog:",
+		"@orpc/server": "catalog:"
+	}
+}

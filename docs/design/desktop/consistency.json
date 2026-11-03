@@ -1,0 +1,211 @@
+{
+	"01-onboarding-welcome": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 84,
+		"contentInset": 24,
+		"sectionGap": null,
+		"rowHeight": 57,
+		"formRowHeight": null,
+		"bodySize": "16px"
+	},
+	"02-onboarding-connect-ai": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 84,
+		"contentInset": 24,
+		"sectionGap": [32],
+		"rowHeight": null,
+		"formRowHeight": 63,
+		"bodySize": "16px"
+	},
+	"03-onboarding-resume": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 84,
+		"contentInset": 24,
+		"sectionGap": null,
+		"rowHeight": null,
+		"formRowHeight": 63,
+		"bodySize": "16px"
+	},
+	"04-home-empty": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 20,
+		"contentInset": 24,
+		"sectionGap": [32],
+		"rowHeight": 62,
+		"formRowHeight": null,
+		"bodySize": "16px"
+	},
+	"05-home": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 20,
+		"contentInset": 24,
+		"sectionGap": [32],
+		"rowHeight": 62,
+		"formRowHeight": null,
+		"bodySize": "16px"
+	},
+	"06-inbox": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 20,
+		"contentInset": null,
+		"sectionGap": null,
+		"rowHeight": null,
+		"formRowHeight": null,
+		"bodySize": "16px"
+	},
+	"06b-inbox-match": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 20,
+		"contentInset": null,
+		"sectionGap": null,
+		"rowHeight": null,
+		"formRowHeight": null,
+		"bodySize": "16px"
+	},
+	"07-inbox-applied": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 20,
+		"contentInset": null,
+		"sectionGap": null,
+		"rowHeight": null,
+		"formRowHeight": null,
+		"bodySize": "16px"
+	},
+	"08-questions": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 20,
+		"contentInset": null,
+		"sectionGap": null,
+		"rowHeight": null,
+		"formRowHeight": null,
+		"bodySize": "16px"
+	},
+	"09-applied": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 20,
+		"contentInset": null,
+		"sectionGap": null,
+		"rowHeight": null,
+		"formRowHeight": null,
+		"bodySize": "16px"
+	},
+	"10-rejected": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 20,
+		"contentInset": null,
+		"sectionGap": null,
+		"rowHeight": null,
+		"formRowHeight": null,
+		"bodySize": "16px"
+	},
+	"11-profile": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 20,
+		"contentInset": 24,
+		"sectionGap": null,
+		"rowHeight": null,
+		"formRowHeight": null,
+		"bodySize": "16px"
+	},
+	"11b-profile-experience": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 20,
+		"contentInset": 24,
+		"sectionGap": null,
+		"rowHeight": 63,
+		"formRowHeight": null,
+		"bodySize": "16px"
+	},
+	"12-settings-models": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 20,
+		"contentInset": 24,
+		"sectionGap": [32],
+		"rowHeight": null,
+		"formRowHeight": 63,
+		"bodySize": "16px"
+	},
+	"13-settings-sources": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 20,
+		"contentInset": 24,
+		"sectionGap": [32],
+		"rowHeight": null,
+		"formRowHeight": 63,
+		"bodySize": "16px"
+	},
+	"13b-settings-job-search": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 20,
+		"contentInset": 24,
+		"sectionGap": [32],
+		"rowHeight": null,
+		"formRowHeight": 63,
+		"bodySize": "16px"
+	},
+	"14-settings-spending": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 20,
+		"contentInset": 24,
+		"sectionGap": [32],
+		"rowHeight": 40,
+		"formRowHeight": 78,
+		"bodySize": "16px"
+	},
+	"15-settings-general": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 20,
+		"contentInset": 24,
+		"sectionGap": [32],
+		"rowHeight": null,
+		"formRowHeight": 79,
+		"bodySize": "16px"
+	},
+	"16-command-menu": {
+		"header": 52,
+		"titleSize": "14px",
+		"titleOffset": 0,
+		"headerInset": 20,
+		"contentInset": 24,
+		"sectionGap": [32],
+		"rowHeight": 62,
+		"formRowHeight": null,
+		"bodySize": "16px"
+	}
+}

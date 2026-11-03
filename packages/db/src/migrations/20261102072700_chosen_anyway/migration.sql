@@ -1,0 +1,1 @@
+ALTER TABLE `applications` ADD `chosen_anyway_at` integer;

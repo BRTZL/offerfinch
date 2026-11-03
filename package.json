@@ -1,0 +1,24 @@
+{
+	"name": "offerfinch",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "pnpm --filter @offerfinch/desktop dev",
+		"build": "pnpm --filter @offerfinch/desktop build",
+		"check-types": "pnpm -r check-types",
+		"check": "biome check --write .",
+		"test": "pnpm --filter @offerfinch/core --filter @offerfinch/db --filter @offerfinch/runner --filter @offerfinch/local-llm --filter @offerfinch/desktop test",
+		"lint": "biome check .",
+		"knip": "knip",
+		"lint:ci": "node --test scripts/check-biome-warnings.test.mjs && node scripts/check-biome-warnings.mjs"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.6.2",
+		"@offerfinch/config": "workspace:*",
+		"@types/node": "catalog:",
+		"knip": "^6.44.1",
+		"lefthook": "^2.2.1",
+		"typescript": "catalog:"
+	},
+	"packageManager": "pnpm@11.9.0"
+}

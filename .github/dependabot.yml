@@ -1,0 +1,40 @@
+# Dependency updates, weekly. Electron first: it carries Chromium's security fixes and the app
+# reads untrusted pages in hidden tabs, so it has a group of its own that never waits behind the
+# others (security advisories also open PRs at once when Dependabot security updates are on in
+# the repository settings). Other minor and patch updates come as one PR; majors come one by one
+# so a breaking change is reviewed on its own. CI (ci.yml) checks every PR.
+#
+# Dependabot allows one entry per ecosystem and directory, hence the groups instead of two npm
+# entries.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      electron:
+        patterns:
+          - electron
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+        exclude-patterns:
+          - electron
+    labels:
+      - dependencies
+    open-pull-requests-limit: 6
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns:
+          - "*"
+    labels:
+      - dependencies

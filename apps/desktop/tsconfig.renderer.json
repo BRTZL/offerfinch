@@ -1,0 +1,18 @@
+{
+	"extends": "@offerfinch/config/tsconfig.base.json",
+	"compilerOptions": {
+		"lib": ["ESNext", "DOM", "DOM.Iterable"],
+		"jsx": "react-jsx",
+		"types": ["node", "vite/client"],
+		"noEmit": true,
+		"noUnusedLocals": false,
+		"paths": {
+			"@/*": ["./src/renderer/*"]
+		}
+	},
+	"include": [
+		"src/renderer/**/*.ts",
+		"src/renderer/**/*.tsx",
+		"src/shared/**/*.ts"
+	]
+}

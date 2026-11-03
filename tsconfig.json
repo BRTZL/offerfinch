@@ -1,0 +1,3 @@
+{
+	"extends": "@offerfinch/config/tsconfig.base.json"
+}

@@ -1,0 +1,109 @@
+# Releases the macOS app when a v<version> tag is pushed (pnpm --filter @offerfinch/desktop
+# release patch): tests, builds arm64 and x64, signs with the Developer ID, notarizes, and
+# publishes a GitHub Release with the DMGs (first install) and the zips plus latest-mac.yml
+# (over-the-air updates). Installed apps find it within 6 hours. See docs/releasing.md.
+name: Desktop release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mac:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # Install scripts are skipped: the root postinstall generates server env typings this
+      # build does not use, better-sqlite3 ships N-API prebuilds for both Mac arches, and
+      # electron-builder downloads its own Electron for each arch.
+      - name: Install
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Check the version matches the tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(node -p "require('./apps/desktop/package.json').version")
+          test "v$version" = "${GITHUB_REF_NAME}" || { echo "Tag ${GITHUB_REF_NAME} does not match version $version"; exit 1; }
+
+      - name: Tests
+        run: |
+          pnpm --filter @offerfinch/core test
+          pnpm --filter @offerfinch/db test
+          pnpm --filter @offerfinch/runner test
+          pnpm --filter @offerfinch/desktop test
+
+      # The App Store Connect key is written to a file for notarization and removed afterwards.
+      - name: Signing and notarization credentials
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          test -n "$APPLE_API_KEY_P8" || { echo "::error::APPLE_API_KEY_P8 is not set (docs/releasing.md)"; exit 1; }
+          key="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPLE_API_KEY_P8" > "$key"
+          echo "APPLE_API_KEY=$key" >> "$GITHUB_ENV"
+
+      - name: Build, sign and notarize
+        working-directory: apps/desktop
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          node scripts/build.mjs --production
+          # Stamped so the app turns on updates; local builds lack it (main/index.ts releaseBuild).
+          pnpm exec electron-builder --mac --arm64 --x64 --publish never -c.extraMetadata.offerfinchRelease=true
+
+      - name: Verify the signature and notarization
+        working-directory: apps/desktop/dist
+        run: |
+          for app in mac/OfferFinch.app mac-arm64/OfferFinch.app; do
+            codesign --verify --deep --strict "$app"
+            codesign -dvv "$app" 2>&1 | grep -q "Authority=Developer ID Application"
+            spctl --assess --type execute -v "$app"
+            xcrun stapler validate "$app"
+          done
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: apps/desktop/dist
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            OfferFinch-*.dmg OfferFinch-*-mac.zip OfferFinch-*-mac.zip.blockmap latest-mac.yml \
+            --title "OfferFinch ${GITHUB_REF_NAME#v}" \
+            --generate-notes
+
+      - name: Keep the build (manual runs)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: offerfinch-mac
+          path: |
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*-mac.zip
+            apps/desktop/dist/latest-mac.yml
+
+      - name: Remove the key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"

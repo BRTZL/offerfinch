@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # Reads the exact pnpm version from package.json's packageManager.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm rebuild better-sqlite3
+      # Boundary tests use synthetic homes and local capture servers, never a real login.
+      - name: Install the tested Codex CLI
+        run: |
+          mkdir -p "$RUNNER_TEMP/codex-tests"
+          pnpm --dir "$RUNNER_TEMP/codex-tests" add @openai/codex@0.166.0 --ignore-scripts
+          # The sandbox needs the native executable, not pnpm's shell/Node wrapper.
+          node scripts/codex-test-path.mjs "$RUNNER_TEMP/codex-tests/node_modules" >> "$GITHUB_PATH"
+      # Existing diagnostics are budgeted per file/rule/message; new warnings fail.
+      - run: pnpm lint:ci
+      - run: pnpm -r check-types
+      - name: Unit tests
+        run: pnpm test
+      - name: Browser safety tests (headless system Chrome)
+        run: pnpm --filter @offerfinch/core test:browser
+      - run: pnpm knip

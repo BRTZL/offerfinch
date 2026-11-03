@@ -1,0 +1,1 @@
+ALTER TABLE `applications` ADD `prepare_requested_at` integer;

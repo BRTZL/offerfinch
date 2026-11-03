@@ -1,0 +1,24 @@
+{
+	"name": "@offerfinch/local-llm",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./*": "./src/*.ts"
+	},
+	"scripts": {
+		"check-types": "tsc --noEmit",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@anthropic-ai/claude-agent-sdk": "0.3.315",
+		"@offerfinch/core": "workspace:*",
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@offerfinch/config": "workspace:*",
+		"@types/node": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "^5.0.5"
+	}
+}

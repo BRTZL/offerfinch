@@ -1,0 +1,26 @@
+packages:
+  - apps/*
+  - packages/*
+allowBuilds:
+  esbuild: true
+  lefthook: true
+  better-sqlite3: true
+  electron: true
+  electron-winstaller: false
+catalog:
+  zod: ^4.5.4
+  typescript: ^6.0.3
+  "@types/node": ^26.4.1
+  "@orpc/server": ^1.15.6
+  lucide-react: ^1.41.0
+  react: ^19.2.8
+  react-dom: ^19.2.8
+  sonner: ^2.0.8
+  "@orpc/client": ^1.15.6
+  "@types/react": ^19.2.18
+  "@types/react-dom": ^19.2.7
+  tailwindcss: ^4.3.3
+  drizzle-orm: 1.0.0-rc.5
+minimumReleaseAgeExclude:
+  - "@tanstack/react-virtual@3.14.25"
+  - "@tanstack/virtual-core@3.19.10"

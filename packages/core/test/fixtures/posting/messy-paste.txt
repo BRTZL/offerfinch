@@ -1,0 +1,22 @@
+Jump to content
+
+Platform Engineer
+
+
+
+Quarry Systems · Berlin
+Apply now
+Save job
+
+About the job
+We are hiring a platform engineer to run our build and deploy tooling.		 It is on-site in Berlin.
+
+
+Requirements:
+•  Go and Kubernetes
+• Five years of backend work
+    • Terraform (nice to have)
+1) Relocation is not offered
+
+This website uses cookies. Accept all cookies
+Share this job

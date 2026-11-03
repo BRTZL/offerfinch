@@ -1,0 +1,18 @@
+Acme Robotics builds fleet software for warehouse robots. We are hiring a Senior Full-Stack Engineer to own product features end to end, from PostgreSQL schemas and Node.js APIs to React and Next.js front ends.
+
+What you will do
+- Build and run TypeScript services on Node.js and PostgreSQL.
+- Ship React and Next.js interfaces our operators use every day.
+- Design event-driven workflows with queues, retries and webhooks.
+- Review code and help other engineers ship safely.
+
+Requirements
+- 6+ years building production web applications in TypeScript.
+- Strong React, Next.js and Node.js experience.
+- PostgreSQL schema design and query tuning.
+- Experience with Cloudflare Workers or similar serverless platforms.
+- Go is a plus.
+
+Location: fully remote, worldwide. We work in English.
+
+How to apply: send your CV and a short cover letter, and tell us your notice period.

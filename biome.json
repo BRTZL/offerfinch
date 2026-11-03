@@ -1,0 +1,184 @@
+{
+	"$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"ignoreUnknown": false,
+		"includes": [
+			"**",
+			"!docs/design/desktop/src",
+			"!apps/desktop/build/OfferFinch.icon",
+			"!**/dist",
+			"!apps/desktop/out",
+			"!apps/desktop/test-results",
+			"!**/.turbo",
+			"!**/.nx",
+			"!**/dev-dist",
+			"!**/.zed",
+			"!**/.vscode",
+			"!**/src/migrations",
+			"!**/test/fixtures",
+			"!**/*.md"
+		]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab"
+	},
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"correctness": {
+				"useExhaustiveDependencies": "error",
+				"noUnusedImports": "error",
+				"noUnusedVariables": "error",
+				"noUnusedPrivateClassMembers": "error",
+				"noUnusedFunctionParameters": "error"
+			},
+			"nursery": {
+				"useTailwindSortedClasses": {
+					"level": "warn",
+					"fix": "safe"
+				},
+				"noFloatingPromises": "error",
+				"noMisusedPromises": "error",
+				"useExhaustiveSwitchCases": "error"
+			},
+			"style": {
+				"noParameterAssign": "error",
+				"useAsConstAssertion": "error",
+				"useDefaultParameterLast": "error",
+				"useEnumInitializers": "error",
+				"useSelfClosingElements": "error",
+				"useSingleVarDeclarator": "error",
+				"noUnusedTemplateLiteral": "error",
+				"useNumberNamespace": "error",
+				"noInferrableTypes": "error",
+				"noUselessElse": "error",
+				"noNonNullAssertion": "error",
+				"useImportType": "error"
+			},
+			"suspicious": {
+				"noExplicitAny": "error",
+				"noDeprecatedImports": "error",
+				"noImportCycles": "error",
+				"noShadow": "warn"
+			},
+			"complexity": {
+				"noUselessUndefined": "error",
+				"useMaxParams": {
+					"level": "error",
+					"options": {
+						"max": 5
+					}
+				},
+				"noExcessiveCognitiveComplexity": {
+					"level": "error",
+					"options": {
+						"maxAllowedComplexity": 25
+					}
+				},
+				"noExcessiveLinesPerFunction": {
+					"level": "warn",
+					"options": {
+						"maxLines": 150
+					}
+				}
+			},
+			"performance": {
+				"noReExportAll": "warn",
+				"noBarrelFile": "warn"
+			}
+		}
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double"
+		}
+	},
+	"css": {
+		"parser": {
+			"tailwindDirectives": true
+		}
+	},
+	"overrides": [
+		{
+			"includes": ["apps/desktop/src/**", "packages/*/src/**"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noConsole": "error"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["**/test/**", "**/e2e/**", "**/scripts/**"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": {
+							"level": "warn",
+							"options": {
+								"maxAllowedComplexity": 25
+							}
+						},
+						"noExcessiveLinesPerFunction": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": [
+				"apps/desktop/src/main/site-browser.ts",
+				"apps/desktop/src/worker/add-job.ts",
+				"packages/core/src/apply/**",
+				"packages/core/src/sites/**",
+				"packages/core/src/linkedin/runner.ts",
+				"packages/core/src/pipeline/{prepare,providers,sweep}.ts",
+				"packages/core/src/web/provider.ts",
+				"packages/db/src/repository/events.ts",
+				"packages/local-llm/src/{claude,codex}.ts"
+			],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": {
+							"level": "warn",
+							"options": {
+								"maxAllowedComplexity": 25
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": [
+				"packages/core/src/tailor/claims.ts",
+				"packages/db/src/index.ts",
+				"packages/db/src/dashboard.ts",
+				"packages/db/src/repository.ts"
+			],
+			"linter": {
+				"rules": {
+					"performance": {
+						"noBarrelFile": "off",
+						"noReExportAll": "off"
+					}
+				}
+			}
+		}
+	]
+}

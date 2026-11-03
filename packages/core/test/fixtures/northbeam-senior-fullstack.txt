@@ -1,0 +1,67 @@
+Northbeam is a development agency from Barcelona specialising in AI-augmented software development. We don’t just use AI; we are actively rewriting the rules of modern engineering. By combining elite human expertise with advanced agentic workflows, we build end-to-end web and mobile applications faster, smarter, and to a higher standard than ever before.
+We are a boutique agency, not a factory. We believe in remote work, radical transparency, scalable architecture, and partnering with clients who respect our craft, our time, and our standards. 🤝
+
+### Why This Role Matters
+
+The way software is built is undergoing a generational shift. We aren’t waiting to see how it plays out, we are leading the transition.
+We are looking for a Senior Full Stack Engineer who doesn't just use AI tools, but thinks in AI-native workflows. Because you have a deep, foundational understanding of the entire software development lifecycle, from Clean Architecture to DevOps, you know exactly what great software looks like. You will use that expertise to orchestrate AI agents to build elegant, robust, and maintainable systems.
+We need engineers who can leverage AI precisely because they understand what good software looks like end to end.
+You'll be joining a small, senior, and highly-collaborative team that values autonomy, quality, and transparency. We build things the right way. 🚀
+
+### Your Mission
+
+- Architect & Build: Develop modern and scalable web applications.
+- Orchestrate AI Ecosystems: Design multi-agent workflows and architectures for complex tasks like autonomous testing, refactoring, and code review.
+- Set the Standards: Define prompting strategies and context management patterns that make AI-assisted development reliable, elite, and repeatable.
+- Drive Innovation: Help evolve our internal tooling, workflows, and development culture around AI-augmented engineering.
+- Collaborate Globally: Partner closely with forward-thinking clients and teammates in a mature, remote-first environment.
+
+### Soft Skills
+
+- Excellent communication with clients and teammates.
+- Strong writing, communication, and documentation skills.
+- Strong self-management skills for remote work.
+- High attention to detail.
+- Positive attitude towards new challenges and a fast learner.
+- Proactive and able to work independently on self-managed projects.
+- Fluent in written and spoken Spanish.
+- Fluent in written and spoken English.
+
+### AI Skills
+
+- Hands-on experience developing with AI coding agents (Claude Code, Cursor, Codex, or similar) as a core part of your workflow.
+- Deep understanding of how coding agents work: tokenisation, context windows, sub agents, tools and skills.
+- Experience working with Spec Driven AI Development and/or Research Plan Implement (RPI) methodologies.
+- Experience designing agentic and multi-agent workflows, orchestrating sub-agents, chaining outputs, and managing context across agent interactions.
+- Familiarity with AI orchestration tools and frameworks (n8n, LangChain, LangGraph, CrewAI, or similar) is a plus.
+
+### Technical Skills
+
+- Knowledge of software architectural principles such as Clean Architecture, DDD (Domain Driven Design), and Hexagonal Architecture.
+- 5+ years of production experience with modern web stacks. We primarily work with Node.js / Bun, React, and Next.js (App Router, Server Components).
+- Strong JavaScript and TypeScript knowledge, both frontend and backend.
+- Solid understanding of relational databases, SQL, and data modelling.
+- Knowledge of Tailwind CSS for styling.
+- Experience with Docker and containerised environments in development and production.
+- Familiar with testing strategies and frameworks such as Jest or Cypress.
+- Ability to build software that's scalable, maintainable, and well-documented.
+
+Nice to Have / Desirable:
+
+- Experience or familiarity with Python and Django.
+
+### Life at Northbeam - Perks
+
+We take care of our crew. We offer a culture built on autonomy, high standards, and mutual respect.
+
+- Competitive Salary: Generous compensation that reflects your senior expertise. 💰
+- True Flexibility: Work from home or a coworking space of your choice, with flexible hours that respect your life. 💻✨
+- Senior Team, Zero Ego: Work alongside amazing, highly skilled coworkers in a transparent organisation. 👽
+- Cutting-Edge Stack: No legacy dread. You will always work with modern tech stacks and pioneering methodologies. 🚀
+- Culture & Connection: Regular company activities and retreats to keep the team connected. 🎯
+
+### Location
+
+This is a fully remote position. To join us, you must reside in Europe and hold a valid work permit authorising employment in the region. 🌍
+
+Ready to shape the future of development? Join us and help us build software that lasts, from Mars, or anywhere you call home. 🏠

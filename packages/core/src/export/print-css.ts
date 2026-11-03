@@ -1,0 +1,72 @@
+/** Print stylesheet from my-profile's tailor-application skill (assets/print.css), verbatim. */
+export const PRINT_CSS = `@page {
+  size: A4;
+  margin: 14mm 16mm;
+}
+
+body {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.35;
+  color: #111;
+  font-variant-ligatures: none;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+h1 {
+  font-size: 20pt;
+  margin: 0 0 2pt;
+}
+
+h1 + p {
+  margin-top: 0;
+  color: #444;
+}
+
+h2 {
+  font-size: 11.5pt;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid #999;
+  padding-bottom: 2pt;
+  margin: 12pt 0 4pt;
+}
+
+h3 {
+  font-size: 10.5pt;
+  margin: 8pt 0 0;
+}
+
+h3 + p {
+  margin: 0 0 2pt;
+  color: #444;
+}
+
+ul {
+  margin: 2pt 0 4pt;
+  padding-left: 14pt;
+}
+
+li {
+  margin: 1pt 0;
+}
+
+p {
+  margin: 4pt 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+h2, h3 {
+  break-after: avoid;
+}
+
+li {
+  break-inside: avoid;
+}
+`;

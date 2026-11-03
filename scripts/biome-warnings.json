@@ -1,0 +1,298 @@
+{
+	"apps/desktop/e2e/linkedin-fixture.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 37
+	},
+	"apps/desktop/e2e/native.spec.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 1,
+		"max": 0
+	},
+	"apps/desktop/e2e/theme.spec.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 4,
+		"max": 0
+	},
+	"apps/desktop/scripts/icons.mjs :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 3,
+		"max": 0
+	},
+	"apps/desktop/scripts/screenshots.mjs :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 26
+	},
+	"apps/desktop/src/main/site-browser.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 2,
+		"max": 35
+	},
+	"apps/desktop/src/renderer/components/desktop/held-calls.tsx :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 2,
+		"max": 0
+	},
+	"apps/desktop/src/renderer/components/desktop/resume-import.tsx :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 176
+	},
+	"apps/desktop/src/renderer/components/pipeline/add-job.tsx :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 233
+	},
+	"apps/desktop/src/renderer/components/pipeline/application/detail.tsx :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 168
+	},
+	"apps/desktop/src/renderer/components/pipeline/application/detail.tsx :: lint/performance/noBarrelFile :: Avoid barrel files.": {
+		"count": 1,
+		"max": 0
+	},
+	"apps/desktop/src/renderer/components/pipeline/application/use-application-actions.ts :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 316
+	},
+	"apps/desktop/src/renderer/components/pipeline/settings/job-filter.tsx :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 189
+	},
+	"apps/desktop/src/renderer/components/shell/command-menu.tsx :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 192
+	},
+	"apps/desktop/src/renderer/lib/utils.ts :: lint/performance/noBarrelFile :: Avoid barrel files.": {
+		"count": 1,
+		"max": 0
+	},
+	"apps/desktop/src/renderer/pages/home.tsx :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 254
+	},
+	"apps/desktop/src/renderer/pages/inbox.tsx :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 2,
+		"max": 421
+	},
+	"apps/desktop/src/renderer/pages/inbox.tsx :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 2,
+		"max": 0
+	},
+	"apps/desktop/src/renderer/pages/onboarding.tsx :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 216
+	},
+	"apps/desktop/src/renderer/pages/profile.tsx :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 159
+	},
+	"apps/desktop/src/worker/add-job.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 29
+	},
+	"apps/desktop/src/worker/pipeline.ts :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 167
+	},
+	"apps/desktop/src/worker/router.ts :: lint/performance/noBarrelFile :: Avoid barrel files.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/core/src/apply/applier.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 41
+	},
+	"packages/core/src/apply/forms.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 3,
+		"max": 50
+	},
+	"packages/core/src/apply/submit.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 33
+	},
+	"packages/core/src/apply/submit.ts :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 170
+	},
+	"packages/core/src/filter/rules.ts :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 242
+	},
+	"packages/core/src/linkedin/runner.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 55
+	},
+	"packages/core/src/linkedin/runner.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/core/src/pipeline/prepare.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 40
+	},
+	"packages/core/src/pipeline/providers.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 34
+	},
+	"packages/core/src/pipeline/sweep.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 34
+	},
+	"packages/core/src/profile/records.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/core/src/scrape/posting.ts :: lint/performance/noBarrelFile :: Avoid barrel files.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/core/src/sites/provider.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 50
+	},
+	"packages/core/src/sites/provider.ts :: lint/performance/noBarrelFile :: Avoid barrel files.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/core/src/tailor/claims/numbers-employers.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/core/src/tailor/claims/tokens.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/core/src/tailor/claims/verify.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/core/src/tailor/fake.ts :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 161
+	},
+	"packages/core/src/tailor/profile-rules.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/core/src/web/provider.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 124
+	},
+	"packages/core/src/web/provider.ts :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 238
+	},
+	"packages/core/test/browser/applier.test.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/core/test/browser/fixture-boards.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 72
+	},
+	"packages/core/test/browser/fixture-boards.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/core/test/claims-coverage.test.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 2,
+		"max": 0
+	},
+	"packages/core/test/claims-fifth-round.test.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/core/test/profile-rules.test.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/core/test/sites.test.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 3,
+		"max": 0
+	},
+	"packages/db/src/dashboard/documents.ts :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 166
+	},
+	"packages/db/src/job-search.ts :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 243
+	},
+	"packages/db/src/repository/events.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 41
+	},
+	"packages/db/src/schema/index.ts :: lint/performance/noBarrelFile :: Avoid barrel files.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/db/src/schema/index.ts :: lint/performance/noReExportAll :: Do not use export all ( export * from ... ).": {
+		"count": 4,
+		"max": 0
+	},
+	"packages/db/test/job-search.test.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/db/test/linkedin.test.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 2,
+		"max": 0
+	},
+	"packages/db/test/payment-holds.test.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 2,
+		"max": 0
+	},
+	"packages/db/test/support/api.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 27
+	},
+	"packages/local-llm/src/claude.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 2,
+		"max": 61
+	},
+	"packages/local-llm/src/claude.ts :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 1,
+		"max": 178
+	},
+	"packages/local-llm/src/codex.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 3,
+		"max": 79
+	},
+	"packages/local-llm/src/codex.ts :: lint/complexity/noExcessiveLinesPerFunction :: This function has too many lines (). Maximum allowed is .": {
+		"count": 2,
+		"max": 300
+	},
+	"packages/local-llm/src/index.ts :: lint/performance/noBarrelFile :: Avoid barrel files.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/local-llm/test/capture.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 27
+	},
+	"packages/local-llm/test/claude-provider.test.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 29
+	},
+	"packages/local-llm/test/claude-provider.test.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 2,
+		"max": 0
+	},
+	"packages/local-llm/test/codex-provider.test.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/local-llm/test/disk-canary.test.ts :: lint/complexity/noExcessiveCognitiveComplexity :: Excessive complexity of  detected (max: ).": {
+		"count": 1,
+		"max": 29
+	},
+	"packages/runner/src/index.ts :: lint/performance/noBarrelFile :: Avoid barrel files.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/runner/src/index.ts :: lint/performance/noReExportAll :: Do not use export all ( export * from ... ).": {
+		"count": 4,
+		"max": 0
+	},
+	"packages/runner/src/step.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 1,
+		"max": 0
+	},
+	"packages/runner/test/runner.test.ts :: lint/suspicious/noShadow :: This variable shadows another variable with the same name in the outer scope.": {
+		"count": 1,
+		"max": 0
+	}
+}

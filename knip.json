@@ -1,0 +1,69 @@
+{
+	"$schema": "./node_modules/knip/schema.json",
+	"workspaces": {
+		".": {
+			"entry": ["scripts/*.{mjs,ts}", "docs/brand/*.mjs"],
+			"project": ["scripts/**/*.{mjs,ts}"]
+		},
+		"apps/desktop": {
+			"entry": [
+				"src/main/index.ts",
+				"src/preload/index.ts",
+				"src/worker/index.ts",
+				"src/renderer/main.tsx",
+				"scripts/**/*.{mjs,ts}",
+				"e2e/**/*.spec.ts"
+			],
+			"project": [
+				"src/**/*.{ts,tsx,css}",
+				"test/**/*.ts",
+				"e2e/**/*.ts",
+				"scripts/**/*.{mjs,ts}"
+			]
+		},
+		"packages/local-llm": {
+			"entry": ["test/**/*.test.ts"],
+			"project": ["src/**/*.ts", "test/**/*.ts"]
+		},
+		"packages/db": {
+			"entry": ["scripts/*.{ts,mjs}", "test/**/*.test.ts"],
+			"project": ["src/**/*.ts", "test/**/*.ts", "scripts/*.{ts,mjs}"]
+		},
+		"packages/core": {
+			"entry": ["test/**/*.test.ts"],
+			"project": ["src/**/*.ts", "test/**/*.ts"]
+		},
+		"packages/runner": {
+			"ignoreDependencies": ["tsx"],
+			"entry": ["test/fixtures/probe-worker.ts"]
+		}
+	},
+	"includeEntryExports": true,
+	"ignoreBinaries": [
+		"swiftc",
+		"screencapture",
+		"sqlite3",
+		"iconutil",
+		"tiffutil",
+		"top",
+		"du"
+	],
+	"ignoreIssues": {
+		"packages/core/src/apply/**": ["exports", "types"],
+		"packages/core/src/sites/**": ["exports", "types"],
+		"packages/core/src/tailor/{claims,flags,stale,profile-rules,employer-names}.ts": [
+			"exports",
+			"types"
+		],
+		"packages/core/src/tailor/claims/**": ["exports", "types"],
+		"packages/core/src/domain/{approval,states}.ts": ["exports", "types"],
+		"packages/core/src/scoring/metered.ts": ["exports", "types"],
+		"packages/core/src/scrape/browser.ts": ["exports", "types"],
+		"packages/core/src/linkedin/detect.ts": ["exports", "types"],
+		"packages/core/src/sources/duckduckgo.ts": ["exports", "types"],
+		"packages/db/src/spend.ts": ["exports", "types"],
+		"packages/local-llm/src/{claude,codex}.ts": ["exports", "types"],
+		"apps/desktop/src/main/site-browser.ts": ["exports", "types"],
+		"apps/desktop/src/worker/checks.ts": ["exports", "types"]
+	}
+}

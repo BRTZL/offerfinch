@@ -1,0 +1,597 @@
+@import "./globals.css";
+
+/* OfferFinch's one token set (docs/design/desktop/system.md). Screens use these through
+   Tailwind (bg-card, text-muted-foreground, border-border, …) and never set their own values. */
+
+/* SF Pro through the system font. The shared globals set Inter with `@theme inline`, which
+   Tailwind writes into every rule that uses it, so a plain `:root` override is never read: the
+   override has to be another `@theme inline`. Nothing is loaded from the network. */
+@theme inline {
+	--font-sans:
+		-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+	--font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+	/* Type: 11/16 below Tailwind's 12/16, 14/20, 16/24 and 20/28. */
+	--text-2xs: 0.6875rem;
+	--text-2xs--line-height: 1rem;
+
+	--color-sidebar: var(--sidebar);
+	--color-hover: var(--hover);
+	--color-selected: var(--selected);
+	--color-well: var(--well);
+	--color-brand: var(--brand);
+	--color-brand-surface: var(--brand-surface);
+	--color-warning: var(--warning);
+	--color-warning-surface: var(--warning-surface);
+	--color-destructive-surface: var(--destructive-surface);
+	--color-primary-surface: var(--primary-surface);
+	--color-cell: var(--cell);
+	--color-scrim: var(--scrim);
+	--color-separator: var(--separator);
+
+	--ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+	--animate-breathe: breathe 2.4s steps(4) infinite;
+}
+
+@keyframes breathe {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.55;
+	}
+}
+
+:root {
+	color-scheme: light;
+	--scrollbar: rgb(0 0 0 / 0.32);
+	--scrollbar-hover: rgb(0 0 0 / 0.5);
+	--background: #fcfcfc;
+	--foreground: #18181b;
+	--card: #ffffff;
+	--card-foreground: #18181b;
+	--popover: #ffffff;
+	--popover-foreground: #18181b;
+	--primary: oklch(0.488 0.217 264);
+	--primary-foreground: #ffffff;
+	--primary-surface: oklch(0.488 0.217 264 / 0.1);
+	--secondary: #f4f4f5;
+	--secondary-foreground: #18181b;
+	--muted: #f4f4f5;
+	--muted-foreground: #71717b;
+	--accent: #f4f4f5;
+	--accent-foreground: #18181b;
+	--destructive: #b91c1c;
+	--destructive-surface: rgb(239 68 68 / 0.08);
+	--border: #e4e4e7;
+	--input: #d4d4d8;
+	--ring: oklch(0.488 0.217 264);
+	--radius: 0.5rem;
+	--sidebar: #fafafa;
+	--sidebar-foreground: #18181b;
+	--sidebar-border: #e4e4e7;
+	--hover: rgb(24 24 27 / 0.05);
+	--selected: rgb(24 24 27 / 0.1);
+	--separator: rgb(0 0 0 / 0.1);
+	--well: #f4f4f5;
+	/* The beak of the mark: high fit, a traced claim, a met requirement. Nothing else. */
+	--brand: #15803d;
+	--brand-surface: rgb(21 128 61 / 0.1);
+	--warning: #b45309;
+	--warning-surface: rgb(245 158 11 / 0.1);
+	--cell: rgb(0 0 0 / 0.09);
+	--scrim: rgb(0 0 0 / 0.18);
+	--bevel: 0 1px 0 rgb(0 0 0 / 0.04);
+	--shadow-control: 0 1px 2px rgb(0 0 0 / 0.05);
+	--shadow-popup: 0 16px 40px -18px rgb(0 0 0 / 0.55);
+	--shadow-paper: 0 0 0 1px rgb(0 0 0 / 0.06), 0 2px 8px rgb(0 0 0 / 0.06);
+}
+
+.dark {
+	color-scheme: dark;
+	--scrollbar: rgb(255 255 255 / 0.28);
+	--scrollbar-hover: rgb(255 255 255 / 0.45);
+	--background: #000000;
+	--foreground: #f5f5f5;
+	--card: #111111;
+	--card-foreground: #f5f5f5;
+	--popover: #161616;
+	--popover-foreground: #f5f5f5;
+	--primary: oklch(0.571 0.21 264);
+	--primary-foreground: #ffffff;
+	--primary-surface: oklch(0.571 0.21 264 / 0.18);
+	--secondary: rgb(255 255 255 / 0.04);
+	--secondary-foreground: #f5f5f5;
+	--muted: rgb(255 255 255 / 0.04);
+	--muted-foreground: #a3a3a3;
+	--accent: rgb(255 255 255 / 0.04);
+	--accent-foreground: #f5f5f5;
+	--destructive: #f87171;
+	--destructive-surface: rgb(239 68 68 / 0.16);
+	--border: rgb(255 255 255 / 0.08);
+	--input: rgb(255 255 255 / 0.11);
+	--ring: oklch(0.571 0.21 264);
+	--sidebar: #000000;
+	--sidebar-foreground: #f5f5f5;
+	--sidebar-border: rgb(255 255 255 / 0.08);
+	--hover: rgb(255 255 255 / 0.05);
+	--selected: rgb(245 245 245 / 0.1);
+	--separator: rgb(255 255 255 / 0.1);
+	--well: #0a0a0a;
+	--brand: #34c759;
+	--brand-surface: rgb(52 199 89 / 0.14);
+	--warning: #fbbf24;
+	--warning-surface: rgb(245 158 11 / 0.16);
+	--cell: rgb(255 255 255 / 0.11);
+	--scrim: rgb(0 0 0 / 0.5);
+	--bevel: 0 -1px 0 rgb(255 255 255 / 0.06);
+	--shadow-control: none;
+	--shadow-popup: 0 18px 44px -18px rgb(0 0 0 / 0.8);
+	--shadow-paper: 0 0 0 1px rgb(0 0 0 / 0.6), 0 4px 16px rgb(0 0 0 / 0.35);
+}
+
+html,
+body,
+#root {
+	height: 100%;
+}
+body {
+	overflow: hidden;
+	cursor: default;
+	-webkit-font-smoothing: antialiased;
+}
+/* Text can be selected and copied anywhere; controls and app chrome cannot, so a click or drag
+   on them never starts a selection. */
+:is(
+	button,
+	label,
+	nav,
+	[data-ds="sidebar"],
+	[role="button"],
+	[role="tab"],
+	[role="tablist"],
+	[role="option"],
+	[role="menuitem"],
+	[role="menuitemcheckbox"],
+	[role="menuitemradio"],
+	[role="switch"],
+	[role="checkbox"],
+	[role="radio"],
+	[role="combobox"],
+	[role="separator"]
+) {
+	user-select: none;
+	-webkit-user-select: none;
+}
+/* Vibrancy: the page is see-through behind the sidebar so macOS draws the material. */
+html.vibrant,
+html.vibrant body {
+	background: transparent;
+}
+html.vibrant {
+	--sidebar: transparent;
+}
+/* Over the material the wallpaper shows through, so quiet text takes a stronger ink to stay
+   above 4.5:1. */
+html.vibrant [data-ds="sidebar"] {
+	--muted-foreground: #4f4f56;
+}
+html.vibrant.dark [data-ds="sidebar"] {
+	--muted-foreground: #c8c8cc;
+}
+
+/* Fields, and reading content inside a control (a list row's text marked selectable), keep text
+   selection. */
+input,
+textarea,
+[contenteditable="true"],
+[data-selectable] {
+	user-select: text;
+	-webkit-user-select: text;
+}
+/* No drag ghost for images, icons or links. */
+img,
+svg,
+a {
+	-webkit-user-drag: none;
+}
+
+/* Lighter icon stroke, as in system symbols. */
+svg.lucide {
+	stroke-width: 1.75;
+	flex: none;
+}
+/* Anything clickable shows the pointing hand; disabled controls keep the arrow. */
+button,
+a[href],
+select,
+summary,
+label:has(
+	> input[type="checkbox"],
+	> input[type="radio"],
+	> button[role="switch"]
+),
+input[type="checkbox"],
+input[type="radio"],
+[role="tab"],
+[role="button"],
+[role="option"],
+[role="menuitem"],
+[role="menuitemcheckbox"],
+[role="menuitemradio"],
+[role="switch"],
+[role="checkbox"],
+[role="radio"],
+[role="combobox"],
+[role="link"] {
+	cursor: pointer;
+}
+:is(button, select, input, [role]):is(
+	:disabled,
+	[aria-disabled="true"],
+	[data-disabled]
+) {
+	cursor: default;
+}
+
+/* Focus: inside the control, so it never spills over a clipped pane edge. Unlayered, to replace
+   the shared globals' outline. Controls that draw their own ring (`focus-visible:ring-…`) and
+   regions that show focus their own way (`data-focus="self"`: the Inbox list shows it by its
+   selection bar) have none. */
+:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: -2px;
+}
+input:focus-visible,
+textarea:focus-visible,
+[class*="focus-visible:ring"]:focus-visible,
+[class*="focus-within:"]:focus-visible,
+[data-focus="self"]:focus-visible {
+	outline: none;
+}
+
+/* Scrollbars float over the content: native ones are hidden (with a mouse connected macOS gives
+   every box a bar that takes width from its content), and one thumb (overlay-scrollbar.tsx) is
+   drawn over whichever box is scrolling. */
+* {
+	scrollbar-width: none;
+}
+.overlay-thumb {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 2147483647;
+	width: 7px;
+	border-radius: 999px;
+	background: var(--scrollbar);
+	opacity: 0;
+	pointer-events: none;
+	user-select: none;
+	transition: opacity 0.25s ease-out;
+}
+.overlay-thumb[data-visible] {
+	opacity: 1;
+	pointer-events: auto;
+	transition-duration: 0.05s;
+}
+.overlay-thumb:hover,
+.overlay-thumb[data-dragging] {
+	background: var(--scrollbar-hover);
+}
+
+/* The window's title bar is hidden: these strips move the window, and every control in them
+   still takes clicks. */
+.drag {
+	-webkit-app-region: drag;
+	user-select: none;
+}
+.drag :is(a, button, input, select, textarea, [role="tab"], [role="button"]) {
+	-webkit-app-region: no-drag;
+}
+
+/* First run: the ambient field fades out toward the middle, where the column sits, so it is never
+   behind text; it shows only in the margins. */
+.ambient-field {
+	mask-image: radial-gradient(
+		ellipse 46% 60% at 50% 50%,
+		transparent 0%,
+		transparent 55%,
+		#000 100%
+	);
+}
+
+/* A step comes in with a short fade and a slight slide from the side it was reached from. */
+@keyframes step-in {
+	from {
+		opacity: 0;
+		transform: translateX(var(--step-from, 12px));
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+.step-in {
+	animation: step-in 240ms var(--ease-standard, cubic-bezier(0.2, 0, 0, 1)) both;
+}
+.step-in[data-direction="back"] {
+	--step-from: -12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		/* biome-ignore lint/complexity/noImportantStyles: reduced motion must win over every component */
+		animation: none !important;
+		/* biome-ignore lint/complexity/noImportantStyles: reduced motion must win over every component */
+		transition: none !important;
+	}
+}
+
+/* The CV, letter, answers and posting pages: set like the exported PDF (white paper in light
+   mode). In dark mode they take the theme's surface and ink; the exported PDF is unchanged. */
+.doc-page {
+	min-height: 100%;
+	padding: 32px 32px 40px;
+	border-radius: 4px 4px 0 0;
+	background: #ffffff;
+	box-shadow: var(--shadow-paper);
+	color: #1d1d1f;
+	font-size: 11.5px;
+	line-height: 1.5;
+	user-select: text;
+	-webkit-user-select: text;
+	cursor: text;
+}
+/* Text set with theme colours (the posting) takes the paper's ink in light mode. */
+.doc-page .text-foreground {
+	color: #1d1d1f;
+}
+.doc-page .text-muted-foreground {
+	color: #3a3a3f;
+}
+.doc-page .bg-muted-foreground {
+	background-color: #8e8e93;
+}
+.doc-page h1 {
+	font-size: 18px;
+	font-weight: 700;
+	line-height: 1.25;
+	letter-spacing: -0.01em;
+}
+.doc-page p {
+	margin: 6px 0;
+	color: #3a3a3f;
+}
+.ui-prose p {
+	margin: 4px 0;
+}
+.doc-page h1 + p {
+	margin-top: 2px;
+	color: #6b6b70;
+	font-size: 11px;
+}
+.doc-page h2 {
+	margin: 16px 0 6px;
+	padding-bottom: 3px;
+	border-bottom: 1px solid rgb(0 0 0 / 0.12);
+	font-size: 11.5px;
+	font-weight: 700;
+	color: #3a3a3f;
+}
+.doc-page h3 {
+	margin: 10px 0 2px;
+	font-weight: 600;
+}
+.doc-page ul,
+.doc-page ol {
+	margin: 4px 0;
+	padding-left: 16px;
+	color: #3a3a3f;
+}
+.doc-page ul {
+	list-style: disc;
+}
+.doc-page ol {
+	list-style: decimal;
+}
+.doc-page li + li {
+	margin-top: 2px;
+}
+.doc-page em {
+	color: #6b6b70;
+}
+.doc-page strong {
+	font-weight: 600;
+	color: #1d1d1f;
+}
+.doc-page a[href^="http"] {
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+/* A flagged line: open in red with its number, confirmed in green. */
+.doc-page a[data-flag-state] {
+	text-decoration: underline;
+	text-decoration-thickness: 2px;
+	text-underline-offset: 2px;
+}
+.doc-page a[data-flag-state] sup {
+	margin-right: 2px;
+	padding: 0 3px;
+	border-radius: 3px;
+	font-family: var(--font-sans);
+	font-size: 9px;
+	font-weight: 600;
+	color: #ffffff;
+}
+.doc-page a[data-flag-state="open"] {
+	background: rgb(239 68 68 / 0.12);
+	text-decoration-color: rgb(239 68 68 / 0.7);
+}
+.doc-page a[data-flag-state="open"] sup {
+	background: #dc2626;
+}
+.doc-page a[data-flag-state="confirmed"] {
+	background: rgb(16 185 129 / 0.1);
+	text-decoration-color: rgb(5 150 105 / 0.6);
+}
+.doc-page a[data-flag-state="confirmed"] sup {
+	background: #047857;
+}
+/* Markdown source, or form answers, on the page. */
+.doc-page pre {
+	font-family: var(--font-mono);
+	font-size: 11px;
+	white-space: pre-wrap;
+}
+/* In the reading column: a whole sheet, rounded on every side, generous margins. */
+.doc-page--sheet {
+	min-height: 0;
+	padding: 48px 56px 56px;
+	border-radius: 8px;
+	font-size: 12px;
+}
+
+/* Rendered Markdown inside the interface (fit notes in the inspector): theme colours, UI scale. */
+.ui-prose {
+	font-size: var(--text-xs);
+	line-height: 1.5;
+	color: var(--color-muted-foreground);
+	user-select: text;
+	-webkit-user-select: text;
+}
+.ui-prose h1,
+.ui-prose h2,
+.ui-prose h3 {
+	margin: 12px 0 4px;
+	font-weight: 600;
+	color: var(--color-foreground);
+}
+.ui-prose > :first-child {
+	margin-top: 0;
+}
+.ui-prose ul,
+.ui-prose ol {
+	margin: 4px 0;
+	padding-left: 14px;
+}
+.ui-prose ul {
+	list-style: disc;
+}
+.ui-prose ol {
+	list-style: decimal;
+}
+.ui-prose li + li {
+	margin-top: 2px;
+}
+.ui-prose strong {
+	font-weight: 600;
+	color: var(--color-foreground);
+}
+/* The chat's replies: the interface's body size and colour, the same quiet structure. */
+.ui-prose.chat-prose {
+	font-size: var(--text-sm);
+	line-height: 1.5;
+	color: var(--color-foreground);
+}
+.ui-prose.chat-prose p {
+	margin: 6px 0;
+}
+.ui-prose.chat-prose code {
+	font-family: var(--font-mono);
+	font-size: var(--text-xs);
+}
+.ui-prose a[href^="http"] {
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+
+/* Dark mode: every reading page takes the theme's surface and ink instead of white paper. */
+.dark .doc-page {
+	background: var(--card);
+	color: var(--foreground);
+	box-shadow: 0 0 0 1px var(--border);
+}
+.dark .doc-page :is(p, ul, ol, h2, pre, .text-muted-foreground) {
+	color: var(--muted-foreground);
+}
+.dark .doc-page :is(h1, h3, strong, .text-foreground) {
+	color: var(--foreground);
+}
+.dark .doc-page :is(em, h1 + p) {
+	color: var(--muted-foreground);
+}
+.dark .doc-page .bg-muted-foreground {
+	background-color: var(--muted-foreground);
+}
+.dark .doc-page h2 {
+	border-bottom-color: var(--border);
+}
+
+/* Rendered Markdown in the page body (profile records): the interface's body size and ink. */
+.ui-prose.ui-prose--body {
+	font-size: var(--text-sm);
+	color: var(--color-foreground);
+}
+.ui-prose.ui-prose--body :is(h1, h2, h3) {
+	font-size: var(--text-sm);
+}
+
+/* Home's mark: a frame sheet stepped like a GIF (components/animated-mark.tsx). Each keyframe
+   shows one frame of the strip until the next; most of the 9 s loop is the resting frame. */
+.brand-anim-strip {
+	animation: brand-anim 9s step-end infinite;
+}
+@keyframes brand-anim {
+	0% {
+		transform: translateX(0);
+	}
+	/* blink */
+	40% {
+		transform: translateX(calc(var(--frame) * -1));
+	}
+	41.5% {
+		transform: translateX(0);
+	}
+	/* double hop */
+	55% {
+		transform: translateX(calc(var(--frame) * -2));
+	}
+	57% {
+		transform: translateX(0);
+	}
+	58.5% {
+		transform: translateX(calc(var(--frame) * -2));
+	}
+	60.5% {
+		transform: translateX(0);
+	}
+	/* double peck */
+	72% {
+		transform: translateX(calc(var(--frame) * -3));
+	}
+	74% {
+		transform: translateX(0);
+	}
+	75.5% {
+		transform: translateX(calc(var(--frame) * -3));
+	}
+	77.5% {
+		transform: translateX(0);
+	}
+	/* chirp, a note, the note fades */
+	86% {
+		transform: translateX(calc(var(--frame) * -4));
+	}
+	88% {
+		transform: translateX(calc(var(--frame) * -5));
+	}
+	91% {
+		transform: translateX(calc(var(--frame) * -6));
+	}
+	93% {
+		transform: translateX(0);
+	}
+}

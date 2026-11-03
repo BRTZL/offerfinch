@@ -1,0 +1,19 @@
+{
+	"extends": "@offerfinch/config/tsconfig.base.json",
+	"compilerOptions": {
+		"types": ["node"],
+		"lib": ["ESNext", "DOM"],
+		"noEmit": true,
+		"paths": {
+			"@/*": ["./src/renderer/*"]
+		}
+	},
+	"include": [
+		"src/main/**/*.ts",
+		"src/preload/**/*.ts",
+		"src/worker/**/*.ts",
+		"src/shared/**/*.ts",
+		"test/**/*.ts",
+		"e2e/**/*.ts"
+	]
+}

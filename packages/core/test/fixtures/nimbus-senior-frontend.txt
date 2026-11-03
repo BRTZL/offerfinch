@@ -1,0 +1,15 @@
+Nimbus Labs makes scheduling software for clinics. We are looking for a Senior Frontend Engineer to lead our React and Next.js web app and the design system behind it.
+
+What you will do
+- Build accessible React and Next.js interfaces in TypeScript.
+- Own shared components, Storybook and design tokens used by several teams.
+- Work with our Node.js and PostgreSQL backend team on APIs.
+
+Requirements
+- 5+ years of React and TypeScript in production.
+- Next.js and server-side rendering.
+- Accessibility: WCAG, keyboard navigation and screen readers.
+- Tailwind or another CSS architecture at scale.
+- React Native is a plus.
+
+Location: remote, worldwide. English is our working language.

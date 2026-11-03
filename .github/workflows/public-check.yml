@@ -1,0 +1,35 @@
+# Checks that the tree names no real person's data (scripts/check-public.mjs). The denylist lives
+# outside the repository: it comes from the PUBLIC_DENYLIST secret (one term per line). Without it
+# (--ci) the check still runs its patterns and prints a warning; a local run without it fails.
+name: Public check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  public:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Denylist from the secret
+        env:
+          DENYLIST: ${{ secrets.PUBLIC_DENYLIST }}
+        run: |
+          if [ -n "$DENYLIST" ]; then
+            printf '%s\n' "$DENYLIST" > "$RUNNER_TEMP/denylist.txt"
+            echo "PUBLIC_DENYLIST=$RUNNER_TEMP/denylist.txt" >> "$GITHUB_ENV"
+          else
+            echo "::warning::PUBLIC_DENYLIST is not set: only the email, phone and topic patterns run."
+          fi
+      - name: ffmpeg, to read the films' frames
+        run: brew install ffmpeg
+      - name: Check the tree (text, images and video frames)
+        run: node scripts/check-public.mjs --images --ci
