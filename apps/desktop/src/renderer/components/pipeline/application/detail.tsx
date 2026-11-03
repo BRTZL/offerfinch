@@ -13,11 +13,7 @@ import { ReadingColumn, ReadingPage } from "@/components/system/document";
 import { ResizeHandle } from "@/components/system/resize-handle";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-	ApplicationReading,
-	applicationDocuments,
-	DocumentTabs,
-} from "./document-tabs";
+import { applicationDocuments, DocumentTabs } from "./document-tabs";
 import { ApplicationInspector } from "./inspector";
 import { DetailSkeleton } from "./skeleton";
 import { ApplicationToolbar } from "./toolbar";
@@ -25,6 +21,7 @@ import {
 	type ApplicationDetailProps,
 	useApplicationActions,
 } from "./use-application-actions";
+import { DocumentReading } from "./versions";
 
 export { ToolbarSlot } from "./toolbar";
 export function ApplicationDetail(props: ApplicationDetailProps) {
@@ -115,7 +112,7 @@ export function ApplicationDetail(props: ApplicationDetailProps) {
 
 	const docBar = <DocumentTabs {...context} />;
 
-	const reading = <ApplicationReading {...context} docBar={docBar} />;
+	const reading = <DocumentReading {...context} docBar={docBar} />;
 
 	const inspector = <ApplicationInspector {...context} />;
 

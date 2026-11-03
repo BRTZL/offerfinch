@@ -1,4 +1,13 @@
-import { and, asc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
+import {
+	and,
+	asc,
+	eq,
+	gte,
+	inArray,
+	isNotNull,
+	isNull,
+	sql,
+} from "drizzle-orm";
 import { applications, llmUsage, spendingSettings } from "../schema/pipeline";
 import {
 	DrizzleSpendStore,
@@ -126,6 +135,31 @@ export const spendingMethods = {
 						inArray(applications.state, ["scored", "preparing"]),
 					),
 				);
+			// A redraft paused by the spending limit runs again too (core `pipeline/redraft.ts`); one
+			// paused by a subscription waits for Try again.
+			const redrafts = await tx
+				.select({ id: applications.id, redraft: applications.redraft })
+				.from(applications)
+				.where(
+					and(
+						eq(applications.userId, userId),
+						eq(applications.state, "ready_for_review"),
+						isNotNull(applications.redraft),
+					),
+				);
+			for (const app of redrafts) {
+				if (
+					app.redraft?.problem?.kind !== "paused" ||
+					!app.redraft.problem.spendingCap
+				)
+					continue;
+				const { problem: _paused, ...rest } = app.redraft;
+				await tx
+					.update(applications)
+					.set({ redraft: rest })
+					.where(eq(applications.id, app.id));
+				waiting.push({ id: app.id });
+			}
 			const stamp = Date.now();
 			const events: PendingEvent[] = [];
 			for (const app of waiting)

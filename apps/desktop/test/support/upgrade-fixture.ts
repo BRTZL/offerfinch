@@ -380,6 +380,23 @@ function progress(job: { id: string; state: string }): Row {
 					})
 				: null,
 		current_role: drafted ? "Senior Frontend Engineer, Bluefin Labs" : null,
+		// A redraft the user asked for that waits on a paused model.
+		redraft:
+			job.state === "ready_for_review"
+				? j({
+						id: "00000000-0000-4000-8000-000000000001",
+						scope: "cover_letter",
+						instruction: "Shorter",
+						rewriteOwnAnswers: false,
+						baseVersions: { cover_letter: 1 },
+						requestedAt: iso(4),
+						problem: {
+							kind: "paused",
+							message: "Fixture: spending limit reached",
+							at: iso(4),
+						},
+					})
+				: null,
 		applied_at: applied ? at(6) : null,
 		applied_via: applied ? "auto" : null,
 		approved_at: ["approved", "applied"].includes(job.state) ? at(5) : null,

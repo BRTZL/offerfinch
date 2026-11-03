@@ -9,6 +9,14 @@ version it tags (docs/releasing.md). Only what is merged into main belongs here.
 
 ## Unreleased
 
+### Redraft
+
+- Redraft… on a prepared application writes a new version of the CV, the letter, the answers or
+  everything, with an optional instruction such as "shorter, mention my Go work". What you don't
+  choose stays exactly as it is; the new version is checked before you can approve it, and an
+  approved application goes back to review. Earlier versions stay readable from the version
+  picker.
+
 ### One search plan for every source
 
 - Sources no longer have settings of their own. One search plan, written each day from your

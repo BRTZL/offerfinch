@@ -14,6 +14,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { desktop } from "@/lib/desktop";
 import type { ApplicationActions } from "./use-application-actions";
+import { VersionPicker } from "./version-picker";
 
 const TABS: Kind[] = ["cv", "cover_letter", "form_answers"];
 
@@ -150,7 +151,11 @@ export function DocumentTabs({
 	editing,
 	startEdit,
 	onDocumentMenu,
+	older,
+	setOlder,
 }: DocumentContext) {
+	// Reading an earlier version: Edit and the PDF and copy menu would act on the current one.
+	const reading = !(older?.appId === loaded.id && older.kind === tab);
 	return (
 		<>
 			<Tabs
@@ -179,12 +184,16 @@ export function DocumentTabs({
 					})}
 				</TabsList>
 			</Tabs>
-			<span className="text-muted-foreground ml-auto text-xs tabular-nums">
-				{current
-					? `Version ${current.version}${current.createdBy === "user" ? ", edited by you" : ""}`
-					: null}
-			</span>
-			{canEdit && editing !== tab && current ? (
+			{current ? (
+				<VersionPicker
+					app={loaded}
+					kind={tab}
+					current={current}
+					older={older}
+					setOlder={setOlder}
+				/>
+			) : null}
+			{canEdit && editing !== tab && current && reading ? (
 				<Button
 					size="sm"
 					variant="ghost"
@@ -195,7 +204,7 @@ export function DocumentTabs({
 					Edit
 				</Button>
 			) : null}
-			{current && editing !== tab ? (
+			{current && editing !== tab && reading ? (
 				<span data-testid="view-toggle">
 					<Button
 						size="icon-sm"

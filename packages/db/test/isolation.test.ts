@@ -308,6 +308,26 @@ const CASES: Record<string, (b: TestUser) => Promise<unknown>> = {
 		),
 	"application.retryCheck": (u) =>
 		refused(ids.app, (id) => u.rpc.application.retryCheck({ id })),
+	"application.redraft": (u) =>
+		refused(ids.app, (id) =>
+			u.rpc.application.redraft({
+				id,
+				scope: "all",
+				instruction: "written by B",
+			}),
+		),
+	"application.retryRedraft": (u) =>
+		refused(ids.app, (id) => u.rpc.application.retryRedraft({ id })),
+	"application.cancelRedraft": (u) =>
+		refused(ids.app, (id) => u.rpc.application.cancelRedraft({ id })),
+	"application.documentVersion": (u) =>
+		refused(ids.app, (id) =>
+			u.rpc.application.documentVersion({
+				id,
+				kind: "cv",
+				version: ids.cvVersion,
+			}),
+		),
 	"application.reject": (u) =>
 		refused(ids.app, (id) =>
 			u.rpc.application.reject({

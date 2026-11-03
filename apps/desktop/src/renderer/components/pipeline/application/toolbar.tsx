@@ -10,6 +10,7 @@ import { PrepareTip } from "@/components/pipeline/prepare-tip";
 import { ToolbarSeparator } from "@/components/system/layout";
 import { Button } from "@/components/ui/button";
 import { keyHint } from "../../../../shared/shortcuts";
+import { RedraftControl } from "./redraft";
 import type {
 	ApplicationActions,
 	ApplicationDetailProps,
@@ -37,6 +38,7 @@ export function ApplicationToolbar({
 	setRejecting,
 	approve,
 	approvable,
+	tab,
 }: ApplicationActions &
 	Pick<ApplicationDetailProps, "matchActions" | "setAsideActions">) {
 	return slot
@@ -108,6 +110,7 @@ export function ApplicationToolbar({
 							</PrepareTip>
 						</>
 					) : null}
+					<RedraftControl app={loaded} tab={tab} hidden={rejecting} />
 					{inReview && !rejecting ? (
 						<>
 							<ToolbarSeparator />

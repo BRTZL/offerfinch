@@ -10,6 +10,7 @@ import { ago } from "@/components/pipeline/bits";
 import { Button } from "@/components/ui/button";
 import { client, orpc } from "@/lib/orpc";
 import { Link } from "@/lib/router";
+import { redraftNotes } from "./redraft";
 
 /** One line per thing the user should know now, each ending in what to do next. */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keep approval, handoff, and pause message conditions together and unchanged.
@@ -21,6 +22,7 @@ export function StatusStrip({ app }: { app: AppDetail }) {
 	}[] = [];
 	const handoffBoard = app.submission?.mode === "handoff";
 	items.push(...postingNotes(app));
+	items.push(...redraftNotes(app));
 	if (app.subscriptionPause)
 		items.push({
 			tone: "warn",

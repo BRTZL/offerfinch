@@ -110,10 +110,38 @@ function savedAnswer(profile: ProfileSnapshot, topic: RegExp): string | null {
 	return null;
 }
 
+/** The fake's fit notes: the match map from the fit assessment. */
+function fakeNotes(input: TailorInput): string {
+	return [
+		`# Notes — ${input.job.companyName} ${input.job.title}`,
+		"",
+		"## Role summary",
+		"",
+		`${input.job.title} at ${input.job.companyName}.`,
+		"",
+		"## Match map",
+		"",
+		...(input.fit?.requirements ?? []).map(
+			(r) =>
+				`- **${r.requirement}:** ${r.status}${r.evidence[0] ? ` (${r.evidence[0].file})` : ""}`,
+		),
+		"",
+		"## Fit verdict",
+		"",
+		`Score ${input.fit?.score ?? "n/a"}.`,
+		"",
+		"## Status",
+		"",
+		`Drafted ${input.today}`,
+	].join("\n");
+}
+
 export function fakeTailorResponder(
 	request: GenerateObjectRequest<unknown>,
 ): TailorOutput {
-	const input = request.context as TailorInput;
+	const input = request.context as TailorInput & { redraft?: unknown };
+	// A redraft writes another arrangement of the same verbatim lines, so its version differs.
+	const variant = input.redraft !== undefined;
 	const profile = evidenceProfile(input.profile);
 	const posting = input.job.descriptionText;
 	const company = input.job.companyName;
@@ -152,6 +180,7 @@ export function fakeTailorResponder(
 				.sort((a, b) => b.score - a.score)
 				.slice(0, 2)
 				.map((b) => b.line);
+			if (variant) bullets.reverse();
 			const meta = [
 				...record.locationParts.filter((p) => !/^(?:full|part)-time$/i.test(p)),
 				record.dates,
@@ -206,6 +235,7 @@ export function fakeTailorResponder(
 	const proof = roles
 		.flatMap((r) => r.variants)
 		.sort((a, b) => relevance(b, posting) - relevance(a, posting));
+	if (variant) proof.reverse();
 	const opening = `I am applying for the ${title} role at ${company}. What draws me to ${company} is the work the posting describes.`;
 	const close = `I would welcome a conversation about the ${title} role at ${company}.`;
 	const paragraphs: string[] = [];
@@ -257,28 +287,7 @@ export function fakeTailorResponder(
 			});
 	}
 
-	const notes = [
-		`# Notes — ${company} ${title}`,
-		"",
-		"## Role summary",
-		"",
-		`${title} at ${company}.`,
-		"",
-		"## Match map",
-		"",
-		...(input.fit?.requirements ?? []).map(
-			(r) =>
-				`- **${r.requirement}:** ${r.status}${r.evidence[0] ? ` (${r.evidence[0].file})` : ""}`,
-		),
-		"",
-		"## Fit verdict",
-		"",
-		`Score ${input.fit?.score ?? "n/a"}.`,
-		"",
-		"## Status",
-		"",
-		`Drafted ${input.today}`,
-	].join("\n");
+	const notes = fakeNotes(input);
 
 	return { notes, cv, coverLetter, formAnswers, missingFacts };
 }

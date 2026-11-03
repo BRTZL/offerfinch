@@ -14,6 +14,7 @@ import { eventsMethods } from "./repository/events";
 import { jobsMethods } from "./repository/jobs";
 import { profileMethods } from "./repository/profile";
 import { questionsMethods } from "./repository/questions";
+import { redraftMethods } from "./repository/redraft";
 import { submissionMethods } from "./repository/submission";
 
 export {
@@ -177,6 +178,26 @@ export class DrizzlePipelineRepository
 
 	saveExport(...args: Parameters<typeof documentsMethods.saveExport>) {
 		return documentsMethods.saveExport.apply(this, args);
+	}
+
+	pendingRedraft(...args: Parameters<typeof redraftMethods.pendingRedraft>) {
+		return redraftMethods.pendingRedraft.apply(this, args);
+	}
+
+	documentVersions(
+		...args: Parameters<typeof redraftMethods.documentVersions>
+	) {
+		return redraftMethods.documentVersions.apply(this, args);
+	}
+
+	saveRedraft(...args: Parameters<typeof redraftMethods.saveRedraft>) {
+		return redraftMethods.saveRedraft.apply(this, args);
+	}
+
+	setRedraftProblem(
+		...args: Parameters<typeof redraftMethods.setRedraftProblem>
+	) {
+		return redraftMethods.setRedraftProblem.apply(this, args);
 	}
 
 	setCheckError(...args: Parameters<typeof applicationsMethods.setCheckError>) {
