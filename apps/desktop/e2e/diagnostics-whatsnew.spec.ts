@@ -9,7 +9,13 @@ import {
 	test,
 } from "@playwright/test";
 
-import { APP_DIR, launchApp, tempUserData, toastsGone } from "./launch";
+import {
+	APP_DIR,
+	launchApp,
+	openRoute,
+	tempUserData,
+	toastsGone,
+} from "./launch";
 import { onboardWithFakes, shootBothThemes, withDb } from "./matches-setup";
 
 /**
@@ -122,19 +128,6 @@ async function quiet(page: Page) {
 	await toastsGone(page, 15_000);
 }
 
-/** Navigates as a notification does (main's test hook). */
-function openPage(app: ElectronApplication, pathname: string) {
-	return app.evaluate(
-		(_electron, p) =>
-			(
-				globalThis as unknown as {
-					__offerfinchTest: { open: (p: string) => void };
-				}
-			).__offerfinchTest.open(p),
-		pathname,
-	);
-}
-
 async function close(app: ElectronApplication) {
 	await app.close();
 }
@@ -208,7 +201,7 @@ test("diagnostics: reviewed, redacted and saved; What's new: once per version", 
 
 			// Settings › General opens it too; Cancel leaves nothing behind.
 			fs.rmSync(zip);
-			await openPage(app, "/settings/general");
+			await openRoute(app, page, "/settings/general");
 			await page.getByTestId("diagnostics-open").click();
 			await expect(sheet.getByTestId("diagnostics-file").first()).toBeVisible({
 				timeout: 30_000,
@@ -288,7 +281,7 @@ test("diagnostics: reviewed, redacted and saved; What's new: once per version", 
 			await page.waitForTimeout(2_000);
 			const sheet = page.getByTestId("whats-new-sheet");
 			await expect(sheet).toHaveCount(0);
-			await openPage(app, "/settings/general");
+			await openRoute(app, page, "/settings/general");
 			await page.getByTestId("whats-new-open").click();
 			await expect(sheet).toBeVisible();
 			await expect(sheet).toContainText("the newer notes");

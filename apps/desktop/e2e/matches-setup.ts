@@ -3,7 +3,7 @@ import { type ElectronApplication, expect, type Page } from "@playwright/test";
 import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
-import { RESUME } from "./launch";
+import { RESUME, skipRestOfSetup } from "./launch";
 
 /** Runs `fn` on the app's database in `userData` (read only unless asked). */
 export function withDb<T>(
@@ -38,7 +38,7 @@ export async function onboardWithFakes(page: Page) {
 	await page.getByTestId("onboarding-text").fill(RESUME);
 	await page.getByTestId("onboarding-structure").click();
 	await page.getByTestId("onboarding-save").click({ timeout: 60_000 });
-	await page.getByTestId("onboarding-later").click();
+	await skipRestOfSetup(page);
 }
 
 /** One scan of the fixture boards, waited for until every new job is scored or set aside. */

@@ -5,7 +5,14 @@ import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
 import { startFixtureBoards } from "./fixture-boards";
-import { APP_DIR, launchApp, RESUME, tempUserData } from "./launch";
+import {
+	APP_DIR,
+	launchApp,
+	openRoute,
+	RESUME,
+	skipRestOfSetup,
+	tempUserData,
+} from "./launch";
 
 /**
  * A match's header and posting, in the background against the fixture boards: a posting open
@@ -51,7 +58,7 @@ test("a long location list is one line; the posting is dark in dark mode", async
 		await page.getByTestId("onboarding-text").fill(RESUME);
 		await page.getByTestId("onboarding-structure").click();
 		await page.getByTestId("onboarding-save").click({ timeout: 60_000 });
-		await page.getByTestId("onboarding-later").click();
+		await skipRestOfSetup(page);
 
 		await page.getByTestId("scan-status").click();
 		await page.getByTestId("scan-now").first().click();
@@ -102,15 +109,7 @@ test("a long location list is one line; the posting is dark in dark mode", async
 			nativeTheme.themeSource = "dark";
 		});
 		await sidebar(page, "Inbox").click();
-		await app.evaluate(
-			(_e, to) =>
-				(
-					globalThis as unknown as {
-						__offerfinchTest: { open: (p: string) => void };
-					}
-				).__offerfinchTest.open(to),
-			`/applications/${matchId}?view=all`,
-		);
+		await openRoute(app, page, `/applications/${matchId}?view=all`);
 
 		const summary = page.getByTestId("locations-summary");
 		await expect(summary).toHaveText(

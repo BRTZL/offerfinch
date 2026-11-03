@@ -4,7 +4,7 @@ import path from "node:path";
 import { expect, test } from "@playwright/test";
 import Database from "better-sqlite3";
 
-import { launchApp } from "./launch";
+import { launchApp, openRoute } from "./launch";
 
 /**
  * Answering a question opens the next one, its answer field ready, instead of an empty pane;
@@ -31,15 +31,7 @@ test("saving an answer opens the next question", async () => {
 			insert.run(crypto.randomUUID(), `k${i}`, q, now + i);
 		db.close();
 
-		await app.evaluate(
-			(_e, to) =>
-				(
-					globalThis as unknown as {
-						__offerfinchTest: { open: (p: string) => void };
-					}
-				).__offerfinchTest.open(to),
-			"/questions",
-		);
+		await openRoute(app, page, "/questions");
 		const rows = page.getByTestId("question-row");
 		await expect(rows).toHaveCount(3, { timeout: 30_000 });
 		const order = await rows.allInnerTexts();

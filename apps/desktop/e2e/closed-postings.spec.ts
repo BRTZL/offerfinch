@@ -10,7 +10,14 @@ import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
 import { startFixtureBoards } from "./fixture-boards";
-import { APP_DIR, launchApp, RESUME, tempUserData, toastsGone } from "./launch";
+import {
+	APP_DIR,
+	launchApp,
+	RESUME,
+	skipRestOfSetup,
+	tempUserData,
+	toastsGone,
+} from "./launch";
 
 /**
  * Closed postings (docs/decisions.md, 2026-11-03), in the background against the fixture boards:
@@ -116,7 +123,7 @@ test("a posting taken down from its board shows as closed, Prepare is refused wi
 		await page.getByTestId("onboarding-text").fill(RESUME);
 		await page.getByTestId("onboarding-structure").click();
 		await page.getByTestId("onboarding-save").click({ timeout: 60_000 });
-		await page.getByTestId("onboarding-later").click();
+		await skipRestOfSetup(page);
 
 		await scanAndSettle(page);
 		const first = posting("4001");

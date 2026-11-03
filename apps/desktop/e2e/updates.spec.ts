@@ -3,22 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
-import { launchApp } from "./launch";
+import { launchApp, openRoute } from "./launch";
 
 /** A new user is sent to setup first; Settings opens once that has happened. */
 async function openSettings(app: ElectronApplication, page: Page) {
 	await expect
 		.poll(() => new URL(page.url()).pathname, { timeout: 30_000 })
 		.toBe("/onboarding");
-	await app.evaluate(
-		(_e, to) =>
-			(
-				globalThis as unknown as {
-					__offerfinchTest: { open: (p: string) => void };
-				}
-			).__offerfinchTest.open(to),
-		"/settings/general",
-	);
+	await openRoute(app, page, "/settings/general");
 }
 
 /**

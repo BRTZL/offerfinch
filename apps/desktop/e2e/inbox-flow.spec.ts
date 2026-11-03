@@ -5,7 +5,14 @@ import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
 import { startFixtureBoards } from "./fixture-boards";
-import { APP_DIR, launchApp, RESUME, tempUserData, toastsGone } from "./launch";
+import {
+	APP_DIR,
+	launchApp,
+	RESUME,
+	skipRestOfSetup,
+	tempUserData,
+	toastsGone,
+} from "./launch";
 
 /**
  * The Inbox as a decision list, in the background against the fixture boards: it opens on
@@ -93,7 +100,7 @@ test("Inbox: matches first, grouped by company, Not interested with reasons, hid
 		await page.getByTestId("onboarding-text").fill(RESUME);
 		await page.getByTestId("onboarding-structure").click();
 		await page.getByTestId("onboarding-save").click({ timeout: 60_000 });
-		await page.getByTestId("onboarding-later").click();
+		await skipRestOfSetup(page);
 
 		await scanAndSettle(page, 1);
 		expect(acmeMatches().length).toBeGreaterThanOrEqual(2);
@@ -281,9 +288,13 @@ test("Inbox: matches first, grouped by company, Not interested with reasons, hid
 				"select count(*) n from scan_runs where finished_at is not null",
 			)[0]?.n,
 		).toBe(2);
-		await expect(page.getByTestId("scan-row")).toHaveCount(2);
+		// The list refreshes every 15 s once no scan runs, so allow it one refresh.
+		await expect(page.getByTestId("scan-row")).toHaveCount(2, {
+			timeout: 30_000,
+		});
 		await expect(page.getByTestId("scan-detail")).toContainText(
 			"from a company you hid",
+			{ timeout: 30_000 },
 		);
 
 		// Closed holds the dismissed matches.
@@ -325,6 +336,10 @@ test("Inbox: matches first, grouped by company, Not interested with reasons, hid
 			.getByTestId("inbox-group")
 			.filter({ hasText: "Acme Robotics" });
 		await back.click();
+		// The list can still show the roles from before the new posting was scored: wait for it.
+		await expect(children).toHaveCount(acmeMatches().length, {
+			timeout: 30_000,
+		});
 		await page.getByTestId("inbox-scroll").focus();
 		// ⌘-selecting two and pressing P prepares nothing.
 		await children.nth(0).click();

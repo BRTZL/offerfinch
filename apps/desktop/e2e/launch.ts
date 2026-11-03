@@ -244,3 +244,59 @@ export async function toastsGone(page: Page, timeout = 15_000): Promise<void> {
 	await page.mouse.move(1, 1);
 	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout });
 }
+
+/** The window's route now (its pathname, without any query). */
+export function pathnameOf(page: Page): string {
+	return new URL(page.url()).pathname;
+}
+
+/** The window shows this route, or an item inside it (a list opens on its first row). */
+function onRoute(page: Page, want: string): boolean {
+	const now = pathnameOf(page);
+	return (
+		now === want ||
+		(want !== "/" && now.startsWith(`${want.replace(/\/$/, "")}/`))
+	);
+}
+
+/**
+ * Navigates as a notification or menu item does (main's test hook) and waits until the window
+ * shows that route. The window may still be starting, or another navigation (Finish later's move
+ * to Home) may land after this one on a slow machine, so the open is sent again until it holds.
+ */
+export async function openRoute(
+	app: ElectronApplication,
+	page: Page,
+	to: string,
+	timeout = 30_000,
+): Promise<void> {
+	const want = new URL(`app://local${to}`).pathname;
+	let sent = false;
+	await expect(async () => {
+		if (!sent || !onRoute(page, want)) {
+			sent = true;
+			await app.evaluate(
+				(_e, where) =>
+					(
+						globalThis as unknown as {
+							__offerfinchTest: { open: (p: string) => void };
+						}
+					).__offerfinchTest.open(where),
+				to,
+			);
+		}
+		await expect
+			.poll(() => onRoute(page, want) || pathnameOf(page), { timeout: 3_000 })
+			.toBe(true);
+	}).toPass({ timeout });
+}
+
+/**
+ * Setup's Finish later, then waits until Home is on screen. Finish later saves first and then
+ * moves to Home, so a test that navigates straight after the click can be sent back to Home.
+ */
+export async function skipRestOfSetup(page: Page): Promise<void> {
+	await page.getByTestId("onboarding-later").click();
+	await expect.poll(() => pathnameOf(page), { timeout: 30_000 }).toBe("/");
+	await expect(page.getByTestId("home")).toBeVisible({ timeout: 30_000 });
+}
