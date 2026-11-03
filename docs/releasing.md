@@ -48,8 +48,8 @@ Three ways, all ending in the same jobs:
    gh run watch
    ```
 
-   The run works out the version and tests it. The build waits for your approval (the `release`
-   environment, below). Only once the build is signed and notarized does it commit "Release
+   The run works out the version, tests it and builds in the `release` environment (below). Only
+   once the build is signed and notarized does it commit "Release
    X.Y.Z" to `main` (stable), push the tag with the release deploy key and publish. If anything
    fails before that, nothing is committed or tagged and the same version can be run again. If
    `main` moved while it ran, the push is refused and nothing is published: run it again.
@@ -65,8 +65,7 @@ Three ways, all ending in the same jobs:
    gh run watch
    ```
 
-   The pushed tag starts the workflow. A tag push is always a real release: it waits for your
-   approval before the build.
+   The pushed tag starts the workflow. A tag push is always a real release.
 
 3. **A tag by hand.** `git tag -a v0.1.1-preview.1 -m "OfferFinch 0.1.1-preview.1" && git push
    origin v0.1.1-preview.1` releases a preview of the tagged commit. A stable tag must match
@@ -88,7 +87,7 @@ the background and offer **Restart to Update**.
 2. **quality** (lint, types, knip, release plan tests, public check), **test** (unit tests) and
    **e2e** (the whole desktop suite in the background, each failing test retried once), in
    parallel.
-3. **build**, in the `release` environment, so it waits for your approval; it fails at once if a
+3. **build**, in the `release` environment (the signing secrets); it fails at once if a
    signing secret is missing. arm64 and x64 on one macOS runner, signed with the Developer ID,
    notarized and verified (`codesign`, `spctl`, `stapler`), then a launch check: the packaged
    arm64 app opens in background test mode against a temporary data folder and must reach its
@@ -105,8 +104,8 @@ run with a signing secret missing fails with the missing names; it never turns i
 
 A dry run runs every check and builds both arches **ad-hoc signed** (as `pnpm dist` does: not
 notarized, without the release stamp, so it never updates itself), runs the launch check and keeps
-the files as a run artifact. It uses no environment, so it needs no approval, reads no signing
-secret and makes no deployment. It commits, tags and publishes nothing; the run summary says
+the files as a run artifact. It uses no environment, so it reads no signing secret and makes no
+deployment. It commits, tags and publishes nothing; the run summary says
 "Dry run: nothing published". The button runs a dry run from any branch:
 
 ```sh
@@ -119,10 +118,11 @@ Two environments (Settings › Environments) hold the release secrets, so only t
 them, on the refs allowed, can read them:
 
 - **`release`**: the five signing secrets. Deployment branches and tags: `main` and `v*.*.*`.
-  Required reviewer: the owner, so every real release waits for an approval before the build.
-  Only a real build runs in it; dry runs do not.
-- **`release-push`**: `RELEASE_DEPLOY_KEY`. Deployment branches: `main` only. No reviewer (the
-  build was already approved). Only finalize runs in it.
+  No required reviewer: the owner starts every release, so a second click would only repeat
+  that decision. Add one (Settings › Environments › release) if others get write access. Only a
+  real build runs in it; dry runs do not.
+- **`release-push`**: `RELEASE_DEPLOY_KEY`. Deployment branches: `main` only. No reviewer. Only
+  finalize runs in it.
 
 Set an environment secret with `gh secret set <NAME> --env <environment> -R <owner>/offerfinch`
 (it asks for the value, or reads it from standard input), or in Settings › Environments ›
@@ -256,14 +256,13 @@ Right after the repository is made public:
    contributors**: "Require approval for all external contributors".
 2. Settings › Code security › **Private vulnerability reporting**: on (SECURITY.md points to it).
 3. The **`release` environment** (One-time setup): deployment branches and tags `main` and
-   `v*.*.*`, the owner as required reviewer, and the five signing secrets in it. Then delete the
+   `v*.*.*`, and the five signing secrets in it. Then delete the
    repository-level signing secrets: the build no longer reads them.
 4. The **`release-push` environment** (deployment branch `main`) and the **release deploy key**
    (One-time setup, 3): write access, private key as `RELEASE_DEPLOY_KEY` in `release-push`,
    Deploy keys on the rulesets' bypass lists. Then require pull requests and the `check` status
    on `main`, and restrict creating `v*` tags.
-5. Prove it with a preview release from the button: approve the build; the run should push the
-   tag and publish, and the tag's own run should end with "already released".
+5. Prove it with a release from the button: the run should push the tag and publish, and the tag's own run should end with "already released".
 6. **`PUBLIC_DENYLIST`**: decide whether CI's public check gets the denylist as a secret (without
    it, CI runs only the generic patterns; the local check uses the full list).
 
@@ -281,8 +280,8 @@ Right after the repository is made public:
 - **"vX.Y.Z is already released":** not an error. The button pushed that tag and published it, so
   the tag's own run has nothing to do. If the button run failed after it pushed the tag, re-run
   its failed jobs; if no release (not even a draft) was made, the tag's run releases it instead.
-- **A run waits with "Waiting for review":** a real build needs the owner's approval in the
-  `release` environment (the run page › Review deployments).
+- **A run waits with "Waiting for review":** someone added a required reviewer to the `release`
+  environment; approve it on the run page › Review deployments, or remove the reviewer.
 - **Notarization fails:** the log names the file; usually a native binary that is not signed.
   `codesign -dvv` on it shows the signature.
 - **An installed app does not update:** Settings › General › Updates shows the error. Ad-hoc
