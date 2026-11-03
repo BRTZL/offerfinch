@@ -79,6 +79,20 @@ function employerLink(html: string): string | undefined {
 	return undefined;
 }
 
+/** What one part of the first line is. */
+function partKind(part: string): "location" | "employment" | "role" | "other" {
+	// A header field is short; a long part is the post's prose run into the line (no break
+	// after the header), never a place or a role.
+	if (part.length > 80) return "other";
+	// Pay first: "$150K, or local average outside the US" names a country, not a place.
+	if (SALARY.test(part) && !WORKPLACE.test(part)) return "other";
+	if (WORKPLACE.test(part) || (isPlace(part) && !ROLE_WORDS.test(part)))
+		return "location";
+	if (EMPLOYMENT.test(part)) return "employment";
+	if (VISA.test(part) || URL_LIKE.test(part)) return "other";
+	return "role";
+}
+
 interface HeaderLine {
 	company: string;
 	title: string;
@@ -109,16 +123,10 @@ export function parseHiringLine(line: string): HeaderLine | null {
 	const roles: string[] = [];
 	let employmentType: string | undefined;
 	for (const part of parts.slice(1)) {
-		if (WORKPLACE.test(part) || (isPlace(part) && !ROLE_WORDS.test(part))) {
-			locations.push(part.slice(0, 160));
-			continue;
-		}
-		if (EMPLOYMENT.test(part)) {
-			employmentType ??= part.slice(0, 60);
-			continue;
-		}
-		if (SALARY.test(part) || VISA.test(part) || URL_LIKE.test(part)) continue;
-		roles.push(part);
+		const kind = partKind(part);
+		if (kind === "location") locations.push(part.slice(0, 160));
+		else if (kind === "employment") employmentType ??= part.slice(0, 60);
+		else if (kind === "role") roles.push(part);
 	}
 	const title = (roles.find((r) => ROLE_WORDS.test(r)) ?? roles[0])
 		?.replace(/\s+/g, " ")

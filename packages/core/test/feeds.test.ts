@@ -195,6 +195,15 @@ describe("feed parsers, on fabricated fixtures in each feed's shape", () => {
 				"Oakmoss | Hybrid (2 days) | Lisbon, Portugal | Data Engineer",
 			),
 		).toMatchObject({ workplaceType: "hybrid", title: "Data Engineer" });
+		// No break after the header: the prose run into the last part is no place.
+		expect(
+			parseHiringLine(
+				"Pinecrest Data | Software Engineers | 100% Remote (Global) | Full-Time Pinecrest processes petabytes of data every month for hundreds of customers in Germany and Japan.",
+			),
+		).toMatchObject({
+			title: "Software Engineers",
+			locations: ["100% Remote (Global)"],
+		});
 		expect(parseHiringLine("We are hiring! Email us.")).toBeNull();
 		expect(parseHiringLine("Only a company | REMOTE")).toBeNull();
 	});
