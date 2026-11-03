@@ -165,11 +165,43 @@ async function safeEvaluate<T>(
 	}
 }
 
-/** Loads the form; a stop when the page is a challenge, blocked, or not the form. */
+/**
+ * `waitForSelector`, cut short when the selector can no longer come: the page tried to leave
+ * the allowed hosts (the refused navigation leaves an error page), or a challenge is shown
+ * instead of the form. Waiting out the timeout would only delay the stop. Returns the
+ * destination problem, null once the selector is there, and throws for a challenge or the
+ * timeout (the caller reads the page to say which).
+ */
+async function waitForSelectorOrAway(
+	page: BrowserPage,
+	selector: string,
+	timeoutMs: number,
+	allowedHosts: string[] | undefined,
+): Promise<string | null> {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		const away = destinationProblem(page, allowedHosts);
+		if (away) return away;
+		const left = deadline - Date.now();
+		if (left <= 0) throw new Error(`No ${selector} within ${timeoutMs} ms.`);
+		try {
+			await page.waitForSelector(selector, { timeoutMs: Math.min(left, 500) });
+			return null;
+		} catch {}
+		if (await safeEvaluate<string | null>(page, VISIBLE_CHALLENGE_SCRIPT))
+			throw new Error("A challenge is shown instead of the form.");
+	}
+}
+
+/**
+ * Loads the form; a stop when the page is a challenge, blocked, not the form, or off the
+ * allowed hosts.
+ */
 export async function openForm(
 	page: BrowserPage,
 	url: string,
 	config: BoardConfig,
+	allowedHosts?: string[],
 ): Promise<Stop | null> {
 	const nav = await page.goto(url, { waitUntil: "load", timeoutMs: 45_000 });
 	if (nav.status !== null && BLOCK_STATUSES.has(nav.status))
@@ -178,7 +210,13 @@ export async function openForm(
 			message: `The board answered HTTP ${nav.status}.`,
 		};
 	try {
-		await page.waitForSelector(config.root, { timeoutMs: 20_000 });
+		const away = await waitForSelectorOrAway(
+			page,
+			config.root,
+			20_000,
+			allowedHosts,
+		);
+		if (away) return { kind: "unrecognized_page", message: away };
 		// Scripts that load after `load` (Greenhouse fetches its locale bundle) must finish before
 		// the form is used, and before a dry run closes the network.
 		await page.waitForNetworkIdle(10_000);
@@ -434,18 +472,25 @@ export async function fillForm(
 	return { ok: true, plan, filled };
 }
 
-/** Clicks submit once and waits for the confirmation; anything else is an unknown outcome. */
+/**
+ * Clicks submit once and waits for the confirmation; anything else is an unknown outcome. A
+ * request refused for leaving the allowed hosts ends the wait at once: the submission went
+ * nowhere, and no confirmation will come.
+ */
 export async function submitForm(
 	page: BrowserPage,
 	config: BoardConfig,
 	timeoutMs = 30_000,
 	formUrl = page.url(),
+	allowedHosts?: string[],
 ): Promise<{ confirmed: string } | { unknown: string }> {
 	await page.click(config.submit);
 	const deadline = Date.now() + timeoutMs;
 	let lastErrors: string[] = [];
 	while (Date.now() < deadline) {
 		await page.waitForTimeout(400);
+		const away = destinationProblem(page, allowedHosts);
+		if (away) return { unknown: away };
 		// Errors and challenges first; only then the board's own confirmation.
 		const challenge = await safeEvaluate<string | null>(
 			page,
@@ -476,7 +521,7 @@ export async function runApplication(
 	const config = BOARD_CONFIGS[run.board];
 	let filled: FilledField[] = [];
 	try {
-		const opened = await openForm(page, run.url, config);
+		const opened = await openForm(page, run.url, config, run.allowedHosts);
 		const awayAfterOpen = destinationProblem(page, run.allowedHosts);
 		if (opened || awayAfterOpen)
 			return {
@@ -538,6 +583,7 @@ export async function runApplication(
 				config,
 				run.confirmTimeoutMs,
 				page.url(),
+				run.allowedHosts,
 			);
 			const after = (await shot(page)) ?? new Uint8Array();
 			const awayAfter = destinationProblem(page, run.allowedHosts);

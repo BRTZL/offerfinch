@@ -9,8 +9,14 @@
 #   starts a second run; it waits for this one (one release at a time), finds the release already
 #   made and ends green without building ("already released").
 #
-# released -> resolve -> quality, test, e2e -> build (arm64 + x64 on one runner)
+# released -> resolve -> quality, test, test-mac, e2e (3 shards), build (arm64 + x64 on one runner)
 #          -> finalize (button only) -> publish -> notify
+#
+# The checks and the build run side by side: signing and notarization take as long as the tests,
+# and nothing is committed, tagged or published until every job has passed. A failed check
+# leaves a signed build as a run artifact and nothing more. Only the jobs that need macOS run
+# there: the Codex boundary tests (sandbox-exec), the desktop app's tests, the e2e suite and the
+# build; macOS runners are few and queue.
 #
 # Two environments hold the secrets (docs/releasing.md):
 # - release: the five signing secrets. Only a real build runs in it, and only from main or a
@@ -172,10 +178,30 @@ jobs:
       - run: pnpm -r check-types
       - run: pnpm knip
 
+  # The unit tests that run anywhere: core, the store and the runner.
   test:
     needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm rebuild better-sqlite3
+      - name: Unit tests
+        run: pnpm --filter @offerfinch/core --filter @offerfinch/db --filter @offerfinch/runner test
+
+  # The unit tests that need macOS: the Codex boundary (sandbox-exec) and the desktop app.
+  test-mac:
+    needs: resolve
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
@@ -194,12 +220,17 @@ jobs:
           pnpm --dir "$RUNNER_TEMP/codex-tests" add @openai/codex@0.166.0 --ignore-scripts
           node scripts/codex-test-path.mjs "$RUNNER_TEMP/codex-tests/node_modules" >> "$GITHUB_PATH"
       - name: Unit tests
-        run: pnpm test
+        run: pnpm --filter @offerfinch/local-llm --filter @offerfinch/desktop test
 
+  # The suite split three ways by file (Playwright shards); each shard is its own runner.
   e2e:
     needs: resolve
     runs-on: macos-15
-    timeout-minutes: 75
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
@@ -215,22 +246,23 @@ jobs:
         working-directory: apps/desktop
         run: node node_modules/electron/install.js
       # In the background (never on screen, never the active app), each failing test retried once.
-      - name: Desktop end-to-end tests
+      - name: Desktop end-to-end tests (shard ${{ matrix.shard }} of 3)
         env:
           OFFERFINCH_TEST_BACKGROUND: "1"
-        run: pnpm --filter @offerfinch/desktop e2e --retries=1
+        run: pnpm --filter @offerfinch/desktop e2e --retries=1 --shard=${{ matrix.shard }}/3
       - name: Keep the traces (failures)
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: e2e-results
+          name: e2e-results-${{ matrix.shard }}
           path: apps/desktop/test-results
           retention-days: 7
 
   # A real build runs in the release environment (the signing secrets); a dry run in none: an
-  # empty environment name means no environment, so no signing secret and no deployment.
+  # empty environment name means no environment, so no signing secret and no deployment. It runs
+  # beside the checks; finalize and publish wait for all of them.
   build:
-    needs: [resolve, quality, test, e2e]
+    needs: resolve
     runs-on: macos-15
     timeout-minutes: 60
     environment: ${{ needs.resolve.outputs.dry_run == 'false' && 'release' || '' }}
@@ -371,7 +403,7 @@ jobs:
   # It pushes over SSH with the release deploy key (release-push environment), which may bypass
   # the rulesets; the workflow's token never writes to main or creates a tag.
   finalize:
-    needs: [resolve, build]
+    needs: [resolve, quality, test, test-mac, e2e, build]
     if: github.event_name == 'workflow_dispatch' && needs.resolve.outputs.dry_run == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -414,9 +446,12 @@ jobs:
           fi
 
   publish:
-    needs: [resolve, build, finalize]
+    needs: [resolve, quality, test, test-mac, e2e, build, finalize]
     if: >-
-      !cancelled() && needs.build.result == 'success' && needs.resolve.outputs.dry_run == 'false' &&
+      !cancelled() && needs.resolve.outputs.dry_run == 'false' &&
+      needs.quality.result == 'success' && needs.test.result == 'success' &&
+      needs['test-mac'].result == 'success' && needs.e2e.result == 'success' &&
+      needs.build.result == 'success' &&
       (needs.finalize.result == 'success' || needs.finalize.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -481,7 +516,16 @@ jobs:
   # One message per run. The topic comes from the NTFY_TOPIC secret: in a public repository a
   # topic in the workflow file would let anyone post to it. Nothing private goes in the message.
   notify:
-    needs: [released, resolve, quality, test, e2e, build, finalize, publish]
+    needs:
+      - released
+      - resolve
+      - quality
+      - test
+      - test-mac
+      - e2e
+      - build
+      - finalize
+      - publish
     if: always() && needs.released.outputs.released != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
