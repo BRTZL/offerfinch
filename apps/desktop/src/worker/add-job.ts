@@ -4,7 +4,6 @@ import type {
 	WorkplaceType,
 } from "@offerfinch/core/domain/types";
 import { normalizeUrl } from "@offerfinch/core/domain/url";
-import { FEEDS } from "@offerfinch/core/feeds/feeds";
 import {
 	evaluateHardRequirements,
 	type FilterResult,
@@ -712,9 +711,6 @@ export type RereadResult =
  * replaced too. When the link can't be read now, a whole-page text is still cleaned in place.
  */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keep guarded posting reads and recovery reasons in their original order.
-/** Job sources whose postings come whole from a public feed (core/feeds). */
-const FEED_SOURCES: ReadonlySet<string> = new Set(FEEDS.map((f) => f.source));
-
 export async function rereadPosting(
 	app: WorkerApp,
 	applicationId: string,
@@ -728,7 +724,6 @@ export async function rereadPosting(
 			title: jobs.title,
 			state: applications.state,
 			description: jobs.descriptionText,
-			source: jobs.source,
 		})
 		.from(applications)
 		.innerJoin(jobs, eq(jobs.id, applications.jobId))
@@ -736,14 +731,6 @@ export async function rereadPosting(
 			and(eq(applications.id, applicationId), eq(applications.userId, userId)),
 		);
 	if (!row) return { ok: false, reason: "That job is not here." };
-	// A remote feed gave the whole posting; its page there (an HN post, a page behind a browser
-	// check) is never read by the app (docs/decisions.md, 2026-11-03).
-	if (FEED_SOURCES.has(row.source))
-		return {
-			ok: false,
-			reason:
-				"This posting came whole from its feed and is not read again. Open it there to see the page.",
-		};
 	// Nothing is read for a posting that can no longer change.
 	if (["applying", "applied", "needs_human"].includes(row.state))
 		return {

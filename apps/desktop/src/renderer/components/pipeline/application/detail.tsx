@@ -98,20 +98,7 @@ export function ApplicationDetail(props: ApplicationDetailProps) {
 			/>
 			<div className="flex h-12 shrink-0 items-center justify-between px-5">
 				<h3 className="text-foreground text-sm font-semibold">Posting</h3>
-				{fromFeed(loaded.job.source) ? (
-					<span className="ml-auto" />
-				) : (
-					<RereadPosting id={loaded.id} className="ml-auto" />
-				)}
-				<a
-					href={loaded.job.url}
-					target="_blank"
-					rel="noreferrer"
-					className="text-primary flex items-center gap-1 text-xs hover:underline"
-				>
-					{postingLinkLabel(loaded.job.source)}
-					<ExternalLink className="size-3" />
-				</a>
+				<PostingLinks id={loaded.id} job={loaded.job} />
 			</div>
 			<div
 				className="min-h-0 flex-1 overflow-auto px-5 pb-6"
@@ -243,20 +230,7 @@ export function ApplicationDetail(props: ApplicationDetailProps) {
 									<h3 className="text-foreground text-sm font-semibold">
 										Posting
 									</h3>
-									{fromFeed(loaded.job.source) ? (
-										<span className="ml-auto" />
-									) : (
-										<RereadPosting id={loaded.id} className="ml-auto" />
-									)}
-									<a
-										href={loaded.job.url}
-										target="_blank"
-										rel="noreferrer"
-										className="text-primary flex items-center gap-1 text-xs hover:underline"
-									>
-										{postingLinkLabel(loaded.job.source)}
-										<ExternalLink className="size-3" />
-									</a>
+									<PostingLinks id={loaded.id} job={loaded.job} />
 								</>
 							}
 						>
@@ -281,6 +255,38 @@ export function ApplicationDetail(props: ApplicationDetailProps) {
 					</div>
 				) : null}
 			</div>
+		</>
+	);
+}
+
+/**
+ * The posting's header links: Re-read (not for a feed's job: the feed gave the whole posting,
+ * and its page there is never read) and the link to the original, named after the feed that
+ * asks to be credited ("Open on Remotive").
+ */
+function PostingLinks({
+	id,
+	job,
+}: {
+	id: string;
+	job: { url: string; source: string };
+}) {
+	return (
+		<>
+			{fromFeed(job.source) ? (
+				<span className="ml-auto" />
+			) : (
+				<RereadPosting id={id} className="ml-auto" />
+			)}
+			<a
+				href={job.url}
+				target="_blank"
+				rel="noreferrer"
+				className="text-primary flex items-center gap-1 text-xs hover:underline"
+			>
+				{postingLinkLabel(job.source)}
+				<ExternalLink className="size-3" />
+			</a>
 		</>
 	);
 }

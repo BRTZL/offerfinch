@@ -1,4 +1,7 @@
+import { FEEDS } from "@offerfinch/core/feeds/feeds";
+import { applications, jobs } from "@offerfinch/db/schema/pipeline";
 import { ORPCError } from "@orpc/server";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import {
 	addJobFromPaste,
@@ -12,11 +15,36 @@ import {
 import { protectedProcedure } from "./procedure";
 import { pastedSchema, refuse, worker } from "./shared";
 
+/** Job sources whose postings come whole from a public feed (core/feeds). */
+const FEED_SOURCES: ReadonlySet<string> = new Set(FEEDS.map((f) => f.source));
+
+/** Whether an application's job came from a remote feed. */
+async function fromFeed(
+	userId: string,
+	applicationId: string,
+): Promise<boolean> {
+	const [row] = await worker()
+		.db.select({ source: jobs.source })
+		.from(applications)
+		.innerJoin(jobs, eq(jobs.id, applications.jobId))
+		.where(
+			and(eq(applications.id, applicationId), eq(applications.userId, userId)),
+		);
+	return Boolean(row && FEED_SOURCES.has(row.source));
+}
+
 export const jobsRouter = {
 	/** Reads a job's posting again and stores it cleaned (structured data, main content). */
 	reread: protectedProcedure
 		.input(z.object({ id: z.string().uuid() }))
-		.handler(async ({ input }) => {
+		.handler(async ({ context, input }) => {
+			// A remote feed gave the whole posting; its page there (an HN post, a page behind a
+			// browser check) is never read by the app (docs/decisions.md, 2026-11-03).
+			if (await fromFeed(context.session.user.id, input.id))
+				throw new ORPCError("BAD_REQUEST", {
+					message:
+						"This posting came whole from its feed and is not read again. Open it there to see the page.",
+				});
 			const result = await rereadPosting(worker(), input.id);
 			if (!result.ok)
 				throw new ORPCError("BAD_REQUEST", { message: result.reason });
