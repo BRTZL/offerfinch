@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { APPLICATION_STATES } from "@offerfinch/core/domain/states";
+import { FEED_IDS } from "@offerfinch/core/feeds/feeds";
+import { nextFeedRead } from "@offerfinch/core/feeds/provider";
 import { detectLinkedInStop } from "@offerfinch/core/linkedin/detect";
 import { nextLinkedInRead } from "@offerfinch/core/linkedin/provider";
 import { LINKEDIN_ORIGIN } from "@offerfinch/core/linkedin/runner";
@@ -21,6 +23,7 @@ import {
 import {
 	clearProviderStop,
 	DrizzleLinkedInStore,
+	feedReads,
 	listProviders,
 	type ProviderId,
 } from "@offerfinch/db";
@@ -83,6 +86,10 @@ const PROVIDER_LABEL: Record<ProviderId, string> = {
 	linkedin: "LinkedIn",
 	indeed: "Indeed",
 	glassdoor: "Glassdoor",
+	remotive: "Remotive",
+	remoteok: "Remote OK",
+	weworkremotely: "We Work Remotely",
+	"hn-hiring": "HN Who is hiring",
 	"web-search": "Web search",
 };
 
@@ -174,9 +181,17 @@ export async function providerStatus(w: WorkerApp, userId: string) {
 			label: PROVIDER_LABEL[p.provider],
 			// Nothing to set up for any of them (job-board search reads DuckDuckGo in its own tab).
 			ready: p.enabled && (!record || retryDue(record, now)),
-			/** LinkedIn only: when a scan reads it next (every 6 hours, 10 pages a day). */
-			nextReadAt:
-				p.provider === "linkedin" && !record ? next.at.toISOString() : null,
+			/**
+			 * LinkedIn and the remote feeds: when a scan reads it next (LinkedIn every 6 hours, 10
+			 * pages a day; a feed every 6 hours, 4 reads a day).
+			 */
+			nextReadAt: record
+				? null
+				: p.provider === "linkedin"
+					? next.at.toISOString()
+					: (FEED_IDS as readonly string[]).includes(p.provider)
+						? nextFeedRead(feedReads(p.config), now).toISOString()
+						: null,
 			stop: record
 				? {
 						kind: record.kind,

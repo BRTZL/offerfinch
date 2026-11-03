@@ -64,6 +64,14 @@ export const HANDOFF_SOURCES: Readonly<Record<string, string>> = Object.freeze({
 	glassdoor:
 		"Found on Glassdoor: open the posting and apply yourself. Nothing is filled or sent automatically, and Glassdoor's own apply is never used.",
 	web: "Found on the web: open the posting and apply on the employer's site yourself. Nothing is filled or sent automatically.",
+	remotive:
+		"Found on Remotive: open the posting on Remotive and apply yourself. Nothing is filled or sent automatically.",
+	remoteok:
+		"Found on Remote OK: open the posting on Remote OK and apply yourself. Nothing is filled or sent automatically.",
+	weworkremotely:
+		"Found on We Work Remotely: open the posting on We Work Remotely and apply yourself. Nothing is filled or sent automatically.",
+	hackernews:
+		"Found in Hacker News' Who is hiring thread: open the post and apply the way it asks, yourself. Nothing is filled or sent automatically.",
 });
 
 /** The mode for an application from `source`: a hand-off source decides before its board does. */

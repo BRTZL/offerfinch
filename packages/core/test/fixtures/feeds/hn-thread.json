@@ -1,0 +1,58 @@
+{
+ "id": 9001,
+ "type": "story",
+ "title": "Ask HN: Who is hiring? (November 2026)",
+ "created_at": "2026-11-02T16:01:37.000Z",
+ "text": "Please state the location and include REMOTE for remote work (fabricated fixture).",
+ "children": [
+  {
+   "id": 9101,
+   "type": "comment",
+   "created_at": "2026-11-02T16:05:00.000Z",
+   "parent_id": 9001,
+   "text": "Nimbus Cloud | Senior Frontend Engineer | REMOTE (worldwide) | Full-time | $120k&#x2F;year | <a href=\"https:&#x2F;&#x2F;nimbus.example&#x2F;jobs&#x2F;42\" rel=\"nofollow\">https:&#x2F;&#x2F;nimbus.example&#x2F;jobs&#x2F;42</a><p>We build a design system for 40 teams. React &amp; TypeScript.<p>Apply: jobs@nimbus.example",
+   "children": [
+    {
+     "id": 9201,
+     "type": "comment",
+     "parent_id": 9101,
+     "created_at": "2026-11-02T17:00:00.000Z",
+     "text": "Is this open to contractors? | Question | REMOTE",
+     "children": []
+    }
+   ]
+  },
+  {
+   "id": 9102,
+   "type": "comment",
+   "created_at": "2026-11-02T16:10:00.000Z",
+   "parent_id": 9001,
+   "text": "Tessera Labs (YC W21) | Berlin, Germany | ONSITE | Backend Developer<p>Go and Postgres.",
+   "children": []
+  },
+  {
+   "id": 9103,
+   "type": "comment",
+   "created_at": "2026-11-02T16:20:00.000Z",
+   "parent_id": 9001,
+   "text": "We are hiring lots of people, see our careers page!",
+   "children": []
+  },
+  {
+   "id": 9104,
+   "type": "comment",
+   "created_at": "2026-11-02T16:30:00.000Z",
+   "parent_id": 9001,
+   "text": null,
+   "children": []
+  },
+  {
+   "id": 9106,
+   "type": "comment",
+   "created_at": "2026-11-02T18:00:00.000Z",
+   "parent_id": 9001,
+   "text": "Harbor Mills | Frontend Engineer, Backend Engineer | REMOTE (Turkey, EU) | https:&#x2F;&#x2F;harbormills.example&#x2F;careers<p>Logistics software for small ports.",
+   "children": []
+  }
+ ]
+}

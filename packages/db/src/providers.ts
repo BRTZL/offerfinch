@@ -1,5 +1,6 @@
 import type { JobSourceKind } from "@offerfinch/core/domain/types";
 import { companyNameKey, normalizeUrl } from "@offerfinch/core/domain/url";
+import type { FeedStore } from "@offerfinch/core/feeds/provider";
 import type {
 	ProviderRun,
 	SearchStore,
@@ -22,14 +23,26 @@ export const PROVIDER_IDS = [
 	"linkedin",
 	"indeed",
 	"glassdoor",
+	// Public remote-job feeds (core/feeds): at most every 6 hours each (core `FEED_PACE`).
+	"remotive",
+	"remoteok",
+	"weworkremotely",
+	"hn-hiring",
 	// Last: the more specific sources find a job first.
 	"web-search",
 ] as const;
-/** Read in the user's browser, or spending AI calls: off until the user turns them on. */
+/**
+ * Read in the user's browser, spending AI calls, or adding jobs to score from a new place: off
+ * until the user turns them on.
+ */
 const OFF_BY_DEFAULT: readonly string[] = [
 	"linkedin",
 	"indeed",
 	"glassdoor",
+	"remotive",
+	"remoteok",
+	"weworkremotely",
+	"hn-hiring",
 	"web-search",
 ];
 export type ProviderId = (typeof PROVIDER_IDS)[number];
@@ -348,5 +361,49 @@ export class SqliteWebStore extends SqliteSiteStore implements WebSearchStore {
 					r.nameKey === nameKey &&
 					titleKey(r.title) === title),
 		);
+	}
+}
+
+/** Reads older than this are dropped from a feed's record (the pace looks back a day). */
+const FEED_READS_KEPT_MS = 2 * 24 * 3_600_000;
+
+/** A feed's recorded reads (ISO times in its config's `reads`), oldest first. */
+export function feedReads(config: Record<string, unknown>): Date[] {
+	const reads = Array.isArray(config.reads) ? config.reads : [];
+	return reads
+		.filter((r): r is string => typeof r === "string")
+		.map((r) => new Date(r))
+		.filter((d) => !Number.isNaN(d.getTime()))
+		.sort((a, b) => a.getTime() - b.getTime());
+}
+
+/**
+ * The remote feeds' view of the database: web search's dedupe and the stop, plus each feed's
+ * reads, kept in its row's config beside the stop. Not in `last_run`: Retry now clears that, and
+ * a feed's pace must hold across restarts and clears alike.
+ */
+export class SqliteFeedStore extends SqliteWebStore implements FeedStore {
+	constructor(private readonly feeds: Database) {
+		super(feeds);
+	}
+
+	async reads(userId: string, feed: string): Promise<Date[]> {
+		const state = (await listProviders(this.feeds, userId)).find(
+			(p) => p.provider === feed,
+		);
+		return feedReads(state?.config ?? {});
+	}
+
+	async markRead(userId: string, feed: string, at: Date): Promise<void> {
+		const state = (await listProviders(this.feeds, userId)).find(
+			(p) => p.provider === feed,
+		);
+		if (!state) throw new Error(`unknown feed ${feed}`);
+		const reads = [...feedReads(state.config), at]
+			.filter((d) => at.getTime() - d.getTime() < FEED_READS_KEPT_MS)
+			.map((d) => d.toISOString());
+		await updateProvider(this.feeds, userId, state.provider, {
+			config: { ...state.config, reads },
+		});
 	}
 }

@@ -6,6 +6,7 @@ import {
 	RereadPosting,
 } from "@/components/pipeline/application/posting";
 import { StatusStrip } from "@/components/pipeline/application/status";
+import { postingLinkLabel } from "@/components/pipeline/bits";
 import { ChatPanel } from "@/components/pipeline/chat/chat-panel";
 import { ErrorLine } from "@/components/system/bits";
 import { ReadingColumn, ReadingPage } from "@/components/system/document";
@@ -104,7 +105,7 @@ export function ApplicationDetail(props: ApplicationDetailProps) {
 					rel="noreferrer"
 					className="text-primary flex items-center gap-1 text-xs hover:underline"
 				>
-					Open original
+					{postingLinkLabel(loaded.job.source)}
 					<ExternalLink className="size-3" />
 				</a>
 			</div>
@@ -245,7 +246,7 @@ export function ApplicationDetail(props: ApplicationDetailProps) {
 										rel="noreferrer"
 										className="text-primary flex items-center gap-1 text-xs hover:underline"
 									>
-										Open original
+										{postingLinkLabel(loaded.job.source)}
 										<ExternalLink className="size-3" />
 									</a>
 								</>

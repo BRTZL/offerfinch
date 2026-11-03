@@ -316,6 +316,7 @@ export class WorkerApp {
 			fakeModels: Boolean(this.init.test?.fakeModels),
 			fakeDelayMs: this.init.test?.fakeDelayMs,
 			boardBases: this.init.test?.boardBases,
+			standInHosts: Object.keys(this.init.test?.fetchRewrite ?? {}),
 			linkedin: linkedinScanDeps(this),
 			log: (message, data) => this.hooks.log("info", message, data),
 		});

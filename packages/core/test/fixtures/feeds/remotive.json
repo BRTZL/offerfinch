@@ -1,0 +1,73 @@
+{
+ "00-warning": "Fabricated fixture in the shape of Remotive's API (2026-11-03).",
+ "0-legal-notice": "Legal warning - fabricated: link back to the URL found on Remotive and mention Remotive as a source.",
+ "job-count": 4,
+ "total-job-count": 4,
+ "jobs": [
+  {
+   "id": 1001,
+   "url": "https://remotive.com/remote-jobs/software-development/senior-frontend-engineer-1001",
+   "title": "Senior Frontend Engineer",
+   "company_name": "Nimbus Cloud",
+   "company_logo": "https://remotive.com/job/1001/logo",
+   "category": "Software Development",
+   "tags": [
+    "react",
+    "typescript",
+    "frontend"
+   ],
+   "job_type": "full_time",
+   "publication_date": "2026-11-01T09:30:00",
+   "candidate_required_location": "Worldwide",
+   "salary": "$90k - $120k",
+   "description": "<p>Nimbus Cloud builds a design system used by 40 product teams.</p><ul><li>Requirements: React &amp; TypeScript, five years of frontend work</li><li>Responsibilities: own components end to end</li></ul><p>Questions: jobs@nimbus.example</p>"
+  },
+  {
+   "id": 1002,
+   "url": "https://remotive.com/remote-jobs/software-development/frontend-developer-1002",
+   "title": "Frontend Developer",
+   "company_name": "Tessera Labs",
+   "company_logo": "",
+   "category": "Software Development",
+   "tags": [
+    "vue"
+   ],
+   "job_type": "contract",
+   "publication_date": "2026-10-31T12:00:00",
+   "candidate_required_location": "USA Only",
+   "salary": "",
+   "description": "<p>Build our customer portal in Vue. You must live in the United States.</p>"
+  },
+  {
+   "id": 1003,
+   "url": "https://remotive.com/remote-jobs/marketing/marketing-manager-1003",
+   "title": "Marketing Manager",
+   "company_name": "Harbor Mills",
+   "company_logo": "",
+   "category": "Marketing",
+   "tags": [],
+   "job_type": "",
+   "publication_date": "2026-10-30T08:00:00",
+   "candidate_required_location": "Worldwide",
+   "salary": "",
+   "description": "<p>Own our campaigns.</p>"
+  },
+  {
+   "id": 1004,
+   "url": "https://remotive.com/remote-jobs/software-development/backend-engineer-1004",
+   "title": "Backend Engineer (Node.js)",
+   "company_name": "Quarry",
+   "company_logo": "",
+   "category": "Software Development",
+   "tags": [
+    "node",
+    "postgres"
+   ],
+   "job_type": "full_time",
+   "publication_date": "2026-11-02T07:15:00",
+   "candidate_required_location": "Europe, Turkey",
+   "salary": "",
+   "description": "<p>Design APIs in Node.js and PostgreSQL for our logistics platform.</p>"
+  }
+ ]
+}

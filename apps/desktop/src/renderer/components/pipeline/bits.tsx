@@ -158,8 +158,30 @@ const SOURCE_LABEL: Record<string, string> = {
 	indeed: "Indeed",
 	glassdoor: "Glassdoor",
 	web: "Web",
+	remotive: "Remotive",
+	remoteok: "Remote OK",
+	weworkremotely: "We Work Remotely",
+	hackernews: "Hacker News",
 	manual: "Added by hand",
 };
+
+/**
+ * Sources whose terms ask that a job link back to its page there and name them (Remotive, Remote
+ * OK, We Work Remotely), and Hacker News, whose post is the posting: the link says where it goes.
+ */
+const LINK_BACK = new Set([
+	"remotive",
+	"remoteok",
+	"weworkremotely",
+	"hackernews",
+]);
+
+/** The posting's link text: "Open on Remotive" for a feed's job, "Open original" otherwise. */
+export function postingLinkLabel(source?: string | null): string {
+	return source && LINK_BACK.has(source)
+		? `Open on ${sourceLabel(source)}`
+		: "Open original";
+}
 
 /** A board's name in words: Greenhouse, Careers page. */
 export function sourceLabel(source?: string | null): string {

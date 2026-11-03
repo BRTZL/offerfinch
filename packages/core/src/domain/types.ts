@@ -9,6 +9,11 @@ export const JOB_SOURCES = [
 	"glassdoor",
 	// Found by web search on any other site (core/web); always handed off.
 	"web",
+	// Public remote-job feeds (core/feeds); always handed off, linked back to the feed.
+	"remotive",
+	"remoteok",
+	"weworkremotely",
+	"hackernews",
 	// Added by hand (`dev:seed-job`): no board claimed.
 	"manual",
 ] as const;
