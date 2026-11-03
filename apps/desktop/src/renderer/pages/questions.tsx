@@ -219,6 +219,7 @@ function Answer({ q, onAnswered }: { q: Question; onAnswered: () => void }) {
 					</div>
 					<HelperResult
 						helper={helper}
+						text={text}
 						onUse={(proposed) => {
 							setText(proposed);
 							box.current?.focus();

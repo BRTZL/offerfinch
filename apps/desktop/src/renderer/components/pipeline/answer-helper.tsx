@@ -8,7 +8,10 @@ import { Button } from "@/components/ui/button";
 import { client } from "@/lib/orpc";
 
 type HelpResult = Awaited<ReturnType<typeof client.questions.help>>;
-type Proposal = Extract<HelpResult, { status: "ok" }>;
+type Proposal = Extract<HelpResult, { status: "ok" }> & {
+	/** The box text the proposal was built from. */
+	basis: string;
+};
 
 /**
  * Why Save is blocked: blanks the helper left ("[which bundle analyzer?]") must be filled in or
@@ -37,8 +40,8 @@ export function useAnswerHelper(questionId: string) {
 			setProposal(null);
 			setNotice(null);
 		},
-		onSuccess: (result) => {
-			if (result.status === "ok") setProposal(result);
+		onSuccess: (result, draft) => {
+			if (result.status === "ok") setProposal({ ...result, basis: draft });
 			else if (result.status === "rejected")
 				setNotice({
 					tone: "warning",
@@ -102,12 +105,17 @@ export function HelperButton({
 	);
 }
 
-/** The proposal under the box: the change, what's missing, Use this and Dismiss. */
+/**
+ * The proposal under the box: the change, what's missing, Use this and Dismiss. If the box was
+ * edited after the proposal was made, Use this is off, so it never overwrites the newer text.
+ */
 export function HelperResult({
 	helper,
+	text,
 	onUse,
 }: {
 	helper: Helper;
+	text: string;
 	onUse: (answer: string) => void;
 }) {
 	const { proposal, notice } = helper;
@@ -126,6 +134,7 @@ export function HelperResult({
 			</Notice>
 		);
 	if (!proposal) return null;
+	const stale = proposal.basis.trim() !== text.trim();
 	// A suggestion replaces an empty box: its "removed" side is one empty line, not worth showing.
 	const lines =
 		proposal.mode === "suggest"
@@ -174,6 +183,7 @@ export function HelperResult({
 			<div className="flex flex-wrap items-center gap-2">
 				<Button
 					size="xs"
+					disabled={stale}
 					onClick={() => {
 						onUse(proposal.answer);
 						helper.dismiss();
@@ -191,6 +201,16 @@ export function HelperResult({
 				>
 					Dismiss
 				</Button>
+				{stale ? (
+					<p
+						className="text-muted-foreground text-xs"
+						data-testid="answer-proposal-stale"
+					>
+						You changed your answer since.{" "}
+						{proposal.mode === "suggest" ? "Suggest" : "Improve"} again to
+						include it.
+					</p>
+				) : null}
 			</div>
 		</div>
 	);

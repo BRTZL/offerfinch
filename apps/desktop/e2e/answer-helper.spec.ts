@@ -117,6 +117,13 @@ test("answer helper: Improve proposes from the user's words, Use this fills the 
 			nativeTheme.themeSource = "system";
 		});
 
+		// Editing the box after the proposal turns Use this off, so it can't overwrite the edit.
+		await box.fill("All of them and more, mostly Lighthouse");
+		await expect(proposal.getByTestId("answer-use")).toBeDisabled();
+		await expect(proposal.getByTestId("answer-proposal-stale")).toBeVisible();
+		await box.fill("All of them and more");
+		await expect(proposal.getByTestId("answer-use")).toBeEnabled();
+
 		// Use this puts the proposal in the box, still editable.
 		await proposal.getByTestId("answer-use").click();
 		await expect(proposal).toHaveCount(0);
