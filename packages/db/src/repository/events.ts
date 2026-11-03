@@ -34,6 +34,22 @@ async function postingClosed(t: Tx, applicationId: string): Promise<boolean> {
 		.where(eq(applications.id, applicationId));
 	return Boolean(job?.closedAt);
 }
+/** A Redraft the user asked for replaces documents: approve after it, or cancel it. */
+async function refuseWhileRedrafting(
+	t: Tx,
+	applicationId: string,
+): Promise<void> {
+	const [pending] = await t
+		.select({ redraft: applications.redraft })
+		.from(applications)
+		.where(eq(applications.id, applicationId));
+	if (pending?.redraft)
+		throw new ApprovalRequiredError(
+			applicationId,
+			"a redraft is pending; approve its new version once checked, or cancel the redraft",
+		);
+}
+
 export const eventsMethods = {
 	async lockOwned(t: Tx, userId: string, applicationId: string) {
 		const [row] = await t
@@ -228,16 +244,7 @@ export const eventsMethods = {
 				return { eventId: existing.id, instanceId, created: false };
 			}
 			if (input.transition?.to === "approved") {
-				// A Redraft the user asked for replaces documents: approve after it, or cancel it.
-				const [pending] = await tx
-					.select({ redraft: applications.redraft })
-					.from(applications)
-					.where(eq(applications.id, input.applicationId));
-				if (pending?.redraft)
-					throw new ApprovalRequiredError(
-						input.applicationId,
-						"a redraft is pending; approve its new version once checked, or cancel the redraft",
-					);
+				await refuseWhileRedrafting(tx, input.applicationId);
 				// Approve exactly what the user saw: refuse if the documents changed since.
 				const current = await this.currentHashes(
 					tx,

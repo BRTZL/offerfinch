@@ -15,6 +15,7 @@ import { client, orpc } from "@/lib/orpc";
 import { useStoredState } from "@/lib/use-stored-state";
 import { matches } from "../../../../shared/shortcuts";
 import { ToolbarSlot } from "./toolbar";
+import type { OlderVersion } from "./version-picker";
 export type ApplicationDetailProps = {
 	id: string;
 	/** The state the list shows for this row, before the detail has loaded. */
@@ -60,6 +61,7 @@ export function useApplicationActions({
 					(d.filter as { decision?: string } | null)?.decision ?? null,
 			});
 			if (step && step !== "failed") return 1_000;
+			if (d.redraft && !d.redraft.problem) return 2_000;
 			return d.reviewCurrent ? 10_000 : 2_000;
 		},
 	});
@@ -93,6 +95,8 @@ export function useApplicationActions({
 	const [autoOpened, setAutoOpened] = useState<string | null>(null);
 
 	const [editing, setEditing] = useState<Kind | null>(null);
+
+	const [older, setOlder] = useState<OlderVersion | null>(null);
 
 	/** Rendered as it will be exported (the default), or the Markdown source. */
 	const [view, setView] = useState<"rendered" | "source">("rendered");
@@ -329,6 +333,8 @@ export function useApplicationActions({
 
 	const approvable = Boolean(loaded?.approvable && !approve.isPending);
 	return {
+		older,
+		setOlder,
 		slot,
 		loaded,
 		postingOpen,

@@ -16,6 +16,7 @@ import { MAX_SUBSCRIPTION_DAILY_CALLS } from "@offerfinch/core/scoring/metered";
 import { BLOCKING_RULES, locateFlag } from "@offerfinch/core/tailor/flags";
 import { evidenceProfile } from "@offerfinch/core/tailor/profile-rules";
 import {
+	ownAnswerQuestions,
 	REDRAFT_INSTRUCTION_MAX,
 	REDRAFT_SCOPES,
 } from "@offerfinch/core/tailor/redraft";
@@ -67,6 +68,23 @@ async function refusal<T>(fn: () => Promise<T>): Promise<T> {
 			throw new ORPCError("CONFLICT", { message: error.message });
 		throw error;
 	}
+}
+
+/**
+ * Every saved version of each document, for the version picker, and the questions whose
+ * current answer the user wrote (a redraft keeps those by default).
+ */
+async function versionsOf(
+	repo: DashboardRepository,
+	userId: string,
+	applicationId: string,
+) {
+	return {
+		ownAnswers: ownAnswerQuestions(
+			await repo.documentVersions(userId, applicationId, "form_answers"),
+		),
+		versions: await repo.documentHistory(userId, applicationId),
+	};
 }
 
 export const pipelineRouter = {
@@ -192,10 +210,11 @@ export const pipelineRouter = {
 				return {
 					...detail,
 					/** Every saved version of each document, for the version picker. */
-					versions: await repoOf(context).documentHistory(
+					...(await versionsOf(
+						repoOf(context),
 						context.session.user.id,
 						input.id,
-					),
+					)),
 					/** Rendered, sanitized HTML of each Markdown document, for the review pane. */
 					preview,
 					formAnswers: formAnswers ? parseFormAnswers(formAnswers.content) : [],

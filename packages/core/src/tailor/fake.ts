@@ -110,6 +110,32 @@ function savedAnswer(profile: ProfileSnapshot, topic: RegExp): string | null {
 	return null;
 }
 
+/** The fake's fit notes: the match map from the fit assessment. */
+function fakeNotes(input: TailorInput): string {
+	return [
+		`# Notes — ${input.job.companyName} ${input.job.title}`,
+		"",
+		"## Role summary",
+		"",
+		`${input.job.title} at ${input.job.companyName}.`,
+		"",
+		"## Match map",
+		"",
+		...(input.fit?.requirements ?? []).map(
+			(r) =>
+				`- **${r.requirement}:** ${r.status}${r.evidence[0] ? ` (${r.evidence[0].file})` : ""}`,
+		),
+		"",
+		"## Fit verdict",
+		"",
+		`Score ${input.fit?.score ?? "n/a"}.`,
+		"",
+		"## Status",
+		"",
+		`Drafted ${input.today}`,
+	].join("\n");
+}
+
 export function fakeTailorResponder(
 	request: GenerateObjectRequest<unknown>,
 ): TailorOutput {
@@ -261,28 +287,7 @@ export function fakeTailorResponder(
 			});
 	}
 
-	const notes = [
-		`# Notes — ${company} ${title}`,
-		"",
-		"## Role summary",
-		"",
-		`${title} at ${company}.`,
-		"",
-		"## Match map",
-		"",
-		...(input.fit?.requirements ?? []).map(
-			(r) =>
-				`- **${r.requirement}:** ${r.status}${r.evidence[0] ? ` (${r.evidence[0].file})` : ""}`,
-		),
-		"",
-		"## Fit verdict",
-		"",
-		`Score ${input.fit?.score ?? "n/a"}.`,
-		"",
-		"## Status",
-		"",
-		`Drafted ${input.today}`,
-	].join("\n");
+	const notes = fakeNotes(input);
 
 	return { notes, cv, coverLetter, formAnswers, missingFacts };
 }
