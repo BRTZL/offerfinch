@@ -16,8 +16,8 @@
 		"docx": "^9.15.0",
 		"linkedom": "^0.18.15",
 		"marked": "^18.1.2",
-		"node-html-parser": "^9.0.5",
-		"unpdf": "^2.0.0",
+		"node-html-parser": "^9.0.6",
+		"unpdf": "^2.1.0",
 		"zod": "catalog:"
 	},
 	"devDependencies": {
