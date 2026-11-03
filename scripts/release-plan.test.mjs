@@ -311,12 +311,36 @@ describe("the CLI", () => {
 			const text = fs.readFileSync(notes, "utf8");
 			assert.match(text, /- Add inbox \([0-9a-f]+\)/);
 			assert.doesNotMatch(text, /Release 0\.1\.0/);
+			assert.match(out, /^date=\d{4}-\d{2}-\d{2}$/m);
 			run("node", ["scripts/release-plan.mjs", "apply", "0.1.1-preview.1"]);
 			assert.equal(
 				JSON.parse(
 					fs.readFileSync(path.join(dir, "apps/desktop/package.json"), "utf8"),
 				).version,
 				"0.1.1-preview.1",
+			);
+			// A stable version is dated with the date it is given (resolve's), not today.
+			run("node", [
+				"scripts/release-plan.mjs",
+				"apply",
+				"0.2.0",
+				"--date",
+				"2026-01-02",
+			]);
+			assert.match(
+				fs.readFileSync(path.join(dir, "apps/desktop/CHANGELOG.md"), "utf8"),
+				/^## 0\.2\.0 \(2026-01-02\)$/m,
+			);
+			assert.throws(
+				() =>
+					run("node", [
+						"scripts/release-plan.mjs",
+						"apply",
+						"0.2.0",
+						"--date",
+						"tomorrow",
+					]),
+				/Not a date/,
 			);
 			// A stable tag that does not match fails with the reason.
 			assert.throws(

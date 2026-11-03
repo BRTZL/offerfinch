@@ -7,10 +7,11 @@
 //   node scripts/release-plan.mjs resolve --notes <file>
 //     RELEASE_EVENT=push|workflow_dispatch, RELEASE_REF=<tag on push>, RELEASE_CHANNEL and
 //     RELEASE_BUMP (dispatch). Writes version, tag, channel and prerelease to $GITHUB_OUTPUT
-//     (or stdout) and the release notes to <file>.
-//   node scripts/release-plan.mjs apply <version>
+//     (or stdout), with the release date (UTC), and the release notes to <file>.
+//   node scripts/release-plan.mjs apply <version> [--date YYYY-MM-DD]
 //     Sets apps/desktop/package.json to <version>; a stable version also dates the changelog's
-//     "## Unreleased" section as that version's. Running it twice changes nothing more.
+//     "## Unreleased" section as that version's (with --date, resolve's date, so the build and
+//     the Release commit agree). Running it twice changes nothing more.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -238,6 +239,7 @@ if (
 				`version=${plan.version}`,
 				`tag=${plan.tag}`,
 				`prerelease=${plan.prerelease}`,
+				`date=${today}`,
 			].join("\n");
 			if (process.env.GITHUB_OUTPUT)
 				fs.appendFileSync(process.env.GITHUB_OUTPUT, `${out}\n`);
@@ -245,11 +247,16 @@ if (
 		} else if (command === "apply") {
 			const version = rest[0];
 			parseVersion(version ?? "");
+			const date = rest.includes("--date")
+				? rest[rest.indexOf("--date") + 1]
+				: today;
+			if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? ""))
+				throw new Error(`Not a date: ${date} (YYYY-MM-DD)`);
 			const next = applyVersion({
 				pkgText: fs.readFileSync(pkgPath, "utf8"),
 				changelog: fs.readFileSync(changelogPath, "utf8"),
 				version,
-				date: today,
+				date,
 			});
 			fs.writeFileSync(pkgPath, next.pkgText);
 			fs.writeFileSync(changelogPath, next.changelog);

@@ -51,6 +51,7 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       tag: ${{ steps.plan.outputs.tag }}
       prerelease: ${{ steps.plan.outputs.prerelease }}
+      date: ${{ steps.plan.outputs.date }}
       dry_run: ${{ steps.mode.outputs.dry_run }}
     steps:
       # Full history and tags: the next preview number and the commits since the last tag.
@@ -183,6 +184,10 @@ jobs:
       # With install scripts: Electron downloads its binary, which the tests launch.
       - name: Install
         run: pnpm install --frozen-lockfile
+      # Electron's binary, if its install script left it to first use (idempotent).
+      - name: Electron
+        working-directory: apps/desktop
+        run: node node_modules/electron/install.js
       # In the background (never on screen, never the active app), each failing test retried once.
       - name: Desktop end-to-end tests
         env:
@@ -219,7 +224,9 @@ jobs:
       # The version goes into the build here: package.json, and for a stable release from the
       # button the dated changelog the app bundles (finalize commits the same change).
       - name: Stamp the version
-        run: node scripts/release-plan.mjs apply "$VERSION"
+        env:
+          RELEASE_DATE: ${{ needs.resolve.outputs.date }}
+        run: node scripts/release-plan.mjs apply "$VERSION" --date "$RELEASE_DATE"
 
       # The App Store Connect key is written to a file for notarization and removed afterwards.
       - name: Notarization key
@@ -307,6 +314,7 @@ jobs:
       VERSION: ${{ needs.resolve.outputs.version }}
       TAG: ${{ needs.resolve.outputs.tag }}
       CHANNEL: ${{ needs.resolve.outputs.channel }}
+      RELEASE_DATE: ${{ needs.resolve.outputs.date }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -317,7 +325,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if [ "$CHANNEL" = "stable" ]; then
-            node scripts/release-plan.mjs apply "$VERSION"
+            node scripts/release-plan.mjs apply "$VERSION" --date "$RELEASE_DATE"
             git add apps/desktop/package.json apps/desktop/CHANGELOG.md
             git commit -m "Release $VERSION"
             git tag -a "$TAG" -m "OfferFinch $VERSION"

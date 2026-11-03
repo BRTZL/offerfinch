@@ -25,9 +25,11 @@ credentials, and a private repository's releases return 404 to them.
 | Notes | that version's section of `apps/desktop/CHANGELOG.md` (the release refuses an empty one) | "Unreleased" plus the commits since the last tag |
 
 Installed stable apps ask GitHub for the *latest* release, which a prerelease never is, so they
-never see previews. An app running a preview (installed from a preview DMG) also takes prereleases
-(electron-updater does this for any prerelease version), and moves on to the stable release once
-it is newer.
+never see previews. An app running a preview (installed from a preview DMG) follows newer previews
+only: electron-updater keeps a `-preview` version on the `preview` channel and skips stable
+releases. To go back to stable, install the stable DMG over it (stable is newer than the previews
+before it, so nothing is lost). What's new in a preview shows the "Unreleased" notes it was built
+with.
 
 ## Cut a release
 
@@ -65,8 +67,10 @@ Three ways, all ending in the same jobs:
    origin v0.1.1-preview.1` releases a preview of the tagged commit. A stable tag must match
    `apps/desktop/package.json` (the script does that for you).
 
-A run takes about 40 minutes (the end-to-end suite is most of it). Only one release runs at a
-time; a second one waits, and a running release is never cancelled. Installed apps find a new
+How long a run takes is unknown until the first one (the end-to-end suite is the longest job;
+it is capped at 75 minutes). Only one release runs at a time and a running release is never
+cancelled. A second run waits; GitHub keeps only one waiting run, so a third replaces the
+waiting one. Installed apps find a new
 release within 6 hours (or at once with Settings › General › Updates › Check Now), download it in
 the background and offer **Restart to Update**.
 

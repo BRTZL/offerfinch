@@ -41,15 +41,24 @@ export function parseChangelog(text: string): ReleaseSection[] {
 	return sections.filter((s) => s.body.length > 0);
 }
 
-/** Negative, zero or positive as a is older than, the same as or newer than b. */
+/**
+ * Negative, zero or positive as a is older than, the same as or newer than b. A preview
+ * ("0.2.0-preview.1", docs/releasing.md) comes before the release it leads to.
+ */
 export function compareVersions(a: string, b: string): number {
-	const pa = a.split(".").map(Number);
-	const pb = b.split(".").map(Number);
+	const [ca = "", pa] = a.split("-", 2);
+	const [cb = "", pb] = b.split("-", 2);
+	const na = ca.split(".").map(Number);
+	const nb = cb.split(".").map(Number);
 	for (let i = 0; i < 3; i++) {
-		const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+		const d = (na[i] || 0) - (nb[i] || 0);
 		if (d !== 0) return d;
 	}
-	return 0;
+	if (pa === pb) return 0;
+	if (pa === undefined) return 1;
+	if (pb === undefined) return -1;
+	const n = (p: string) => Number(p.split(".").at(-1)) || 0;
+	return n(pa) - n(pb);
 }
 
 const released = (s: ReleaseSection) => s.version !== "Unreleased";
