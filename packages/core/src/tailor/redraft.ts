@@ -139,7 +139,7 @@ export interface RedraftInput extends TailorInput {
 }
 
 /** The block a redraft adds to the tailoring prompt, after the job. */
-export function redraftBlock(input: RedraftInput): string {
+function redraftBlock(input: RedraftInput): string {
 	const known = contactValues(input.profile);
 	const { documents, instruction, current } = input.redraft;
 	const replaced = documents

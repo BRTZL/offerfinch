@@ -26,7 +26,7 @@ import {
  * the review step that follows checks the new version like any new version in review.
  */
 
-export type RedraftOutcome =
+type RedraftOutcome =
 	| { outcome: "none" }
 	| { outcome: "saved"; documents: RedraftDocument[] }
 	| { outcome: "paused"; reason: string }
@@ -42,7 +42,7 @@ const nowIso = (deps: PipelineDeps) =>
  * pause is recorded on the request, never an error. Idempotent: the versions and the cleared
  * request are written in one transaction, so a retry after it finds nothing to do.
  */
-export async function redraftStep(
+async function redraftStep(
 	deps: PipelineDeps,
 	userId: string,
 	jobId: string,
