@@ -93,8 +93,30 @@ test("setup's happy path: found both CLIs, five steps, first matches with a chir
 		await frames(app, page, "4-review");
 		await page.getByTestId("onboarding-save").click();
 
-		// 3. What you want.
+		// 3. What you want. "Profile saved." shows above the footer, never over Back or Continue.
 		await expect(page.getByTestId("step-count")).toContainText("Step 3 of 5");
+		const toast = page.locator("[data-sonner-toast]").first();
+		await expect(toast).toBeVisible();
+		const continueBox = await page.getByTestId("step-continue").boundingBox();
+		// Once it has slid in: its bottom edge above the footer's buttons.
+		await expect
+			.poll(async () => {
+				const box = await toast.boundingBox();
+				return box && continueBox ? box.y + box.height <= continueBox.y : false;
+			})
+			.toBe(true);
+		// The step bar: the first two done, this one current, the rest still to do.
+		for (const [key, state] of [
+			["ai", "done"],
+			["profile", "done"],
+			["wants", "current"],
+			["loop", "todo"],
+			["scan", "todo"],
+		] as const)
+			await expect(page.getByTestId(`step-${key}`)).toHaveAttribute(
+				"data-state",
+				state,
+			);
 		await expect(page.getByTestId("setup-sources")).toBeVisible();
 		await beat(page, 1200);
 		await frames(app, page, "5-what-you-want");
@@ -117,6 +139,15 @@ test("setup's happy path: found both CLIs, five steps, first matches with a chir
 			{ timeout: 120_000 },
 		);
 		await expect.poll(async () => (await chirps(app)).length).toBe(2);
+		// The first matches, inline: up to three rows with company, title and fit.
+		const rows = page.getByTestId("first-match");
+		await expect(rows.first()).toBeVisible();
+		expect(await rows.count()).toBeGreaterThanOrEqual(1);
+		expect(await rows.count()).toBeLessThanOrEqual(3);
+		await expect(rows.first().locator("[data-fit]")).toBeVisible();
+		await expect(page.getByTestId("onboarding-finish")).toHaveText(
+			"Open the Inbox",
+		);
 		await beat(page, 1500);
 		await frames(app, page, "8-first-matches");
 		await page.getByTestId("onboarding-finish").click();

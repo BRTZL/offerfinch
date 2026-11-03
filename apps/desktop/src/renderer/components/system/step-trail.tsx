@@ -18,9 +18,9 @@ export interface TrailStep {
 }
 
 /**
- * Setup's step indicator: one bar per step, and the finch standing over the current one. Moving
- * to another step, it hops there (the mark's hop frame while it moves, 200 ms). Under reduced
- * motion it is simply there.
+ * Setup's step indicator: one bar per step (done ones green, the current one in ink, the rest
+ * quiet), and the finch standing over the current one. Moving to another step, it hops there
+ * (the mark's hop frame while it moves, 200 ms). Under reduced motion it is simply there.
  */
 export function StepTrail({
 	steps,
@@ -73,13 +73,15 @@ export function StepTrail({
 						title={s.title}
 						onClick={() => onPick(i)}
 						data-testid={`step-${s.key}`}
+						data-state={i === current ? "current" : s.done ? "done" : "todo"}
 						style={{ width: BAR }}
 						className={cn(
 							"ease-standard focus-visible:ring-ring h-1 rounded-full transition-colors duration-150 outline-none focus-visible:ring-2",
+							// Done in the brand green, the current one in ink under the finch, the rest quiet.
 							i === current
-								? "bg-brand"
+								? "bg-foreground"
 								: s.done
-									? "bg-muted-foreground"
+									? "bg-brand"
 									: "bg-border",
 						)}
 					/>

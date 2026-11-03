@@ -3,23 +3,72 @@ import { LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useStepAction } from "@/components/desktop/step-action";
-import { Cells } from "@/components/system/bits";
+import { Cells, Fit } from "@/components/system/bits";
 import { Group, GroupBody } from "@/components/system/layout";
+import { Row } from "@/components/system/rows";
 import { SparkleBurst } from "@/components/system/sparkle";
 import { client, orpc } from "@/lib/orpc";
 import { useCelebrate } from "./celebrate";
 
 type ScanResult = { jobsFetched?: number; jobsInserted?: number };
 
-/** After the search: the first scored matches, polled until they arrive. */
-function useFirstMatches(enabled: boolean) {
+type Match = {
+	id: string;
+	company: string;
+	title: string;
+	score: number | null;
+};
+
+/**
+ * After the search: the first scored matches, polled until they arrive or the scoring is over
+ * (`settled`: nothing scoring any more, and still none).
+ */
+function useFirstMatches(enabled: boolean): {
+	matches: Match[];
+	settled: boolean;
+} {
 	const home = useQuery({
 		...orpc.desktop.home.queryOptions(),
 		enabled,
 		refetchInterval: (q) =>
-			(q.state.data?.recent.length ?? 0) > 0 ? false : 2_000,
+			(q.state.data?.recent.length ?? 0) > 0 ||
+			(q.state.data && q.state.data.scan.state !== "scanning")
+				? false
+				: 2_000,
 	});
-	return home.data?.recent.length ?? 0;
+	const matches: Match[] = home.data?.recent ?? [];
+	return {
+		matches,
+		settled: Boolean(home.data && home.data.scan.state !== "scanning"),
+	};
+}
+
+/** Up to three of the first matches, as Home lists them: fit, company, title. */
+function FirstMatches({ matches }: { matches: Match[] }) {
+	return (
+		<Group data-testid="first-matches">
+			{matches.slice(0, 3).map((m) => (
+				<Row
+					key={m.id}
+					data-testid="first-match"
+					leading={
+						<span className="w-8 text-right">
+							<Fit value={m.score} />
+						</span>
+					}
+					title={
+						<>
+							<span className="font-medium">{m.company}</span>
+							<span className="text-muted-foreground">
+								{"  "}
+								{m.title}
+							</span>
+						</>
+					}
+				/>
+			))}
+		</Group>
+	);
 }
 
 function progressLine(
@@ -27,6 +76,7 @@ function progressLine(
 	finished: boolean,
 	result: ScanResult | null | undefined,
 	matches: number,
+	settled: boolean,
 ): string {
 	if (!p) return "Starting…";
 	if (p.status === "errored") return `The search stopped: ${p.error}`;
@@ -34,7 +84,9 @@ function progressLine(
 	const read = `${result?.jobsFetched ?? 0} jobs read, ${result?.jobsInserted ?? 0} new.`;
 	if (matches > 0)
 		return `Done: ${read} Your first ${matches === 1 ? "match is" : `${matches} matches are`} in.`;
-	return `Done: ${read} Matches appear in the Inbox as they are scored.`;
+	if (settled)
+		return `Done: ${read} No matches this time. OfferFinch keeps looking every hour, and new ones show up in the Inbox.`;
+	return `Done: ${read} Scoring the new jobs…`;
 }
 
 /**
@@ -63,14 +115,14 @@ export function FirstScan({ onDone }: { onDone: () => void }) {
 	useEffect(() => {
 		if (finished) void queryClient.invalidateQueries();
 	}, [finished, queryClient]);
-	const matches = useFirstMatches(p?.status === "complete");
+	const { matches, settled } = useFirstMatches(p?.status === "complete");
 	const cheered = useRef(false);
 	useEffect(() => {
-		if (matches > 0 && !cheered.current) {
+		if (matches.length > 0 && !cheered.current) {
 			cheered.current = true;
 			celebrate();
 		}
-	}, [matches, celebrate]);
+	}, [matches.length, celebrate]);
 	const result = p?.result as ScanResult | null | undefined;
 	useStepAction(
 		finished
@@ -100,7 +152,7 @@ export function FirstScan({ onDone }: { onDone: () => void }) {
 			</p>
 		);
 	return (
-		<div className="relative" data-testid="first-scan">
+		<div className="relative flex flex-col gap-4" data-testid="first-scan">
 			<SparkleBurst burst={burst} />
 			<Group>
 				<GroupBody className="flex flex-col gap-3">
@@ -114,7 +166,7 @@ export function FirstScan({ onDone }: { onDone: () => void }) {
 					) : null}
 					<p
 						data-testid="first-scan-progress"
-						data-matches={matches}
+						data-matches={matches.length}
 						className="text-foreground flex items-center gap-2 text-sm"
 					>
 						{!finished ? (
@@ -123,10 +175,11 @@ export function FirstScan({ onDone }: { onDone: () => void }) {
 								aria-hidden
 							/>
 						) : null}
-						{progressLine(p, finished, result, matches)}
+						{progressLine(p, finished, result, matches.length, settled)}
 					</p>
 				</GroupBody>
 			</Group>
+			{matches.length > 0 ? <FirstMatches matches={matches} /> : null}
 		</div>
 	);
 }
