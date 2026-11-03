@@ -133,7 +133,11 @@ test("answer helper: Improve proposes from the user's words, Use this fills the 
 		);
 		await expect(save).toBeDisabled();
 		await box.press("Meta+Enter");
+		await page.waitForTimeout(500);
 		await expect(question).toBeVisible();
+		expect(
+			readDb("select 1 from profile_facts where question = ?", QUESTION),
+		).toEqual([]);
 
 		// Filled in, it saves the final text as the user's profile fact.
 		const final = `${proposed} I have not worked to a bundle-size budget.`;

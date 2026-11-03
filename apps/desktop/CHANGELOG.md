@@ -13,8 +13,10 @@ version it tags (docs/releasing.md). Only what is merged into main belongs here.
 
 - Questions has Suggest (empty box: a draft from your profile, with [ blanks ] where it has
   nothing) and Improve (rewrites what you typed into a clear, complete answer). Each shows the
-  change and what the answer still doesn't cover; Use this puts it in the box to edit. It never
-  adds a tool, number or name you didn't give, and Save waits until every [ blank ] is filled in.
+  change and what the answer still doesn't cover; Use this puts it in the box to edit. It only
+  uses what you typed and what your profile already holds, and drops a suggestion that names a
+  tool or number from anywhere else. Check it before you save; Save waits until every [ blank ] is
+  filled in.
 
 ### Redraft
 
