@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in OfferFinch doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please don't paste personal data (your resume, emails, phone
+        numbers, company names from your applications). For a security problem, use the
+        Security tab's private report instead.
+  - type: input
+    id: version
+    attributes:
+      label: OfferFinch version
+      description: OfferFinch › About OfferFinch
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: Apple menu › About This Mac
+      placeholder: "macOS 26.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: chip
+    attributes:
+      label: Mac
+      options:
+        - Apple silicon
+        - Intel
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Click …
+        3. See …
+  - type: textarea
+    id: logs
+    attributes:
+      label: Diagnostics or logs
+      description: |
+        Best: **Help › Export Diagnostics…** makes a redacted .zip you can attach here.
+        Otherwise the log is at `~/Library/Logs/OfferFinch/main.log`; paste only the lines
+        around the problem and remove anything personal.
+      render: text

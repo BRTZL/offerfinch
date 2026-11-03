@@ -66,7 +66,7 @@ no Dock or menu-bar icon. It uses temporary data folders, fake models, and local
 boards. One foreground-only theme
 case is skipped in this mode. Never point tests, measurements, or screenshots at real app
 data. CI runs lint, types, unit tests, headless browser safety tests, and Knip on `macos-15`;
-desktop e2e runs locally.
+desktop e2e runs locally and in the release workflow.
 
 The public-data checker scans tracked text and, with `--images`, image text using macOS
 Vision. Accepted pre-existing findings and each cleanup gate are recorded in
@@ -121,3 +121,9 @@ performance history is in [desktop design notes](docs/design/desktop/README.md).
 the local processes and application lifecycle. Browser inspection evidence remains in
 [form inspection](docs/form-inspection.md); provider research remains in
 [T3 provider research](docs/t3-provider-research.md).
+
+## Contributing and license
+
+Bug reports, ideas and pull requests are welcome: see [contributing](CONTRIBUTING.md). Report
+security problems privately as [the security policy](SECURITY.md) describes. OfferFinch is
+released under the [MIT License](LICENSE).
