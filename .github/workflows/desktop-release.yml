@@ -361,18 +361,44 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
           PRERELEASE: ${{ needs.resolve.outputs.prerelease }}
         working-directory: dist
+        # A draft first, every file uploaded and checked, then published: installed apps never see a
+        # release with missing update files, and a re-run resumes the same draft instead of failing.
         run: |
+          set -euo pipefail
           if [ "$PRERELEASE" = "true" ]; then
             # Installed stable apps read the latest release, which a prerelease never is.
             channel=(--prerelease --latest=false)
           else
             channel=(--latest)
           fi
-          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag \
-            OfferFinch-*.dmg OfferFinch-*-mac.zip OfferFinch-*-mac.zip.blockmap ./*-mac.yml \
-            --title "OfferFinch $VERSION" \
-            --notes-file ../notes/release-notes.md \
-            "${channel[@]}"
+          shopt -s nullglob
+          files=(OfferFinch-*.dmg OfferFinch-*-mac.zip OfferFinch-*-mac.zip.blockmap ./*-mac.yml)
+          # Two arches: a DMG, a zip and a blockmap each, and one updater manifest.
+          if [ "${#files[@]}" -lt 7 ]; then
+            echo "::error::Expected 7 release files, found ${#files[@]}"; ls -la; exit 1
+          fi
+          repo=(-R "$GITHUB_REPOSITORY")
+          if state=$(gh release view "$TAG" "${repo[@]}" --json isDraft,tagName 2>/dev/null); then
+            if [ "$(jq -r .tagName <<<"$state")" != "$TAG" ]; then
+              echo "::error::A release exists that is not for $TAG"; exit 1
+            fi
+            echo "Resuming the release for $TAG (draft: $(jq -r .isDraft <<<"$state"))."
+          else
+            gh release create "$TAG" "${repo[@]}" --verify-tag --draft \
+              --title "OfferFinch $VERSION" --notes-file ../notes/release-notes.md
+          fi
+          gh release upload "$TAG" "${repo[@]}" --clobber "${files[@]}"
+          for f in "${files[@]}"; do
+            name=$(basename "$f")
+            size=$(stat -c %s "$f")
+            got=$(gh release view "$TAG" "${repo[@]}" --json assets \
+              --jq ".assets[] | select(.name == \"$name\") | .size")
+            if [ "$got" != "$size" ]; then
+              echo "::error::$name is not attached in full (${got:-0} of $size bytes)"; exit 1
+            fi
+          done
+          gh release edit "$TAG" "${repo[@]}" --draft=false \
+            --title "OfferFinch $VERSION" --notes-file ../notes/release-notes.md "${channel[@]}"
           echo "Published https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"
 
   # One message per run. The topic comes from the NTFY_TOPIC secret: in a public repository a
