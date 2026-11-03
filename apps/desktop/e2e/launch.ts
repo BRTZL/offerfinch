@@ -246,7 +246,7 @@ export async function toastsGone(page: Page, timeout = 15_000): Promise<void> {
 }
 
 /** The window's route now (its pathname, without any query). */
-export function pathnameOf(page: Page): string {
+function pathnameOf(page: Page): string {
 	return new URL(page.url()).pathname;
 }
 
