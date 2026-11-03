@@ -4,7 +4,14 @@ import { expect, type Page, test } from "@playwright/test";
 import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
-import { APP_DIR, launchApp, RESUME, tempUserData, toastsGone } from "./launch";
+import {
+	APP_DIR,
+	launchApp,
+	RESUME,
+	skipRestOfSetup,
+	tempUserData,
+	toastsGone,
+} from "./launch";
 
 /**
  * The chat, with fake models (OFFERFINCH_FAKE_MODELS=1), in the background: beside an
@@ -66,7 +73,7 @@ test("chat beside an application and the profile: proposals accepted through the
 		await page.getByTestId("onboarding-text").fill(RESUME);
 		await page.getByTestId("onboarding-structure").click();
 		await page.getByTestId("onboarding-save").click({ timeout: 60_000 });
-		await page.getByTestId("onboarding-later").click();
+		await skipRestOfSetup(page);
 
 		// A pasted posting (no network), prepared to review.
 		await page.getByTestId("search-button").click();

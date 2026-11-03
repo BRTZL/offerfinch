@@ -11,7 +11,13 @@ import {
 } from "@playwright/test";
 
 import { startFixtureBoards } from "./fixture-boards";
-import { launchApp, notices, RESUME, tempUserData } from "./launch";
+import {
+	launchApp,
+	notices,
+	RESUME,
+	skipRestOfSetup,
+	tempUserData,
+} from "./launch";
 
 /**
  * Add job from link, against local stand-ins only: a Greenhouse link (the fixture board), an
@@ -135,7 +141,7 @@ test("add a job from a link: a board, an unknown site, a wall, a filter miss kep
 		await page.getByTestId("onboarding-text").fill(RESUME);
 		await page.getByTestId("onboarding-structure").click();
 		await page.getByTestId("onboarding-save").click({ timeout: 60_000 });
-		await page.getByTestId("onboarding-later").click();
+		await skipRestOfSetup(page);
 
 		// Where the user lives, as onboarding fills it from a profile's location (this fabricated
 		// resume has none). Without a country no place rules a job out, so step 4 needs one.
@@ -203,6 +209,10 @@ test("add a job from a link: a board, an unknown site, a wall, a filter miss kep
 			.fill(`${origin}/careers/frontend-engineer`);
 		await page.getByTestId("add-job-submit").click();
 		await expect(page.getByTestId("add-job")).toBeHidden();
+		// Wait for the new job to open: until then the first job, and its Prepare, is still shown.
+		await expect
+			.poll(() => new URL(page.url()).pathname)
+			.not.toBe(`/applications/${firstId}`);
 		await expect(page.getByTestId("prepare")).toBeVisible({ timeout: 60_000 });
 		await expect(page.getByText("Harbor Mills").first()).toBeVisible();
 		// The posting, not the page: no doctype, title tag or furniture.

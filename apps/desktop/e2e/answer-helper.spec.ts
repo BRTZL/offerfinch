@@ -4,7 +4,14 @@ import { expect, type Page, test } from "@playwright/test";
 import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
-import { APP_DIR, launchApp, RESUME, tempUserData } from "./launch";
+import {
+	APP_DIR,
+	launchApp,
+	openRoute,
+	RESUME,
+	skipRestOfSetup,
+	tempUserData,
+} from "./launch";
 
 /**
  * The answer helper on the Questions page, with fake models in the background: Improve turns
@@ -57,7 +64,7 @@ test("answer helper: Help me remember composes ticks, Improve proposes from the 
 		await page.getByTestId("onboarding-text").fill(RESUME);
 		await page.getByTestId("onboarding-structure").click();
 		await page.getByTestId("onboarding-save").click({ timeout: 60_000 });
-		await page.getByTestId("onboarding-later").click();
+		await skipRestOfSetup(page);
 
 		const handle = db();
 		handle
@@ -71,15 +78,7 @@ test("answer helper: Help me remember composes ticks, Improve proposes from the 
 				Date.now(),
 			);
 		handle.close();
-		await app.evaluate(
-			(_e, to) =>
-				(
-					globalThis as unknown as {
-						__offerfinchTest: { open: (p: string) => void };
-					}
-				).__offerfinchTest.open(to),
-			"/questions",
-		);
+		await openRoute(app, page, "/questions");
 		const question = page.getByTestId("question");
 		await expect(question).toContainText("Which profiling tools", {
 			timeout: 30_000,

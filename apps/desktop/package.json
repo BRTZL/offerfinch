@@ -2,7 +2,7 @@
 	"name": "@offerfinch/desktop",
 	"license": "MIT",
 	"productName": "OfferFinch",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"private": true,
 	"type": "module",
 	"description": "OfferFinch finds matching jobs and prepares applications on your Mac. Nothing is sent without your approval.",

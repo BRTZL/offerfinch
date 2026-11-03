@@ -9,12 +9,14 @@ import {
 	openMatches,
 	scanOnce,
 	shootBothThemes,
+	withDb,
 } from "./matches-setup";
 
 /**
  * Prepare, in the background against the fixture boards and fake models: its hover says what it
  * does and never shows a cost (the owner mostly uses subscriptions; 2026-11-03), and a selection
- * of matches prepares them all with Prepare N. Screenshots go to test-results/prepare-shots (or
+ * of matches prepares them all with Prepare N. Home and an application's details show no costs
+ * either. Screenshots go to test-results/prepare-shots (or
  * E2E_SHOTS).
  */
 const SHOTS = path.resolve(
@@ -68,6 +70,40 @@ test("Prepare says what it does, with no cost, and Prepare N prepares a selectio
 				),
 			)
 			.toBe(2);
+
+		// An application's details list its model calls, never what they cost.
+		const scored = withDb(userData, (db) =>
+			db
+				.prepare(
+					"select application_id id from llm_usage where application_id is not null limit 1",
+				)
+				.get(),
+		) as { id: string };
+		await page.goto(`app://local/applications/${scored.id}?view=all`);
+		const inspector = page.getByTestId("inspector");
+		if (!(await inspector.isVisible()))
+			await page.getByRole("button", { name: "Details" }).first().click();
+		await expect(inspector).toBeVisible();
+		await inspector.getByText("Model calls").click();
+		await expect(inspector.getByTestId("model-calls")).toContainText(" in / ");
+		await expect(inspector).not.toContainText(/\$\d|<\$0/);
+		await toastsGone(page, 15_000);
+		await shootBothThemes(app, page, (t) =>
+			path.join(SHOTS, `details-no-cost-${t}.png`),
+		);
+
+		// Home: no spend line.
+		await page
+			.getByRole("navigation", { name: "Main" })
+			.getByRole("link", { name: /^Home/ })
+			.click();
+		await expect(page.getByTestId("home-scans")).toBeVisible();
+		await expect(page.getByTestId("home-scans")).not.toContainText("$");
+		await expect(page.getByTestId("home")).not.toContainText(/\$\d|spent/);
+		await toastsGone(page, 15_000);
+		await shootBothThemes(app, page, (t) =>
+			path.join(SHOTS, `home-no-cost-${t}.png`),
+		);
 		expect(errors).toEqual([]);
 	} finally {
 		await app.close();

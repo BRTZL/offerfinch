@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 
-import { launchApp } from "./launch";
+import { launchApp, openRoute } from "./launch";
 
 /**
  * Moving between screens draws the new one at once, also on its first visit: screens' code is
@@ -28,15 +28,7 @@ test("every screen settles quickly on its first visit", async () => {
 		await expect
 			.poll(() => new URL(page.url()).pathname, { timeout: 30_000 })
 			.toBe("/onboarding");
-		await app.evaluate(
-			(_e, to) =>
-				(
-					globalThis as unknown as {
-						__offerfinchTest: { open: (p: string) => void };
-					}
-				).__offerfinchTest.open(to),
-			"/settings/general",
-		);
+		await openRoute(app, page, "/settings/general");
 		const sidebar = page.locator("[data-ds=sidebar]");
 		await expect(sidebar).toBeVisible({ timeout: 30_000 });
 		// Idle preloading has run.

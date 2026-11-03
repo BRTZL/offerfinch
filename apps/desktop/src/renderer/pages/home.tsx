@@ -28,7 +28,6 @@ import { Row } from "@/components/system/rows";
 import { RowsSkeleton } from "@/components/system/skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { desktop } from "@/lib/desktop";
-import { usd } from "@/lib/money";
 import { type client, orpc } from "@/lib/orpc";
 import { Link } from "@/lib/router";
 
@@ -221,7 +220,7 @@ export default function HomePage() {
 			"cap",
 			"/settings/spending",
 			"This month's cap is reached: new preparation is paused",
-			`${usd(h.spend.spentMicros)} of ${usd(h.spend.capMicros)}`,
+			"Raise the cap in Spending, or wait for next month",
 			"home-needs-cap",
 		);
 	if (h.spend.held > 0)
@@ -461,9 +460,6 @@ export default function HomePage() {
 					>
 						Scan history
 					</Link>
-					<span data-testid="home-spend">
-						{` · ${usd(h.spend.spentMicros)} spent this month`}
-					</span>
 					{(last?.status === "errored" || failed > 0) && (
 						<span className="text-warning" data-testid="home-scan-stops">
 							{last?.status === "errored"

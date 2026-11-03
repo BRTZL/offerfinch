@@ -14,7 +14,9 @@ import {
 	APP_DIR,
 	launchApp,
 	notices,
+	openRoute,
 	RESUME,
+	skipRestOfSetup,
 	tempUserData,
 	toastsGone,
 } from "./launch";
@@ -47,18 +49,6 @@ function readDb<T>(query: string, ...params: unknown[]): T[] {
 	} finally {
 		handle.close();
 	}
-}
-
-async function open(app: ElectronApplication, to: string) {
-	await app.evaluate(
-		(_e, where) =>
-			(
-				globalThis as unknown as {
-					__offerfinchTest: { open: (p: string) => void };
-				}
-			).__offerfinchTest.open(where),
-		to,
-	);
 }
 
 async function shot(page: Page, name: string) {
@@ -95,7 +85,7 @@ test("After Applied: Ghosted, a follow-up reminder, stage chips, a move with not
 		await page.getByTestId("onboarding-text").fill(RESUME);
 		await page.getByTestId("onboarding-structure").click();
 		await page.getByTestId("onboarding-save").click({ timeout: 60_000 });
-		await page.getByTestId("onboarding-later").click();
+		await skipRestOfSetup(page);
 		await page.getByTestId("scan-status").click();
 		await page.getByTestId("scan-now").first().click();
 		await expect
@@ -180,7 +170,7 @@ test("After Applied: Ghosted, a follow-up reminder, stage chips, a move with not
 		).toEqual({ stage: "ghosted", automatic: 1 });
 
 		// Clicking the reminder opens the application in Applied, its progress shown.
-		await open(app, `/applied/${quiet.id}`);
+		await openRoute(app, page, `/applied/${quiet.id}`);
 		const rows = page.getByTestId("applied-row");
 		await expect(rows).toHaveCount(3, { timeout: 30_000 });
 		const tracking = page.getByTestId("tracking");
@@ -219,7 +209,7 @@ test("After Applied: Ghosted, a follow-up reminder, stage chips, a move with not
 			59,
 		);
 		await page.clock.install({ time: lateYesterday });
-		await open(app, `/applied/${recent.id}`);
+		await openRoute(app, page, `/applied/${recent.id}`);
 		await expect(tracking).toBeVisible({ timeout: 30_000 });
 		await tracking.getByTestId("move-stage-select").click();
 		await page.getByRole("option", { name: "Interviewing (round 1)" }).click();
@@ -285,7 +275,7 @@ test("After Applied: Ghosted, a follow-up reminder, stage chips, a move with not
 		await expect(page.locator("html.dark")).toHaveCount(1);
 		await shot(page, "applied-dark");
 		// Ghosted, undone by the user.
-		await open(app, `/applied/${silent.id}`);
+		await openRoute(app, page, `/applied/${silent.id}`);
 		await expect(tracking.getByTestId("undo-ghosted")).toBeVisible({
 			timeout: 30_000,
 		});

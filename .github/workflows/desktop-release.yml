@@ -5,13 +5,22 @@
 #   bumps package.json and dates the changelog first) or vX.Y.Z-preview.N (preview).
 # - The Release button (workflow_dispatch) on main: it works out the version itself, and once the
 #   build is signed and notarized commits "Release X.Y.Z" to main (stable only), tags and pushes
-#   with the GITHUB_TOKEN. A tag pushed that way starts no other run, so this run publishes it.
+#   with the release deploy key, then publishes. A deploy-key push starts workflows, so that tag
+#   starts a second run; it waits for this one (one release at a time), finds the release already
+#   made and ends green without building ("already released").
 #
-# resolve -> quality, test, e2e -> build (arm64 + x64 on one runner) -> finalize (button only)
-#         -> publish -> notify
+# released -> resolve -> quality, test, e2e -> build (arm64 + x64 on one runner)
+#          -> finalize (button only) -> publish -> notify
 #
-# Without the signing secrets, or with dry_run, it is a dry run: an ad-hoc signed build, no
-# notarization, the files kept as a run artifact, and nothing committed, tagged or published.
+# Two environments hold the secrets (docs/releasing.md):
+# - release: the five signing secrets. Only a real build runs in it, and only from main or a
+#   v*.*.* tag (its deployment refs); no reviewer: the Release button is the owner's decision.
+# - release-push: RELEASE_DEPLOY_KEY, the deploy key finalize pushes with. Deployment ref: main.
+#
+# A dry run happens only when the button's dry_run is ticked (a tag push never is one): an ad-hoc
+# signed build, no notarization, no environment, the files kept as a run artifact, and nothing
+# committed, tagged or published. A real run with a signing secret missing fails; it never turns
+# into a dry run.
 name: Release
 
 on:
@@ -43,7 +52,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A tag push whose release already exists (draft or published) ends here, green: the Release
+  # button pushed that tag and has already published it. Its own job because seeing a draft
+  # release takes push access; it runs no repository code and checks nothing out.
+  released:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      released: ${{ steps.check.outputs.released }}
+    steps:
+      - name: Already released?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.ref_name }}
+        # Any answer but "found" or "not found" fails, so a GitHub hiccup never starts a rebuild.
+        run: |
+          released=false
+          if [ "$EVENT" = "push" ]; then
+            if out=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json tagName 2>&1); then
+              released=true
+            elif ! grep -q "release not found" <<<"$out"; then
+              echo "::error::Could not look up the release for $TAG: $out"
+              exit 1
+            fi
+          fi
+          if [ "$released" = "true" ]; then
+            msg="$TAG is already released (the Release button published it). Nothing to do."
+            echo "::notice::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "released=$released" >> "$GITHUB_OUTPUT"
+
   resolve:
+    needs: released
+    if: needs.released.outputs.released == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -62,25 +108,16 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+      # Only the button's dry_run makes a dry run; a tag push is always a real release. The
+      # signing secrets live in the release environment, which this job cannot see: build checks
+      # them and fails if one is missing.
       - name: Dry run or release
         id: mode
         env:
           DRY_RUN_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
-          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
-          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
-          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
-          missing=""
-          for name in MAC_CERT_P12_BASE64 MAC_CERT_PASSWORD APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER; do
-            [ -n "${!name}" ] || missing="$missing $name"
-          done
           if [ "$DRY_RUN_INPUT" = "true" ]; then
             echo "::notice::Dry run (asked for): nothing will be published."
-            echo "dry_run=true" >> "$GITHUB_OUTPUT"
-          elif [ -n "$missing" ]; then
-            echo "::warning::Dry run: these secrets are not set:$missing (docs/releasing.md). Nothing will be published."
             echo "dry_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "dry_run=false" >> "$GITHUB_OUTPUT"
@@ -201,14 +238,34 @@ jobs:
           path: apps/desktop/test-results
           retention-days: 7
 
+  # A real build runs in the release environment (the signing secrets); a dry run in none: an
+  # empty environment name means no environment, so no signing secret and no deployment.
   build:
     needs: [resolve, quality, test, e2e]
     runs-on: macos-15
     timeout-minutes: 60
+    environment: ${{ needs.resolve.outputs.dry_run == 'false' && 'release' || '' }}
     env:
       VERSION: ${{ needs.resolve.outputs.version }}
       DRY_RUN: ${{ needs.resolve.outputs.dry_run }}
     steps:
+      - name: The signing secrets
+        if: env.DRY_RUN == 'false'
+        env:
+          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          missing=""
+          for name in MAC_CERT_P12_BASE64 MAC_CERT_PASSWORD APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Not set in the release environment:$missing (docs/releasing.md, One-time setup). Nothing was published; for a test build, run the button with dry_run."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -322,20 +379,32 @@ jobs:
 
   # The button only: commit "Release X.Y.Z" (stable) and push it with the tag, atomically. It
   # pushes the commit this run built, so it fails rather than release if main moved meanwhile.
+  # It pushes over SSH with the release deploy key (release-push environment), which may bypass
+  # the rulesets; the workflow's token never writes to main or creates a tag.
   finalize:
     needs: [resolve, build]
     if: github.event_name == 'workflow_dispatch' && needs.resolve.outputs.dry_run == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: write
+    environment: release-push
     env:
       VERSION: ${{ needs.resolve.outputs.version }}
       TAG: ${{ needs.resolve.outputs.tag }}
       CHANNEL: ${{ needs.resolve.outputs.channel }}
       RELEASE_DATE: ${{ needs.resolve.outputs.date }}
     steps:
+      # Checked first: with an empty ssh-key, checkout would quietly use the token over HTTPS.
+      - name: The deploy key
+        env:
+          RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
+        run: |
+          if [ -z "$RELEASE_DEPLOY_KEY" ]; then
+            echo "::error::RELEASE_DEPLOY_KEY is not set in the release-push environment (docs/releasing.md, One-time setup). The build passed; nothing was pushed or published."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -423,8 +492,8 @@ jobs:
   # One message per run. The topic comes from the NTFY_TOPIC secret: in a public repository a
   # topic in the workflow file would let anyone post to it. Nothing private goes in the message.
   notify:
-    needs: [resolve, quality, test, e2e, build, finalize, publish]
-    if: always()
+    needs: [released, resolve, quality, test, e2e, build, finalize, publish]
+    if: always() && needs.released.outputs.released != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

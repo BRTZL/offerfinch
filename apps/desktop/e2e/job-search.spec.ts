@@ -5,7 +5,13 @@ import { expect, type Page, test } from "@playwright/test";
 import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
-import { APP_DIR, launchApp, RESUME, tempUserData } from "./launch";
+import {
+	APP_DIR,
+	launchApp,
+	RESUME,
+	skipRestOfSetup,
+	tempUserData,
+} from "./launch";
 
 /**
  * Settings › Job search, in the background: "I live in", citizenship and right to work are
@@ -91,7 +97,7 @@ test("job search pickers: filled from the profile, changed with the keyboard, ke
 		await run.page.getByTestId("onboarding-text").fill(RESUME);
 		await run.page.getByTestId("onboarding-structure").click();
 		await run.page.getByTestId("onboarding-save").click({ timeout: 60_000 });
-		await run.page.getByTestId("onboarding-later").click();
+		await skipRestOfSetup(run.page);
 	} finally {
 		await run.app.close();
 	}

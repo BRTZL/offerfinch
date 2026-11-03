@@ -7,7 +7,7 @@ import {
 	test,
 } from "@playwright/test";
 
-import { launchApp, tempUserData } from "./launch";
+import { launchApp, openRoute, tempUserData } from "./launch";
 
 /**
  * The first run as a focused, full-window flow: no app sidebar, one centred column, a footer
@@ -199,15 +199,7 @@ test("the ambient field runs only while onboarding is shown and the window is fo
 		await focus(app);
 		// Setup already started: Home offers it; open it as Home's link does.
 		await page.waitForTimeout(1500);
-		await app.evaluate(
-			(_e, to) =>
-				(
-					globalThis as unknown as {
-						__offerfinchTest: { open: (p: string) => void };
-					}
-				).__offerfinchTest.open(to),
-			"/onboarding",
-		);
+		await openRoute(app, page, "/onboarding");
 		await expect(page.getByTestId("onboarding")).toBeVisible({
 			timeout: 30_000,
 		});
@@ -264,15 +256,7 @@ test("the ambient field runs only while onboarding is shown and the window is fo
 		});
 
 		// Leaving onboarding removes it entirely.
-		await app.evaluate(
-			(_e, to) =>
-				(
-					globalThis as unknown as {
-						__offerfinchTest: { open: (p: string) => void };
-					}
-				).__offerfinchTest.open(to),
-			"/settings/general",
-		);
+		await openRoute(app, page, "/settings/general");
 		await expect(page.locator('[data-ds="sidebar"]')).toBeVisible();
 		await expect(field).toHaveCount(0);
 		const after = await sample(15);
