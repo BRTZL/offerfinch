@@ -4,8 +4,26 @@
 Bundled with the app (electron-builder extraResources) and shown by What's new once after an
 update, and from Settings › General › What's new. Write for the person using the app: what
 changed for them, in plain words. Add to "Unreleased"; the release script renames it to the
-version it tags (docs/releasing.md). Only what is merged into main belongs here.
+version it tags (docs/releasing.md). Right after a release there is no "Unreleased": start one
+at the top, above the newest version. Only what is merged into main belongs here.
 -->
+
+## Unreleased
+
+### Help with answers on Questions
+
+- Help me remember on Questions turns a hard question into a few multiple-choice asks (which
+  tools, yes or no, a rough size), with None of these, Not sure and a box for anything else. The
+  options are reminders, never facts about you: only what you tick goes into your answer, and
+  Improve then turns it into sentences. An option your profile already names is marked "in
+  profile".
+- Buttons keep their width while they work: a spinner shows in place instead of the label
+  changing to "Saving…", and Suggest and Improve share one width.
+
+### Easier to use
+
+- Home and an application's details no longer show costs; an application lists its model calls
+  instead. Spending limits for API keys stay in Settings › Spending.
 
 ## 0.1.1 (2026-11-03)
 
@@ -17,13 +35,6 @@ version it tags (docs/releasing.md). Only what is merged into main belongs here.
   uses what you typed and what your profile already holds, and drops a suggestion that names a
   tool or number from anywhere else. Check it before you save; Save waits until every [ blank ] is
   filled in.
-- Help me remember on Questions turns a hard question into a few multiple-choice asks (which
-  tools, yes or no, a rough size), with None of these, Not sure and a box for anything else. The
-  options are reminders, never facts about you: only what you tick goes into your answer, and
-  Improve then turns it into sentences. An option your profile already names is marked "in
-  profile".
-- Buttons keep their width while they work: a spinner shows in place instead of the label
-  changing to "Saving…", and Suggest and Improve share one width.
 
 ### Redraft
 
@@ -83,8 +94,6 @@ version it tags (docs/releasing.md). Only what is merged into main belongs here.
 - Notifications chirp: OfferFinch has its own sound. Choose it, macOS's default or none in
   Settings › Notifications.
 - CVs, letters, answers and postings read in dark mode when your Mac is dark.
-- Home and an application's details no longer show costs; an application lists its model calls
-  instead. Spending limits for API keys stay in Settings › Spending.
 
 ### Help
 
