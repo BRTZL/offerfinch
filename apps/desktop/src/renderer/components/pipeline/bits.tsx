@@ -3,7 +3,6 @@ import { toast } from "sonner";
 import { Badge, type Tone } from "@/components/system/bits";
 import { InspectorSection } from "@/components/system/pane";
 import { desktop } from "@/lib/desktop";
-import { usd } from "@/lib/money";
 
 export const STATE_LABEL: Record<string, string> = {
 	found: "Found",
@@ -133,20 +132,6 @@ export function FileLink({
 			{children}
 		</button>
 	);
-}
-
-/**
- * An application's model cost. Calls on a subscription have no per-call price, so they read
- * "Subscription" rather than a misleading "$0"; mixed with API calls, the API part is priced.
- */
-export function costLabel(
-	micros: number,
-	subscriptionCalls = 0,
-	apiCalls = 0,
-): string {
-	if (subscriptionCalls > 0 && apiCalls === 0) return "Subscription";
-	if (subscriptionCalls > 0) return `${usd(micros)} + subscription`;
-	return usd(micros);
 }
 
 const SOURCE_LABEL: Record<string, string> = {

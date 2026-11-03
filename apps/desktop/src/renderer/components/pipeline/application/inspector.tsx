@@ -1,11 +1,11 @@
 import {
 	AfterApproveSection,
 	ChecksSection,
-	CostDisclosure,
 	EvidenceDisclosure,
 	FitSection,
 	HistoryDisclosure,
 	JobFlagsSection,
+	ModelCallsDisclosure,
 	QuestionsSection,
 	WhyDisclosure,
 } from "@/components/pipeline/application/details";
@@ -85,7 +85,7 @@ export function ApplicationInspector({
 					</Disclosure>
 				) : null}
 				<EvidenceDisclosure app={loaded} />
-				{loaded.cost && <CostDisclosure cost={loaded.cost} />}
+				{loaded.cost && <ModelCallsDisclosure cost={loaded.cost} />}
 				<HistoryDisclosure app={loaded} />
 			</div>
 		</Inspector>
