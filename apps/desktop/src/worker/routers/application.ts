@@ -1,8 +1,4 @@
-import {
-	DashboardRepository,
-	prepareEstimate,
-	reopenPosting,
-} from "@offerfinch/db";
+import { DashboardRepository, reopenPosting } from "@offerfinch/db";
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 import { checkBeforeAction } from "../closed-postings";
@@ -39,24 +35,6 @@ export const applicationRouter = {
 			await context.sendEvent(event);
 			return { preparing: true };
 		}),
-	/**
-	 * What Prepare is likely to cost on the models it would use now, from past preparations'
-	 * recorded costs (issue #66). Null: a model is not connected, or nothing was prepared on it.
-	 */
-	prepareEstimate: protectedProcedure.handler(async ({ context }) => {
-		const w = worker();
-		const tailoring = w.roles.find((r) => r.role === "tailoring");
-		const claims = w.roles.find((r) => r.role === "claims");
-		if (!tailoring?.ready || !claims?.ready)
-			return { estimate: null, connected: false };
-		return {
-			connected: true,
-			estimate: await prepareEstimate(w.db, context.session.user.id, {
-				tailoring: tailoring.provider,
-				claims: claims.provider,
-			}),
-		};
-	}),
 	/**
 	 * The hand-off opened on an approved application: is the posting still open? Cheap and
 	 * safe checks only (core `pipeline/closed.ts`); LinkedIn, Indeed and Glassdoor are never read.

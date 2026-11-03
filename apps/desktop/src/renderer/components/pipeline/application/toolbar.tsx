@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { createContext } from "react";
 import { createPortal } from "react-dom";
-import { PrepareTip } from "@/components/pipeline/prepare-estimate";
+import { PrepareTip } from "@/components/pipeline/prepare-tip";
 import { ToolbarSeparator } from "@/components/system/layout";
 import { Button } from "@/components/ui/button";
 import { keyHint } from "../../../../shared/shortcuts";
