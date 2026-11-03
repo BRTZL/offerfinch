@@ -30,11 +30,21 @@ export function blankProblem(text: string): string | null {
 	return bracketBlanks(text).length ? "Fill in or remove [ … ] first." : null;
 }
 
+/** "Prometheus", "Prometheus and Loki", "A, B, C, D, E and 2 more". */
+function listTerms(terms: string[]): string {
+	const shown = terms.slice(0, 5).map((t) => `"${t}"`);
+	if (terms.length > 5) shown.push(`${terms.length - 5} more`);
+	return shown.length > 1
+		? `${shown.slice(0, -1).join(", ")} and ${shown.at(-1)}`
+		: (shown[0] ?? "something");
+}
+
 /**
  * The answer helper beside Save answer. Suggest (empty box) drafts from the profile; Improve
  * rewrites what the user typed. Either shows a proposal under the box with what is still
  * missing; Use this puts it in the box, still editable, and nothing is saved until Save answer.
- * A paused model, an error or a proposal the guard dropped is said plainly; the box is untouched.
+ * Names or numbers nobody stated are flagged on the proposal, never hidden. A paused model or an
+ * error is said plainly; the box is untouched.
  */
 export function useAnswerHelper(questionId: string) {
 	const [proposal, setProposal] = useState<Proposal | null>(null);
@@ -51,11 +61,6 @@ export function useAnswerHelper(questionId: string) {
 		},
 		onSuccess: (result, draft) => {
 			if (result.status === "ok") setProposal({ ...result, basis: draft });
-			else if (result.status === "rejected")
-				setNotice({
-					tone: "warning",
-					text: "The suggestion added something you didn't say; not shown.",
-				});
 			else if (result.status === "empty")
 				setNotice({
 					tone: "warning",
@@ -165,10 +170,17 @@ export function HelperResult({
 						: "Your answer, rewritten"}
 				</p>
 			</div>
-			<p className="text-muted-foreground text-xs">
-				Only your words and your profile's facts. Check it before you save; fill
-				in anything in [ brackets ].
-			</p>
+			{proposal.unchecked.length ? (
+				<p className="text-warning text-xs" data-testid="answer-unchecked">
+					Not in your words or profile: {listTerms(proposal.unchecked)}. Keep
+					them only if they are true.
+				</p>
+			) : (
+				<p className="text-muted-foreground text-xs">
+					Only your words and your profile's facts. Check it before you save;
+					fill in anything in [ brackets ].
+				</p>
+			)}
 			<DiffView lines={lines} />
 			<div className="flex flex-col gap-1" data-testid="answer-missing">
 				<p className="text-foreground text-xs font-medium">What's missing</p>

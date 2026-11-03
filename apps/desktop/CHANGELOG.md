@@ -22,6 +22,9 @@ at the top, above the newest version. Only what is merged into main belongs here
   options are reminders, never facts about you: only what you tick goes into your answer, and
   Improve then turns it into sentences. An option your profile already names is marked "in
   profile".
+- Suggest and Improve always show their answer. A name or number that is in neither what you
+  typed nor your profile (a tool the question asks about, say) is marked above it, so you can
+  check it before you save, instead of the answer being hidden.
 - Buttons keep their width while they work: a spinner shows in place instead of the label
   changing to "Saving…", and Suggest and Improve share one width.
 

@@ -159,6 +159,9 @@ describe("answer helper guard", () => {
 		expect(suggest("Lighthouse is what I used most.")).toEqual(["Lighthouse"]);
 		// Inner capitals, digits and symbols are names wherever they stand.
 		expect(suggest("DevTools mostly.")).toEqual(["DevTools"]);
+		// A contraction starting a sentence is an ordinary word, not a name.
+		expect(suggest("Haven't profiled with React Profiler much.")).toEqual([]);
+		expect(suggest("Didn't use [which tool?].")).toEqual([]);
 	});
 
 	it("knows the common spellings of a technology's name", () => {
@@ -226,15 +229,23 @@ describe("answer helper request", () => {
 		expect(parts.prompt).toContain("No posting");
 	});
 
-	it("drops a proposal that adds a fact, and says which words", async () => {
-		const { llm } = fixedModel(
+	it("shows a proposal that adds a fact, flagging the words nobody stated", async () => {
+		const { llm, requests } = fixedModel(
 			"I have used Lighthouse, Webpack and Statoscope.",
 		);
-		expect(await runAnswerHelper(llm, input())).toEqual({
-			status: "rejected",
+		expect(await runAnswerHelper(llm, input())).toMatchObject({
+			status: "ok",
 			mode: "improve",
-			unsupported: ["Webpack", "Statoscope"],
+			answer: "I have used Lighthouse, Webpack and Statoscope.",
+			unchecked: ["Webpack", "Statoscope"],
 		});
+		// One call: nothing is retried or hidden.
+		expect(requests).toHaveLength(1);
+	});
+
+	it("tells a suggestion to keep a tool the profile lacks inside a blank", () => {
+		const parts = answerHelperPromptParts(input({ draft: "" }));
+		expect(parts.prompt).toContain("may appear only inside a bracket blank");
 	});
 
 	it("reports an empty answer", async () => {
@@ -268,6 +279,7 @@ describe("answer helper request", () => {
 				'Which tools "and more" covers, by name',
 				"Not answered yet: have you worked to a JS bundle-size budget?",
 			],
+			unchecked: [],
 		});
 		const suggestion = await runAnswerHelper(
 			new FakeLlmProvider(),
