@@ -1,0 +1,8 @@
+{
+	"//": "Images whose OCR text may skip named patterns, pinned by content hash: any change to the image brings every check back. Use only for screenshots of fabricated test data.",
+	"docs/screenshots/desktop/chat-application.png": {
+		"sha256": "5d07bb6a0157611585dc5ab09f002a650b5bf4f9a6c153e0582e41d97ca4ac6e",
+		"skip": ["phone number"],
+		"reason": "Fabricated e2e identity (Sam Rivera, +1 555 010 0199). The runner's OCR misreads the 555 number, so it no longer looks fabricated."
+	}
+}
