@@ -1361,10 +1361,19 @@ function locationRule(job: FilterInput, ctx: WorkContext): LocationOutcome {
 
 /* -------------------------------------------------------------------- role */
 
+/**
+ * A title keyword as a whole word. Escaped, so "C++", "C#" and ".NET" are keywords, not syntax;
+ * the edges are "not a word character" rather than `\b`, which never matches after "+" or "#".
+ */
+export function keywordPattern(keyword: string): RegExp {
+	const escaped = keyword.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return new RegExp(`(?<!\\w)${escaped}(?!\\w)`);
+}
+
 function roleRule(job: FilterInput, settings: FilterSettings): FilterReason {
 	const title = job.title.toLowerCase();
 	const excluded = settings.excludeTitleKeywords.find((k) =>
-		new RegExp(`\\b${k.toLowerCase()}\\b`).test(title),
+		keywordPattern(k).test(title),
 	);
 	if (excluded)
 		return {

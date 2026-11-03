@@ -248,6 +248,9 @@ export async function ensureHourlyScan(
 	userId: string,
 	now: Date = new Date(),
 ): Promise<string | null> {
+	// A scan still queued or running (one that ran past the hour, or waits for a site check) is
+	// not joined by a second: two at once take both queue slots and read the same sites together.
+	if (await busyScan(db, userId)) return null;
 	const id = hourlyScanId(userId, now);
 	const inserted = await db
 		.insert(flowRuns)
@@ -267,16 +270,11 @@ export async function ensureHourlyScan(
 	return inserted.length > 0 ? id : null;
 }
 
-/**
- * "Scan now": a scan unless one is already queued or running for the user (then that one's id).
- */
-export async function startManualScan(
+/** The user's scan that is queued or running now, if any. */
+async function busyScan(
 	db: Database,
-	runner: Pick<FlowRunner, "poke"> | null,
 	userId: string,
-	now: Date = new Date(),
-	companyIds?: string[],
-): Promise<{ id: string; started: boolean }> {
+): Promise<{ id: string } | undefined> {
 	const [busy] = await db
 		.select({ id: flowRuns.id })
 		.from(flowRuns)
@@ -288,6 +286,20 @@ export async function startManualScan(
 			),
 		)
 		.limit(1);
+	return busy;
+}
+
+/**
+ * "Scan now": a scan unless one is already queued or running for the user (then that one's id).
+ */
+export async function startManualScan(
+	db: Database,
+	runner: Pick<FlowRunner, "poke"> | null,
+	userId: string,
+	now: Date = new Date(),
+	companyIds?: string[],
+): Promise<{ id: string; started: boolean }> {
+	const busy = await busyScan(db, userId);
 	if (busy) return { id: busy.id, started: false };
 	const id = `scan-${userId}-manual-${now.getTime()}`;
 	await db.insert(flowRuns).values({

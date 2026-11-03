@@ -78,3 +78,59 @@ describe("scoring stores a rank and tells the scorer where the user may work", (
 		);
 	});
 });
+
+describe("the strong-match notification follows the rank", () => {
+	it("is not sent for a job ranked below the bar, whatever its raw score", async () => {
+		const run = async (alertMinScore: number) => {
+			const repo = new MemoryRepo(PROFILE);
+			repo.onDemand = true;
+			repo.settings = { ...repo.settings, alertMinScore };
+			repo.addCompany({
+				name: "Acme",
+				source: "greenhouse",
+				sourceKey: "acme",
+			});
+			const notified: string[] = [];
+			const workflows = new LocalWorkflowStarter();
+			const deps: PipelineDeps = {
+				repo,
+				sources: {
+					greenhouse: {
+						kind: "greenhouse",
+						listJobs: async () => [
+							posting("1", { title: "Senior Software Engineer, Ankara" }),
+							posting("2", {
+								title: "Senior Software Engineer, EMEA",
+								locations: ["Remote (EMEA)"],
+								workplaceType: "remote",
+							}),
+						],
+					},
+				},
+				llm: new FakeLlmProvider(),
+				claimsLlm: new FakeLlmProvider(),
+				exporter: fakeExporter(),
+				now: () => new Date("2026-10-30T12:00:00Z"),
+				notifier: {
+					notifyStrongMatch: async (match) => {
+						notified.push(match.title);
+					},
+				},
+				workflows,
+			};
+			workflows.bind(deps);
+			await runScanFlow(new LocalStep(), deps, {
+				userId: "u1",
+				trigger: "cli",
+			});
+			const score = repo.apps[0]?.fit?.score ?? 0;
+			return { notified, score };
+		};
+		// Nothing alerts with the bar above every score; this run only tells us the fake's score.
+		const { score } = await run(101);
+		expect(score).toBeGreaterThan(15);
+		// Both jobs score the same; the EMEA one is ranked 15 lower for its unclear place.
+		const { notified } = await run(score - 10);
+		expect(notified).toEqual(["Senior Software Engineer, Ankara"]);
+	});
+});

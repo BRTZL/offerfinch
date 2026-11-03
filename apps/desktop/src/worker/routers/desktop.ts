@@ -20,6 +20,7 @@ import {
 } from "drizzle-orm";
 import { z } from "zod";
 import { findChrome } from "../browser";
+import { scanProgressOf } from "../scan-history";
 import { nextScan } from "../schedule";
 import { protectedProcedure } from "./procedure";
 import { providerStatus, WAITING_ON_YOU, worker } from "./shared";
@@ -249,7 +250,10 @@ export const desktopStatusRouter = {
 				: null,
 		}));
 	}),
-	/** One scan run's progress: companies done of all, and what it found so far. */
+	/**
+	 * One scan run's progress: sources (or, for a company scan, companies) done of all, what runs
+	 * now, and what it found so far.
+	 */
 	scan: protectedProcedure
 		.input(z.object({ id: z.string().max(200) }))
 		.handler(async ({ input }) => {
@@ -269,19 +273,34 @@ export const desktopStatusRouter = {
 					"select result from flow_steps where run_id = ? and key = 'list companies#1'",
 				)
 				.get(input.id) as { result: string } | undefined;
-			const total = listed
-				? (JSON.parse(listed.result) as unknown[]).length
+			const result = run.result
+				? (JSON.parse(run.result) as Record<string, unknown>)
 				: null;
+			if (listed)
+				return {
+					status: run.status,
+					total: (JSON.parse(listed.result) as unknown[]).length,
+					done: steps.filter(
+						(s) => s.status === "complete" || s.status === "failed",
+					).length,
+					unit: "companies" as const,
+					line: null,
+					error: run.error,
+					result,
+				};
+			// A scan of sources lists no companies: its progress is in the scan history.
+			const sources = await scanProgressOf(w.db, {
+				id: run.id,
+				userId: run.userId,
+			});
 			return {
 				status: run.status,
-				total,
-				done: steps.filter(
-					(s) => s.status === "complete" || s.status === "failed",
-				).length,
+				total: sources?.total ?? null,
+				done: sources?.done ?? 0,
+				unit: "sources" as const,
+				line: sources?.line ?? null,
 				error: run.error,
-				result: run.result
-					? (JSON.parse(run.result) as Record<string, unknown>)
-					: null,
+				result,
 			};
 		}),
 };

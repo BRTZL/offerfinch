@@ -20,6 +20,7 @@ import {
 	runStatus,
 	scanHistoryViews,
 	scanLogFor,
+	scanProgressOf,
 } from "../src/worker/scan-history";
 import { SITE_DEBUG_DIR } from "../src/worker/site-debug";
 
@@ -320,5 +321,54 @@ describe("rows from before the scan history (Codex review)", () => {
 			"hn-hiring": "HN Who is hiring",
 		});
 		expect(view?.outcome).toBe("Nothing searched: Remote OK is not due yet");
+	});
+});
+
+describe("a running scan's progress", () => {
+	it("counts the sources that run, done of all, and names the one reading now", async () => {
+		const { db, dir } = await setup();
+		const run = { id: "scan-u1-2026110410", userId: "u1" };
+		await db.insert(flowRuns).values({
+			id: run.id,
+			userId: "u1",
+			kind: "scan",
+			params: { userId: "u1", trigger: "cron" },
+			status: "running",
+			runAfter: new Date(),
+			createdAt: new Date(),
+			updatedAt: new Date(),
+		} as never);
+		// Before the scan's first hook there is nothing to count.
+		expect(await scanProgressOf(db, run)).toBeNull();
+		const hooks = scanLogFor({ db, init: { userData: dir } }, run, {
+			userId: "u1",
+			trigger: "cron",
+		});
+		const log = hooks.scanLog;
+		if (!log) throw new Error("no scan log");
+		await log.start([
+			{ id: "job-board-search", label: "Job-board search" },
+			{ id: "indeed", label: "Indeed" },
+		]);
+		await log.progress({
+			source: "job-board-search",
+			label: "Job-board search",
+			query: "frontend remote",
+		});
+		expect(await scanProgressOf(db, run)).toEqual({
+			total: 2,
+			done: 0,
+			line: "Reading Job-board search: frontend remote",
+		});
+		await log.source(
+			{ provider: "job-board-search", queries: 1, fetched: 3, newJobIds: [] },
+			"Job-board search",
+		);
+		await log.progress({ source: "indeed", label: "Indeed" });
+		expect(await scanProgressOf(db, run)).toEqual({
+			total: 2,
+			done: 1,
+			line: "Reading Indeed…",
+		});
 	});
 });

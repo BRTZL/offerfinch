@@ -225,6 +225,7 @@ export class MemoryRepo implements PipelineRepository {
 			job: job.job,
 			filter: app.filter,
 			score: app.fit?.score ?? null,
+			rank: app.rank?.rank ?? null,
 			fit: app.fit,
 			endedReason: app.endedReason,
 			prepareAttempts: app.prepareAttempts ?? 0,

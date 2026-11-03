@@ -195,6 +195,12 @@ describe("notification actions", () => {
 		expect(notice.path).toBe("/inbox?view=matches");
 	});
 
+	it("a stopped scan opens the scan history, where its fix is", () => {
+		const stopped: NoticeItem = { kind: "stopped", title: "LinkedIn stopped" };
+		expect(summarize("stopped", [stopped]).path).toBe("/scans");
+		expect(summarize("stopped", [stopped, stopped]).path).toBe("/scans");
+	});
+
 	it("other kinds get no buttons", () => {
 		for (const kind of ["question", "review", "stopped", "followup"] as const)
 			expect(

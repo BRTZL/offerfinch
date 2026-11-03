@@ -24,7 +24,9 @@ import {
 	scanJobs,
 	setScanProgress,
 } from "@offerfinch/db";
+import { scanRuns } from "@offerfinch/db/schema/pipeline";
 import { ORPCError } from "@orpc/server";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { protectedProcedure } from "./routers/procedure";
 import { SITE_DEBUG_DIR } from "./site-debug";
@@ -148,6 +150,36 @@ export function scanLogFor(
 			void setScanProgress(db, run.id, progress).catch(() => {});
 		},
 	};
+}
+
+/**
+ * How far a running scan is, for the sidebar and Home meters: sources done of the ones that run
+ * (every provider less those recorded idle when the scan started), and what runs now. Null
+ * before the scan's history row exists.
+ */
+export async function scanProgressOf(
+	db: Database,
+	run: { id: string; userId: string },
+): Promise<{ total: number; done: number; line: string | null } | null> {
+	const [row] = await db
+		.select({ sources: scanRuns.sources, progress: scanRuns.progress })
+		.from(scanRuns)
+		.where(eq(scanRuns.flowRunId, run.id));
+	if (!row) return null;
+	const isIdle = (s: SourceReport) =>
+		s.status === "off" || s.status === "not_set_up";
+	const all = (await listProviders(db, run.userId)).length;
+	const total = all - row.sources.filter(isIdle).length;
+	if (total <= 0) return null;
+	const done = Math.min(total, row.sources.filter((s) => !isIdle(s)).length);
+	const p = row.progress;
+	const label = p ? (p.label ?? labelOf(p.source)) : null;
+	const line = p
+		? p.query
+			? `Reading ${label}: ${p.query}`
+			: `Reading ${label}…`
+		: null;
+	return { total, done, line };
 }
 
 /** Sources that ran first (in scan order), then the ones that could not, then off. */
