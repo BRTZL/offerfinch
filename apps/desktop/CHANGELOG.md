@@ -12,6 +12,8 @@ at the top, above the newest version. Only what is merged into main belongs here
 
 - Setup is five short steps, finds Claude Code and Codex on your Mac and connects them for you,
   and tells you exactly what to run when one is missing.
+- Worked at the same company twice? The CV check now ties each role to its own entry, so lines
+  under your earlier role are no longer flagged against the later one's title and dates.
 
 ### Help with answers on Questions
 

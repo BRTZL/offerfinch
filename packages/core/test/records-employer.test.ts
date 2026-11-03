@@ -169,3 +169,125 @@ describe("the employer rule on records", () => {
 		expect(about(HARBOR)).toMatch(/is not about Lumen Labs/);
 	});
 });
+
+/**
+ * Two stints at one company: a junior role, then a senior role years later. Each CV role must be
+ * tied to its own experience file, found by title as well as company.
+ */
+describe("the employer rule with two roles at one company", () => {
+	const EARLY =
+		"Built the first version of the Harbor Mills booking widget in Vue.";
+	const LATER = "Led the move of the checkout service to Kotlin and gRPC.";
+	const twice: ProfileRecord[] = [
+		records[0] as ProfileRecord,
+		role("harbor-early", {
+			company: "Harbor Mills",
+			title: "Software Developer",
+			start: "Mar 2016",
+			end: "Sep 2018",
+			bullet: EARLY,
+		}),
+		role("harbor-later", {
+			company: "Harbor Mills",
+			title: "Senior Software Engineer",
+			start: "Apr 2023",
+			end: "Present",
+			bullet: LATER,
+		}),
+	];
+	const twiceProfile = { files: renderRecords(twice) };
+	const twiceCv = (first: string, second: string) => `# Avery Quinn
+
+Lisbon, Portugal
+
+## Experience
+
+### Senior Software Engineer — Harbor Mills
+*Remote · Apr 2023 – Present*
+
+- ${first}
+
+### Software Developer — Harbor Mills
+*Remote · Mar 2016 – Sep 2018*
+
+- ${second}`;
+	const twiceInput = (doc: string): ClaimsInput => ({
+		...input(doc),
+		profile: twiceProfile,
+	});
+	/** Each line cited from the file it came from; a role's heading and dates from its own file. */
+	function twiceOutput(i: ClaimsInput): ClaimsCheckOutput {
+		const early = "experience/harbor-early.md";
+		const later = "experience/harbor-later.md";
+		const exact: Record<string, [string, string]> = {
+			[EARLY]: [early, EARLY],
+			[LATER]: [later, LATER],
+			"Avery Quinn": ["personal.md", "Avery Quinn"],
+			"Lisbon, Portugal": ["personal.md", "Lisbon, Portugal"],
+			"Software Developer — Harbor Mills": [
+				early,
+				"Harbor Mills — Software Developer",
+			],
+			"Senior Software Engineer — Harbor Mills": [
+				later,
+				"Harbor Mills — Senior Software Engineer",
+			],
+		};
+		const cite = (text: string): [string, string] | null =>
+			exact[text] ??
+			(text.includes("Apr 2023")
+				? [later, "Apr 2023 – Present"]
+				: text.includes("Mar 2016")
+					? [early, "Mar 2016 – Sep 2018"]
+					: null);
+		return {
+			claims: segmentDocuments(i).flatMap((s) => {
+				const found = cite(s.text);
+				if (!found) return [];
+				return [
+					{
+						segments: [s.id],
+						document: s.document,
+						text: s.text,
+						supported: true,
+						evidence: [{ file: found[0], quote: found[1] }],
+						note: "Stated in the cited record.",
+					},
+				];
+			}),
+			skipped: [],
+		};
+	}
+
+	it("passes each bullet under its own stint", () => {
+		const i = twiceInput(twiceCv(LATER, EARLY));
+		const report = verifyClaims(twiceOutput(i), i, "openai:checker");
+		expect(report.issues.filter((x) => x.document === "cv")).toEqual([]);
+	});
+
+	it("flags a bullet moved to the other stint", () => {
+		const i = twiceInput(twiceCv(EARLY, LATER));
+		const report = verifyClaims(twiceOutput(i), i, "openai:checker");
+		const about = (text: string) =>
+			report.issues.find(
+				(x) => x.rule === "unchecked_line" && x.excerpt === text,
+			)?.message;
+		expect(about(EARLY)).toMatch(/is not about Harbor Mills/);
+		expect(about(LATER)).toMatch(/is not about Harbor Mills/);
+	});
+
+	it("flags a stint whose title or dates are not its file's", () => {
+		const i = twiceInput(
+			twiceCv(LATER, EARLY).replace(
+				"Mar 2016 – Sep 2018",
+				"Mar 2016 – Sep 2019",
+			),
+		);
+		const messages = verifyClaims(twiceOutput(i), i, "openai:checker")
+			.issues.filter((x) => x.rule === "experience_record")
+			.map((x) => x.message);
+		expect(messages).toEqual([
+			'Harbor Mills dates must be "Mar 2016 – Sep 2018" (experience/harbor-early.md header).',
+		]);
+	});
+});

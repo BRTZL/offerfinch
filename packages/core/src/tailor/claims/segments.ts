@@ -20,6 +20,8 @@ export interface Segment {
 	occurrence: number;
 	/** The employer of the CV role the segment sits under (`### Title — Company` in Experience). */
 	employer?: string;
+	/** That role's title: tells two stints at one employer apart. */
+	role?: string;
 }
 
 /** A segment's identity across versions: document, context, text and occurrence. */
@@ -52,6 +54,7 @@ const ROLE_HEADING = /^(.+?)\s+[—–-]\s+(.+)$/;
 export interface LineContext {
 	context: string;
 	employer?: string;
+	role?: string;
 }
 
 /**
@@ -69,14 +72,20 @@ export function lineContexts(
 	if (kind === "cv") {
 		let section = "";
 		/** The headings below the section, outermost first. */
-		let path: { level: number; title: string; employer?: string }[] = [];
+		let path: {
+			level: number;
+			title: string;
+			employer?: string;
+			role?: string;
+		}[] = [];
 		const here = (): LineContext => {
-			const employer = path.find((h) => h.employer)?.employer;
+			const role = path.find((h) => h.employer);
 			return {
 				context: [section, ...path.map((h) => h.title)]
 					.filter(Boolean)
 					.join(" › "),
-				...(employer ? { employer } : {}),
+				...(role?.employer ? { employer: role.employer } : {}),
+				...(role?.role ? { role: role.role } : {}),
 			};
 		};
 		return lines.map((raw) => {
@@ -91,11 +100,18 @@ export function lineContexts(
 				}
 				path = path.filter((h) => h.level < level);
 				const above = here();
-				const employer =
+				const roleHeading =
 					/^experience\b|\bexperience$/i.test(section) && !above.employer
-						? title.match(ROLE_HEADING)?.[2]?.trim()
-						: undefined;
-				path.push({ level, title, ...(employer ? { employer } : {}) });
+						? title.match(ROLE_HEADING)
+						: null;
+				const employer = roleHeading?.[2]?.trim();
+				const role = roleHeading?.[1]?.trim();
+				path.push({
+					level,
+					title,
+					...(employer ? { employer } : {}),
+					...(employer && role ? { role } : {}),
+				});
 				return above;
 			}
 			return here();
@@ -235,6 +251,7 @@ export function segmentDocuments(input: ClaimsInput): Segment[] {
 			context: where.context,
 			occurrence,
 			...(where.employer ? { employer: where.employer } : {}),
+			...(where.role ? { role: where.role } : {}),
 		});
 	};
 	const lines = (kind: CheckedDocument, body: string, question = "") => {

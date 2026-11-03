@@ -4,6 +4,7 @@ import {
 	nameKey,
 	type RuleIssue,
 	type RuleSet,
+	roleRecords,
 	type SegmentPlace,
 } from "../profile-rules";
 import { type KnownExpansion, withoutExpansions } from "./expansions";
@@ -69,20 +70,31 @@ function names(line: string, company: string): boolean {
  */
 export function otherEmployer(
 	segment: Segment,
-	evidence: { files: Set<string>; lines: string[] },
+	evidence: { files: Set<string>; sources: { file: string; line: string }[] },
 	rules: RuleSet,
 ): string | null {
 	const employer = segment.employer;
 	if (!employer) return null;
-	const record = rules.records.find(
-		(r) => nameKey(r.company) === nameKey(employer),
-	);
+	// Two stints at one employer: the line belongs to the one whose title its role has.
+	const stints = roleRecords(rules.records, employer, segment.role);
+	const record = stints[0];
 	// No file to tie the line to: it cannot be about that employer on this evidence.
 	if (!record)
 		return `No experience file for ${employer}, the role this line sits under.`;
-	if (evidence.files.has(record.file)) return null;
-	if (evidence.lines.some((line) => names(line, record.company))) return null;
-	return `Its evidence (${[...evidence.files].join(", ")}) is not about ${record.company}, the role this line sits under (${record.file}).`;
+	if (stints.some((r) => evidence.files.has(r.file))) return null;
+	// A line naming the employer counts, unless it is from another stint's own file there.
+	const otherStints = new Set(
+		roleRecords(rules.records, employer)
+			.filter((r) => !stints.includes(r))
+			.map((r) => r.file),
+	);
+	if (
+		evidence.sources.some(
+			(s) => !otherStints.has(s.file) && names(s.line, record.company),
+		)
+	)
+		return null;
+	return `Its evidence (${[...evidence.files].join(", ")}) is not about ${record.company}, the role this line sits under (${stints.map((r) => r.file).join(", ")}).`;
 }
 
 export interface Employer {
@@ -112,12 +124,19 @@ export function eachEmployer(
 	known: KnownExpansion,
 	everywhere: Set<string>[] = [],
 ): string | null {
-	const named = employers.filter((e) => mentions(segment.text, e.names));
+	// Two stints at one company are one employer here: the line names the company, not a stint.
+	const company = (e: Employer) => nameKey(e.record.company);
 	const role = employers.find(
 		(e) =>
 			segment.employer !== undefined &&
-			nameKey(e.record.company) === nameKey(segment.employer),
+			company(e) === nameKey(segment.employer),
 	);
+	const named = employers
+		.filter((e) => mentions(segment.text, e.names))
+		.map((e) => (role && company(e) === company(role) ? role : e))
+		.filter(
+			(e, i, all) => all.findIndex((o) => company(o) === company(e)) === i,
+		);
 	if (named.length > 0 && role && !named.includes(role)) named.push(role);
 	if (named.length < 2) return null;
 	const nameTokens = new Set(
@@ -147,10 +166,15 @@ export function eachEmployer(
 		});
 	});
 	for (const employer of named) {
+		const own = new Set(
+			employers
+				.filter((e) => company(e) === company(employer))
+				.map((e) => e.record.file),
+		);
 		const about = parts.filter((part) =>
 			part.names.length > 0
-				? part.names.includes(employer)
-				: part.file === employer.record.file,
+				? part.names.some((e) => company(e) === company(employer))
+				: own.has(part.file),
 		);
 		const stated = new Set([
 			...about.flatMap((a) => [...factTokens(a.text)]),
