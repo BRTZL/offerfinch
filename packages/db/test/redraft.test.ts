@@ -19,6 +19,7 @@ import {
 } from "@offerfinch/core/tailor/fake";
 import type { TailorOutput } from "@offerfinch/core/tailor/tailor";
 import {
+	DashboardRepository,
 	DrizzlePipelineRepository,
 	importProfile,
 	seedCompanies,
@@ -371,6 +372,23 @@ describe("Redraft", () => {
 		expect((await docs()).cover_letter?.version).toBe(
 			(before.cover_letter?.version ?? 0) + 1,
 		);
+		expect((await view()).redraft).toBeNull();
+	});
+
+	it("runs a redraft paused by a limit again when the spending limit changes", async () => {
+		paused = true;
+		await a.rpc.application.redraft({ id: appId, scope: "cv" });
+		await deliver();
+		expect((await view()).redraft?.problem?.kind).toBe("paused");
+		paused = false;
+		const { events } = await new DashboardRepository(t.db).setSpendingCap(
+			a.id,
+			{ enabled: true, monthlyCapMicros: 50_000_000 },
+		);
+		expect(events.map((e) => e.userId)).toContain(a.id);
+		const before = (await docs()).cv?.version ?? 0;
+		await deliver();
+		expect((await docs()).cv?.version).toBe(before + 1);
 		expect((await view()).redraft).toBeNull();
 	});
 
