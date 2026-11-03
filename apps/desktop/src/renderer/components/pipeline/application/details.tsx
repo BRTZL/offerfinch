@@ -8,16 +8,10 @@ import {
 	type AppDetail,
 	DOC_LABEL,
 } from "@/components/pipeline/application/types";
-import {
-	ago,
-	costLabel,
-	STATE_LABEL,
-	sourceLabel,
-} from "@/components/pipeline/bits";
+import { ago, STATE_LABEL, sourceLabel } from "@/components/pipeline/bits";
 import { Cells, Fit } from "@/components/system/bits";
 import { Disclosure, InspectorSection } from "@/components/system/pane";
 import { useEvidenceLabel } from "@/lib/evidence";
-import { usd } from "@/lib/money";
 import { Link } from "@/lib/router";
 import { cn } from "@/lib/utils";
 
@@ -426,24 +420,18 @@ export function QuestionsSection({ app }: { app: AppDetail }) {
 	);
 }
 
-/** Model calls made for this application and their estimated cost. */
-export function CostDisclosure({
+/** Model calls made for this application: what each did, with which model, and its size. */
+export function ModelCallsDisclosure({
 	cost,
 }: {
 	cost: NonNullable<AppDetail["cost"]>;
 }) {
 	return (
 		<Disclosure
-			title="Cost"
-			value={
-				<span data-testid="app-cost">
-					{cost.subscriptionCalls > 0 && cost.apiCalls === 0
-						? "Subscription"
-						: `${costLabel(cost.totalMicros, cost.subscriptionCalls, cost.apiCalls)} est.`}
-				</span>
-			}
+			title="Model calls"
+			value={<span data-testid="app-model-calls">{cost.calls.length}</span>}
 		>
-			<div className="flex flex-col gap-1 text-xs" data-testid="cost-calls">
+			<div className="flex flex-col gap-1 text-xs" data-testid="model-calls">
 				{cost.calls.length === 0 && (
 					<div className="text-muted-foreground">No model calls yet.</div>
 				)}
@@ -452,7 +440,6 @@ export function CostDisclosure({
 						// Calls in the same second (a step's quick retries) share task and time.
 						key={`${i}-${c.task}-${String(c.createdAt)}`}
 						className="flex gap-2"
-						title={c.priceBasis ?? undefined}
 					>
 						<span className="text-foreground w-20 shrink-0">
 							{TASK_LABEL[c.task] ?? c.task}
@@ -462,22 +449,8 @@ export function CostDisclosure({
 								? "running…"
 								: `${c.model ?? c.provider} · ${c.inputTokens + c.cachedInputTokens} in / ${c.outputTokens} out${c.error ? " · failed" : ""}`}
 						</span>
-						<span
-							className="text-foreground tabular-nums"
-							data-testid="cost-call-price"
-						>
-							{c.billing === "subscription"
-								? "Subscription"
-								: usd(c.status === "settled" ? c.costMicros : c.estimateMicros)}
-						</span>
 					</div>
 				))}
-				<div className="text-2xs text-muted-foreground pt-1">
-					Estimated from list prices per model; the provider's invoice is the
-					real cost.
-					{cost.subscriptionCalls > 0 &&
-						" Subscription calls ran on your own plan: their tokens are shown, not priced, and a monthly limit does not count them."}
-				</div>
 			</div>
 		</Disclosure>
 	);

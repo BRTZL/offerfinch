@@ -76,6 +76,8 @@ version it tags (docs/releasing.md). Only what is merged into main belongs here.
 - Notifications chirp: OfferFinch has its own sound. Choose it, macOS's default or none in
   Settings › Notifications.
 - CVs, letters, answers and postings read in dark mode when your Mac is dark.
+- Home and an application's details no longer show costs; an application lists its model calls
+  instead. Spending limits for API keys stay in Settings › Spending.
 
 ### Help
 
