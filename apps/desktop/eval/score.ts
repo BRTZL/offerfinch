@@ -7,7 +7,7 @@ import type { EvalPosting } from "./fixtures";
  */
 
 /** Phrases a hiring manager reads as filler or as machine-written. */
-export const CLICHES: { label: string; pattern: RegExp }[] = [
+const CLICHES: { label: string; pattern: RegExp }[] = [
 	{ label: "excited to", pattern: /\b(?:I am|I'm) (?:so |really )?excited\b/i },
 	{ label: "writing to apply", pattern: /\bI am writing to\b/i },
 	{ label: "passionate", pattern: /\bpassion(?:ate)?\b/i },
@@ -57,7 +57,7 @@ export const CLICHES: { label: string; pattern: RegExp }[] = [
 const PLACEHOLDER =
 	/\{\{[^}]*\}\}|\[(?:[A-Z][A-Za-z ]+|Company|Name|Date|X+)\]|<[a-z][^>]*>|\bTODO\b|\bXXX\b|\bTBD\b|\blorem\b/i;
 
-export function words(text: string): number {
+function words(text: string): number {
 	return text.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
 }
 
@@ -70,7 +70,7 @@ function sentences(text: string): string[] {
 }
 
 /** The letter's body: paragraphs between the greeting and the sign-off. */
-export function letterBody(letter: string): string[] {
+function letterBody(letter: string): string[] {
 	const paragraphs = letter
 		.split(/\n\s*\n/)
 		.map((p) => p.trim())

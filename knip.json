@@ -67,6 +67,7 @@
 		"packages/db/src/spend.ts": ["exports", "types"],
 		"packages/local-llm/src/{claude,codex}.ts": ["exports", "types"],
 		"apps/desktop/src/main/site-browser.ts": ["exports", "types"],
-		"apps/desktop/src/worker/checks.ts": ["exports", "types"]
+		"apps/desktop/src/worker/checks.ts": ["exports", "types"],
+		"apps/desktop/eval/vitest.config.ts": ["exports"]
 	}
 }
