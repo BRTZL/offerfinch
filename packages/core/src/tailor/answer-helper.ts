@@ -15,8 +15,8 @@ import { profileBlock } from "./tailor";
  * The answer helper on the Questions page. A saved answer becomes a profile fact that the claims
  * check treats as evidence, so the helper may only reorganize and clarify what the user wrote
  * and what the profile already holds, and say what is still missing. Two layers keep it there:
- * the prompt's rules, and a deterministic guard after the model that drops any proposal naming
- * a number or a capitalized name (a tool, an employer, a product) that no source holds.
+ * the prompt's rules, and a deterministic check after the model that flags every number or
+ * capitalized name (a tool, an employer, a product) no source holds, for the user to check.
  * Nothing is saved here: the user puts the proposal in the box, edits it, and saves it as today.
  */
 
@@ -59,9 +59,12 @@ export type AnswerHelperResult =
 			mode: AnswerHelperMode;
 			answer: string;
 			missing: string[];
+			/**
+			 * Names and numbers in the answer that neither the draft nor the profile holds. The
+			 * proposal is still shown; these are flagged for the user to check before saving.
+			 */
+			unchecked: string[];
 	  }
-	/** The guard found names or numbers no source holds: the proposal is not shown. */
-	| { status: "rejected"; mode: AnswerHelperMode; unsupported: string[] }
 	/** The model returned no answer at all. */
 	| { status: "empty"; mode: AnswerHelperMode };
 
@@ -88,7 +91,8 @@ The answer:
 What's missing:
 - List the parts of the question the answer does not cover yet, one short line each (at most five), e.g. "Whether you worked to a bundle-size budget, and its size". Include every bracket blank. Empty when nothing is missing.`;
 
-const SUGGEST = `Mode: suggest. <draft> is empty. Draft an answer from <profile> only. The question's examples are not the user's facts: name a tool only if the profile holds it. For every part the profile does not answer, leave a bracket blank.`;
+const SUGGEST = `Mode: suggest. <draft> is empty. Draft an answer from <profile> only. The question's examples are not the user's facts: name a tool only if the profile holds it. For every part the profile does not answer, leave a bracket blank.
+- A tool, product or name the question asks about that the profile does not hold may appear only inside a bracket blank, e.g. "[Have you used Prometheus? Where?]". Do not write it anywhere else, not even to say the user has not used it: you do not know that.`;
 
 const IMPROVE = `Mode: improve. Rewrite <draft> into a complete, clear answer to the question.
 - Keep every fact the user stated, and add none from anywhere else. Facts the profile already holds may be used to make the user's own statement precise, never to extend it.
@@ -195,8 +199,12 @@ function tokens(text: string): { token: string; start: boolean }[] {
 
 /** Any digit, in any script: a quantity, a version or a size, and never let through unsourced. */
 const isNumeric = (token: string) => /\p{N}/u.test(token);
-/** A capital and lower-case letters only ("Experienced"), as an ordinary word starting a sentence. */
-const isPlainWord = (token: string) => /^\p{Lu}\p{Ll}+$/u.test(token);
+/**
+ * A capital and lower-case letters only ("Experienced"), as an ordinary word starting a
+ * sentence; a contraction ("Haven't", "Didn't") counts as one too.
+ */
+const isPlainWord = (token: string) =>
+	/^\p{Lu}\p{Ll}+(?:'\p{Ll}+)?$/u.test(token);
 
 /**
  * The forms a token may be found under: "React's" names React, "APIs" an API, "React.js" and
@@ -312,7 +320,10 @@ export function profileNames(text: string, profile: ProfileSnapshot): boolean {
 
 const clip = (text: string, max: number) => text.trim().slice(0, max);
 
-/** One helper call: the model's proposal, kept only if the guard finds nothing new in it. */
+/**
+ * One helper call. The proposal is always returned; names and numbers that no source holds are
+ * listed in `unchecked` so the user can check them, never silently dropped.
+ */
 export async function runAnswerHelper(
 	llm: LlmProvider,
 	input: AnswerHelperInput,
@@ -329,7 +340,7 @@ export async function runAnswerHelper(
 	});
 	const answer = clip(output.answer, ANSWER_MAX);
 	if (!answer) return { status: "empty", mode };
-	const unsupported = unsupportedTerms(answer, {
+	const unchecked = unsupportedTerms(answer, {
 		draft: input.draft,
 		question: mode === "improve" ? input.question : null,
 		profile: input.profile,
@@ -343,7 +354,6 @@ export async function runAnswerHelper(
 			.filter(Boolean)
 			.join("\n"),
 	});
-	if (unsupported.length) return { status: "rejected", mode, unsupported };
 	return {
 		status: "ok",
 		mode,
@@ -352,5 +362,6 @@ export async function runAnswerHelper(
 			.map((m) => clip(m, 300))
 			.filter(Boolean)
 			.slice(0, 5),
+		unchecked,
 	};
 }
