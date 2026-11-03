@@ -10,6 +10,14 @@ at the top, above the newest version. Only what is merged into main belongs here
 
 ## Unreleased
 
+- While a scan runs, the sidebar and Home show how many sources are done and which one is
+  being read.
+- A "scan stopped" notification opens the scan history, where the fix is, instead of Models.
+- "Skip titles with" takes C++, C# and .NET as words: before, C++ stopped new jobs from being
+  checked at all.
+- A scan that runs past the hour is no longer joined by the next hour's scan.
+- Strong-match notifications follow the order of Matches: a job ranked lower (an unclear
+  place, a company you passed on) no longer alerts on its raw score.
 - Setup is five short steps, finds Claude Code and Codex on your Mac and connects them for you,
   and tells you exactly what to run when one is missing.
 - Worked at the same company twice? The CV check now ties each role to its own entry, so lines
