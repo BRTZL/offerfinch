@@ -182,16 +182,37 @@ gh secret set NTFY_TOPIC -R <owner>/offerfinch                # the topic name o
 
 ### 4. Repository settings
 
-- **Settings › Actions › General › Workflow permissions**: the workflow asks for `contents: write`
-  where it needs it; nothing to change unless the organisation restricts it.
-- **Branch protection or rulesets on `main`**: the Release button pushes the "Release X.Y.Z"
-  commit with the workflow's token. A rule that requires pull requests on `main` refuses that push
-  (the run then fails before publishing); allow GitHub Actions to bypass it, or release stable
-  versions with the local script.
+- **Workflow permissions** (Settings › Actions › General): the default token is read-only; the
+  workflow asks for `contents: write` only in the jobs that commit, tag and publish.
+- **Actions**: every action is pinned to a full commit SHA with its version in a comment
+  (`uses: actions/checkout@<sha> # v7.0.1`); Dependabot updates the SHA and the comment together.
+  Settings › Actions › General allows only GitHub-owned actions and `pnpm/action-setup`, and
+  requires SHA pinning, so an unpinned or unknown action fails before it runs.
+- **Rulesets** (Settings › Rules): `main` can't be force-pushed or deleted, and `v*` tags can't be
+  moved or deleted once a release made them. Pull requests are not yet required on `main`: on a
+  personal account GitHub Actions can't bypass a ruleset, so that rule would refuse the Release
+  button's "Release X.Y.Z" commit. It comes with the release deploy key (go-public checklist).
 - **Public repository**: installed apps can only read public releases (see above).
 
 Once the five signing secrets are set, the next run is a real release. Run a dry run first
 (above) to see the build pass.
+
+### 5. Go-public checklist
+
+Right after the repository is made public:
+
+1. Settings › Actions › General › **Approval for running fork pull request workflows from
+   contributors**: "Require approval for all external contributors".
+2. Settings › Code security › **Private vulnerability reporting**: on (SECURITY.md points to it).
+3. Signing secrets into a **`release` environment** (Settings › Environments): deployment
+   branches and tags `main` and `v*` only, and the owner as required reviewer, so every release
+   waits for an approval and no other branch's workflow can read them. The build job runs in that
+   environment; then delete the repository-level signing secrets. Prove it with a preview release.
+4. A **release deploy key** (write access, private key as a `release` environment secret) that the
+   Release button pushes with, allowed to bypass the rulesets; then require pull requests and the
+   `check` status on `main`, and restrict creating `v*` tags.
+5. **`PUBLIC_DENYLIST`**: decide whether CI's public check gets the denylist as a secret (without
+   it, CI runs only the generic patterns; the local check uses the full list).
 
 ## What can go wrong
 
