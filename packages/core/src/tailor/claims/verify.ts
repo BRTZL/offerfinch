@@ -93,20 +93,6 @@ function lineEnv(profile: ProfileSnapshot, input: ClaimsInput): LineEnv {
 }
 
 /**
- * What a profile sentence states: its fact tokens, none when it holds a negation ("yes. No
- * Kubernetes." states no Kubernetes). "without" negates only what follows it, so the words
- * before it are stated when they hold no negation of their own: "a refunds service in Node.js
- * and PostgreSQL that handles 40,000 refunds a day without duplicate payouts" states Node.js and
- * PostgreSQL, not payouts.
- */
-function statedTokens(sentence: string): Set<string> {
-	const said = factTokens(sentence);
-	if (!said.has(NEGATED)) return said;
-	const before = factTokens(sentence.split(/\bwithout\b/i)[0] ?? "");
-	return before.has(NEGATED) ? new Set() : before;
-}
-
-/**
  * The issue on one segment, if any: its claims (`said`, with the verified quotes they cite) leave
  * a fact word out, name something the cited files do not, cite a caution or another employer; or
  * nothing covers it and its skip is not one the segment allows.
@@ -139,8 +125,10 @@ function lineIssue(
 		for (const file of evidence?.files ?? [])
 			for (const sentence of citableText(profile, file).split(
 				/\n|(?<=[.!?;])\s+/,
-			))
-				for (const t of statedTokens(sentence)) inSources.add(t);
+			)) {
+				const said = factTokens(sentence);
+				if (!said.has(NEGATED)) for (const t of said) inSources.add(t);
+			}
 		for (const source of evidence?.sources ?? [])
 			for (const t of answerTopic(
 				profile,
