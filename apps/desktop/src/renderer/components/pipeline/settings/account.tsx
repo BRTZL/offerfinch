@@ -171,10 +171,10 @@ function ExportBackup() {
 			<Button
 				variant="outline"
 				onClick={() => save.mutate()}
-				disabled={save.isPending}
+				pending={save.isPending}
 				data-testid="backup-export"
 			>
-				{save.isPending ? "Exporting…" : "Export backup…"}
+				Export backup…
 			</Button>
 		</FormRow>
 	);
@@ -270,10 +270,11 @@ function RestoreBackup() {
 			<Button
 				variant="outline"
 				onClick={() => check.mutate()}
-				disabled={check.isPending || restore.isPending}
+				disabled={restore.isPending}
+				pending={check.isPending}
 				data-testid="backup-restore"
 			>
-				{check.isPending ? "Checking…" : "Restore from backup…"}
+				Restore from backup…
 			</Button>
 			<AlertDialog
 				open={checked !== null}
@@ -299,10 +300,10 @@ function RestoreBackup() {
 						</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={() => checked && restore.mutate(checked.id)}
-							disabled={restore.isPending}
+							pending={restore.isPending}
 							data-testid="restore-confirm"
 						>
-							{restore.isPending ? "Restoring…" : "Restore"}
+							Restore
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -354,10 +355,10 @@ function EraseData() {
 						<AlertDialogAction
 							variant="destructive"
 							onClick={() => erase.mutate()}
-							disabled={erase.isPending}
+							pending={erase.isPending}
 							data-testid="erase-confirm"
 						>
-							{erase.isPending ? "Erasing…" : "Erase everything"}
+							Erase everything
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>

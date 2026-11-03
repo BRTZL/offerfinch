@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useDesktopStatus } from "@/components/shell/sidebar";
-import { Button } from "@/components/ui/button";
+import { Button, SwapLabel } from "@/components/ui/button";
 import { client, orpc } from "@/lib/orpc";
 
 /** The toolbar's Scan now: reads every watched board once, now. */
@@ -35,8 +35,10 @@ export function ScanButton({ compact = false }: { compact?: boolean }) {
 			aria-label={label}
 			title={compact ? `${label}. ${next ?? ""}` : next}
 		>
-			<RefreshCw />
-			{compact ? null : label}
+			<RefreshCw className={scanning ? "animate-spin" : undefined} />
+			{compact ? null : (
+				<SwapLabel labels={["Scan now", "Scanning…"]} show={label} />
+			)}
 		</Button>
 	);
 }

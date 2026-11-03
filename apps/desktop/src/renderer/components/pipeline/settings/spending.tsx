@@ -22,6 +22,7 @@ const STEP_LABEL: Record<string, string> = {
 	"chat-application": "Chat about applications",
 	"chat-profile": "Profile chat",
 	"answer-helper": "Answer helper on Questions",
+	"answer-choices": "Help me remember on Questions",
 };
 
 /** A model's or step's share: its cost, and its subscription calls. */

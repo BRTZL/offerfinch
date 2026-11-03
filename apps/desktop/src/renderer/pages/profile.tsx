@@ -527,10 +527,10 @@ export default function ProfilePage() {
 									<Button
 										size="sm"
 										onClick={() => convert.mutate()}
-										disabled={convert.isPending}
+										pending={convert.isPending}
 										data-testid="profile-convert"
 									>
-										{convert.isPending ? "Converting…" : "Convert"}
+										Convert
 									</Button>
 								</span>
 							</Notice>

@@ -68,3 +68,23 @@ export function fakeAnswerHelperResponder(
 	}
 	return { answer: sentences.join(" "), missing };
 }
+
+/**
+ * The fake for "Help me remember": one group per part of the question. A part with examples
+ * offers them plus one common tool the question doesn't list (a memory jog, never a claim); any
+ * other part is yes or no.
+ */
+export function fakeAnswerChoicesResponder(
+	request: GenerateObjectRequest<unknown>,
+): { groups: { ask: string; multi: boolean; options: string[] }[] } {
+	const { input } = request.context as { input: AnswerHelperInput };
+	const examples = examplesOf(input.question);
+	return {
+		groups: partsOf(input.question).map((part, i) => {
+			const ask = `${part.replace(/^\w/, (c) => c.toUpperCase())}?`;
+			return i === 0 && examples.length
+				? { ask, multi: true, options: [...examples, "WebPageTest"] }
+				: { ask, multi: false, options: ["Yes", "No"] };
+		}),
+	};
+}

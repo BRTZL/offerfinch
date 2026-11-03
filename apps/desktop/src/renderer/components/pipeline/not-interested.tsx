@@ -257,10 +257,11 @@ export function NotInterested({
 							ref={confirmRef}
 							size="sm"
 							onClick={confirm}
-							disabled={!target || dismiss.isPending}
+							disabled={!target}
+							pending={dismiss.isPending}
 							data-testid="dismiss-confirm"
 						>
-							{dismiss.isPending ? "Saving…" : "Not interested"}
+							Not interested
 						</Button>
 					</div>
 				</div>

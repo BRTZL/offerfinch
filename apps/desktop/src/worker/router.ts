@@ -32,7 +32,7 @@ export const desktopAppRouter = {
 	 * the open matches again.
 	 */
 	settings: { ...pipelineRouter.settings, ...jobSearchSettingsRouter(worker) },
-	/** Questions, with the answer helper (Suggest and Improve) beside Save answer. */
+	/** Questions, with the answer helper (Suggest, Improve and Help me remember) beside Save answer. */
 	questions: { ...pipelineRouter.questions, ...answerHelperRouter(worker) },
 	/** Scan history: what each scan searched, found and set aside, and why. */
 	scanHistory: scanHistoryRouter(worker),

@@ -487,12 +487,11 @@ export function ModelSettings({ compact = false }: { compact?: boolean }) {
 										<Button
 											variant="ghost"
 											disabled={!state?.ready || test.isPending}
+											pending={test.isPending && test.variables === role}
 											onClick={() => test.mutate(role)}
 											data-testid={`role-${role}-test`}
 										>
-											{test.isPending && test.variables === role
-												? "Testing…"
-												: "Test"}
+											Test
 										</Button>
 									</FormRow>
 								);

@@ -4,6 +4,7 @@ import {
 	meteredFor,
 	SpendingCapReachedError,
 } from "@offerfinch/core/scoring/metered";
+import { runAnswerChoices } from "@offerfinch/core/tailor/answer-choices";
 import {
 	ANSWER_MAX,
 	type AnswerHelperInput,
@@ -89,7 +90,39 @@ async function helperInput(
  * answer. A paused or limited model comes back as a reason, never as a changed box.
  */
 export function answerHelperRouter(worker: () => WorkerApp) {
+	/** The drafting model, metered to the question's application. */
+	const llmFor = (w: WorkerApp, userId: string, applicationId: string | null) =>
+		// Drafting's model, as the chat uses: the claims check stays independent of it.
+		meteredFor(
+			w.deps.tailorLlm ?? w.deps.llm,
+			w.deps.spend,
+			userId,
+			applicationId,
+		);
 	return {
+		/**
+		 * Help me remember: the question as a few multiple-choice asks. Options are memory jogs;
+		 * only what the user ticks reaches the box, and nothing is saved here.
+		 */
+		choices: protectedProcedure
+			.input(z.object({ id: z.string().uuid() }))
+			.handler(async ({ context, input }) => {
+				const w = worker();
+				const userId = context.session.user.id;
+				const loaded = await helperInput(w, userId, input.id, "");
+				if (!loaded.input)
+					return paused(
+						"Your profile is empty. Import your resume or add a record first.",
+					);
+				try {
+					return await runAnswerChoices(
+						llmFor(w, userId, loaded.applicationId),
+						loaded.input,
+					);
+				} catch (error) {
+					return failure(w, error);
+				}
+			}),
 		help: protectedProcedure
 			.input(
 				z.object({
@@ -105,13 +138,7 @@ export function answerHelperRouter(worker: () => WorkerApp) {
 					return paused(
 						"Your profile is empty. Import your resume or add a record first.",
 					);
-				// Drafting's model, as the chat uses: the claims check stays independent of it.
-				const llm = meteredFor(
-					w.deps.tailorLlm ?? w.deps.llm,
-					w.deps.spend,
-					userId,
-					loaded.applicationId,
-				);
+				const llm = llmFor(w, userId, loaded.applicationId);
 				try {
 					const result = await runAnswerHelper(llm, loaded.input);
 					if (result.status !== "ok") return result;

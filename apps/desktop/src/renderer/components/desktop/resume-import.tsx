@@ -53,7 +53,6 @@ type Picked = {
  * start from scratch. Your AI drafts profile records from the text; nothing is saved until the
  * draft is reviewed. In onboarding, "Draft my profile" sits in the footer.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keep the import, preview, and save states together so transitions use the same draft.
 export function ResumeImport({
 	onDraft,
 	onScratch,
@@ -122,7 +121,7 @@ export function ResumeImport({
 	};
 	const ready = text.trim().length >= 20 && picked?.state !== "reading";
 	const inFooter = useStepAction({
-		label: structure.isPending ? "Drafting…" : "Draft my profile",
+		label: "Draft my profile",
 		onClick: () => structure.mutate(),
 		disabled: mode === "choose" || !ready || structure.isPending,
 		busy: structure.isPending,
@@ -296,11 +295,12 @@ export function ResumeImport({
 			{!inFooter && mode !== "choose" ? (
 				<div>
 					<Button
-						disabled={!ready || structure.isPending}
+						disabled={!ready}
+						pending={structure.isPending}
 						onClick={() => structure.mutate()}
 						data-testid="onboarding-structure"
 					>
-						{structure.isPending ? "Drafting…" : "Draft my profile"}
+						Draft my profile
 					</Button>
 				</div>
 			) : null}
@@ -373,7 +373,7 @@ export function DraftReview({
 		onError: (error) => toast.error(error.message),
 	});
 	const inFooter = useStepAction({
-		label: save.isPending ? "Saving…" : "Save profile",
+		label: "Save profile",
 		onClick: () => save.mutate(draft),
 		disabled: save.isPending,
 		busy: save.isPending,
@@ -421,10 +421,10 @@ export function DraftReview({
 				{inFooter ? null : (
 					<Button
 						onClick={() => save.mutate(draft)}
-						disabled={save.isPending}
+						pending={save.isPending}
 						data-testid="onboarding-save"
 					>
-						{save.isPending ? "Saving…" : "Save profile"}
+						Save profile
 					</Button>
 				)}
 				<Button variant="ghost" onClick={() => setDraft(null)}>

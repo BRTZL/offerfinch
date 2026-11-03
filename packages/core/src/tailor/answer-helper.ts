@@ -99,17 +99,9 @@ export function answerHelperPromptParts(input: AnswerHelperInput): {
 	promptPrefix: string;
 	prompt: string;
 } {
-	const known = contactValues(input.profile);
-	const safe = (text: string) => promptText(redactContact(text, known));
+	const safe = safeText(input.profile);
 	const mode = modeOf(input.draft);
-	const posting = input.posting
-		? `<posting>
-Company: ${safe(input.posting.companyName)}
-Title: ${safe(input.posting.title)}
-
-${safe(input.posting.text.slice(0, POSTING_MAX))}
-</posting>`
-		: "<posting>No posting: the question is not tied to one.</posting>";
+	const posting = postingBlock(input, safe);
 	return {
 		// The profile first, as every other call sends it: the cached prefix stays the same.
 		promptPrefix: profileBlock(input.profile),
@@ -123,6 +115,27 @@ ${safe(input.posting.text.slice(0, POSTING_MAX))}
 
 ${mode === "suggest" ? SUGGEST : IMPROVE}`,
 	};
+}
+
+/** Untrusted text made safe for a prompt: contact details redacted, tags escaped. */
+export function safeText(profile: ProfileSnapshot) {
+	const known = contactValues(profile);
+	return (text: string) => promptText(redactContact(text, known));
+}
+
+/** The posting, clipped, as untrusted text; or a line saying there is none. */
+export function postingBlock(
+	input: Pick<AnswerHelperInput, "posting">,
+	safe: (text: string) => string,
+): string {
+	return input.posting
+		? `<posting>
+Company: ${safe(input.posting.companyName)}
+Title: ${safe(input.posting.title)}
+
+${safe(input.posting.text.slice(0, POSTING_MAX))}
+</posting>`
+		: "<posting>No posting: the question is not tied to one.</posting>";
 }
 
 /* ------------------------------------------------------------------ guard */
@@ -275,6 +288,24 @@ export function unsupportedTerms(
 		out.add(token);
 	}
 	return [...out];
+}
+
+/**
+ * Whether the profile's evidence names `text`: it has at least one name or number, and every one
+ * is in the profile ("React Profiler" yes, "Yes" or "Lighthouse" no). For the "In your profile"
+ * mark on a choice; never decided by the model.
+ */
+export function profileNames(text: string, profile: ProfileSnapshot): boolean {
+	const names = tokens(text).filter(
+		({ token }) =>
+			isNumeric(token) ||
+			(/\p{Lu}/u.test(token) && !COMMON.has(token.toLowerCase())),
+	);
+	if (!names.length) return false;
+	const known = new Set(
+		tokens(profileEvidence(profile)).flatMap(({ token }) => keysOf(token)),
+	);
+	return names.every(({ token }) => keysOf(token).some((k) => known.has(k)));
 }
 
 /* ------------------------------------------------------------------- call */

@@ -185,10 +185,10 @@ export function SelectionSummary({
 							<Button
 								size="sm"
 								onClick={() => void prepare(matchIds)}
-								disabled={preparing}
+								pending={preparing}
 								data-testid="prepare-selection"
 							>
-								{preparing ? "Starting…" : `Prepare ${canDismiss}`}
+								{`Prepare ${canDismiss}`}
 							</Button>
 						</PrepareTip>
 					}

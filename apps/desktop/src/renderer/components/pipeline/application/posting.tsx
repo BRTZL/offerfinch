@@ -217,7 +217,7 @@ export function RereadPosting({
 			data-testid="reread-posting"
 		>
 			<RotateCw className={reread.isPending ? "animate-spin" : undefined} />
-			{reread.isPending ? "Reading…" : "Re-read posting"}
+			Re-read posting
 		</Button>
 	);
 }

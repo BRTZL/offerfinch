@@ -102,10 +102,10 @@ export function ApplicationToolbar({
 								<Button
 									size="sm"
 									onClick={() => prepare.mutate()}
-									disabled={prepare.isPending}
+									pending={prepare.isPending}
 									data-testid="prepare"
 								>
-									{prepare.isPending ? "Starting…" : "Prepare"}
+									Prepare
 								</Button>
 							</PrepareTip>
 						</>

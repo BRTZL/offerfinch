@@ -17,6 +17,13 @@ version it tags (docs/releasing.md). Only what is merged into main belongs here.
   uses what you typed and what your profile already holds, and drops a suggestion that names a
   tool or number from anywhere else. Check it before you save; Save waits until every [ blank ] is
   filled in.
+- Help me remember on Questions turns a hard question into a few multiple-choice asks (which
+  tools, yes or no, a rough size), with None of these, Not sure and a box for anything else. The
+  options are reminders, never facts about you: only what you tick goes into your answer, and
+  Improve then turns it into sentences. An option your profile already names is marked "in
+  profile".
+- Buttons keep their width while they work: a spinner shows in place instead of the label
+  changing to "Saving…", and Suggest and Improve share one width.
 
 ### Redraft
 

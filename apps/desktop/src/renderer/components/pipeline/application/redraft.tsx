@@ -269,10 +269,10 @@ function RedraftDialog({
 					<Button
 						type="submit"
 						form={`${ids}-form`}
-						disabled={start.isPending}
+						pending={start.isPending}
 						data-testid="redraft-confirm"
 					>
-						{start.isPending ? "Starting…" : `Redraft ${NOUN[scope]}`}
+						{`Redraft ${NOUN[scope]}`}
 					</Button>
 				</DialogFooter>
 			</DialogContent>
