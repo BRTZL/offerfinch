@@ -184,7 +184,12 @@ if (
 	const pkgPath = path.join(root, "apps/desktop/package.json");
 	const changelogPath = path.join(root, "apps/desktop/CHANGELOG.md");
 	const git = (...a) =>
-		execFileSync("git", a, { cwd: root, encoding: "utf8" }).trim();
+		execFileSync("git", a, {
+			cwd: root,
+			encoding: "utf8",
+			// No earlier tag is normal (the first release): git's complaint is noise.
+			stdio: ["ignore", "pipe", "ignore"],
+		}).trim();
 	const [command, ...rest] = process.argv.slice(2);
 	const today = new Date().toISOString().slice(0, 10);
 	try {
