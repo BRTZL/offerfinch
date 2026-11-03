@@ -90,14 +90,14 @@ type ProviderId = SourcesData["providers"][number]["provider"];
 
 /**
  * Each source in the order a scan runs them: the hidden tab it reads in (a check there needs
- * the user), whether its site has a sign-in, and what it reads (shown on hover over its name,
- * so each row stays two short lines). Nothing to set: every source searches for what
- * Settings › Job search lists.
+ * the user; the remote feeds have none, they are plain requests), whether its site has a
+ * sign-in, and what it reads (shown on hover over its name, so each row stays two short lines).
+ * Nothing to set: every source searches for what Settings › Job search lists.
  */
 const SOURCES: {
 	id: ProviderId;
 	label: string;
-	tab: SiteTabId;
+	tab?: SiteTabId;
 	/** The tab that reads its result pages, when it is another (web search). */
 	pagesTab?: SiteTabId;
 	signIn: boolean;
@@ -134,6 +134,34 @@ const SOURCES: {
 		signIn: true,
 		about:
 			"Its search pages. Job pages may show a browser check: the run waits for you.",
+	},
+	{
+		id: "remotive",
+		label: "Remotive",
+		signIn: false,
+		about:
+			"Remote jobs from Remotive's public API, read at most every 6 hours (Remotive asks for no more than 4 reads a day); up to 25 new matches a read. Jobs link to Remotive.",
+	},
+	{
+		id: "remoteok",
+		label: "Remote OK",
+		signIn: false,
+		about:
+			"Remote jobs from Remote OK's public API, read at most every 6 hours; up to 25 new matches a read. Jobs link to Remote OK.",
+	},
+	{
+		id: "weworkremotely",
+		label: "We Work Remotely",
+		signIn: false,
+		about:
+			"Remote jobs from We Work Remotely's public RSS feed, read at most every 6 hours; up to 25 new matches a read. Jobs link to We Work Remotely.",
+	},
+	{
+		id: "hn-hiring",
+		label: "HN Who is hiring",
+		signIn: false,
+		about:
+			"This month's Hacker News \"Who is hiring?\" thread, read through the public HN Search API at most every 6 hours; each post's first line is read for the company, role and place. Up to 25 new matches a read.",
 	},
 	{
 		id: "web-search",
@@ -307,6 +335,16 @@ function runLine(tab: TabState, last: string): string {
 
 type Provider = SourcesData["providers"][number];
 
+/** A source without a site tab (a remote feed): never reading in a tab, never signed in. */
+const NO_TAB: TabState = {
+	signIn: "never",
+	signedInAt: null,
+	legacyProfile: false,
+	running: false,
+	check: null,
+	lastCheck: null,
+};
+
 /** The row's light: off, needs you, busy, stopped, a problem, or fine. */
 function toneOf(
 	p: Provider,
@@ -340,7 +378,10 @@ function detailLine(
 		new Date(p.nextReadAt).getTime() > Date.now()
 			? `Next read in ${inAbout(p.nextReadAt)}`
 			: null;
-	const parts = [source.signIn ? signInLine(source.tab, tab) : null, next];
+	const parts = [
+		source.signIn && source.tab ? signInLine(source.tab, tab) : null,
+		next,
+	];
 	return parts.filter(Boolean).join(" · ") || null;
 }
 
@@ -356,7 +397,8 @@ function SourceRow({
 	onSheet: (site: SiteTabId, mode: SiteSheetMode) => void;
 }) {
 	const p = data.providers.find((x) => x.provider === source.id);
-	const tab = data.tabs[source.tab];
+	const site = source.tab;
+	const tab = site ? data.tabs[site] : NO_TAB;
 	const reading = source.pagesTab ? data.tabs[source.pagesTab].running : false;
 	const update = useMutation({
 		mutationFn: (enabled: boolean) =>
@@ -391,15 +433,13 @@ function SourceRow({
 				/>
 			}
 		>
-			{fix === "watch" ? (
+			{fix === "watch" && site ? (
 				<Button
 					variant={tab.check ? "default" : "outline"}
 					size="sm"
 					onClick={() =>
 						onSheet(
-							reading && !tab.check
-								? (source.pagesTab ?? source.tab)
-								: source.tab,
+							reading && !tab.check ? (source.pagesTab ?? site) : site,
 							"live",
 						)
 					}
@@ -407,11 +447,11 @@ function SourceRow({
 				>
 					{tab.check ? "Needs you" : "Watch live"}
 				</Button>
-			) : fix === "sign-in" ? (
+			) : fix === "sign-in" && site ? (
 				<Button
 					variant="outline"
 					size="sm"
-					onClick={() => onSheet(source.tab, "sign-in")}
+					onClick={() => onSheet(site, "sign-in")}
 					data-testid={`source-${id}-sign-in`}
 				>
 					Sign in…

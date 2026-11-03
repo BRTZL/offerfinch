@@ -55,6 +55,10 @@ const RETRYABLE = new Set([
 	"linkedin-top-picks",
 	"indeed",
 	"glassdoor",
+	"remotive",
+	"remoteok",
+	"weworkremotely",
+	"hn-hiring",
 	"web-search",
 ]);
 

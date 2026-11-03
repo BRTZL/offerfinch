@@ -28,6 +28,7 @@ import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 import { protectedProcedure } from "./routers/procedure";
 import { SITE_DEBUG_DIR } from "./site-debug";
+import { PROVIDER_LABEL } from "./source-labels";
 
 /**
  * Scan history in the worker: the ScanLog bound to one scan run (`core/pipeline/scan-report.ts`)
@@ -36,12 +37,8 @@ import { SITE_DEBUG_DIR } from "./site-debug";
  */
 
 const LABEL: Record<string, string> = {
-	"job-board-search": "Job-board search",
-	indeed: "Indeed",
-	glassdoor: "Glassdoor",
-	linkedin: "LinkedIn",
+	...PROVIDER_LABEL,
 	"linkedin-top-picks": "LinkedIn Top picks",
-	"web-search": "Web search",
 };
 const labelOf = (id: string) => LABEL[id] ?? id;
 const plural = (n: number, one: string, many = `${one}s`) =>
@@ -160,6 +157,8 @@ const ORDER: Record<string, number> = {
 	paused_check: 1,
 	needs_sign_in: 1,
 	retrying: 1,
+	// On, and not due in this scan (a feed's or LinkedIn's pace): before the sources that are off.
+	waiting: 2,
 	not_set_up: 2,
 	off: 3,
 };

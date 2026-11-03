@@ -264,4 +264,61 @@ describe("rows from before the scan history (Codex review)", () => {
 			runStatus({ flowRunId: "scan-x", status: "running", finishedAt: null }),
 		).toBe("running");
 	});
+
+	it("names the remote feeds and lists a waiting source before those that are off (review #1)", async () => {
+		const { db, dir } = await setup();
+		await db.insert(flowRuns).values({
+			id: "scan-u1-manual-2",
+			userId: "u1",
+			kind: "scan",
+			params: { userId: "u1", trigger: "manual" },
+			status: "running",
+			runAfter: new Date(),
+			createdAt: new Date(),
+			updatedAt: new Date(),
+		} as never);
+		// Remote OK on and not due; Remotive and the other sources off.
+		await updateProvider(db, "u1", "job-board-search", { enabled: false });
+		await updateProvider(db, "u1", "remoteok", { enabled: true });
+		const hooks = scanLogFor(
+			{ db, init: { userData: dir } },
+			{ id: "scan-u1-manual-2", userId: "u1" },
+			{ userId: "u1", trigger: "manual" },
+		);
+		const log = hooks.scanLog;
+		if (!log) throw new Error("no scan log");
+		await log.start([{ id: "remoteok", label: "Remote OK" }]);
+		await log.source(
+			{
+				provider: "remoteok",
+				queries: 0,
+				fetched: 0,
+				newJobIds: [],
+				status: "waiting",
+				retryAt: new Date(Date.now() + 3_600_000).toISOString(),
+				problem: "Next Remote OK read in ~1 h.",
+			},
+			"Remote OK",
+		);
+		await db
+			.update(flowRuns)
+			.set({ status: "complete", endedAt: new Date() })
+			.where(eq(flowRuns.id, "scan-u1-manual-2"));
+		const [view] = await scanHistoryViews(
+			db,
+			"u1",
+			await listScanRuns(db, "u1"),
+		);
+		const rows = view?.sources.map((s) => [s.report.id, s.report.status]) ?? [];
+		expect(rows[0]).toEqual(["remoteok", "waiting"]);
+		const labels = Object.fromEntries(
+			view?.sources.map((s) => [s.report.id, s.report.label]) ?? [],
+		);
+		expect(labels).toMatchObject({
+			remotive: "Remotive",
+			weworkremotely: "We Work Remotely",
+			"hn-hiring": "HN Who is hiring",
+		});
+		expect(view?.outcome).toBe("Nothing searched: Remote OK is not due yet");
+	});
 });

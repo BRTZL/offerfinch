@@ -372,6 +372,13 @@ const STATUS_PHRASE: Record<SourceStatus, string> = {
 const plural = (n: number, one: string, many = `${one}s`) =>
 	`${n} ${n === 1 ? one : many}`;
 
+/** "Remotive", "Remotive and Remote OK", "Remotive, Remote OK and 2 more". */
+function inWords(names: string[]): string {
+	if (names.length <= 2) return names.join(" and ");
+	if (names.length === 3) return `${names[0]}, ${names[1]} and ${names[2]}`;
+	return `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`;
+}
+
 /** "Indeed stopped: Page cap of 8 reached", "Glassdoor paused for a check". */
 function problemPhrase(r: SourceReport): string {
 	if (r.status === "error" && r.problem) {
@@ -444,10 +451,17 @@ export function scanOutcome(
 		if (run.status === "errored")
 			return `The scan stopped: ${run.error?.split("\n")[0]?.slice(0, 120) ?? "an error"}`;
 		if (run.status === "interrupted") return "Interrupted before it finished";
-		if (troubled.length === 0)
+		if (troubled.length === 0) {
+			// Sources on but not due in this scan (a feed's or LinkedIn's pace) are not "off".
+			const waiting = sources
+				.filter((s) => s.report.status === "waiting")
+				.map((s) => s.report.label);
+			if (active.length === 0 && waiting.length > 0)
+				return `Nothing searched: ${inWords(waiting)} ${waiting.length === 1 ? "is" : "are"} not due yet`;
 			return active.length === 0
 				? "Nothing searched: every source is off"
 				: "Nothing searched: no searches to run";
+		}
 		return `Nothing searched: ${troubled
 			.slice(0, 3)
 			.map((s) => problemPhrase(s.report))

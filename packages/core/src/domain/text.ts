@@ -36,8 +36,21 @@ export function decodeEntities(text: string): string {
 		.replace(/&quot;/g, '"')
 		.replace(/&#39;|&apos;/g, "'")
 		.replace(/&nbsp;/g, " ")
-		.replace(/&#(\d+);/g, (_, code: string) =>
-			String.fromCodePoint(Number(code)),
-		)
+		.replace(/&#(\d+);/g, (_, code: string) => codePoint(Number(code)))
 		.replace(/&amp;/g, "&");
+}
+
+/**
+ * A numeric character reference's character; one outside Unicode (or a lone surrogate) is the
+ * replacement character, so a posting with a stray "&#99999999;" still reads (feeds, boards).
+ */
+export function codePoint(code: number): string {
+	if (
+		!Number.isInteger(code) ||
+		code < 0 ||
+		code > 0x10ffff ||
+		(code >= 0xd800 && code <= 0xdfff)
+	)
+		return "\ufffd";
+	return String.fromCodePoint(code);
 }

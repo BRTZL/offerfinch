@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:media="http://search.yahoo.com/mrss">
+  <channel>
+    <title>We Work Remotely: Remote jobs in design, programming, marketing and more (fabricated fixture)</title>
+    <link>https://weworkremotely.com/remote-jobs.rss</link>
+    <description>Fabricated fixture in the shape of We Work Remotely's RSS feed (2026-11-03)</description>
+    <language>en-US</language>
+    <ttl>60</ttl>
+    <item>
+      <title>Fernhill Analytics: Senior Front-End Engineer</title>
+      <region>Anywhere in the World</region>
+      <country>🇺🇸 United States of America</country>
+      <state>California</state>
+      <skills>React, TypeScript, and CSS</skills>
+      <category>Front-End Programming</category>
+      <type>Full-Time</type>
+      <description>
+&lt;p&gt;
+  &lt;strong&gt;Headquarters:&lt;/strong&gt; Remote
+&lt;/p&gt;
+&lt;p&gt;Fernhill Analytics builds dashboards for &amp;amp; with small clinics. You will own our charting library.&lt;/p&gt;
+&lt;ul&gt;&lt;li&gt;Five years of React&lt;/li&gt;&lt;/ul&gt;
+</description>
+      <pubDate>Mon, 02 Nov 2026 17:00:19 +0000</pubDate>
+      <expires_at>Wed, 02 Dec 2026 17:00:19 +0000</expires_at>
+      <guid>https://weworkremotely.com/remote-jobs/fernhill-analytics-senior-front-end-engineer</guid>
+      <link>https://weworkremotely.com/remote-jobs/fernhill-analytics-senior-front-end-engineer</link>
+    </item>
+    <item>
+      <title><![CDATA[Brightwater Health: Frontend Engineer]]></title>
+      <region>USA Only</region>
+      <country>🇺🇸 United States of America</country>
+      <state>Texas</state>
+      <skills>Vue</skills>
+      <category>Front-End Programming</category>
+      <type>Full-Time</type>
+      <description>&lt;p&gt;US residents only.&lt;/p&gt;</description>
+      <pubDate>Mon, 02 Nov 2026 12:00:00 +0000</pubDate>
+      <expires_at>Wed, 02 Dec 2026 12:00:00 +0000</expires_at>
+      <guid>https://weworkremotely.com/remote-jobs/brightwater-health-frontend-engineer</guid>
+      <link>https://weworkremotely.com/remote-jobs/brightwater-health-frontend-engineer</link>
+    </item>
+    <item>
+      <title>Juniper Atlas: Frontend Engineer</title>
+      <region>Anywhere in the World</region>
+      <country></country>
+      <state></state>
+      <skills></skills>
+      <category>Front-End Programming</category>
+      <type>Contract</type>
+      <description>&lt;p&gt;A closed posting.&lt;/p&gt;</description>
+      <pubDate>Fri, 02 Oct 2026 12:00:00 +0000</pubDate>
+      <expires_at>Sun, 01 Nov 2026 12:00:00 +0000</expires_at>
+      <guid>https://weworkremotely.com/remote-jobs/juniper-atlas-frontend-engineer</guid>
+      <link>https://weworkremotely.com/remote-jobs/juniper-atlas-frontend-engineer</link>
+    </item>
+  </channel>
+</rss>

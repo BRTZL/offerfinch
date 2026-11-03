@@ -1,0 +1,66 @@
+[
+ {
+  "last_updated": 1793664000,
+  "legal": "API Terms of Service (fabricated fixture): link back to the URL on Remote OK and mention Remote OK as a source."
+ },
+ {
+  "slug": "remote-front-end-engineer-kestrel-works-2001",
+  "id": "2001",
+  "epoch": 1793600000,
+  "date": "2026-11-02T08:53:20+00:00",
+  "company": "Kestrel Works",
+  "company_logo": "",
+  "position": "Front End Engineer",
+  "tags": [
+   "frontend",
+   "react",
+   "dev"
+  ],
+  "description": "<p>Remote \u00c2\u00b7 Full time \u00c2\u00b7 €70k\u00e2\u0080\u0093€90k</p><p>Build our editor in React.</p>",
+  "location": "",
+  "salary_min": 70000,
+  "salary_max": 90000,
+  "apply_url": "https://remoteOK.com/remote-jobs/remote-front-end-engineer-kestrel-works-2001",
+  "logo": "",
+  "url": "https://remoteOK.com/remote-jobs/remote-front-end-engineer-kestrel-works-2001"
+ },
+ {
+  "slug": "remote-software-engineer-lumen-co-2002",
+  "id": "2002",
+  "epoch": 1793500000,
+  "date": "2026-11-01T05:06:40+00:00",
+  "company": "Lumen &amp; Co",
+  "company_logo": "",
+  "position": "Software Engineer",
+  "tags": [
+   "frontend",
+   "typescript"
+  ],
+  "description": "<p>Work on our web app, fully remote from anywhere in the world.</p>",
+  "location": "Remote",
+  "salary_min": 0,
+  "salary_max": 0,
+  "apply_url": "https://remoteOK.com/remote-jobs/remote-software-engineer-lumen-co-2002",
+  "logo": "",
+  "url": "https://remoteOK.com/remote-jobs/remote-software-engineer-lumen-co-2002"
+ },
+ {
+  "slug": "remote-frontend-engineer-copperline-2003",
+  "id": "2003",
+  "epoch": 1793400000,
+  "date": "2026-10-31T01:20:00+00:00",
+  "company": "Copperline",
+  "company_logo": "",
+  "position": "Frontend Engineer",
+  "tags": [
+   "frontend"
+  ],
+  "description": "<p>Hybrid in Palo Alto, three days a week in the office.</p>",
+  "location": "Palo Alto, CA",
+  "salary_min": 0,
+  "salary_max": 0,
+  "apply_url": "https://remoteOK.com/remote-jobs/remote-frontend-engineer-copperline-2003",
+  "logo": "",
+  "url": "https://remoteOK.com/remote-jobs/remote-frontend-engineer-copperline-2003"
+ }
+]

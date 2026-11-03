@@ -1,11 +1,14 @@
+import type { WorkplaceType } from "../domain/types";
+import type { LocationVerdict } from "../filter/rules";
 import { LINKEDIN_ORIGIN } from "../linkedin/runner";
 import type { SiteId } from "../sites/sites";
 import { describeSearch, type PlanSearch, rotate } from "./plan";
 
 /**
  * Each source's form of the shared search plan (`plan.ts`): LinkedIn's search URL parameters,
- * Indeed's and Glassdoor's search pages, and DuckDuckGo queries for job-board search (one board
- * per query) and web search (plain words).
+ * Indeed's and Glassdoor's search pages, DuckDuckGo queries for job-board search (one board
+ * per query) and web search (plain words), and the remote feeds' local match (a feed is read
+ * whole; its postings are kept when one of the plan's searches would have found them).
  */
 
 const words = (s: PlanSearch) =>
@@ -223,6 +226,122 @@ export function webQueries(
 			.trim(),
 	);
 	return rotate([...new Set(all)], start, max);
+}
+
+/* ------------------------------------------------------------ Remote feeds */
+
+/**
+ * Words that name the kind of role, any one standing for the others ("Frontend Developer",
+ * "Frontend Lead"). Never enough on their own: a search must also name a specialty.
+ */
+const ROLE_NOUNS = new Set([
+	"engineer",
+	"developer",
+	"programmer",
+	"swe",
+	"sde",
+	"dev",
+	"lead",
+]);
+/** Words that make a title no more specific ("Software Engineer"): its feed tags may say more. */
+const GENERIC = new Set(["software", "web", "application", "app"]);
+/** Left out of matching: the fit score weighs seniority; these words say nothing else. */
+const IGNORED = new Set([
+	"senior",
+	"sr",
+	"staff",
+	"principal",
+	"junior",
+	"jr",
+	"mid",
+	"level",
+	"ii",
+	"iii",
+	"iv",
+	"and",
+	"or",
+	"the",
+	"of",
+	"for",
+	"in",
+	"a",
+	"an",
+	"with",
+	"to",
+	"remote",
+]);
+
+/**
+ * Words of a title or a search, folded so spellings meet: "Front-End", "front end" and
+ * "frontend"; "Node.js" and "node"; plurals ("Engineers") as one.
+ */
+function matchWords(text: string): string[] {
+	return text
+		.toLowerCase()
+		.replace(/\bfront[\s-]+end\b/g, "frontend")
+		.replace(/\bback[\s-]+end\b/g, "backend")
+		.replace(/\bfull[\s-]+stack\b/g, "fullstack")
+		.replace(/\b(react|node|vue|next)\.?js\b/g, "$1")
+		.split(/[^\p{L}\p{N}+#]+/u)
+		.filter(Boolean)
+		.map((w) => (w.length > 4 && w.endsWith("s") ? w.slice(0, -1) : w));
+}
+
+/**
+ * A feed posting is what a search asks for. The search must name a specialty (a word beyond role
+ * words and seniority: "Staff Engineer" alone finds nothing), and every one of its specialty words
+ * must be in the title. The feed's tags may supply them only when the title is a generic role
+ * ("Software Engineer", "Engineer") with no specialty of its own to conflict with. When the
+ * search names a kind of role (engineer, developer, lead), the title names one of them.
+ * Seniority is left to the fit score.
+ */
+export function feedKeywordsMatch(
+	posting: { title: string; tags?: string[] },
+	s: PlanSearch,
+): boolean {
+	const wanted = matchWords(s.keywords).filter((w) => !IGNORED.has(w));
+	const core = wanted.filter((w) => !ROLE_NOUNS.has(w));
+	if (core.length === 0) return false;
+	const titleWords = matchWords(posting.title);
+	const title = new Set(titleWords);
+	const role = wanted.some((w) => ROLE_NOUNS.has(w));
+	if (role && ![...ROLE_NOUNS].some((w) => title.has(w))) return false;
+	if (core.every((w) => title.has(w))) return true;
+	const generic = titleWords.every(
+		(w) => IGNORED.has(w) || ROLE_NOUNS.has(w) || GENERIC.has(w),
+	);
+	if (!generic) return false;
+	const tags = new Set(matchWords((posting.tags ?? []).join(" , ")));
+	return core.every((w) => title.has(w) || tags.has(w));
+}
+
+/**
+ * The posting is where the search looks. Its kind of work first: a remote search takes remote
+ * (or unstated) work, an office search office, hybrid or unstated work. Then its place, as the
+ * job filter judged it: remote worldwide takes a posting open worldwide or not clearly limited;
+ * remote in a country also one that hires from the user's country; office one where the user
+ * lives, may work or would move to.
+ */
+export function feedWhereMatch(
+	posting: { workplaceType: WorkplaceType },
+	verdict: LocationVerdict | undefined,
+	s: PlanSearch,
+): boolean {
+	const remoteWork =
+		posting.workplaceType === "remote" || posting.workplaceType === "unknown";
+	if (s.where === "remote-worldwide")
+		return remoteWork && (verdict === "remote_global" || verdict === "unclear");
+	if (s.where === "remote-in-country")
+		return (
+			remoteWork &&
+			(verdict === "remote_home" ||
+				verdict === "remote_global" ||
+				verdict === "unclear")
+		);
+	return (
+		posting.workplaceType !== "remote" &&
+		(verdict === "home" || verdict === "relocation")
+	);
 }
 
 /**

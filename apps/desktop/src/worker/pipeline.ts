@@ -1,5 +1,7 @@
 import dns from "node:dns/promises";
 import type { BlobStore } from "@offerfinch/core/export/export";
+import { FEEDS } from "@offerfinch/core/feeds/feeds";
+import { FeedProvider } from "@offerfinch/core/feeds/provider";
 import {
 	type LinkedInScanDeps,
 	LinkedInScanProvider,
@@ -39,6 +41,7 @@ import {
 	listProviders,
 	providerCursor,
 	recordProviderRun,
+	SqliteFeedStore,
 	SqliteSearchPlanStore,
 	SqliteSiteStore,
 	SqliteWebStore,
@@ -125,6 +128,11 @@ export interface PipelineInputs {
 	siteHost: SiteTabHost;
 	/** Test runs: sites served by a local stand-in, and no pause between their pages. */
 	test?: boolean;
+	/**
+	 * Test runs: the hosts a local stand-in answers (`fetchRewrite`). A remote feed on any other
+	 * host is refused in a test run unless `OFFERFINCH_REAL_SITES=1`.
+	 */
+	standInHosts?: string[];
 	/** LinkedIn's tab, store and notices, for scans (`worker/linkedin.ts`). */
 	linkedin?: LinkedInScanDeps;
 	log: PipelineDeps["log"];
@@ -377,6 +385,12 @@ async function scanProviders(
 			),
 		);
 	}
+	// Public remote-job feeds: plain GETs, each at most every 6 hours whatever the scans do.
+	for (const feed of FEEDS)
+		if (enabled(feed.id))
+			out.push(
+				new FeedProvider(feed, new SqliteFeedStore(db), feedFetch(input)),
+			);
 	// Last, so the more specific sources find a job first.
 	if (enabled(WEB_SEARCH_ID))
 		out.push(
@@ -405,6 +419,28 @@ async function scanProviders(
 			),
 		);
 	return out;
+}
+
+/**
+ * The feeds' fetch, looked up when called: test runs replace `globalThis.fetch` after the worker
+ * starts, to send the boards' and feeds' hosts to a local stand-in. A test run never reaches a
+ * real feed by accident: a host without a stand-in is refused unless `OFFERFINCH_REAL_SITES=1`.
+ */
+function feedFetch(input: PipelineInputs): typeof fetch {
+	return (resource, init) => {
+		if (input.test && process.env.OFFERFINCH_REAL_SITES !== "1") {
+			const url = new URL(
+				typeof resource === "string" || resource instanceof URL
+					? resource
+					: resource.url,
+			);
+			if (!input.standInHosts?.includes(url.host))
+				return Promise.reject(
+					new Error(`a test run reads no real feed (${url.host})`),
+				);
+		}
+		return globalThis.fetch(resource, init);
+	};
 }
 
 /** The sources that search through DuckDuckGo: its stop is one stop for both. */

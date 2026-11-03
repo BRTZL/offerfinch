@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { APPLICATION_STATES } from "@offerfinch/core/domain/states";
+import { FEED_IDS } from "@offerfinch/core/feeds/feeds";
+import { nextFeedRead } from "@offerfinch/core/feeds/provider";
 import { detectLinkedInStop } from "@offerfinch/core/linkedin/detect";
 import { nextLinkedInRead } from "@offerfinch/core/linkedin/provider";
 import { LINKEDIN_ORIGIN } from "@offerfinch/core/linkedin/runner";
@@ -21,6 +23,7 @@ import {
 import {
 	clearProviderStop,
 	DrizzleLinkedInStore,
+	feedReads,
 	listProviders,
 	type ProviderId,
 } from "@offerfinch/db";
@@ -31,6 +34,7 @@ import type { WorkerApp } from "../app";
 import { siteActivity } from "../checks";
 import { DUCKDUCKGO_PROVIDERS } from "../pipeline";
 import { siteOrigins } from "../sites";
+import { PROVIDER_LABEL } from "../source-labels";
 
 export const pastedSchema = z.object({
 	title: z.string().trim().min(1, "Add the job title").max(300),
@@ -77,14 +81,6 @@ export function worker(): WorkerApp {
 }
 
 export const stateSchema = z.enum(APPLICATION_STATES);
-
-const PROVIDER_LABEL: Record<ProviderId, string> = {
-	"job-board-search": "Job-board search",
-	linkedin: "LinkedIn",
-	indeed: "Indeed",
-	glassdoor: "Glassdoor",
-	"web-search": "Web search",
-};
 
 /**
  * Each site tab (LinkedIn, Indeed, Glassdoor): its sign-in as last seen, whether a run reads it
@@ -174,9 +170,17 @@ export async function providerStatus(w: WorkerApp, userId: string) {
 			label: PROVIDER_LABEL[p.provider],
 			// Nothing to set up for any of them (job-board search reads DuckDuckGo in its own tab).
 			ready: p.enabled && (!record || retryDue(record, now)),
-			/** LinkedIn only: when a scan reads it next (every 6 hours, 10 pages a day). */
-			nextReadAt:
-				p.provider === "linkedin" && !record ? next.at.toISOString() : null,
+			/**
+			 * LinkedIn and the remote feeds: when a scan reads it next (LinkedIn every 6 hours, 10
+			 * pages a day; a feed every 6 hours, 4 reads a day).
+			 */
+			nextReadAt: record
+				? null
+				: p.provider === "linkedin"
+					? next.at.toISOString()
+					: (FEED_IDS as readonly string[]).includes(p.provider)
+						? nextFeedRead(feedReads(p.config), now).toISOString()
+						: null,
 			stop: record
 				? {
 						kind: record.kind,
@@ -206,7 +210,9 @@ export async function clearStops(
 	).includes(provider)
 		? DUCKDUCKGO_PROVIDERS
 		: [provider];
-	for (const id of ids) await clearProviderStop(w.db, userId, id);
+	const keepLastRun = (FEED_IDS as readonly string[]).includes(provider);
+	for (const id of ids)
+		await clearProviderStop(w.db, userId, id, { keepLastRun });
 }
 
 /** A domain refusal ("Refusing: …") as a 409 the app shows as-is. */

@@ -1,6 +1,10 @@
 import type { JobSourceKind } from "@offerfinch/core/domain/types";
 import { companyNameKey, normalizeUrl } from "@offerfinch/core/domain/url";
 import type {
+	FeedDuplicateQuery,
+	FeedStore,
+} from "@offerfinch/core/feeds/provider";
+import type {
 	ProviderRun,
 	SearchStore,
 } from "@offerfinch/core/pipeline/providers";
@@ -13,8 +17,8 @@ import type { WebSearchStore } from "@offerfinch/core/web/provider";
 import { and, eq, inArray, isNotNull, or } from "drizzle-orm";
 
 import type { Database } from "./client";
-import { titleKey } from "./linkedin";
 import { companies, jobs, sourceProviders } from "./schema/pipeline";
+import { titleKey } from "./title-key";
 
 export const PROVIDER_IDS = [
 	"job-board-search",
@@ -22,14 +26,26 @@ export const PROVIDER_IDS = [
 	"linkedin",
 	"indeed",
 	"glassdoor",
+	// Public remote-job feeds (core/feeds): at most every 6 hours each (core `FEED_PACE`).
+	"remotive",
+	"remoteok",
+	"weworkremotely",
+	"hn-hiring",
 	// Last: the more specific sources find a job first.
 	"web-search",
 ] as const;
-/** Read in the user's browser, or spending AI calls: off until the user turns them on. */
+/**
+ * Read in the user's browser, spending AI calls, or adding jobs to score from a new place: off
+ * until the user turns them on.
+ */
 const OFF_BY_DEFAULT: readonly string[] = [
 	"linkedin",
 	"indeed",
 	"glassdoor",
+	"remotive",
+	"remoteok",
+	"weworkremotely",
+	"hn-hiring",
 	"web-search",
 ];
 export type ProviderId = (typeof PROVIDER_IDS)[number];
@@ -271,6 +287,7 @@ export async function clearProviderStop(
 	db: Database,
 	userId: string,
 	provider: ProviderId,
+	options: { keepLastRun?: boolean } = {},
 ): Promise<void> {
 	const state = (await listProviders(db, userId)).find(
 		(p) => p.provider === provider,
@@ -278,6 +295,26 @@ export async function clearProviderStop(
 	if (!state?.config.stop) return;
 	const { stop: _cleared, ...config } = state.config;
 	await updateProvider(db, userId, provider, { config });
+	// A remote feed keeps its last run: the scan Retry now starts finds it not due (its pace
+	// still holds) and records nothing, which would leave it reading "Not run yet". A run that
+	// read nothing (no results: the refused one) loses the problem and status it reported, so
+	// the row doesn't go on saying "Paused after … refused" once the stop is lifted.
+	if (options.keepLastRun) {
+		const last = state.lastRun;
+		if (last && last.results === undefined && (last.problem || last.status)) {
+			const { problem: _p, status: _s, retryAt: _r, ...kept } = last;
+			await db
+				.update(sourceProviders)
+				.set({ lastRun: kept })
+				.where(
+					and(
+						eq(sourceProviders.userId, userId),
+						eq(sourceProviders.provider, provider),
+					),
+				);
+		}
+		return;
+	}
 	// The stopped run's note goes with it: the source reads as not run until the next scan.
 	await db
 		.update(sourceProviders)
@@ -348,5 +385,111 @@ export class SqliteWebStore extends SqliteSiteStore implements WebSearchStore {
 					r.nameKey === nameKey &&
 					titleKey(r.title) === title),
 		);
+	}
+}
+
+/** Reads older than this are dropped from a feed's record (the pace looks back a day). */
+const FEED_READS_KEPT_MS = 2 * 24 * 3_600_000;
+
+/** A feed's recorded reads (ISO times in its config's `reads`), oldest first. */
+export function feedReads(config: Record<string, unknown>): Date[] {
+	const reads = Array.isArray(config.reads) ? config.reads : [];
+	return reads
+		.filter((r): r is string => typeof r === "string")
+		.map((r) => new Date(r))
+		.filter((d) => !Number.isNaN(d.getTime()))
+		.sort((a, b) => a.getTime() - b.getTime());
+}
+
+/**
+ * The remote feeds' view of the database: web search's dedupe and the stop, plus each feed's
+ * reads, kept in its row's config beside the stop. Not in `last_run`: Retry now clears that, and
+ * a feed's pace must hold across restarts and clears alike.
+ */
+export class SqliteFeedStore extends SqliteWebStore implements FeedStore {
+	constructor(private readonly feeds: Database) {
+		super(feeds);
+	}
+
+	async sameJobStored(
+		userId: string,
+		posting: FeedDuplicateQuery,
+	): Promise<boolean> {
+		const nameKey = companyNameKey(posting.company);
+		const urls = new Set(posting.urls.map(normalizeUrl));
+		const rows = await this.feeds
+			.select({
+				urlNormalized: jobs.urlNormalized,
+				applyUrl: jobs.applyUrl,
+				title: jobs.title,
+				workplaceType: jobs.workplaceType,
+				locations: jobs.locations,
+				closedAt: jobs.closedAt,
+				nameKey: companies.nameKey,
+				status: companies.status,
+			})
+			.from(jobs)
+			.innerJoin(
+				companies,
+				and(eq(companies.id, jobs.companyId), eq(companies.userId, userId)),
+			)
+			.where(
+				and(
+					eq(jobs.userId, userId),
+					or(
+						nameKey ? eq(companies.nameKey, nameKey) : undefined,
+						inArray(jobs.urlNormalized, [...urls]),
+						isNotNull(jobs.applyUrl),
+					),
+				),
+			);
+		if (nameKey) {
+			const [removed] = await this.feeds
+				.select({ id: companies.id })
+				.from(companies)
+				.where(
+					and(
+						eq(companies.userId, userId),
+						eq(companies.nameKey, nameKey),
+						eq(companies.status, "removed"),
+					),
+				)
+				.limit(1);
+			if (removed) return true;
+		}
+		// The same posting only: its URL, or another source's apply link to it. A company and title
+		// alone never prove one vacancy (two remote openings may differ by region or team), so a
+		// feed job a board also lists may be stored twice (decisions.md, 2026-11-03).
+		return rows.some(
+			(r) =>
+				(r.urlNormalized !== null && urls.has(r.urlNormalized)) ||
+				(r.applyUrl !== null && urls.has(normalizeUrl(r.applyUrl))),
+		);
+	}
+
+	async reads(userId: string, feed: string): Promise<Date[]> {
+		const state = (await listProviders(this.feeds, userId)).find(
+			(p) => p.provider === feed,
+		);
+		return feedReads(state?.config ?? {});
+	}
+
+	async markRead(userId: string, feed: string, at: Date): Promise<void> {
+		const state = (await listProviders(this.feeds, userId)).find(
+			(p) => p.provider === feed,
+		);
+		if (!state) throw new Error(`unknown feed ${feed}`);
+		// A read "after" this one was recorded before the clock went back: dropped, so the pace
+		// counts from now (core `nextFeedRead` ignores it too).
+		const reads = [...feedReads(state.config), at]
+			.filter(
+				(d) =>
+					d.getTime() <= at.getTime() &&
+					at.getTime() - d.getTime() < FEED_READS_KEPT_MS,
+			)
+			.map((d) => d.toISOString());
+		await updateProvider(this.feeds, userId, state.provider, {
+			config: { ...state.config, reads },
+		});
 	}
 }
