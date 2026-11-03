@@ -66,3 +66,23 @@ export function autoFill(input: {
 	}
 	return { settings: next, filled };
 }
+
+/**
+ * Whether each role can run now: its configuration is ready (`ready`, from the worker) and, on a
+ * plan, that plan's CLI is installed and signed in. A subscription choice stays the user's when
+ * the CLI is gone or signed out; it is just not ready until it is back.
+ */
+export function readyNow<
+	R extends { role: Role; mode: string; ready: boolean },
+>(roles: R[], signedIn: { claude: boolean; codex: boolean }): R[] {
+	return roles.map((r) => ({
+		...r,
+		ready:
+			r.ready &&
+			(r.mode === "claude-subscription"
+				? signedIn.claude
+				: r.mode === "codex-subscription"
+					? signedIn.codex
+					: true),
+	}));
+}

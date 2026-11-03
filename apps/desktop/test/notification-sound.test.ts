@@ -23,9 +23,8 @@ vi.mock("electron", () => {
 	return { Notification };
 });
 
-const { CHIRP_SOUND, Notifier, soundOptions } = await import(
-	"../src/main/notifications"
-);
+const { CHIRP_COOLDOWN_MS, CHIRP_SOUND, chirpPlayer, Notifier, soundOptions } =
+	await import("../src/main/notifications");
 
 describe("notification sound", () => {
 	it("maps each choice to Electron's options: macOS plays only its own sounds", () => {
@@ -83,5 +82,59 @@ describe("notification sound", () => {
 		expect(
 			fs.statSync(path.join(import.meta.dirname, "../build", CHIRP_SOUND)).size,
 		).toBeGreaterThan(1000);
+	});
+});
+
+describe("the chirp player", () => {
+	const setup = () => {
+		let t = 1_000_000;
+		const finish: Array<(error: Error | null) => void> = [];
+		const play = chirpPlayer("chirp.aiff", () => {}, {
+			now: () => t,
+			play: (_file, done) => finish.push(done),
+		});
+		return {
+			play,
+			finish,
+			advance: (ms: number) => {
+				t += ms;
+			},
+		};
+	};
+
+	it("a burst of 100 calls starts one player", () => {
+		const p = setup();
+		const played = Array.from({ length: 100 }, () => p.play());
+		expect(played.filter(Boolean)).toHaveLength(1);
+		expect(p.finish).toHaveLength(1);
+	});
+
+	it("never two at once, even after the cooldown", () => {
+		const p = setup();
+		expect(p.play()).toBe(true);
+		p.advance(CHIRP_COOLDOWN_MS + 1);
+		// The first is still playing.
+		expect(p.play()).toBe(false);
+		p.finish[0]?.(null);
+		expect(p.play()).toBe(true);
+		expect(p.finish).toHaveLength(2);
+	});
+
+	it("waits the cooldown after a short chirp", () => {
+		const p = setup();
+		expect(p.play()).toBe(true);
+		p.finish[0]?.(null);
+		p.advance(CHIRP_COOLDOWN_MS - 1);
+		expect(p.play()).toBe(false);
+		p.advance(1);
+		expect(p.play()).toBe(true);
+	});
+
+	it("a failed player frees it again", () => {
+		const p = setup();
+		p.play();
+		p.finish[0]?.(new Error("afplay failed"));
+		p.advance(CHIRP_COOLDOWN_MS);
+		expect(p.play()).toBe(true);
 	});
 });

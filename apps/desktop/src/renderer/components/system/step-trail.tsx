@@ -68,7 +68,7 @@ export function StepTrail({
 					<button
 						key={s.key}
 						type="button"
-						aria-label={s.title}
+						aria-label={`Step ${i + 1} of ${steps.length}, ${s.title}, ${i === current ? "current" : s.done ? "done" : "not done yet"}`}
 						aria-current={i === current ? "step" : undefined}
 						title={s.title}
 						onClick={() => onPick(i)}

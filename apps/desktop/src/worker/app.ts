@@ -156,7 +156,9 @@ export class WorkerApp {
 			hostScript: init.claudeHost,
 			log: (message, data) => hooks.log("info", message, data),
 		});
-		this.subscriptions = init.test
+		// Test runs never reach the CLIs on this Mac: their state is the test's (fake-clis.ts).
+		// Main sets `fakeClis` only for an unpackaged build, so a shipped app never reads it.
+		this.subscriptions = init.test?.fakeClis
 			? fakeSubscriptions(init.userData, local)
 			: local;
 		this.blobs = new FsBlobStore(path.join(init.userData, "files"));

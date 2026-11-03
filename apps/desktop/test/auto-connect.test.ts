@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	type AiChoice,
 	autoFill,
+	readyNow,
 	unavailable,
 } from "../src/shared/auto-connect";
 
@@ -107,5 +108,42 @@ describe("Connect AI picks Claude Code and Codex", () => {
 				for (const role of ["scoring", "tailoring", "claims"] as const)
 					expect(unavailable(role, settings[role].mode)).toBeNull();
 			}
+	});
+});
+
+describe("a role is ready only while its plan's CLI is signed in", () => {
+	const roles = [
+		{ role: "scoring" as const, mode: "claude-subscription", ready: true },
+		{ role: "tailoring" as const, mode: "claude-subscription", ready: true },
+		{ role: "claims" as const, mode: "codex-subscription", ready: true },
+	];
+
+	it("both signed in: all ready", () => {
+		expect(
+			readyNow(roles, { claude: true, codex: true }).map((r) => r.ready),
+		).toEqual([true, true, true]);
+	});
+
+	it("Claude signed out: its roles keep the choice but are not ready", () => {
+		const now = readyNow(roles, { claude: false, codex: true });
+		expect(now.map((r) => r.mode)).toEqual(roles.map((r) => r.mode));
+		expect(now.map((r) => r.ready)).toEqual([false, false, true]);
+	});
+
+	it("Codex gone: the checker is not ready", () => {
+		expect(
+			readyNow(roles, { claude: true, codex: false }).map((r) => r.ready),
+		).toEqual([true, true, false]);
+	});
+
+	it("API keys and test models do not depend on the CLIs", () => {
+		const other = [
+			{ role: "scoring" as const, mode: "api", ready: true },
+			{ role: "tailoring" as const, mode: "fake", ready: true },
+			{ role: "claims" as const, mode: "api", ready: false },
+		];
+		expect(
+			readyNow(other, { claude: false, codex: false }).map((r) => r.ready),
+		).toEqual([true, true, false]);
 	});
 });

@@ -30,6 +30,10 @@ test("both signed in: every role set by itself, all set, one chirp", async () =>
 		const summary = page.getByTestId("setup-ai-summary");
 		await expect(summary).toHaveAttribute("data-all-set", "true");
 		await expect(summary).toContainText("You're all set");
+		// Said out loud too: a polite status region that is there from the start.
+		const live = page.getByTestId("setup-ai-live");
+		await expect(live).toHaveAttribute("role", "status");
+		await expect(live).toContainText("You're all set");
 		await expect(page.getByTestId("setup-cli-claude")).toHaveAttribute(
 			"data-state",
 			"ready",
@@ -52,6 +56,7 @@ test("both signed in: every role set by itself, all set, one chirp", async () =>
 		await expect(page.getByTestId("setup-ai-test-result")).toContainText(
 			"Works",
 		);
+		await expect(live).toContainText("Works");
 		// The choices are stored, and shown in the folded settings.
 		await page.getByTestId("models-manual").getByRole("button").first().click();
 		await expect(roleMode(page, "scoring")).toHaveText(/Claude subscription/);
@@ -152,6 +157,42 @@ test("a choice already made is kept when setup is opened again", async () => {
 		await expect(roleMode(page, "scoring")).toHaveText(/Claude subscription/);
 		await expect(roleMode(page, "tailoring")).toHaveText(/Test models/);
 		await expect(roleMode(page, "claims")).toHaveText(/Codex subscription/);
+		expect(errors).toEqual([]);
+	} finally {
+		await app.close();
+		fs.rmSync(userData, { recursive: true, force: true });
+	}
+});
+
+test("a plan chosen before, then signed out: the choice stays, not all set, the fix shows", async () => {
+	const userData = newUser();
+	fakeClis(userData, { claude: "logged_in", codex: "logged_in" });
+	const { app, page, errors } = await launchApp({ userData });
+	try {
+		await openConnectAi(page);
+		const summary = page.getByTestId("setup-ai-summary");
+		await expect(summary).toHaveAttribute("data-all-set", "true");
+		// Claude Code is signed out (or removed) later; setup is checked again.
+		fakeClis(userData, { claude: "logged_out", codex: "logged_in" });
+		await page.getByTestId("setup-ai-check").click();
+		await expect(page.getByTestId("setup-cli-claude")).toHaveAttribute(
+			"data-state",
+			"signed-out",
+			{ timeout: 30_000 },
+		);
+		await expect(summary).not.toHaveAttribute("data-all-set", /.*/);
+		await expect(summary).toContainText("Drafting still needs Claude");
+		await expect(page.getByTestId("setup-cli-claude")).toContainText(
+			"Drafts and scores once it's back and signed in",
+		);
+		await expect(page.getByTestId("setup-cli-claude-command")).toHaveText(
+			"claude",
+		);
+		await expect(page.getByTestId("setup-ai-test")).toHaveCount(0);
+		// The choice is the user's: still Claude for both roles.
+		await page.getByTestId("models-manual").getByRole("button").first().click();
+		await expect(roleMode(page, "scoring")).toHaveText(/Claude subscription/);
+		await expect(roleMode(page, "tailoring")).toHaveText(/Claude subscription/);
 		expect(errors).toEqual([]);
 	} finally {
 		await app.close();

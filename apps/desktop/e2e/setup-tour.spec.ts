@@ -117,6 +117,19 @@ test("setup's happy path: found both CLIs, five steps, first matches with a chir
 				"data-state",
 				state,
 			);
+		// The same, for a screen reader.
+		await expect(page.getByTestId("step-profile")).toHaveAttribute(
+			"aria-label",
+			"Step 2 of 5, Your resume, done",
+		);
+		await expect(page.getByTestId("step-wants")).toHaveAttribute(
+			"aria-label",
+			"Step 3 of 5, What you want, current",
+		);
+		await expect(page.getByTestId("step-scan")).toHaveAttribute(
+			"aria-label",
+			"Step 5 of 5, First search, not done yet",
+		);
 		await expect(page.getByTestId("setup-sources")).toBeVisible();
 		await beat(page, 1200);
 		await frames(app, page, "5-what-you-want");

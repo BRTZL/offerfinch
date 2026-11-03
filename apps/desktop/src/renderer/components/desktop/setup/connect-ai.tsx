@@ -16,7 +16,7 @@ import { SparkleBurst } from "@/components/system/sparkle";
 import { Button } from "@/components/ui/button";
 import { desktop } from "@/lib/desktop";
 import { client, orpc } from "@/lib/orpc";
-import type { Role } from "../../../../shared/auto-connect";
+import { type Role, readyNow } from "../../../../shared/auto-connect";
 import { useCelebrate } from "./celebrate";
 
 type Detected = Awaited<ReturnType<typeof client.ai.autoConnect>>;
@@ -29,9 +29,9 @@ const DOES: Record<Role, string> = {
 	claims: "checks drafts",
 };
 
-/** "drafts and scores", from the roles a CLI runs. */
+/** "drafts and scores", from the roles set to a CLI (signed in or not). */
 function doesText(roles: RoleState[], mode: string): string | null {
-	const mine = roles.filter((r) => r.mode === mode && r.ready);
+	const mine = roles.filter((r) => r.mode === mode);
 	if (!mine.length) return null;
 	const words = (["tailoring", "scoring", "claims"] as const)
 		.filter((role) => mine.some((r) => r.role === role))
@@ -82,7 +82,10 @@ function cliText(
 				? does.charAt(0).toUpperCase() + does.slice(1)
 				: "Not used: you chose another way below",
 		};
-	const subtitle = `Needed to ${needFor} with your plan`;
+	// Chosen for a role but gone or signed out: the choice stays, and waits for the CLI.
+	const subtitle = does
+		? `${does.charAt(0).toUpperCase() + does.slice(1)} once it's back and signed in`
+		: `Needed to ${needFor} with your plan`;
 	if (!cli.path)
 		return { state: "missing", title: `${name} isn't on this Mac`, subtitle };
 	if (cli.login.state === "logged_out")
@@ -209,7 +212,11 @@ export function ConnectAi() {
 	useEffect(() => detectNow(false), [detectNow]);
 	// Roles as they are now: a choice made below changes them.
 	const ai = useQuery(orpc.ai.get.queryOptions());
-	const roles = ai.data?.roles ?? d?.roles ?? [];
+	// A plan's role is ready only while its CLI is signed in, whatever the settings say.
+	const roles = readyNow(ai.data?.roles ?? d?.roles ?? [], {
+		claude: d?.claude.login.state === "logged_in",
+		codex: d?.codex.login.state === "logged_in",
+	});
 	const summary = summaryOf(roles);
 	// The moment the AI is connected: once, when this visit connected it (found it, or set by
 	// hand below), not on reopening a finished step.
@@ -236,9 +243,26 @@ export function ConnectAi() {
 		onError: (e) => setTests({ ok: false, message: e.message }),
 	});
 
+	// Read out as it changes: what was found, then each Check again and test. One region, the
+	// same element from the first frame on, so screen readers announce every change.
+	const live = (
+		<p
+			className="sr-only"
+			role="status"
+			aria-live="polite"
+			data-testid="setup-ai-live"
+		>
+			{!d
+				? "Looking for Claude Code and Codex."
+				: tests?.ok
+					? `${summary.title}. Works: ${tests.message}`
+					: `${summary.title}. ${summary.body}`}
+		</p>
+	);
 	if (!d)
 		return (
 			<div className="flex flex-col gap-3" data-testid="setup-ai-detecting">
+				{live}
 				<p className="text-muted-foreground text-sm">
 					Looking for Claude Code and Codex on this Mac…
 				</p>
@@ -247,6 +271,7 @@ export function ConnectAi() {
 		);
 	return (
 		<div className="flex flex-col gap-4" data-testid="setup-ai">
+			{live}
 			<div className="relative">
 				<SparkleBurst burst={burst} />
 				<Notice
@@ -303,6 +328,8 @@ export function ConnectAi() {
 							tests.ok ? "text-brand text-sm" : "text-destructive text-sm"
 						}
 						data-testid="setup-ai-test-result"
+						// A failure is said at once; a success goes through the status region.
+						role={tests.ok ? undefined : "alert"}
 					>
 						{tests.ok ? `Works: ${tests.message}` : tests.message}
 					</span>

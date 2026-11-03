@@ -186,7 +186,8 @@ await run(
 		await page.getByTestId("welcome").waitFor();
 		await shot("01-onboarding-welcome");
 		await page.getByTestId("welcome-start").click();
-		await page.getByText("Step 1 of 8").waitFor();
+		await page.getByTestId("setup-ai").waitFor();
+		await page.getByTestId("models-manual").getByRole("button").first().click();
 		for (const role of ["scoring", "tailoring", "claims"]) {
 			await page.getByTestId(`role-${role}-mode`).click();
 			await page.getByTestId(`role-${role}-fake`).click();

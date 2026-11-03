@@ -20,27 +20,40 @@ type Match = {
 };
 
 /**
- * After the search: the first scored matches, polled until they arrive or the scoring is over
- * (`settled`: nothing scoring any more, and still none).
+ * After the search: the first scored matches, polled until they arrive or the scoring the search
+ * started is over (`settled`: no scan running, no new job still being scored, and none matched).
+ * A scan ends before its jobs are scored, so the scan alone never settles it.
  */
 function useFirstMatches(enabled: boolean): {
 	matches: Match[];
 	settled: boolean;
 } {
+	// Polling stops once there is an answer either way.
+	const done = useRef(false);
+	const poll = () => (done.current ? false : 2_000);
+	const scoring = useQuery({
+		...orpc.desktop.scoring.queryOptions(),
+		enabled,
+		refetchInterval: poll,
+	});
 	const home = useQuery({
 		...orpc.desktop.home.queryOptions(),
 		enabled,
-		refetchInterval: (q) =>
-			(q.state.data?.recent.length ?? 0) > 0 ||
-			(q.state.data && q.state.data.scan.state !== "scanning")
-				? false
-				: 2_000,
+		refetchInterval: poll,
 	});
 	const matches: Match[] = home.data?.recent ?? [];
-	return {
-		matches,
-		settled: Boolean(home.data && home.data.scan.state !== "scanning"),
-	};
+	// Settled only on a Home read taken after scoring was seen done: the two polls tick apart,
+	// and the last scores land just before `pending` reaches 0.
+	const settled = Boolean(
+		home.data &&
+			scoring.data &&
+			home.data.scan.state !== "scanning" &&
+			scoring.data.pending === 0 &&
+			home.dataUpdatedAt > scoring.dataUpdatedAt &&
+			matches.length === 0,
+	);
+	done.current = matches.length > 0 || settled;
+	return { matches, settled };
 }
 
 /** Up to three of the first matches, as Home lists them: fit, company, title. */
