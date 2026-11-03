@@ -703,7 +703,7 @@ export class WorkerApp {
 			this.batcher.add({
 				kind: "stopped",
 				title: `${b.name}: stopped`,
-				detail: `${b.name}'s board asked for a person (or robots.txt refused). Nothing was bypassed; check it in Settings > Watchlist.`,
+				detail: `${b.name}'s board asked for a person (or robots.txt refused). Nothing was bypassed; the scan history says more.`,
 			});
 		await this.announceAdded();
 		await this.settings.set("noticeWatermark", now.getTime());

@@ -151,7 +151,9 @@ async function alertStep(
 	const app = await deps.repo.getApplicationByJob(userId, jobId);
 	if (!app || app.score === null) return false;
 	const settings = await deps.repo.getFilterSettings(userId);
-	if (app.score < settings.alertMinScore) return false;
+	// The rank is the score less the penalties (unclear place, a company passed on): what Matches
+	// orders by. A job ranked below the bar is not a strong match, whatever its raw score.
+	if ((app.rank ?? app.score) < settings.alertMinScore) return false;
 	if (!(await deps.repo.claimAlert(userId, app.applicationId))) return false;
 	try {
 		await deps.notifier.notifyStrongMatch({

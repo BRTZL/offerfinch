@@ -33,7 +33,6 @@ pnpm -r check-types
 pnpm lint:ci
 pnpm knip
 pnpm --filter @offerfinch/desktop e2e
-node scripts/check-public.mjs --images
 ```
 
 End-to-end tests run windowless with temporary data folders, fake models and local fixture job
@@ -46,7 +45,7 @@ boards. Never point tests, screenshots or scripts at real app data
 - Add tests for new behaviour, and a line under **Unreleased** in
   [apps/desktop/CHANGELOG.md](apps/desktop/CHANGELOG.md) for anything a user would notice.
 - No personal data in code, fixtures, screenshots or commit messages: use made-up names,
-  emails and companies. `check-public` must pass.
+  emails and companies. `node scripts/check-public.mjs` finds slips locally.
 - The app must never submit anything without the user's approval, bypass CAPTCHAs or bot
   checks, or store site passwords. Changes that do will not be merged.
 

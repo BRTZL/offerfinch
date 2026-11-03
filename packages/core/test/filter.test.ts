@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	evaluateHardRequirements,
 	type FilterInput,
+	keywordPattern,
 	languageRequirements,
 } from "../src/filter/rules";
 import { parseFilterSettings } from "../src/filter/settings";
@@ -366,5 +367,32 @@ describe("defaults", () => {
 		expect(defaults.rightToWork).toEqual([]);
 		expect(defaults.keepOnsiteIn).toEqual([]);
 		expect(defaults.languages).toEqual(["English"]);
+	});
+});
+
+describe("title keywords with symbols", () => {
+	const settings = {
+		...PERSONA_FILTER_SETTINGS,
+		excludeTitleKeywords: ["C++", "C#", ".NET", "(contract)"],
+	};
+	const role = (title: string) =>
+		evaluate({ title }, settings).reasons.find((r) => r.rule === "role");
+
+	it("match as whole words, not as regular expression syntax", () => {
+		expect(role("Senior C++ Engineer")?.message).toBe('Title contains "C++".');
+		expect(role("Senior C# Developer")?.message).toBe('Title contains "C#".');
+		expect(role("Software Engineer, .NET")?.message).toBe(
+			'Title contains ".NET".',
+		);
+		expect(role("Software Engineer (Contract)")?.message).toBe(
+			'Title contains "(contract)".',
+		);
+	});
+
+	it("do not match inside another word", () => {
+		expect(role("Senior Software Engineer")?.outcome).toBe("pass");
+		expect(keywordPattern("net").test("internet engineer")).toBe(false);
+		expect(keywordPattern("go").test("django developer")).toBe(false);
+		expect(keywordPattern("go").test("go developer")).toBe(true);
 	});
 });

@@ -291,6 +291,7 @@ export const jobsMethods = {
 			},
 			filter: row.app.filterResult ?? null,
 			score: row.app.score,
+			rank: row.app.rank,
 			fit: row.app.fit ?? null,
 			endedReason: row.app.endedReason,
 			prepareAttempts: row.app.prepareAttempts,

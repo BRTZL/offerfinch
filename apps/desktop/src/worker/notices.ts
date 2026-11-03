@@ -41,7 +41,7 @@ const LIST_PATH: Record<NoticeKind, string> = {
 	match: "/inbox?view=matches",
 	question: "/questions",
 	review: "/inbox?view=review",
-	stopped: "/settings/watchlist",
+	stopped: "/scans",
 	followup: "/applied",
 };
 

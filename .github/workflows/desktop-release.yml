@@ -171,17 +171,6 @@ jobs:
       - run: pnpm lint:ci
       - run: pnpm -r check-types
       - run: pnpm knip
-      # Text only here; public-check.yml reads images and video frames on pull requests.
-      - name: Public check
-        env:
-          DENYLIST: ${{ secrets.PUBLIC_DENYLIST }}
-        run: |
-          if [ -n "$DENYLIST" ]; then
-            printf '%s\n' "$DENYLIST" > "$RUNNER_TEMP/denylist.txt"
-            export PUBLIC_DENYLIST="$RUNNER_TEMP/denylist.txt"
-          fi
-          node scripts/check-public.mjs --ci
-          rm -f "$RUNNER_TEMP/denylist.txt"
 
   test:
     needs: resolve

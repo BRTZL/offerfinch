@@ -166,7 +166,7 @@ export function Sidebar() {
 									on={p.done}
 									tone="ink"
 									size="sm"
-									label={`${p.done} of ${p.total} companies read`}
+									label={`${p.done} of ${p.total} ${p.unit} read`}
 								/>
 							) : null}
 						</>

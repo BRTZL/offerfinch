@@ -143,6 +143,8 @@ export interface ApplicationRecord {
 	job: NormalizedJob;
 	filter: FilterResult | null;
 	score: number | null;
+	/** The order of Matches: the score less penalties; absent or null before ranking. */
+	rank?: number | null;
 	fit: FitResult | null;
 	endedReason: string | null;
 	prepareAttempts: number;

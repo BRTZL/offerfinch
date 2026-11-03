@@ -499,14 +499,40 @@ describe("scheduling", () => {
 		expect(
 			await ensureHourlyScan(db, null, "u1", new Date("2026-11-01T10:59:00Z")),
 		).toBeNull();
-		// Woken from sleep hours later: only the current hour is started, once.
+		// Woken from sleep hours later while the morning's scan still waits: it runs alone.
 		const woke = new Date("2026-11-01T15:02:00Z");
+		expect(await ensureHourlyScan(db, null, "u1", woke)).toBeNull();
+		await db
+			.update(flowRuns)
+			.set({ status: "complete" })
+			.where(eq(flowRuns.id, "scan-u1-2026110110"));
+		// Once it ended, only the current hour is started, once.
 		expect(await ensureHourlyScan(db, null, "u1", woke)).toBe(
 			hourlyScanId("u1", woke),
 		);
+		// A scan running past the hour is not joined by the next hour's.
+		await db
+			.update(flowRuns)
+			.set({ status: "running" })
+			.where(eq(flowRuns.id, hourlyScanId("u1", woke)));
+		expect(
+			await ensureHourlyScan(db, null, "u1", new Date("2026-11-01T16:05:00Z")),
+		).toBeNull();
 		const manual = await startManualScan(db, null, "u1", woke);
-		// Two scans are queued already: a manual one is not added on top.
+		// A scan is running already: a manual one is not added on top.
 		expect(manual.started).toBe(false);
+	});
+
+	it("starts one scan when the timer and Scan now ask at the same moment", async () => {
+		const db = await openTestDb();
+		const at = new Date("2026-11-02T09:00:30Z");
+		const [hourly, manual] = await Promise.all([
+			ensureHourlyScan(db, null, "u1", at),
+			startManualScan(db, null, "u1", at),
+		]);
+		expect([hourly !== null, manual.started].filter(Boolean)).toHaveLength(1);
+		const runs = await db.select().from(flowRuns);
+		expect(runs).toHaveLength(1);
 	});
 });
 

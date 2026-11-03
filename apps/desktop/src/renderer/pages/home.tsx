@@ -120,6 +120,20 @@ function HomeSkeleton() {
 	);
 }
 
+/** "Reading LinkedIn: frontend engineer (2 of 5 sources)" while a scan runs. */
+function scanningLine(
+	p:
+		| { total: number | null; done: number; unit: string; line: string | null }
+		| undefined,
+): string {
+	if (!p?.total) return "Scanning…";
+	const of =
+		p.unit === "sources"
+			? plural(p.total, "source")
+			: plural(p.total, "company", "companies");
+	return `${p.line ?? "Scanning"} (${Math.min(p.done + 1, p.total)} of ${of})`;
+}
+
 /** Where the app opens: what needs you now, new matches, the scans and the spend. */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Stateful home orchestration stays unchanged; current e2e does not cover every scan and resume state.
 export default function HomePage() {
@@ -441,9 +455,7 @@ export default function HomePage() {
 
 				<p className="text-muted-foreground text-xs" data-testid="home-scans">
 					{scanning
-						? p?.total
-							? `Scanning ${Math.min(p.done + 1, p.total)} of ${plural(p.total, "company", "companies")}`
-							: "Scanning…"
+						? scanningLine(p)
 						: h.scan.paused
 							? "Scans are paused"
 							: last
