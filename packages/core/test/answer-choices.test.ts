@@ -175,6 +175,39 @@ describe("composing picks", () => {
 		expect(composeChoices(groups, [])).toBe("");
 	});
 
+	it("ignores a pick the group does not offer (picks from an earlier set of asks)", () => {
+		// Help me remember pressed again: the new asks come in another order and with other
+		// options; the old ticks, still indexed by position, must not become facts.
+		const regenerated: ChoiceGroup[] = [
+			{
+				ask: "Have you led a team?",
+				multi: false,
+				options: [
+					{ label: "Yes, as a lead", inProfile: false },
+					{ label: "No", inProfile: false },
+				],
+			},
+			{
+				ask: "Which of these have you used",
+				multi: true,
+				options: [{ label: "WebPageTest", inProfile: false }],
+			},
+		];
+		expect(
+			composeChoices(regenerated, [
+				{ picked: ["Yes"], other: "" },
+				{ picked: ["Lighthouse", "React Profiler"], other: "" },
+			]),
+		).toBe("");
+		// What the user typed under Other is theirs and stays.
+		expect(
+			composeChoices(regenerated, [
+				{ picked: ["Yes"], other: "" },
+				{ picked: ["Lighthouse"], other: "Perfetto" },
+			]),
+		).toBe("Which of these have you used? Perfetto.");
+	});
+
 	it("says None of these plainly", () => {
 		expect(composeChoices(groups, [{ picked: [NONE], other: "" }])).toBe(
 			"Which of these have you used? None of these.",

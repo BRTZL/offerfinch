@@ -46,8 +46,16 @@ export function composeChoices(
 		const p = picks[i];
 		if (!p) return;
 		const other = p.other.trim();
-		const chosen = p.picked.filter((x) => x !== NOT_SURE && x !== NONE);
-		const answer = p.picked.includes(NONE)
+		// Only labels this group offers: a pick made under another set of asks (Help me remember
+		// pressed again) never becomes a fact here.
+		const offered = new Set([
+			NOT_SURE,
+			NONE,
+			...group.options.map((o) => o.label),
+		]);
+		const picked = p.picked.filter((x) => offered.has(x));
+		const chosen = picked.filter((x) => x !== NOT_SURE && x !== NONE);
+		const answer = picked.includes(NONE)
 			? other
 				? sentence(`None of these; ${other}`)
 				: "None of these."

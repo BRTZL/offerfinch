@@ -332,7 +332,13 @@ export function ChoicesCard({
 	onCompose: (draft: string) => void;
 }) {
 	const { groups, notice } = choices;
-	const [picks, setPicks] = useState<ChoicePicks[]>([]);
+	// Picks belong to one set of asks: when Help me remember runs again, the new groups start
+	// empty, so a tick can never land under a different ask by position.
+	const [chosen, setChosen] = useState<{
+		groups: ChoiceGroup[] | null;
+		picks: ChoicePicks[];
+	}>({ groups: null, picks: [] });
+	const picks = chosen.groups === groups ? chosen.picks : [];
 	if (notice)
 		return (
 			<Notice
@@ -350,14 +356,15 @@ export function ChoicesCard({
 	if (!groups) return null;
 	const at = (i: number): ChoicePicks => picks[i] ?? { picked: [], other: "" };
 	const update = (i: number, next: Partial<ChoicePicks>) =>
-		setPicks((all) => {
+		setChosen((current) => {
+			const all = current.groups === groups ? current.picks : [];
 			const copy = groups.map((_, j) => all[j] ?? { picked: [], other: "" });
 			copy[i] = { ...copy[i], ...next } as ChoicePicks;
-			return copy;
+			return { groups, picks: copy };
 		});
 	const draft = composeChoices(groups, picks);
 	const close = () => {
-		setPicks([]);
+		setChosen({ groups: null, picks: [] });
 		choices.dismiss();
 	};
 	return (

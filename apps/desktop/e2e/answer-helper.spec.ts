@@ -110,6 +110,17 @@ test("answer helper: Help me remember composes ticks, Improve proposes from the 
 		await chip.click();
 		await expect(chip).toHaveAttribute("aria-pressed", "true");
 		expect((await chip.boundingBox())?.width).toBe(chipWidth);
+		// Asking again starts the new asks empty: a tick never carries over to another ask.
+		await page.getByTestId("answer-choices").click();
+		await expect(groups).toHaveCount(2, { timeout: 30_000 });
+		await expect(
+			card
+				.getByTestId("answer-choice")
+				.and(page.locator('[aria-pressed="true"]')),
+		).toHaveCount(0);
+		await expect(use).toBeDisabled();
+		await chip.click();
+		await expect(chip).toHaveAttribute("aria-pressed", "true");
 		await tools
 			.getByTestId("answer-choice")
 			.filter({ hasText: "WebPageTest" })
@@ -225,14 +236,14 @@ test("answer helper: Help me remember composes ticks, Improve proposes from the 
 			).map((r) => r.answer),
 		).toEqual([final]);
 		// Each call metered like every other model call: Improve twice (once on the picks), and
-		// Help me remember once.
+		// Help me remember twice (asked again once).
 		const calls = (task: string) =>
 			readDb<{ n: number }>(
 				"select count(*) n from llm_usage where task = ?",
 				task,
 			)[0]?.n;
 		expect(calls("answer-helper")).toBe(2);
-		expect(calls("answer-choices")).toBe(1);
+		expect(calls("answer-choices")).toBe(2);
 		expect(errors).toEqual([]);
 	} finally {
 		await app.close();
