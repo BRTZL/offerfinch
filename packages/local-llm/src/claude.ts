@@ -708,6 +708,9 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			await rm(cwd, { recursive: true, force: true });
 		}
 		if (paid) throw paid;
+		// The prompt went out but no answer came back (the stream was lost, the CLI exited without
+		// one, this side stopped it): the call settles on the plan at $0 all the same, logged.
+		if (promptSent && !gotResult) this.warnNoAnswer(failure, streamError);
 		// The answer arrived from a session that did not end cleanly: on the plan all the same
 		// (extra usage was probed off just before; a paid sign would have won above), but logged.
 		if (gotResult && !refusal(failure)) {
@@ -737,6 +740,24 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 		if (resultError !== null && output === undefined)
 			throw new Error(`${this.name} returned no answer: ${resultError}`);
 		return { output };
+	}
+
+	/**
+	 * A sent prompt got no answer (the stream was lost, the CLI exited without one, this side
+	 * stopped it): it settles on the plan at $0 like an unclear answer, so it is logged the same
+	 * way. A usage-limit or logout refusal is the vendor's answer, not unclear.
+	 */
+	private warnNoAnswer(failure: Error | null, streamError: Error | null) {
+		if (refusal(failure)) return;
+		const detail = [
+			streamError && `stream: ${streamError.message}`,
+			failure && `stopped: ${failure.message}`,
+			!streamError && !failure && "the CLI ended without an answer",
+		].filter(Boolean);
+		this.options.log?.(
+			"warning: claude subscription call got no answer after its prompt was sent; settled on the plan",
+			{ provider: this.name, detail: detail.join("; ").slice(0, 300) },
+		);
 	}
 
 	/** A reason to stop the session now, from one of its messages, or null. */

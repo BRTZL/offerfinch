@@ -724,6 +724,39 @@ describe("what the real CLI emits", () => {
 			expect(clean.warnings).toEqual([]);
 		});
 
+		it("logs a warning for a sent prompt whose stream was lost before any answer", async () => {
+			const { claude, warnings, seen } = logged({
+				runs: [[]],
+				lose: true,
+				loseWith: "socket hang up",
+			});
+			await expect(claude.generateObject(request())).rejects.toThrow(
+				/socket hang up/,
+			);
+			expect(seen[0]?.prompts).toHaveLength(1);
+			expect(warnings).toEqual([
+				"warning: claude subscription call got no answer after its prompt was sent; settled on the plan",
+			]);
+		});
+
+		it("logs a warning for a sent prompt whose CLI exited without an answer", async () => {
+			const { claude, warnings, seen } = logged({ runs: [[]] });
+			await expect(claude.generateObject(request())).rejects.toThrow(
+				/ended without an answer/,
+			);
+			expect(seen[0]?.prompts).toHaveLength(1);
+			expect(warnings).toEqual([
+				"warning: claude subscription call got no answer after its prompt was sent; settled on the plan",
+			]);
+		});
+
+		it("logs nothing for a call refused before its prompt was sent", async () => {
+			const { claude, warnings, seen } = logged({ account: {}, runs: [[]] });
+			await claude.generateObject(request()).catch(() => {});
+			expect(seen.flatMap((s) => s.prompts)).toEqual([]);
+			expect(warnings).toEqual([]);
+		});
+
 		describe("a session that failed around its answer (Codex repros of 39848ba)", () => {
 			const res = (
 				subtype: string,
