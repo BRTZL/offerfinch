@@ -723,12 +723,14 @@ function ModeSelect({
 							title={why ?? undefined}
 							data-testid={`role-${role}-${mode}`}
 						>
-							{modeLabel(role, mode, settings)}
-							{why ? (
-								<span className="text-muted-foreground block text-xs">
-									{why}
-								</span>
-							) : null}
+							<span className="flex flex-col">
+								<span>{modeLabel(role, mode, settings)}</span>
+								{why ? (
+									<span className="text-muted-foreground max-w-56 text-xs whitespace-normal">
+										{why}
+									</span>
+								) : null}
+							</span>
 						</SelectItem>
 					);
 				})}
