@@ -216,15 +216,14 @@ describe("remote roles", () => {
 		expect(off.summary).toMatch(/worldwide remote jobs are off/);
 	});
 
-	it("leaves Remote (EMEA) and Remote (Europe) unclear for someone in Turkey", () => {
+	it("rejects Remote (EMEA) and Remote (Europe) for someone in Turkey: they may not hire there", () => {
 		for (const location of ["Remote (EMEA)", "Remote - Europe"]) {
 			const result = evaluate({
 				locations: [location],
 				workplaceType: "remote",
 			});
-			expect(result.decision, location).toBe("unclear");
-			expect(result.locationVerdict, location).toBe("unclear");
-			expect(result.flags, location).toContain("location unclear");
+			expect(result.decision, location).toBe("reject");
+			expect(result.summary, location).toMatch(/may not include Turkey/);
 		}
 	});
 
@@ -237,9 +236,95 @@ describe("remote roles", () => {
 		expect(result.locationVerdict).toBe("remote_home");
 	});
 
-	it("leaves a remote role that does not say from where unclear", () => {
-		const result = evaluate({ locations: ["Remote"], workplaceType: "remote" });
-		expect(result.decision).toBe("unclear");
+	it("keeps a remote role that does not say from where, flagged and ranked lower", () => {
+		for (const locations of [["Remote"], ["100% Remote"], []]) {
+			const result = evaluate({ locations, workplaceType: "remote" });
+			expect(result.decision, locations.join()).toBe("keep");
+			expect(result.locationVerdict, locations.join()).toBe("unclear");
+			expect(result.flags, locations.join()).toEqual(["location unclear"]);
+		}
+	});
+
+	it("rejects a place it cannot place: only jobs that clearly hire from home are kept", () => {
+		for (const location of [
+			"Remote (IN) | Remote (NG) | Remote (PH)",
+			"Curitiba",
+			"Kolkata",
+		]) {
+			const result = evaluate({
+				locations: [location],
+				workplaceType: "remote",
+			});
+			expect(result.decision, location).toBe("reject");
+		}
+	});
+
+	it("never rejects on a time zone: only the user decides whether the hours suit them", () => {
+		for (const location of [
+			"Remote (GMT+3)",
+			"Remote - UTC+3",
+			"Remote (EET)",
+			"Remote (CET)",
+			"Remote - CEST",
+			"Remote (PST)",
+			"Remote, US time zones",
+			"Remote (Pacific Time Zone)",
+			"Remote, UTC-8 to UTC-5",
+		]) {
+			const result = evaluate({
+				locations: [location],
+				workplaceType: "remote",
+			});
+			expect(result.decision, location).toBe("keep");
+		}
+		for (const text of [
+			"You must be based in CET.",
+			"You must be based in the EST time zone.",
+		])
+			expect(
+				evaluate({
+					locations: ["Remote"],
+					workplaceType: "remote",
+					descriptionText: `${BODY}\n${text}`,
+				}).decision,
+				text,
+			).toBe("keep");
+		// A place next to the time zone still counts.
+		expect(
+			evaluate({
+				locations: ["Remote - United States (PST)"],
+				workplaceType: "remote",
+			}).decision,
+		).toBe("reject");
+	});
+
+	it("keeps regions that hold Turkey; 'International' is worldwide", () => {
+		for (const location of [
+			"Remote - Middle East",
+			"Remote (MENA)",
+			"Remote - International",
+		])
+			expect(
+				evaluate({ locations: [location], workplaceType: "remote" }).decision,
+				location,
+			).toBe("keep");
+		expect(
+			evaluate({
+				locations: ["Remote"],
+				workplaceType: "remote",
+				descriptionText: `${BODY}\nYou must be based in the Middle East.`,
+			}).decision,
+		).toBe("keep");
+	});
+
+	it("keeps Turkish districts and 'Worldwide' without a workplace field", () => {
+		for (const location of ["34906 Pendik", "Çankaya", "Kadıköy, İstanbul"]) // public-ok: districts in a location test
+			expect(evaluate({ locations: [location] }).decision, location).toBe(
+				"keep",
+			);
+		const world = evaluate({ locations: ["Worldwide"] });
+		expect(world.decision).toBe("keep");
+		expect(world.locationVerdict).toBe("remote_global");
 	});
 });
 
@@ -265,12 +350,12 @@ describe("on-site and hybrid in the user's country", () => {
 		expect(result.decision).toBe("keep");
 	});
 
-	it("leaves a foreign city with remote wording but no workplace unclear", () => {
+	it("rejects a foreign city with remote wording but no workplace", () => {
 		const result = evaluate({
 			locations: ["Berlin, Germany"],
 			descriptionText: `${BODY}\nWe are a remote-first company.`,
 		});
-		expect(result.decision).toBe("unclear");
+		expect(result.decision).toBe("reject");
 		expect(rule(result, "location")?.message).toMatch(/mentions remote work/);
 	});
 });
@@ -429,10 +514,10 @@ describe("citizenship and clearance", () => {
 		);
 	});
 
-	it("is unclear while no country is set", () => {
-		expect(citizenship(LOCKHEED, parseFilterSettings({}))?.outcome).toBe(
-			"unclear",
-		);
+	it("passes while no citizenship is set, asking for it", () => {
+		const reason = citizenship(LOCKHEED, parseFilterSettings({}));
+		expect(reason?.outcome).toBe("pass");
+		expect(reason?.message).toMatch(/set your citizenship/);
 	});
 });
 
@@ -518,7 +603,7 @@ describe("review findings (2026-11-03)", () => {
 		expect(result.summary).toMatch(/Remote only within/);
 	});
 
-	it("rejects a remote role limited to a legal area the user is outside; keeps geographic Europe unclear", () => {
+	it("rejects a remote role limited to a legal area the user is outside, and geographic Europe too", () => {
 		for (const location of [
 			"Remote (EU only)",
 			"Remote - EEA",
@@ -532,11 +617,11 @@ describe("review findings (2026-11-03)", () => {
 			});
 			expect(result.decision, location).toBe("reject");
 		}
-		for (const location of ["Remote (Europe)", "Remote — EMEA", "Remote (CET)"])
+		for (const location of ["Remote (Europe)", "Remote — EMEA"])
 			expect(
 				evaluate({ locations: [location], workplaceType: "remote" }).decision,
 				location,
-			).toBe("unclear");
+			).toBe("reject");
 		// An EU citizen may work there.
 		expect(
 			evaluate(
@@ -598,8 +683,8 @@ describe("re-check findings (2026-11-03)", () => {
 		).toBe("keep");
 		expect(
 			evaluate({ locations: ["EMEA (excluding UK)"], workplaceType: "remote" })
-				.decision,
-		).toBe("unclear");
+				.summary,
+		).toMatch(/may not include Turkey/);
 	});
 
 	it("ends a negation at a contrast word: each country keeps its own polarity", () => {
@@ -691,7 +776,7 @@ describe("re-check findings (2026-11-03)", () => {
 });
 
 describe("before any country is set", () => {
-	it("never rejects on place: on-site abroad, residence and remote-in-a-country are unclear", () => {
+	it("never rejects on place: on-site abroad, residence and remote-in-a-country are kept", () => {
 		const none = parseFilterSettings({});
 		for (const input of [
 			{ locations: ["Seattle, WA"], workplaceType: "onsite" as const },
@@ -707,7 +792,7 @@ describe("before any country is set", () => {
 			},
 		]) {
 			const result = evaluate(input, none);
-			expect(result.decision, JSON.stringify(input)).toBe("unclear");
+			expect(result.decision, JSON.stringify(input)).toBe("keep");
 			expect(result.summary, JSON.stringify(input)).toMatch(
 				/set where you live in Settings/,
 			);

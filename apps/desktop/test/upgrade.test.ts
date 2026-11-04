@@ -296,7 +296,10 @@ function expectedStages(before: Snapshot): Record<string, unknown>[] {
 function refilteredApps(before: Snapshot, latest: boolean): string[] {
 	if (latest) return [];
 	const chosenAnyway = before.applications?.get("id=a3")?.chosen_anyway_at;
-	return chosenAnyway === undefined ? ["a1", "a3"] : ["a1"];
+	// Drafts waiting for answers (a5) or review (a6) are checked again too.
+	return chosenAnyway === undefined
+		? ["a1", "a3", "a5", "a6"]
+		: ["a1", "a5", "a6"];
 }
 
 /** The values start-up is meant to change, as "table [key] column" patterns. */
@@ -406,7 +409,12 @@ describe.concurrent.each(POINTS)("upgrade from schema %s", (point) => {
 			}),
 		).toEqual([]);
 		// The re-filtered matches pass the current rules; their old "unclear" flag is gone.
-		const verdicts: Record<string, string> = { a1: "remote_home", a3: "home" };
+		const verdicts: Record<string, string> = {
+			a1: "remote_home",
+			a3: "home",
+			a5: "remote_home",
+			a6: "home",
+		};
 		for (const id of refiltered) {
 			const app = after.applications?.get(`id=${id}`);
 			expect(JSON.parse(String(app?.filter_result)), id).toMatchObject({
@@ -493,7 +501,7 @@ describe.concurrent.each(POINTS)("upgrade from schema %s", (point) => {
 				/^An earlier note the user has not dismissed\. \S/,
 			),
 			shellPath: SHELL_PATH,
-			jobSearchVersion: 1,
+			jobSearchVersion: 2,
 		});
 		// The old switch's choice (on) is LinkedIn's Sources row now.
 		expect(s.linkedin?.enabled).toBe(true);

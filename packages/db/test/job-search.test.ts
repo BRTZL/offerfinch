@@ -168,13 +168,15 @@ describe("re-filter after the job search changes", () => {
 			workplaceType: "remote",
 			score: 75,
 		});
+		// Names no place: kept, ranked lower.
 		ids.emea = await add({
 			company: "nimbus",
-			locations: ["Remote (EMEA)"],
+			locations: ["Remote"],
 			workplaceType: "remote",
 			score: 85,
 		});
-		// Never touched, though each fails the filter now:
+		// Checked again and rejected too: a match Prepare was pressed on, a draft in review,
+		// one below the minimum.
 		ids.prepareAsked = await add({
 			company: "lockheed",
 			locations: ["Fort Worth, TX"],
@@ -200,6 +202,7 @@ describe("re-filter after the job search changes", () => {
 			locations: ["Arlington, VA"],
 			extra: { ended_reason: "Fit score 20 is below the minimum of 55." },
 		});
+		// Never touched, though each fails the filter now:
 		ids.chosen = await add({
 			company: "lockheed",
 			locations: ["Arlington, VA"],
@@ -212,13 +215,21 @@ describe("re-filter after the job search changes", () => {
 		});
 	});
 
-	it("moves found jobs and open matches that now fail to rejected_by_filter, with the reason and an event", async () => {
+	it("moves found jobs, matches and drafts in review that now fail to rejected_by_filter, with the reason and an event", async () => {
 		const result = await refilterApplications(db, "u1");
-		expect(result.checked).toBe(4);
-		expect(result.rejected).toBe(2);
-		expect(result.events).toHaveLength(2);
-		expect((await row(ids.lockheed ?? ""))?.state).toBe("rejected_by_filter");
-		expect((await row(ids.seattle ?? ""))?.state).toBe("rejected_by_filter");
+		expect(result.checked).toBe(7);
+		expect(result.rejected).toBe(5);
+		expect(result.events).toHaveLength(5);
+		for (const key of [
+			"lockheed",
+			"seattle",
+			"prepareAsked",
+			"inReview",
+			"lowScore",
+		])
+			expect((await row(ids[key] ?? ""))?.state, key).toBe(
+				"rejected_by_filter",
+			);
 		const lockheed = result.decisions.find(
 			(d) => d.applicationId === ids.lockheed,
 		);
@@ -244,13 +255,10 @@ describe("re-filter after the job search changes", () => {
 		);
 	});
 
-	it("never touches anything past an open match, nor jobs the user added or chose", async () => {
+	it("never touches anything applied or dismissed, nor jobs the user added or chose", async () => {
 		for (const [key, state] of [
-			["prepareAsked", "scored"],
-			["inReview", "ready_for_review"],
 			["applied", "applied"],
 			["dismissed", "dismissed"],
-			["lowScore", "scored"],
 			["chosen", "scored"],
 			["manual", "scored"],
 		] as const)
@@ -340,15 +348,17 @@ describe("re-filter races (review, 2026-11-03)", () => {
 		});
 	});
 
-	it("leaves a match the user pressed Prepare on after the pass selected it", async () => {
+	it("leaves a match that started drafting after the pass selected it", async () => {
 		const id = await add({ company: "nimbus", locations: ["Berlin"] });
 		const result = await refilterApplications(
-			interleaved(() =>
-				repo.requestPrepare({ userId: "u1", applicationId: id }).then(() => {}),
-			),
+			interleaved(async () => {
+				await db.run(
+					sql`update applications set state = 'preparing' where id = ${id}`,
+				);
+			}),
 			"u1",
 		);
-		expect((await row(id))?.state).toBe("scored");
+		expect((await row(id))?.state).toBe("preparing");
 		expect(result.rejected).toBe(0);
 	});
 
@@ -435,6 +445,27 @@ describe("set aside with older settings, brought back by newer ones (re-check, 2
 		expect((await row(second))?.state).toBe("scored");
 	});
 
+	it("hides a draft in review, and brings it back as a plain match: nothing drafted again", async () => {
+		await saveFilterSettings(db, "u1", TURKEY);
+		const id = await add({
+			company: "nimbus",
+			locations: ["Berlin"],
+			state: "ready_for_review",
+			extra: { prepare_requested_at: Date.now() },
+		});
+		const first = await refilterApplications(db, "u1");
+		expect(first.rejected).toBe(1);
+		expect((await flowRow(id))?.state).toBe("rejected_by_filter");
+		await saveFilterSettings(db, "u1", GERMANY_TOO);
+		const second = await refilterApplications(db, "u1");
+		expect(second.restored).toBe(1);
+		const [back] = await execute<{ state: string; at: number | null }>(
+			db,
+			sql`select state, prepare_requested_at at from applications where id = ${id}`,
+		);
+		expect(back).toEqual({ state: "scored", at: null });
+	});
+
 	it("brings a set-aside match back to Matches with an event that starts its run again", async () => {
 		await saveFilterSettings(db, "u1", TURKEY);
 		const id = await add({ company: "nimbus", locations: ["Berlin"] });
@@ -454,7 +485,7 @@ describe("set aside with older settings, brought back by newer ones (re-check, 2
 		expect((await row(id))?.rank).not.toBeNull();
 		const [transition] = await execute<{ to_state: string; reason: string }>(
 			db,
-			sql`select to_state, reason from application_transitions where application_id = ${id} order by created_at desc limit 1`,
+			sql`select to_state, reason from application_transitions where application_id = ${id} order by created_at desc, rowid desc limit 1`,
 		);
 		expect(transition).toMatchObject({
 			to_state: "scored",

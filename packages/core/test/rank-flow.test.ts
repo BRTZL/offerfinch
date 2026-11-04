@@ -41,7 +41,7 @@ describe("scoring stores a rank and tells the scorer where the user may work", (
 					listJobs: async () => [
 						posting("1", {}),
 						posting("2", {
-							locations: ["Remote (EMEA)"],
+							locations: ["Remote"],
 							workplaceType: "remote",
 						}),
 					],
@@ -101,7 +101,7 @@ describe("the strong-match notification follows the rank", () => {
 							posting("1", { title: "Senior Software Engineer, Ankara" }),
 							posting("2", {
 								title: "Senior Software Engineer, EMEA",
-								locations: ["Remote (EMEA)"],
+								locations: ["Remote"],
 								workplaceType: "remote",
 							}),
 						],

@@ -364,39 +364,16 @@ test("Inbox: matches first, grouped by company, Not interested with reasons, hid
 			.toMatchObject({ at: expect.any(Number) });
 		await expect(page).not.toHaveURL(new RegExp(chosen));
 
-		// Closed lists what the job filter set aside, with its reason; Show in Matches brings
-		// one back, and the filter never sets it aside again.
+		// What the job filter rejected is hidden everywhere: not in Closed, not in All.
 		const europe = () => acme().find((r) => r.external_id === "4003");
 		expect(europe()?.state).toBe("rejected_by_filter");
-		await page.getByTestId("inbox-view-closed").click();
-		const setAside = page
-			.locator("[data-testid=inbox-row][data-state=rejected_by_filter]")
-			.filter({ hasText: "Senior Full Stack Engineer" });
-		await expect(setAside).toContainText(/Set aside: /);
-		await setAside.click();
-		await expect(page.getByTestId("show-in-matches")).toBeVisible();
-		await page.screenshot({ path: path.join(SHOTS, "closed-set-aside.png") });
-		await page.getByTestId("show-in-matches").click();
-		await expect(setAside).toHaveCount(0);
-		await expect
-			.poll(() => europe()?.state, { timeout: 60_000 })
-			.toBe("scored");
-		expect(
-			readDb<{ at: number | null }>(
-				"select chosen_anyway_at at from applications where id = ?",
-				europe()?.id,
-			)[0]?.at,
-		).not.toBeNull();
-		await page.getByTestId("inbox-view-matches").click();
-		await page
-			.getByTestId("inbox-group")
-			.filter({ hasText: "Acme Robotics" })
-			.click();
-		await expect(
-			page
-				.getByTestId("summary-role")
-				.filter({ hasText: "Senior Full Stack Engineer" }),
-		).toBeVisible();
+		for (const view of ["closed", "all"]) {
+			await page.getByTestId(`inbox-view-${view}`).click();
+			await expect(page.getByTestId("inbox-row").first()).toBeVisible();
+			await expect(
+				page.locator("[data-testid=inbox-row][data-state=rejected_by_filter]"),
+			).toHaveCount(0);
+		}
 		expect(errors).toEqual([]);
 	} finally {
 		await app.close();

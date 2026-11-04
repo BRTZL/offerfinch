@@ -46,7 +46,7 @@ describe("rank", () => {
 		});
 		const unclear = rankMatch({
 			...base,
-			filter: filterFor(["Remote (EMEA)"], "remote"),
+			filter: filterFor(["Remote"], "remote"),
 		});
 		expect(clear.rank).toBe(80);
 		expect(clear.penalties).toEqual([]);
@@ -240,7 +240,7 @@ describe("rank", () => {
 		const result = rankMatch({
 			...base,
 			score: 10,
-			filter: filterFor(["Remote (EMEA)"], "remote"),
+			filter: filterFor(["Remote"], "remote"),
 			profileYears: 1,
 			job: {
 				title: "Principal Embedded Engineer",

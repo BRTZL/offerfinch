@@ -14,7 +14,7 @@ import {
 	APPLICATION_UPDATED_EVENT,
 	applicationInstanceId,
 } from "@offerfinch/core/workflow/types";
-import { and, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 
 import type { Database } from "./client";
 import type { PendingEvent } from "./dashboard";
@@ -54,11 +54,24 @@ export async function ensureLocationDefaults(
 	return { changed: true, settings: next };
 }
 
+/**
+ * What a pass checks again: jobs still being checked, matches (acted on or not), and drafts
+ * waiting for answers or review. Never one being drafted right now (`preparing`), approved,
+ * being submitted or ended.
+ */
+const REFILTERED = [
+	"found",
+	"scored",
+	"needs_answers",
+	"ready_for_review",
+] as const;
+type RefilterFrom = (typeof REFILTERED)[number];
+
 interface RefilterDecision {
 	applicationId: string;
 	title: string;
 	company: string;
-	from: "found" | "scored" | "rejected_by_filter";
+	from: RefilterFrom | "rejected_by_filter";
 	decision: FilterResult["decision"];
 	summary: string;
 	/** The location rule's verdict, for counts by reason. */
@@ -68,7 +81,7 @@ interface RefilterDecision {
 }
 
 export interface RefilterResult {
-	/** Applications looked at: found jobs and open matches. */
+	/** Applications looked at: found jobs, matches and drafts waiting on the user. */
 	checked: number;
 	/** Moved to rejected_by_filter. */
 	rejected: number;
@@ -150,36 +163,26 @@ function stampOf(revision: string): string {
 class Superseded extends Error {}
 
 /**
- * Every condition that makes an application eligible, repeated in each write: a match the user
- * pressed Prepare on, chose (Show in Matches, Prepare anyway) or that ended in between is left
- * as it is, whatever was read at selection.
+ * Every condition that makes an application eligible, repeated in each write: one the user
+ * chose (Show in Matches, Prepare anyway) or that moved on in between is left as it is,
+ * whatever was read at selection.
  */
-function eligible(
-	applicationId: string,
-	userId: string,
-	from: "found" | "scored",
-) {
+function eligible(applicationId: string, userId: string, from: RefilterFrom) {
 	return and(
 		eq(applications.id, applicationId),
 		eq(applications.userId, userId),
 		eq(applications.state, from),
 		isNull(applications.chosenAnywayAt),
-		...(from === "scored"
-			? [
-					isNull(applications.endedReason),
-					isNull(applications.prepareRequestedAt),
-				]
-			: []),
 	);
 }
 
 /**
  * Runs the job filter again (deterministic, no model call) over jobs still being checked
- * (`found`) and matches nobody acted on (`scored`, not below the minimum, Prepare not pressed).
- * Those it now rejects move to `rejected_by_filter` with the reason, shown under Scans and
- * Inbox › Closed; the others keep their place with the new filter result, and open matches are
- * ranked again. Never touched: jobs the user added or chose anyway (`chosen_anyway_at`, which
- * Show in Matches sets), dismissed jobs, and anything past an open match.
+ * (`found`), every match (`scored`, Prepare pressed or not) and drafts waiting for answers or
+ * review. Those it now rejects move to `rejected_by_filter` with the reason, hidden everywhere;
+ * their runs are woken and end. The others keep their place with the new filter result, and
+ * matches are ranked again. Never touched: jobs the user added or chose anyway
+ * (`chosen_anyway_at`), dismissed jobs, a draft being written, and anything approved or later.
  *
  * Races: each write is one transaction that checks, at write time, every eligibility condition
  * and that the settings are still the ones this pass read. A save in between supersedes the
@@ -209,12 +212,7 @@ export async function refilterApplications(
 			and(
 				eq(applications.userId, userId),
 				or(
-					eq(applications.state, "found"),
-					and(
-						eq(applications.state, "scored"),
-						isNull(applications.endedReason),
-						isNull(applications.prepareRequestedAt),
-					),
+					inArray(applications.state, [...REFILTERED]),
 					// Set aside by a pass with older settings (never one set aside at its first
 					// check, nor one the user showed in Matches: chosen_anyway_at below).
 					and(
@@ -312,7 +310,9 @@ export async function refilterApplications(
 			);
 			return;
 		}
-		// Scored before it was set aside: back to Matches; never scored: checked again.
+		// Scored before it was set aside: back to Matches; never scored: checked again. A draft
+		// hidden from review or answers comes back as a plain match, Prepare not pressed, so
+		// nothing is drafted again until the user asks.
 		const back = app.score !== null ? "scored" : "found";
 		const rank = back === "scored" ? rankOf(app, job, filter) : null;
 		const event = await write(async (tx) => {
@@ -321,6 +321,7 @@ export async function refilterApplications(
 				.set({
 					state: back,
 					stateChangedAt: new Date(),
+					prepareRequestedAt: null,
 					filterDecision: filter.decision,
 					filterResult: filter,
 					flags: filter.flags,
@@ -357,7 +358,7 @@ export async function refilterApplications(
 				await reconsider(app, job, company);
 				continue;
 			}
-			const from = app.state as "found" | "scored";
+			const from = app.state as RefilterFrom;
 			const filter = evaluateHardRequirements(
 				{
 					title: job.title,

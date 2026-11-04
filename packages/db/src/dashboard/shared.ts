@@ -51,11 +51,11 @@ export function inboxViewWhere(view: InboxView) {
 			return sql`(${applications.state} = 'applying' or (${applications.state} = 'approved' and ${postingOpen}))`;
 		case "closed":
 			// Scored below the minimum counts as closed: it was never a match to decide on. So does
-			// a job the job filter set aside (at its first check, or a match the re-filter moved),
-			// and a posting found closed before it was submitted.
-			return sql`(${applications.state} in ('applied', 'rejected', 'expired', 'failed', 'dismissed', 'rejected_by_filter') or (${applications.state} = 'scored' and ${applications.endedReason} is not null) or (${jobs.closedAt} is not null and ${applications.state} <> 'found' and not ${submitted}))`;
+			// a posting found closed before it was submitted. A job the job filter rejected is
+			// hidden everywhere, here too.
+			return sql`(${applications.state} in ('applied', 'rejected', 'expired', 'failed', 'dismissed') or (${applications.state} = 'scored' and ${applications.endedReason} is not null) or (${jobs.closedAt} is not null and ${applications.state} not in ('found', 'rejected_by_filter') and not ${submitted}))`;
 		case "all":
-			return sql`${applications.state} <> 'found'`;
+			return sql`${applications.state} not in ('found', 'rejected_by_filter')`;
 	}
 }
 

@@ -199,7 +199,8 @@ export class WorkerApp {
 		});
 		this.runner = new FlowRunner({
 			db,
-			concurrency: 2,
+			// A running scan holds one slot; the others score its jobs as they come in.
+			concurrency: 3,
 			onStalled: (stall) => void this.onStalled(stall),
 			stopGraceMs: init.test?.stallProbe ? 300 : undefined,
 			handlers: {

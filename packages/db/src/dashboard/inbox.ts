@@ -231,7 +231,10 @@ export const inboxMethods = {
 			.orderBy(desc(applications.appliedAt), desc(sql`${applications}.rowid`));
 	},
 
-	/** Jobs the pipeline turned down, with the reason: filter rejections, low scores, user rejections. */
+	/**
+	 * Jobs turned down, with the reason: low scores and user rejections. The job filter's rejects
+	 * are hidden everywhere, so never here.
+	 */
 	async listRejected(userId: string, limit = 300) {
 		return this.database
 			.select({
@@ -262,7 +265,7 @@ export const inboxMethods = {
 				and(
 					eq(applications.userId, userId),
 					or(
-						inArray(applications.state, ["rejected_by_filter", "rejected"]),
+						eq(applications.state, "rejected"),
 						and(
 							eq(applications.state, "scored"),
 							isNotNull(applications.endedReason),

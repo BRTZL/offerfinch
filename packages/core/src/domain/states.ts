@@ -49,8 +49,9 @@ const TRANSITIONS: Record<ApplicationState, readonly ApplicationState[]> = {
 	// (re-filter, no model call); only a match nobody acted on.
 	scored: ["preparing", "expired", "dismissed", "rejected_by_filter"],
 	preparing: ["needs_answers", "ready_for_review", "failed"],
-	needs_answers: ["preparing", "expired"],
-	ready_for_review: ["approved", "rejected", "expired"],
+	// -> rejected_by_filter: the job search changed and the re-filter now rejects the job.
+	needs_answers: ["preparing", "expired", "rejected_by_filter"],
+	ready_for_review: ["approved", "rejected", "expired", "rejected_by_filter"],
 	// approved -> applied: the user submitted it by hand.
 	approved: ["applying", "ready_for_review", "applied"],
 	rejected: [],

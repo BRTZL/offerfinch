@@ -133,7 +133,8 @@ export function refilterAndWake(
  * Bumped when the filter or ranking changes in a way the stored matches should see. At startup a
  * lower stored version fills the location fields from the profile, then re-filters once.
  */
-const JOB_SEARCH_VERSION = 1;
+// 2: the filter keeps or rejects, nothing unclear; every open job is checked again once.
+const JOB_SEARCH_VERSION = 2;
 
 export async function upgradeJobSearch(
 	w: JobSearchWorker,

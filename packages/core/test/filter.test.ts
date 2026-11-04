@@ -41,14 +41,14 @@ describe("Northbeam-style posting (Spanish, Europe residency)", () => {
 		expect(result.decision).toBe("reject");
 	});
 
-	it("rejects on Spanish, and reads 'reside in Europe' as ambiguous, with the posting's words as evidence", () => {
+	it("rejects on Spanish and on 'reside in Europe', with the posting's words as evidence", () => {
 		const language = result.reasons.find((r) => r.rule === "language");
 		const permit = result.reasons.find((r) => r.rule === "work_permit");
 		expect(language?.outcome).toBe("reject");
 		expect(language?.message).toMatch(/Requires Spanish/);
 		expect(language?.evidence).toMatch(/Fluent in written and spoken Spanish/);
-		// Europe is geographic and may include Turkey, so residence there is not decisive on its own.
-		expect(permit?.outcome).toBe("unclear");
+		// Europe is geographic and may not include Turkey: only clear hires from it are kept.
+		expect(permit?.outcome).toBe("reject");
 		expect(permit?.message).toMatch(/Asks for residence in Europe/);
 		expect(permit?.evidence).toMatch(
 			/must reside in Europe and hold a valid work permit/,
@@ -133,24 +133,27 @@ describe("location rules", () => {
 		);
 	});
 
-	it("sends ambiguous locations on to scoring flagged, never drops them", () => {
+	it("keeps a posting with no place flagged; rejects a region that may not hire from home", () => {
 		for (const input of [
-			{ locations: ["EMEA"], workplaceType: "remote" as const },
 			{ locations: ["Remote"], workplaceType: "remote" as const },
 			{ locations: [], workplaceType: "unknown" as const },
-			{ locations: ["Europe"], workplaceType: "remote" as const },
 		]) {
 			const result = evaluate(input);
-			expect(result.decision, JSON.stringify(input)).toBe("unclear");
+			expect(result.decision, JSON.stringify(input)).toBe("keep");
 			expect(result.flags).toContain("location unclear");
 		}
+		for (const input of [
+			{ locations: ["EMEA"], workplaceType: "remote" as const },
+			{ locations: ["Europe"], workplaceType: "remote" as const },
+		])
+			expect(evaluate(input).decision, JSON.stringify(input)).toBe("reject");
 	});
 
 	it("does not read lowercase 'us' in prose as the United States", () => {
 		expect(
 			evaluate({ locations: ["Join us remotely"], workplaceType: "remote" })
-				.decision,
-		).toBe("unclear");
+				.summary,
+		).not.toMatch(/United States/);
 	});
 });
 
@@ -167,17 +170,16 @@ describe("work-permit rules", () => {
 		).toMatch(/United States/);
 	});
 
-	it("does not reject a worldwide remote role that asks for residence in Europe", () => {
+	it("rejects a worldwide remote role that asks for residence in Europe: it may not include Turkey", () => {
 		const result = evaluate({
 			locations: ["Remote - Worldwide"],
 			workplaceType: "remote",
 			descriptionText: `${ENGLISH_BODY}\nYou must be based in Europe.`,
 		});
-		expect(result.decision).toBe("unclear");
+		expect(result.decision).toBe("reject");
 		const permit = result.reasons.find((r) => r.rule === "work_permit");
-		expect(permit?.outcome).toBe("unclear");
+		expect(permit?.outcome).toBe("reject");
 		expect(permit?.message).toMatch(/residence in Europe/);
-		expect(result.flags).toEqual(["work permit unclear"]);
 	});
 
 	it("tells legal work authorization apart from residence", () => {
@@ -195,11 +197,11 @@ describe("work-permit rules", () => {
 			outcome: "reject",
 			message: expect.stringMatching(/Requires work authorization in EU/),
 		});
-		// A geographic region is not.
+		// A geographic region that may not include Turkey is a reject too.
 		expect(permit("You must be authorized to work in Europe.")?.outcome).toBe(
-			"unclear",
+			"reject",
 		);
-		expect(permit("Candidates must live in EMEA.")?.outcome).toBe("unclear");
+		expect(permit("Candidates must live in EMEA.")?.outcome).toBe("reject");
 		// Residence in a named country is decisive unless relocation is on.
 		expect(permit("You must be based in Germany.")).toMatchObject({
 			outcome: "reject",
@@ -238,9 +240,9 @@ describe("work-permit rules", () => {
 			"You don't need to be based in Germany.",
 		])
 			expect(permit(waived)?.outcome, waived).toBe("pass");
-		// A bare mention is uncertain, not a requirement.
+		// A bare mention is no requirement.
 		expect(permit("Work authorization in Germany.")).toMatchObject({
-			outcome: "unclear",
+			outcome: "pass",
 			message: expect.stringMatching(/without saying it is required/),
 		});
 		expect(

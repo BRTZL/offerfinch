@@ -291,33 +291,17 @@ function domainPenalties(
 function locationPenalties(filter: FilterResult | null): RankPenalty[] {
 	if (!filter) return [];
 	const penalties: RankPenalty[] = [];
-	const unclear = (rule: string) =>
-		filter.reasons.some((r) => r.rule === rule && r.outcome === "unclear");
-	const verdict =
-		filter.locationVerdict ?? (unclear("location") ? "unclear" : undefined);
-	if (verdict === "unclear")
+	if (filter.locationVerdict === "unclear")
 		penalties.push({
 			kind: "location",
 			points: 15,
 			reason: "location unclear",
 		});
-	else if (verdict === "relocation")
+	else if (filter.locationVerdict === "relocation")
 		penalties.push({
 			kind: "location",
 			points: 8,
 			reason: "needs relocation",
-		});
-	if (unclear("work_permit"))
-		penalties.push({
-			kind: "work_rights",
-			points: 10,
-			reason: "right to work unclear",
-		});
-	if (unclear("citizenship"))
-		penalties.push({
-			kind: "work_rights",
-			points: 10,
-			reason: "citizenship requirement unclear",
 		});
 	// Preferred, not required ("clearance preferred"): a weaker chance without it, never a
 	// reject. 8 for the first, 4 more for any other, 12 at most.

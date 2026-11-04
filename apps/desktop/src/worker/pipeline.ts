@@ -273,6 +273,8 @@ export function buildPipeline(input: PipelineInputs): {
 	});
 	deps.tailorLlm = tailorLlm;
 	deps.notifier = input.notifier;
+	// A scanned job is filtered and scored while later sources still search.
+	deps.startDuringScanMs = 2_000;
 	// PLAN A: scans run providers, never the old company watchlist.
 	const db = input.db as Database;
 	deps.providers = (userId) => scanProviders(input, db, userId);

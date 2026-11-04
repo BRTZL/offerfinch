@@ -99,19 +99,19 @@ const events = async (id: string) =>
 	)[0]?.n;
 
 describe("jobs the job filter set aside, in the Inbox", () => {
-	it("are listed and counted in Closed and All, with the filter's reason", async () => {
+	it("are hidden everywhere: in no view, no count and not on the Rejected page", async () => {
 		const id = await setAside(true);
 		const counts = await repo.inboxCounts("u1");
-		for (const view of ["closed", "all"] as const) {
+		for (const view of ["matches", "closed", "all"] as const) {
 			const rows = await repo.listApplications("u1", { view, limit: 500 });
-			expect(rows.length).toBe(counts[view]);
-			expect(rows.find((r) => r.id === id)).toMatchObject({
-				state: "rejected_by_filter",
-				filterReason: "Needs US citizenship",
-			});
+			expect(rows.length, view).toBe(counts[view]);
+			expect(
+				rows.some((r) => r.id === id),
+				view,
+			).toBe(false);
 		}
-		const matches = await repo.listApplications("u1", { view: "matches" });
-		expect(matches.some((r) => r.id === id)).toBe(false);
+		const rejected = await repo.listRejected("u1");
+		expect(rejected.some((r) => r.id === id)).toBe(false);
 	});
 
 	it("Show in Matches brings a set-aside match back, and the re-filter leaves it alone", async () => {
