@@ -197,7 +197,12 @@ export const desktopStatusRouter = {
 				spentMicros: spending.spentMicros + spending.reservedMicros,
 				capMicros: spending.capMicros,
 				reached: spending.reached,
-				held: spending.held.count,
+				/** Plans stopped after a paid call, until the user resumes them. */
+				paidStops: Object.entries(
+					await new DrizzleSpendStore(w.db).paidStops(userId),
+				)
+					.filter(([, at]) => at !== null)
+					.map(([vendor]) => (vendor === "openai" ? "Codex" : "Claude")),
 				subscriptionCalls: spending.subscriptionCalls,
 				callBudget: subscriptionRoles.length
 					? await new DrizzleSpendStore(w.db).subscriptionBudget(userId)

@@ -23,10 +23,10 @@ import { estimateCost, inputTokenBound, worstCaseMicros } from "./pricing";
  */
 export interface SpendStore {
 	/**
-	 * One locked reservation per call. `subscription`: also refused unless the user has
-	 * confirmed that extra usage is off on their Claude account, or when its model calls would
-	 * pass the user's budget for the last 24 hours; its worst case counts against the cap until
-	 * it settles, because a call can still turn out to be paid extra usage.
+	 * One locked reservation per call. `api`: refused when its worst case would pass the cap.
+	 * `subscription`: never counted against the cap (it settles at $0 unless the vendor says it
+	 * was paid); refused while that vendor is stopped after a paid call, or when its model calls
+	 * would pass the user's budget for the last 24 hours.
 	 */
 	reserveSpend(input: {
 		userId: string;
@@ -41,19 +41,18 @@ export interface SpendStore {
 	}): Promise<
 		| { ok: true; id: string }
 		| { ok: false; reason: "cap"; spentMicros: number; capMicros: number }
-		| { ok: false; reason: "extra_usage_unconfirmed" }
 		/**
-		 * The vendor has a call whose payment is unknown, or that was paid, and the user has not
-		 * reconciled it and resumed: its calls stop until they do. `detail` says how.
+		 * A call of this vendor was paid (Claude extra usage, ChatGPT credits) and the user has not
+		 * resumed it yet: its calls stop until they do. `detail` says so, in words.
 		 */
-		| { ok: false; reason: "payment_unresolved"; detail: string }
+		| { ok: false; reason: "vendor_stopped"; detail: string }
 		| ({ ok: false; reason: "call_budget" } & SubscriptionBudget)
 	>;
 	/** The user's subscription call budget and its use over the last 24 hours. */
 	subscriptionBudget(userId: string): Promise<SubscriptionBudget>;
 	/**
-	 * A subscription call refused before it started (another account, extra usage not
-	 * confirmed off): a settled $0 row carrying the message, so the application says why.
+	 * A subscription call refused before it started (another account, a stopped vendor, the call
+	 * budget): a settled $0 row carrying the message, so the application says why.
 	 */
 	recordRefusal(input: {
 		userId: string;
@@ -63,11 +62,11 @@ export interface SpendStore {
 		error: string;
 	}): Promise<void>;
 	/**
-	 * Withdraws the user's confirmation that extra usage is off (a call drew on it). `vendor` is
-	 * the paid call's ("anthropic", "openai"): a store that keeps one confirmation per vendor
-	 * withdraws only that one; one that keeps a single confirmation may ignore it.
+	 * A call of `vendor` ("anthropic", "openai") drew on paid extra usage: that vendor's calls stop
+	 * until the user resumes them. A paid Claude call also withdraws the Claude confirmation that
+	 * extra usage is off; the other vendor is never touched.
 	 */
-	clearExtraUsageConfirmation(userId: string, vendor?: string): Promise<void>;
+	recordPaidStop(userId: string, vendor: string): Promise<void>;
 	/**
 	 * Jobs whose application has sat in scored or preparing since before `before`: what the cap
 	 * may have paused. The sweep wakes them once the cap leaves room (a new month, a higher cap).
@@ -94,19 +93,11 @@ export interface SpendStore {
 		},
 	): Promise<void>;
 	/**
-	 * Keeps a reservation open, at its worst-case estimate, for a call whose outcome is unknown (no
-	 * usage reported, and not established as unbilled): it still counts against the cap until the
-	 * user reconciles it against the provider's usage page.
+	 * An API-key call whose outcome is unknown (it failed with no usage reported, and was not
+	 * refused before processing): its reservation stays open at the worst-case estimate, counted
+	 * against this month's cap. Subscription calls are never held.
 	 */
-	holdSpend(
-		id: string,
-		input: {
-			basis: string;
-			error: string;
-			billing?: LlmBilling;
-			modelCalls?: number;
-		},
-	): Promise<void>;
+	holdSpend(id: string, input: { basis: string; error: string }): Promise<void>;
 }
 
 /** Model calls on the subscription in any rolling 24 hours, and their use. */
@@ -177,36 +168,15 @@ export class SpendingCapReachedError extends LlmPausedError {
 export const SUBSCRIPTION_BASIS =
 	"subscription: included in the user's plan, not billed per token; tokens as the CLI reported them";
 
-/** A subscription call that the vendor said drew on paid extra usage. */
-export const EXTRA_USAGE_BASIS =
-	"paid extra usage on the Claude subscription: billed per token, estimated at the API price";
-
-/** A sent subscription call whose payment could not be established either way. */
-export const PAYMENT_UNKNOWN_BASIS =
-	"subscription call sent, payment unknown (the check that would say whether it drew on paid extra usage failed); held at the worst case until reconciled with the vendor's usage page";
-
-/** A sent subscription call that failed without an answer or usage: held until reconciled. */
-export const OUTCOME_UNKNOWN_BASIS =
-	"subscription call sent, outcome unknown (no answer, no usage reported); held at the worst case until reconciled with claude.ai > Settings > Usage";
-
 /**
- * A subscription call the provider reported answered on the plan (`onAnswered`: output for the
- * sent prompt, e.g. one that failed the schema, a session that ended by itself, no sign of paid
- * extra usage), with no tokens reported: billed like any answered call.
+ * A subscription call that the vendor said drew on paid extra usage: Claude's extra usage, or
+ * ChatGPT credits through Codex. Named per vendor, so the ledger says which plan it was.
  */
-export const ANSWERED_NO_USAGE_BASIS =
-	"subscription: answered (output for the prompt, the session ended by itself, no sign of paid extra usage), included in the user's plan; the CLI reported no tokens";
-
-/** A subscription call that returned its answer from a session that also failed. */
-export const BILLING_UNCLEAR_BASIS =
-	"subscription call answered, but its session also failed (an error or crash result, an assistant error, a lost stream); held at the worst case until reconciled with claude.ai > Settings > Usage";
-
-function tokensOf(usage: LlmUsage): string {
-	return `${usage.model}: ${usage.inputTokens} input, ${usage.cachedInputTokens} cached, ${usage.outputTokens} output tokens reported`;
+export function paidBasis(vendor: string): string {
+	return vendor === "openai"
+		? "paid ChatGPT credits on the Codex plan: estimated at the API price"
+		: "paid extra usage on the Claude plan: billed per token, estimated at the API price";
 }
-
-export const EXTRA_USAGE_UNCONFIRMED =
-	"extra usage is not confirmed off for this Claude account. Anthropic offers no per-request switch that keeps a call off paid extra usage, so subscription calls run only after you turn it off at claude.ai > Settings > Usage and confirm that in Settings › Models. The sweep that ends each scan then restarts it once it has waited an hour (preparation: two).";
 
 /** The model a provider is named after ("anthropic:claude-opus-5-5" -> "claude-opus-5-5"). */
 function modelOf(provider: LlmProvider): string {
@@ -223,20 +193,6 @@ function schemaText(schema: unknown): string {
 	} catch {
 		return UNKNOWN_SCHEMA_ALLOWANCE;
 	}
-}
-
-/**
- * Not billed: the vendor refused the request before any model work (HTTP 401 or 429 and the
- * like, as `NOT_BILLED_STATUSES` for the API providers). A subscription provider reports those
- * as a logout or a usage-limit pause; one that drew on paid extra usage is never this.
- */
-function refusedBeforeProcessing(error: unknown): boolean {
-	if (error instanceof LlmNotBilledError) return true;
-	return (
-		error instanceof SubscriptionUnavailableError &&
-		!error.paid &&
-		(error.kind === "usage_limit" || error.kind === "logged_out")
-	);
 }
 
 export class MeteredLlm implements LlmProvider {
@@ -302,18 +258,14 @@ export class MeteredLlm implements LlmProvider {
 	}
 
 	/**
-	 * A subscription call. Refused before the CLI starts for another account, or while the user
-	 * has not confirmed extra usage off. Its worst case at the API price is reserved against the
-	 * cap, because no vendor switch keeps a request off paid extra usage: a call the vendor says
-	 * drew on it settles at its estimated API price (held at the worst case without usage),
-	 * labelled `api`, and clears the confirmation. A sent call whose payment the provider could
-	 * not establish (`paid: "unknown"`) is held at the reservation whatever tokens it reported, and
-	 * clears the confirmation too. A call settles at $0 with the tokens reported only when it
-	 * provably cost nothing extra: nothing was sent, its answer came back (with usage, or with
-	 * `onAnswered`: the provider's positive evidence that it was answered on the plan, even when
-	 * the answer failed the schema), or the vendor refused it before processing; any other sent
-	 * call that failed is held at the reservation until reconciled. A pause is recorded with its message, so the application says
-	 * why.
+	 * A subscription call, the way T3 Code runs one: the provider checks the login and the plan's
+	 * headroom before it sends anything (Claude: extra usage confirmed off by a probe), and this
+	 * reserves one call of the daily budget, outside the spending cap. It settles at $0 with the
+	 * tokens reported, however it ended, unless the vendor said it drew on paid extra usage: then
+	 * it is labelled `api` at its estimated API price (the reserved worst case without usage) and
+	 * that vendor stops until the user resumes it. Refused before the CLI starts for another
+	 * account, a stopped vendor or a used-up budget, recorded with its message, so the
+	 * application says why.
 	 */
 	private async generateOnSubscription<T>(
 		request: GenerateObjectRequest<T>,
@@ -353,9 +305,7 @@ export class MeteredLlm implements LlmProvider {
 					: new SubscriptionUnavailableError(
 							"extra_usage",
 							this.inner.name,
-							reserved.reason === "payment_unresolved"
-								? reserved.detail
-								: EXTRA_USAGE_UNCONFIRMED,
+							reserved.detail,
 						);
 			await this.store.recordRefusal({ ...refusal, error: error.message });
 			throw error;
@@ -363,8 +313,6 @@ export class MeteredLlm implements LlmProvider {
 		let usage: LlmUsage | null = null;
 		let error: unknown = null;
 		let modelCalls = 0;
-		let answered = false;
-		let unclear: string | null = null;
 		try {
 			return await this.inner.generateObject({
 				...request,
@@ -376,38 +324,25 @@ export class MeteredLlm implements LlmProvider {
 					modelCalls++;
 					request.onModelCall?.();
 				},
-				onAnswered: () => {
-					answered = true;
-					request.onAnswered?.();
-				},
-				onBillingUnclear: (detail) => {
-					unclear ??= detail;
-					request.onBillingUnclear?.(detail);
-				},
 			});
 		} catch (caught) {
 			error = caught;
 			throw caught;
 		} finally {
 			await this.settleSubscription(
-				reserved.id,
+				{ id: reserved.id, estimateMicros },
 				usage,
 				error,
 				modelCalls,
-				answered,
-				unclear,
 			);
 		}
 	}
 
-	// biome-ignore lint/complexity/useMaxParams: These arguments form the subscription-settlement contract shared by reservation and reconciliation.
 	private async settleSubscription(
-		id: string,
+		reservation: { id: string; estimateMicros: number },
 		usage: LlmUsage | null,
 		error: unknown,
 		modelCalls: number,
-		answered: boolean,
-		unclear: string | null,
 	): Promise<void> {
 		const message =
 			error === null
@@ -415,97 +350,30 @@ export class MeteredLlm implements LlmProvider {
 				: error instanceof Error
 					? error.message
 					: String(error);
-		// Nothing sent (a breaker still open from an earlier paid call re-throws that call's
-		// error): nothing new was billed, and the confirmation stays as the user left it.
+		// The vendor said this sent call drew on paid extra usage: billed per token. (A breaker
+		// still open from an earlier paid call re-throws that call's error with nothing sent.)
 		if (
 			error instanceof SubscriptionUnavailableError &&
-			error.paid === "unknown" &&
+			error.paid &&
 			modelCalls > 0
 		) {
-			// Sent, and whether it was paid cannot be established: it may have been, so it keeps
-			// its reservation whatever tokens it reported, and the vendor's confirmation is
-			// withdrawn, as for a paid call, so later calls stop until the user reconciles it and
-			// confirms again (where the store gates that vendor's calls on it).
-			await this.store.clearExtraUsageConfirmation(
-				this.scope.userId,
-				vendorOf(this.inner),
-			);
-			await this.store.holdSpend(id, {
-				basis: `${PAYMENT_UNKNOWN_BASIS}${usage ? ` (${tokensOf(usage)})` : ""}`,
-				error: message ?? "payment unknown",
+			const vendor = vendorOf(this.inner);
+			await this.store.recordPaidStop(this.scope.userId, vendor);
+			const cost = usage ? estimateCost(usage) : null;
+			await this.store.settleSpend(reservation.id, {
+				usage,
+				costMicros: cost?.micros ?? reservation.estimateMicros,
+				basis: `${paidBasis(vendor)} (${cost?.basis ?? "no usage reported: charged at the reserved worst case"})`,
+				error: message,
+				billing: "api",
 				modelCalls,
 			});
 			return;
 		}
-		if (
-			error instanceof SubscriptionUnavailableError &&
-			error.paid === true &&
-			modelCalls > 0
-		) {
-			// The first sign of paid extra usage stops every later call until the user confirms
-			// again (the provider's breaker stops this process's callers meanwhile).
-			await this.store.clearExtraUsageConfirmation(
-				this.scope.userId,
-				vendorOf(this.inner),
-			);
-			if (usage) {
-				const cost = estimateCost(usage);
-				await this.store.settleSpend(id, {
-					usage,
-					costMicros: cost.micros,
-					basis: `${EXTRA_USAGE_BASIS} (${cost.basis})`,
-					error: message,
-					billing: "api",
-					modelCalls,
-				});
-			} else
-				await this.store.holdSpend(id, {
-					basis: `${EXTRA_USAGE_BASIS}; no usage reported, held at the worst case until reconciled with claude.ai > Settings > Usage`,
-					error: message ?? "paid extra usage",
-					billing: "api",
-					modelCalls,
-				});
-			return;
-		}
-		if (unclear !== null && modelCalls > 0) {
-			// Its session also failed: what it cost is not clear, whether the answer passed the
-			// schema or not and whatever tokens it reported. Held like a call whose outcome is
-			// unknown (the store stops this vendor's calls on it until reconciled).
-			await this.store.holdSpend(id, {
-				basis: `${BILLING_UNCLEAR_BASIS}${usage ? ` (${tokensOf(usage)})` : ""}`,
-				error: unclear,
-				modelCalls,
-			});
-			return;
-		}
-		if (
-			error !== null &&
-			usage === null &&
-			modelCalls > 0 &&
-			!refusedBeforeProcessing(error)
-		) {
-			// The answer arrived and its whole session showed no sign of paid extra usage (a paid
-			// report is handled above and wins): billed like any answered call, on the plan.
-			if (answered) {
-				await this.store.settleSpend(id, {
-					usage: null,
-					costMicros: 0,
-					basis: ANSWERED_NO_USAGE_BASIS,
-					error: message,
-					modelCalls,
-				});
-				return;
-			}
-			// The prompt was sent and no answer came back (a lost stream, an abort, a 5xx): Claude
-			// may have billed it, and the report that would say paid extra usage never arrived.
-			await this.store.holdSpend(id, {
-				basis: OUTCOME_UNKNOWN_BASIS,
-				error: message ?? "outcome unknown",
-				modelCalls,
-			});
-			return;
-		}
-		await this.store.settleSpend(id, {
+		// Anything else is on the plan: answered, failed, timed out or refused. Extra usage is
+		// confirmed off and probed before every Claude call, and Codex starts only with headroom,
+		// so an unclear ending is almost surely on the plan; the provider logs it.
+		await this.store.settleSpend(reservation.id, {
 			usage,
 			costMicros: 0,
 			basis: SUBSCRIPTION_BASIS,
@@ -518,7 +386,7 @@ export class MeteredLlm implements LlmProvider {
 	 * Reported usage settles at its cost. Without usage: an answer was billed, at an unknown
 	 * amount, so it settles at the reservation; a refusal before processing (LlmNotBilledError) was
 	 * not billed and is released; anything else (a 5xx, a lost stream, a timeout) may have been
-	 * billed, so the reservation is held until reconciled, and a retry reserves again on top of it.
+	 * billed, so the reservation is held for the month, and a retry reserves again on top of it.
 	 */
 	private async settle(
 		reservation: { id: string; estimateMicros: number },
@@ -562,7 +430,7 @@ export class MeteredLlm implements LlmProvider {
 		}
 		await this.store.holdSpend(reservation.id, {
 			basis:
-				"outcome unknown (no usage reported); held at the worst case until reconciled with the provider's usage page",
+				"outcome unknown (no usage reported); held at the worst case for this month's cap",
 			error: message,
 		});
 	}
@@ -578,12 +446,20 @@ export function meteredFor(
 	return store ? new MeteredLlm(llm, store, { userId, applicationId }) : llm;
 }
 
-/** True when the user's cap is on and this month's spend and reservations have reached it. */
+/**
+ * True when the user's cap is on and this month's spend and reservations have reached it, for
+ * work on `providers`. Work whose every provider is a subscription is never stopped by the cap:
+ * subscription calls do not count against it (only one that turned out paid does, afterwards).
+ */
 export async function capReached(
 	store: SpendStore | undefined,
 	userId: string,
+	providers: (LlmProvider | undefined)[],
 ): Promise<SpendingCapReachedError | null> {
 	if (!store) return null;
+	const known = providers.filter((p): p is LlmProvider => p !== undefined);
+	if (known.length > 0 && known.every((p) => billingOf(p) === "subscription"))
+		return null;
 	const status = await store.spendingStatus(userId);
 	const used = status.spentMicros + status.reservedMicros;
 	return status.enabled && used >= status.capMicros

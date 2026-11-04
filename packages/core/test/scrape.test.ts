@@ -448,7 +448,7 @@ describe("careers-page extraction is metered for the scan's user", () => {
 			async subscriptionBudget() {
 				return { budget: 40, used: 0, resetsAt: null };
 			},
-			async clearExtraUsageConfirmation() {},
+			async recordPaidStop() {},
 			async listCapPausedJobIds() {
 				return [];
 			},

@@ -237,13 +237,13 @@ export default function HomePage() {
 			"Raise the cap in Spending, or wait for next month",
 			"home-needs-cap",
 		);
-	if (h.spend.held > 0)
+	if (h.spend.paidStops.length > 0)
 		fix(
-			"held",
+			"paid-stop",
 			"/settings/models",
-			`Reconcile ${plural(h.spend.held, "model call")} with an unknown cost`,
-			"Look up what each cost on the vendor's usage page",
-			"home-needs-held",
+			`${h.spend.paidStops.join(" and ")} stopped after a paid call`,
+			"Check your plan's usage, then resume it in Models",
+			"home-needs-paid-stop",
 		);
 	if (h.scan.unset.length > 0)
 		fix(

@@ -38,18 +38,16 @@ export async function sweepStuckApplications(
 	const cutoff = new Date(
 		now.getTime() - (options.olderThanMinutes ?? 60) * 60_000,
 	);
+	const tailoring = deps.tailorLlm ?? deps.llm;
 	// The subscription's call budget for the last 24 hours: while it is used up, scoring and
 	// preparation on it wait, and the sweep after it frees starts them again.
 	const budget = deps.spend
-		? await subscriptionBudgetReached(deps.spend, userId, [
-				deps.llm,
-				deps.tailorLlm ?? deps.llm,
-			])
+		? await subscriptionBudgetReached(deps.spend, userId, [deps.llm, tailoring])
 		: null;
 	const scoringWaits =
 		budget !== null && billingOf(deps.llm) === "subscription";
 	const preparingWaits =
-		budget !== null && billingOf(deps.tailorLlm ?? deps.llm) === "subscription";
+		budget !== null && billingOf(tailoring) === "subscription";
 	const jobIds = scoringWaits
 		? []
 		: await deps.repo.listStuckFoundJobIds(
@@ -96,7 +94,7 @@ export async function sweepStuckApplications(
 	if (
 		deps.spend &&
 		!preparingWaits &&
-		!(await capReached(deps.spend, userId))
+		!(await capReached(deps.spend, userId, [tailoring, deps.claimsLlm]))
 	) {
 		const paused = await deps.spend.listCapPausedJobIds(
 			userId,

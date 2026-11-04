@@ -94,7 +94,7 @@ describe("redacting what goes to the models", () => {
 			holdSpend: async () => {},
 			recordRefusal: async () => {},
 			subscriptionBudget: async () => ({ budget: 40, used: 0, resetsAt: null }),
-			clearExtraUsageConfirmation: async () => {},
+			recordPaidStop: async () => {},
 		};
 		const llm = new MeteredLlm(inner, store, {
 			userId: "u1",

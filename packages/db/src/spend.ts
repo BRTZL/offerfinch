@@ -2,21 +2,10 @@ import type { LlmUsage } from "@offerfinch/core/scoring/llm";
 import {
 	DEFAULT_SUBSCRIPTION_DAILY_CALLS,
 	MAX_SUBSCRIPTION_DAILY_CALLS,
-	OUTCOME_UNKNOWN_BASIS,
 	type SpendStore,
 	type SubscriptionBudget,
 } from "@offerfinch/core/scoring/metered";
-import {
-	and,
-	asc,
-	eq,
-	gte,
-	inArray,
-	isNotNull,
-	lt,
-	or,
-	sql,
-} from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, lt, or, sql } from "drizzle-orm";
 
 import type { Database } from "./client";
 import {
@@ -29,7 +18,7 @@ import {
 /** The cap a user has before changing it: $20 per calendar month (UTC), on. */
 export const DEFAULT_SPENDING_CAP_MICROS = 20_000_000;
 /** Longer than any model call runs: an open reservation this old lost its process. */
-export const STALE_RESERVATION_MINUTES = 60;
+const STALE_RESERVATION_MINUTES = 60;
 /** The column is a 32-bit integer of micro-dollars; $2,000 keeps well inside it. */
 export const MAX_SPENDING_CAP_MICROS = 2_000_000_000;
 
@@ -79,9 +68,9 @@ export class DrizzleSpendStore implements SpendStore {
 				// Settled subscription rows are $0 by construction; filtered too, so one can never
 				// count. A paid extra-usage call is re-labelled `api` when it settles.
 				spent: sql<number>`coalesce(sum(${llmUsage.costMicros}) filter (where ${llmUsage.status} = 'settled' and ${llmUsage.billing} = 'api'), 0)`,
-				// Every open reservation counts, a subscription call's too: until it settles it may
-				// turn out to be paid extra usage.
-				reserved: sql<number>`coalesce(sum(${llmUsage.estimateMicros}) filter (where ${llmUsage.status} = 'reserved'), 0)`,
+				// Open API-key reservations only: a subscription call never counts against the cap
+				// (it counts once it settles as paid).
+				reserved: sql<number>`coalesce(sum(${llmUsage.estimateMicros}) filter (where ${llmUsage.status} = 'reserved' and ${llmUsage.billing} = 'api'), 0)`,
 			})
 			.from(llmUsage)
 			.where(
@@ -212,35 +201,38 @@ export class DrizzleSpendStore implements SpendStore {
 			// One reservation at a time, so parallel workflows cannot all pass the check: SQLite
 			// transactions run one at a time (client.ts), which replaces Postgres' advisory lock.
 			if (billing === "subscription") {
-				// A vendor with a held call (payment unknown, or paid without usage) or a pause the
-				// user has not lifted takes no new call, in this process or after a restart.
+				// A vendor stopped after a paid call takes no new call until the user resumes it,
+				// in this process or after a restart. Only that vendor: the other keeps running.
 				const vendor = subscriptionVendor(input.provider);
-				if (vendor) {
-					const unresolved = await this.unresolved(tx, input.userId, vendor);
-					if (unresolved)
-						return {
-							ok: false as const,
-							reason: "payment_unresolved" as const,
-							detail: unresolved,
-						};
-				}
+				const stopped = vendor
+					? await this.stopped(tx, input.userId, vendor)
+					: null;
+				if (stopped)
+					return {
+						ok: false as const,
+						reason: "vendor_stopped" as const,
+						detail: stopped,
+					};
 				// No confirmation click: before each Claude call the provider reads the plan's usage
-				// report and sends nothing unless extra usage is off (fails closed when unknown);
-				// a call that drew on it anyway pauses Claude (above) until reconciled.
+				// report and sends nothing unless extra usage is off (fails closed when unknown).
 				// The plan's protection: this call must fit the last 24 hours' budget.
 				const budget = await this.budget(tx, input.userId);
 				if (budget.used + (input.modelCalls ?? 0) > budget.budget)
 					return { ok: false as const, reason: "call_budget", ...budget };
+			} else {
+				const status = await this.status(tx, input.userId);
+				const committed = status.spentMicros + status.reservedMicros;
+				if (
+					status.enabled &&
+					committed + input.estimateMicros > status.capMicros
+				)
+					return {
+						ok: false as const,
+						reason: "cap" as const,
+						spentMicros: committed,
+						capMicros: status.capMicros,
+					};
 			}
-			const status = await this.status(tx, input.userId);
-			const committed = status.spentMicros + status.reservedMicros;
-			if (status.enabled && committed + input.estimateMicros > status.capMicros)
-				return {
-					ok: false as const,
-					reason: "cap" as const,
-					spentMicros: committed,
-					capMicros: status.capMicros,
-				};
 			const [row] = await tx
 				.insert(llmUsage)
 				.values({
@@ -300,34 +292,16 @@ export class DrizzleSpendStore implements SpendStore {
 	}
 
 	/**
-	 * Why a vendor's subscription calls must wait, or null: a held call of that vendor (payment
-	 * unknown, paid without usage, or a reservation whose process died), else its pause.
+	 * Why a vendor's subscription calls must wait, or null: a paid call stopped it and the user
+	 * has not resumed it.
 	 */
-	private async unresolved(
+	private async stopped(
 		t: Tx | Database,
 		userId: string,
 		vendor: SubscriptionVendor,
 	): Promise<string | null> {
-		const label = VENDOR_LABEL[vendor];
-		const [held] = await t
-			.select({ n: sql<number>`count(*)` })
-			.from(llmUsage)
-			.where(
-				and(
-					eq(llmUsage.userId, userId),
-					eq(llmUsage.status, "reserved"),
-					sql`${llmUsage.provider} like ${`${SUBSCRIPTION_PREFIX[vendor]}%`}`,
-					or(
-						isNotNull(llmUsage.error),
-						lt(llmUsage.createdAt, this.staleBefore()),
-					),
-				),
-			);
-		const n = Number(held?.n ?? 0);
-		if (n > 0)
-			return `${n} ${label} subscription call${n === 1 ? "'s" : "s'"} payment is unknown or was paid, so ${label} calls are stopped. In Settings > Models, enter what each one really cost (from the ${label} usage page) or that it was not charged, then resume ${label}.`;
 		const [pause] = await t
-			.select()
+			.select({ pausedAt: subscriptionPauses.pausedAt })
 			.from(subscriptionPauses)
 			.where(
 				and(
@@ -335,67 +309,31 @@ export class DrizzleSpendStore implements SpendStore {
 					eq(subscriptionPauses.vendor, vendor),
 				),
 			);
-		if (pause)
-			return `${label} calls are stopped since ${pause.pausedAt.toISOString().slice(0, 16).replace("T", " ")} UTC (${pause.reason}). Every held call is reconciled; resume ${label} in Settings > Models.`;
-		return null;
+		return pause ? paidStopText(vendor, pause.pausedAt) : null;
 	}
 
-	/** Each vendor's state: held calls, a pause, and whether its calls may run. */
-	async subscriptionState(userId: string) {
-		const out: Record<
-			SubscriptionVendor,
-			{
-				held: number;
-				pausedAt: Date | null;
-				reason: string | null;
-				blocked: string | null;
-			}
-		> = {
-			anthropic: { held: 0, pausedAt: null, reason: null, blocked: null },
-			openai: { held: 0, pausedAt: null, reason: null, blocked: null },
-		};
-		const held = await this.listHeld(userId);
+	/** Each vendor's paid stop: when a paid call stopped it, or null while it runs. */
+	async paidStops(
+		userId: string,
+	): Promise<Record<SubscriptionVendor, Date | null>> {
 		const pauses = await this.db
 			.select()
 			.from(subscriptionPauses)
 			.where(eq(subscriptionPauses.userId, userId));
-		for (const vendor of ["anthropic", "openai"] as const) {
-			out[vendor].held = held.filter((h) => h.vendor === vendor).length;
-			const pause = pauses.find((p) => p.vendor === vendor);
-			out[vendor].pausedAt = pause?.pausedAt ?? null;
-			out[vendor].reason = pause?.reason ?? null;
-			out[vendor].blocked = await this.unresolved(this.db, userId, vendor);
-		}
-		return out;
+		const at = (vendor: SubscriptionVendor) =>
+			pauses.find((p) => p.vendor === vendor)?.pausedAt ?? null;
+		return { anthropic: at("anthropic"), openai: at("openai") };
 	}
 
 	/**
-	 * Lifts a vendor's pause once every held call of it is reconciled. Claude also takes the
-	 * extra-usage confirmation again (resuming says it is off). Throws while calls are held.
+	 * Lifts a vendor's paid stop. Resuming Claude also says extra usage is off again (the probe
+	 * still checks it before every call).
 	 */
 	async resumeSubscription(
 		userId: string,
 		vendor: SubscriptionVendor,
 	): Promise<void> {
 		await this.db.transaction(async (tx) => {
-			const [held] = await tx
-				.select({ n: sql<number>`count(*)` })
-				.from(llmUsage)
-				.where(
-					and(
-						eq(llmUsage.userId, userId),
-						eq(llmUsage.status, "reserved"),
-						sql`${llmUsage.provider} like ${`${SUBSCRIPTION_PREFIX[vendor]}%`}`,
-						or(
-							isNotNull(llmUsage.error),
-							lt(llmUsage.createdAt, this.staleBefore()),
-						),
-					),
-				);
-			if (Number(held?.n ?? 0) > 0)
-				throw new Error(
-					`Refusing: reconcile every held ${VENDOR_LABEL[vendor]} call first`,
-				);
 			await tx
 				.delete(subscriptionPauses)
 				.where(
@@ -423,14 +361,11 @@ export class DrizzleSpendStore implements SpendStore {
 	}
 
 	/**
-	 * A call of `vendor` was paid, or its payment is unknown: that vendor stops (a pause kept in
-	 * the database) until the user reconciles and resumes it; a Claude call also withdraws the
-	 * Claude confirmation. Another vendor's calls are not touched.
+	 * A call of `vendor` was paid: that vendor stops (kept in the database) until the user resumes
+	 * it; a paid Claude call also withdraws the Claude confirmation. The other vendor, and its
+	 * confirmation, are never touched.
 	 */
-	async clearExtraUsageConfirmation(
-		userId: string,
-		vendor?: string,
-	): Promise<void> {
+	async recordPaidStop(userId: string, vendor: string): Promise<void> {
 		const v: SubscriptionVendor = vendor === "openai" ? "openai" : "anthropic";
 		await this.db
 			.insert(subscriptionPauses)
@@ -438,7 +373,7 @@ export class DrizzleSpendStore implements SpendStore {
 				userId,
 				vendor: v,
 				pausedAt: this.now(),
-				reason: "a call was paid, or its payment could not be established",
+				reason: PAID_STOP_REASON[v],
 			})
 			.onConflictDoNothing();
 		if (v !== "anthropic") return;
@@ -482,149 +417,54 @@ export class DrizzleSpendStore implements SpendStore {
 
 	async holdSpend(
 		id: string,
-		input: {
-			basis: string;
-			error: string;
-			billing?: "api" | "subscription";
-			modelCalls?: number;
-		},
+		input: { basis: string; error: string },
 	): Promise<void> {
 		await this.db
 			.update(llmUsage)
-			.set({
-				...(input.billing ? { billing: input.billing } : {}),
-				...(input.modelCalls !== undefined
-					? { modelCalls: input.modelCalls }
-					: {}),
-				priceBasis: input.basis,
-				error: input.error.slice(0, 500),
-			})
+			.set({ priceBasis: input.basis, error: input.error.slice(0, 500) })
 			.where(and(eq(llmUsage.id, id), eq(llmUsage.status, "reserved")));
 	}
 
 	/**
-	 * A reservation open this long has lost its process (a killed scan or server): its outcome
-	 * is unknown, so it is held like one that failed, until the user reconciles it.
+	 * API-key calls this month still open at their worst case: held (failed without a usage
+	 * report) or lost with their process. They count against the cap.
 	 */
-	private staleBefore(): Date {
-		return new Date(this.now().getTime() - STALE_RESERVATION_MINUTES * 60_000);
-	}
-
-	/**
-	 * Reservations held because their call's outcome is unknown (a failure without usage, or a
-	 * process that died mid-call), oldest first.
-	 */
-	async listHeld(userId: string) {
-		const rows = await this.db
-			.select({
-				id: llmUsage.id,
-				task: llmUsage.task,
-				provider: llmUsage.provider,
-				billing: llmUsage.billing,
-				applicationId: llmUsage.applicationId,
-				estimateMicros: llmUsage.estimateMicros,
-				basis: llmUsage.priceBasis,
-				error: llmUsage.error,
-				createdAt: llmUsage.createdAt,
-			})
-			.from(llmUsage)
-			.where(
-				and(
-					eq(llmUsage.userId, userId),
-					eq(llmUsage.status, "reserved"),
-					or(
-						isNotNull(llmUsage.error),
-						lt(llmUsage.createdAt, this.staleBefore()),
-					),
-				),
-			)
-			.orderBy(asc(llmUsage.createdAt), asc(sql`${llmUsage}.rowid`));
-		const offSince = await this.claudeOffSince(userId);
-		return rows.map((r) => ({
-			...r,
-			/** The subscription vendor, or the API's ("anthropic", "openai") for key calls. */
-			vendor: (subscriptionVendor(r.provider) ??
-				(r.provider.split(":")[0] as string)) as string,
-			subscription: subscriptionVendor(r.provider) !== null,
-			/**
-			 * A Claude subscription call held only because its outcome is unknown, sent while the
-			 * user's confirmation that extra usage is off stood (given before it, never withdrawn
-			 * since). Its billing is still unknown: the user decides; nothing is settled here.
-			 */
-			confirmedOffBefore:
-				offSince !== null &&
-				subscriptionVendor(r.provider) === "anthropic" &&
-				(r.basis?.startsWith(OUTCOME_UNKNOWN_BASIS) ?? false) &&
-				r.createdAt.getTime() >= offSince.getTime(),
-		}));
-	}
-
-	/**
-	 * Since when the Claude confirmation that extra usage is off has stood without an extra-usage
-	 * event (a paid Claude call, or a Claude pause); null when it is not standing.
-	 */
-	private async claudeOffSince(userId: string): Promise<Date | null> {
-		const [settings] = await this.db
-			.select({ at: spendingSettings.extraUsageOffConfirmedAt })
-			.from(spendingSettings)
-			.where(eq(spendingSettings.userId, userId));
-		const since = settings?.at ?? null;
-		if (!since) return null;
-		const [pause] = await this.db
-			.select({ vendor: subscriptionPauses.vendor })
-			.from(subscriptionPauses)
-			.where(
-				and(
-					eq(subscriptionPauses.userId, userId),
-					eq(subscriptionPauses.vendor, "anthropic"),
-				),
-			);
-		if (pause) return null;
-		const [paid] = await this.db
-			.select({ n: sql<number>`count(*)` })
-			.from(llmUsage)
-			.where(
-				and(
-					eq(llmUsage.userId, userId),
-					eq(llmUsage.billing, "api"),
-					sql`${llmUsage.provider} like ${`${SUBSCRIPTION_PREFIX.anthropic}%`}`,
-					gte(llmUsage.createdAt, since),
-				),
-			);
-		return Number(paid?.n ?? 0) > 0 ? null : since;
-	}
-
-	/**
-	 * Settles a held reservation at what the provider's usage page shows for it (0 when it was not
-	 * billed). Only the owner's held rows; returns whether one was settled. A positive amount was
-	 * billed per token, so a subscription row becomes `api` and counts as spent.
-	 */
-	async reconcile(
+	async heldApiCalls(
 		userId: string,
-		id: string,
-		costMicros: number,
-	): Promise<boolean> {
-		const rows = await this.db
-			.update(llmUsage)
-			.set({
-				status: "settled",
-				costMicros,
-				...(costMicros > 0 ? { billing: "api" as const } : {}),
-				priceBasis: `reconciled by the user from the provider's usage page (${new Date(this.now()).toISOString().slice(0, 10)})`,
-				settledAt: this.now(),
+	): Promise<{ count: number; micros: number }> {
+		const stale = new Date(
+			this.now().getTime() - STALE_RESERVATION_MINUTES * 60_000,
+		);
+		const [row] = await this.db
+			.select({
+				count: sql<number>`count(*)`,
+				micros: sql<number>`coalesce(sum(${llmUsage.estimateMicros}), 0)`,
 			})
+			.from(llmUsage)
 			.where(
 				and(
-					eq(llmUsage.id, id),
 					eq(llmUsage.userId, userId),
 					eq(llmUsage.status, "reserved"),
-					or(
-						isNotNull(llmUsage.error),
-						lt(llmUsage.createdAt, this.staleBefore()),
-					),
+					eq(llmUsage.billing, "api"),
+					gte(llmUsage.createdAt, monthStart(this.now())),
+					or(isNotNull(llmUsage.error), lt(llmUsage.createdAt, stale)),
 				),
-			)
-			.returning({ id: llmUsage.id });
-		return rows.length > 0;
+			);
+		return {
+			count: Number(row?.count ?? 0),
+			micros: Number(row?.micros ?? 0),
+		};
 	}
+}
+
+const PAID_STOP_REASON: Record<SubscriptionVendor, string> = {
+	anthropic: "a call used paid extra usage",
+	openai: "a call used paid ChatGPT credits",
+};
+
+/** What a paid stop says, wherever it shows: "Claude used paid extra usage on <date>. …" */
+export function paidStopText(vendor: SubscriptionVendor, at: Date): string {
+	const what =
+		vendor === "anthropic" ? "paid extra usage" : "paid ChatGPT credits";
+	return `${VENDOR_LABEL[vendor]} used ${what} on ${at.toISOString().slice(0, 10)}. Calls are stopped. Resume ${VENDOR_LABEL[vendor]} in Settings > Models.`;
 }

@@ -1282,7 +1282,7 @@ test("a scan reads every source from the shared plan, LinkedIn's Top picks first
 	}
 });
 
-test("a Codex call with unknown payment stops Codex across a worker kill until reconciled and resumed", async () => {
+test("a paid Codex call stops Codex across a worker kill until resumed", async () => {
 	const calls = () =>
 		fs.existsSync(path.join(userData, "fake-codex-calls"))
 			? fs
@@ -1305,7 +1305,7 @@ test("a Codex call with unknown payment stops Codex across a worker kill until r
 		);
 		await page.getByTestId("role-claims-test").click();
 		await expect(page.getByTestId("role-claims-test-result")).toContainText(
-			/payment|unknown/,
+			/credits/,
 		);
 		expect(calls()).toBe(1);
 
@@ -1314,27 +1314,19 @@ test("a Codex call with unknown payment stops Codex across a worker kill until r
 		process.kill(pid, "SIGKILL");
 		await expect.poll(() => workerPid(app), { timeout: 30_000 }).not.toBe(pid);
 		await page.reload();
-		await expect(page.getByTestId("held-call")).toHaveCount(1, {
-			timeout: 30_000,
-		});
-		await expect(page.getByTestId("stopped-openai")).toBeVisible();
-		// The "you had confirmed extra usage was off" line is Claude's, never Codex's.
-		await expect(page.getByTestId("held-confirmed-off")).toHaveCount(0);
-		await shot(page, "held-codex-call");
+		await expect(page.getByTestId("stopped-openai")).toContainText(
+			/Codex used paid credits on .+\. Calls are stopped\./,
+			{ timeout: 30_000 },
+		);
+		// Only Codex stopped; no held call, nothing to reconcile.
+		await expect(page.getByTestId("stopped-anthropic")).toHaveCount(0);
+		await expect(page.getByTestId("held-call")).toHaveCount(0);
+		await shot(page, "paid-codex-stop");
 
 		// Still stopped after the restart: refused before the call starts.
 		await page.getByTestId("role-claims-test").click();
 		await expect(page.getByTestId("role-claims-test-result")).toContainText(
-			/payment is unknown or was paid/,
-		);
-		expect(calls()).toBe(1);
-
-		// Reconciled as not charged: stopped until resumed.
-		await page.getByTestId("held-not-charged").click();
-		await expect(page.getByTestId("held-call")).toHaveCount(0);
-		await page.getByTestId("role-claims-test").click();
-		await expect(page.getByTestId("role-claims-test-result")).toContainText(
-			/resume Codex/,
+			/Calls are stopped/,
 		);
 		expect(calls()).toBe(1);
 

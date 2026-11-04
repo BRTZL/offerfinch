@@ -76,7 +76,9 @@ export const spendingMethods = {
 					gte(llmUsage.createdAt, monthStart()),
 				),
 			);
-		const held = await new DrizzleSpendStore(this.database).listHeld(userId);
+		const held = await new DrizzleSpendStore(this.database).heldApiCalls(
+			userId,
+		);
 		const [subscription] = await this.database
 			.select({ n: sql<number>`count(*)` })
 			.from(llmUsage)
@@ -89,15 +91,12 @@ export const spendingMethods = {
 			);
 		return {
 			...status,
-			/** Calls this month on a subscription: not priced; held against the cap only while running. */
+			/** Calls this month on a subscription: not priced, outside the cap unless paid. */
 			subscriptionCalls: Number(subscription?.n ?? 0),
 			/** Spend not tied to an application this month (careers-page extraction). */
 			unattributedMicros: Number(unattributed?.micros ?? 0),
-			/** Calls with an unknown outcome, held at their worst case until reconciled (CLI). */
-			held: {
-				count: held.length,
-				micros: held.reduce((n, h) => n + h.estimateMicros, 0),
-			},
+			/** API-key calls this month with an unknown outcome, counted at their worst case. */
+			held,
 			reached:
 				status.enabled &&
 				status.spentMicros + status.reservedMicros >= status.capMicros,

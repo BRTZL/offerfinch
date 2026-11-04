@@ -35,8 +35,8 @@ import {
 export interface ModelConfig {
 	/**
 	 * Fit scoring (and tailoring, unless TAILOR_LLM_PROVIDER says otherwise): `anthropic`, `fake`,
-	 * `claude-subscription` (local only) or `fake-subscription` (tests). Defaults to anthropic when
-	 * ANTHROPIC_API_KEY is set, else fake.
+	 * `claude-subscription` or `codex-subscription` (local only), or `fake-subscription` (tests).
+	 * Defaults to anthropic when ANTHROPIC_API_KEY is set, else fake.
 	 */
 	scoringProvider?: string;
 	/** Tailoring only; unset: LLM_PROVIDER. Same values. */
@@ -50,19 +50,22 @@ export interface ModelConfig {
 	scoringModel?: string;
 	scoringEffort?: string;
 	/**
-	 * Tailoring only (the largest call). Unset: `claude-sonnet-5-5`, with ANTHROPIC_EFFORT. Fit
-	 * scoring keeps ANTHROPIC_MODEL (default `claude-opus-5-5`).
+	 * Tailoring only (the largest call). Unset: `claude-sonnet-5-5` on Claude, the account's
+	 * default on Codex, with ANTHROPIC_EFFORT. Fit scoring keeps ANTHROPIC_MODEL (default
+	 * `claude-opus-5-5` on Claude, the account's default on Codex).
 	 */
 	tailoringModel?: string;
 	tailoringEffort?: string;
 	/** Fake claims check only: "1" makes every check throw (e2e of a failing check). */
 	FAKE_CLAIMS_FAIL?: string;
 	/**
-	 * Claims check provider, a second model family: `openai`, `fake` or `codex-subscription`
-	 * (local only: the user's ChatGPT plan through the Codex CLI, docs/decisions.md). Defaults to
-	 * openai when OPENAI_API_KEY is set.
+	 * Claims check provider, the other company than tailoring's: `openai`, `anthropic`, `fake`,
+	 * or a plan through its local CLI, `codex-subscription` or `claude-subscription` (local only,
+	 * docs/decisions.md). Defaults to openai when OPENAI_API_KEY is set.
 	 */
 	claimsProvider?: string;
+	/** Claims check on Claude (`anthropic`, `claude-subscription`). Unset: `claude-opus-5-5`. */
+	claimsModel?: string;
 	/** codex-subscription only. Unset: the account's default Codex model. */
 	codexModel?: string;
 	/** codex-subscription only: low, medium, high, xhigh or max. Unset: the model's default. */
@@ -170,10 +173,6 @@ export function createLlm(
 	if (provider === "fake") return new FakeLlmProvider();
 	if (provider === "fake-subscription")
 		return new FakeSubscriptionProvider(undefined);
-	if (provider === "codex-subscription")
-		throw new Error(
-			"LLM_PROVIDER=codex-subscription is not supported: Codex is offered only for the claims check (CLAIMS_LLM_PROVIDER=codex-subscription), so a draft is never checked by the vendor that wrote it (docs/decisions.md).",
-		);
 	if (isSubscription(provider))
 		return subscriptionProvider(
 			env,
@@ -181,7 +180,7 @@ export function createLlm(
 			{
 				role: "scoring",
 				provider,
-				model: env.scoringModel || DEFAULT_ANTHROPIC_MODEL,
+				model: planModel(provider, env.scoringModel, DEFAULT_ANTHROPIC_MODEL),
 				effort: effortOf(env.scoringEffort),
 			},
 			options.local,
@@ -199,6 +198,15 @@ export function createLlm(
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
+/** A plan's model: the one named, else Claude's default on Claude, the account's on Codex (""). */
+function planModel(
+	provider: SubscriptionProviderName,
+	model: string | undefined,
+	claudeDefault: string,
+): string {
+	return model || (provider === "codex-subscription" ? "" : claudeDefault);
+}
+
 function effortOf(value: string | undefined) {
 	if (!value) return;
 	const effort = EFFORTS.find((e) => e === value);
@@ -208,10 +216,10 @@ function effortOf(value: string | undefined) {
 }
 
 /**
- * The tailoring model: `claude-sonnet-5-5` unless TAILOR_MODEL names another (Anthropic only,
- * since the claims check must stay a different provider). Effort: TAILOR_EFFORT, else
- * ANTHROPIC_EFFORT, else the provider's default (medium). The fake stays the fake. The provider
- * is TAILOR_LLM_PROVIDER when set, else the scoring one's.
+ * The tailoring model: `claude-sonnet-5-5` on Claude unless TAILOR_MODEL names another, the
+ * account's default on Codex. Effort: TAILOR_EFFORT, else ANTHROPIC_EFFORT, else the provider's
+ * default (medium). The fake stays the fake. The provider is TAILOR_LLM_PROVIDER when set, else
+ * the scoring one's. The claims check is built after it, on the other company.
  */
 export function createTailorLlm(
 	env: ModelConfig,
@@ -223,10 +231,6 @@ export function createTailorLlm(
 		if (chosen === "fake") return new FakeLlmProvider();
 		if (chosen === "fake-subscription")
 			return new FakeSubscriptionProvider(undefined);
-		if (chosen === "codex-subscription")
-			throw new Error(
-				"TAILOR_LLM_PROVIDER=codex-subscription is not supported: Codex is offered only for the claims check (docs/decisions.md).",
-			);
 		if (chosen !== "anthropic" && !isSubscription(chosen))
 			throw new Error(`Unknown TAILOR_LLM_PROVIDER: ${chosen}`);
 		if (chosen === "anthropic" && !env.anthropicKey)
@@ -240,7 +244,7 @@ export function createTailorLlm(
 			{
 				role: "tailoring",
 				provider,
-				model: env.tailoringModel || DEFAULT_TAILOR_MODEL,
+				model: planModel(provider, env.tailoringModel, DEFAULT_TAILOR_MODEL),
 				effort: effortOf(env.tailoringEffort || env.scoringEffort),
 			},
 			options.local,
@@ -254,9 +258,10 @@ export function createTailorLlm(
 }
 
 /**
- * Picks the claims-check model. It must be a different provider from the tailoring model, so a
- * draft is never checked by the model that wrote it. The fake is used only when asked for or
- * allowed by the caller, such as in desktop tests.
+ * Picks the claims-check model. It must be the other company than the tailoring model's, so a
+ * draft is never checked by the company that wrote it: OpenAI (an API key or Codex) for drafts
+ * by Claude, Anthropic (an API key or the Claude plan) for drafts by Codex. The fake is used only
+ * when asked for or allowed by the caller, such as in desktop tests.
  */
 export function createClaimsLlm(
 	env: ModelConfig,
@@ -295,9 +300,23 @@ export function createClaimsLlm(
 						model: env.codexModel || "",
 						effort: effortOf(env.codexEffort),
 					}
-				: { role: "claims", provider, model: env.openaiModel || "" },
+				: {
+						role: "claims",
+						provider,
+						model: env.claimsModel || DEFAULT_ANTHROPIC_MODEL,
+					},
 			options.local,
 		);
+		assertOtherVendor(claims, options.tailoring);
+		return claims;
+	}
+	if (provider === "anthropic") {
+		if (!env.anthropicKey)
+			throw new Error("CLAIMS_LLM_PROVIDER=anthropic needs ANTHROPIC_API_KEY");
+		const claims = new AnthropicProvider({
+			apiKey: env.anthropicKey,
+			model: env.claimsModel || DEFAULT_ANTHROPIC_MODEL,
+		});
 		assertOtherVendor(claims, options.tailoring);
 		return claims;
 	}

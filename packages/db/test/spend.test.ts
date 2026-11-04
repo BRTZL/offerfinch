@@ -99,7 +99,7 @@ describe("spending cap in SQLite", () => {
 		).rejects.toThrow(/between \$0 and \$2,000/);
 	});
 
-	it("holds a call with an unknown outcome against the cap until its owner reconciles it", async () => {
+	it("holds an API call with an unknown outcome against this month's cap", async () => {
 		await execute(db, sql`delete from llm_usage`);
 		const repo = new DashboardRepository(db);
 		const store = new DrizzleSpendStore(db);
@@ -119,14 +119,12 @@ describe("spending cap in SQLite", () => {
 			reservedMicros: 300_000,
 			held: { count: 1, micros: 300_000 },
 		});
-		// Another user cannot settle it.
-		expect(await store.reconcile("u2", reserved.id, 0)).toBe(false);
-		expect(await store.reconcile("u1", reserved.id, 120_000)).toBe(true);
-		expect(await repo.spending("u1")).toMatchObject({
-			spentMicros: 120_000,
-			reservedMicros: 0,
-			held: { count: 0, micros: 0 },
-		});
+		// Next month it no longer counts.
+		const later = new DrizzleSpendStore(
+			db,
+			() => new Date(Date.now() + 32 * 86_400_000),
+		);
+		expect((await later.spendingStatus("u1")).reservedMicros).toBe(0);
 	});
 });
 
@@ -152,19 +150,19 @@ describe("subscription calls in Postgres", () => {
 		// Not confirmed: the provider's own check before each call guards extra usage.
 		await store.confirmExtraUsageOff("u1", false);
 		expect((await reserveSub(store)).ok).toBe(true);
-		await store.clearExtraUsageConfirmation("u1");
+		await store.recordPaidStop("u1", "anthropic");
 		expect(await store.extraUsageOffConfirmedAt("u1")).toBeNull();
-		// Confirming again is not enough: Claude stays paused until it is resumed.
+		// Confirming again is not enough: Claude stays stopped until it is resumed.
 		await store.confirmExtraUsageOff("u1", true);
 		expect(await reserveSub(store)).toMatchObject({
 			ok: false,
-			reason: "payment_unresolved",
+			reason: "vendor_stopped",
 		});
 		await store.resumeSubscription("u1", "anthropic");
 		expect((await reserveSub(store)).ok).toBe(true);
 	});
 
-	it("counts an open subscription reservation at its worst case, and a settled one at $0", async () => {
+	it("never counts a subscription reservation against the cap, open or settled at $0", async () => {
 		await execute(db, sql`delete from llm_usage`);
 		const repo = new DashboardRepository(db);
 		await repo.setSpendingCap("u1", {
@@ -176,9 +174,13 @@ describe("subscription calls in Postgres", () => {
 		const first = await reserveSub(store);
 		expect(first.ok).toBe(true);
 		if (!first.ok) return;
-		expect((await store.spendingStatus("u1")).reservedMicros).toBe(300_000);
-		// No room for a second worst case while the first is open.
-		expect(await reserveSub(store)).toMatchObject({ ok: false, reason: "cap" });
+		expect((await store.spendingStatus("u1")).reservedMicros).toBe(0);
+		// Past the cap's room: a subscription call is not capped.
+		expect((await reserveSub(store, 900_000)).ok).toBe(true);
+		await execute(
+			db,
+			sql`delete from llm_usage where estimate_micros = 900000`,
+		);
 		await store.settleSpend(first.id, {
 			usage: {
 				model: "claude-sonnet-5-5",
@@ -218,8 +220,7 @@ describe("subscription calls in Postgres", () => {
 		const store = new DrizzleSpendStore(db);
 		await store.confirmExtraUsageOff("u1", true);
 		const paid = await reserveSub(store);
-		const held = await reserveSub(store);
-		if (!paid.ok || !held.ok) throw new Error("not reserved");
+		if (!paid.ok) throw new Error("not reserved");
 		await store.settleSpend(paid.id, {
 			usage: null,
 			costMicros: 42_000,
@@ -227,30 +228,28 @@ describe("subscription calls in Postgres", () => {
 			error: "Subscription paused (extra_usage, x): paid",
 			billing: "api",
 		});
-		await store.holdSpend(held.id, {
-			basis: "paid extra usage, no usage",
-			error: "Subscription paused (extra_usage, x): paid",
-			billing: "api",
-		});
 		const status = await store.spendingStatus("u1");
-		expect(status).toMatchObject({
-			spentMicros: 42_000,
-			reservedMicros: 300_000,
-		});
-		expect((await store.listHeld("u1")).map((h) => h.id)).toEqual([held.id]);
+		expect(status).toMatchObject({ spentMicros: 42_000, reservedMicros: 0 });
 	});
 
-	it("serializes subscription reservations with API ones under the same lock", async () => {
+	it("serializes API reservations under the same lock across connections", async () => {
 		await execute(db, sql`delete from llm_usage`);
 		const repo = new DashboardRepository(db);
 		await repo.setSpendingCap("u1", {
 			enabled: true,
 			monthlyCapMicros: 300_000,
 		});
-		await new DrizzleSpendStore(db).confirmExtraUsageOff("u1", true);
+		const reserveApi = (store: DrizzleSpendStore) =>
+			store.reserveSpend({
+				userId: "u1",
+				applicationId: null,
+				task: "tailor",
+				provider: "anthropic:claude-sonnet-5-5",
+				estimateMicros: 300_000,
+			});
 		const results = await Promise.all([
-			reserveSub(new DrizzleSpendStore(db)),
-			reserveSub(new DrizzleSpendStore(other)),
+			reserveApi(new DrizzleSpendStore(db)),
+			reserveApi(new DrizzleSpendStore(other)),
 		]);
 		expect(results.filter((r) => r.ok)).toHaveLength(1);
 	});
@@ -332,58 +331,34 @@ describe("the subscription call budget in Postgres", () => {
 });
 
 describe("a reservation whose process died", () => {
-	it("is listed as held after an hour and can be reconciled, still counting until then", async () => {
+	it("counts a stale API reservation as held this month; a stale subscription one never counts", async () => {
 		await execute(db, sql`delete from llm_usage`);
 		const store = new DrizzleSpendStore(db);
-		await store.confirmExtraUsageOff("u1", true);
-		const open = await store.reserveSpend({
-			userId: "u1",
-			applicationId: null,
-			task: "tailor",
-			provider: "claude-subscription:claude-sonnet-5-5",
-			estimateMicros: 2_880_000,
-			billing: "subscription",
-			modelCalls: 2,
-		});
-		if (!open.ok) throw new Error("not reserved");
-		expect(await store.listHeld("u1")).toEqual([]);
+		for (const [provider, billing] of [
+			["claude-subscription:claude-sonnet-5-5", "subscription"],
+			["anthropic:claude-sonnet-5-5", "api"],
+		] as const) {
+			const open = await store.reserveSpend({
+				userId: "u1",
+				applicationId: null,
+				task: "tailor",
+				provider,
+				estimateMicros: 2_880_000,
+				billing,
+				modelCalls: billing === "subscription" ? 1 : 0,
+			});
+			if (!open.ok) throw new Error("not reserved");
+		}
+		expect(await store.heldApiCalls("u1")).toEqual({ count: 0, micros: 0 });
 		const later = new DrizzleSpendStore(
 			db,
 			() => new Date(Date.now() + 61 * 60_000),
 		);
-		expect((await later.listHeld("u1")).map((h) => h.id)).toEqual([open.id]);
+		expect(await later.heldApiCalls("u1")).toEqual({
+			count: 1,
+			micros: 2_880_000,
+		});
 		expect((await later.spendingStatus("u1")).reservedMicros).toBe(2_880_000);
-		expect(await later.reconcile("u1", open.id, 0)).toBe(true);
-		expect((await later.spendingStatus("u1")).reservedMicros).toBe(0);
-	});
-
-	it("counts a stale subscription reservation reconciled at a positive amount as spent", async () => {
-		await execute(db, sql`delete from llm_usage`);
-		const store = new DrizzleSpendStore(db);
-		await store.confirmExtraUsageOff("u1", true);
-		const open = await store.reserveSpend({
-			userId: "u1",
-			applicationId: null,
-			task: "tailor",
-			provider: "claude-subscription:claude-sonnet-5-5",
-			estimateMicros: 2_880_000,
-			billing: "subscription",
-			modelCalls: 1,
-		});
-		if (!open.ok) throw new Error("not reserved");
-		const later = new DrizzleSpendStore(
-			db,
-			() => new Date(Date.now() + 61 * 60_000),
-		);
-		// Not the owner's: refused, and the row stays held.
-		expect(await later.reconcile("u2", open.id, 1_500_000)).toBe(false);
-		expect(await later.reconcile("u1", open.id, 1_500_000)).toBe(true);
-		expect(await later.spendingStatus("u1")).toMatchObject({
-			spentMicros: 1_500_000,
-			reservedMicros: 0,
-		});
-		// Settled rows are no longer held, so a second reconcile cannot change it.
-		expect(await later.reconcile("u1", open.id, 0)).toBe(false);
 	});
 });
 
@@ -407,12 +382,12 @@ describe("a paid call pauses its own vendor only", () => {
 			true,
 		);
 		expect((await reserve("codex-subscription:default")).ok).toBe(true);
-		await store.clearExtraUsageConfirmation("u1", "anthropic");
+		await store.recordPaidStop("u1", "anthropic");
 		expect(
 			await reserve("claude-subscription:claude-sonnet-5-5"),
 		).toMatchObject({
 			ok: false,
-			reason: "payment_unresolved",
+			reason: "vendor_stopped",
 		});
 		expect((await reserve("codex-subscription:default")).ok).toBe(true);
 		await store.resumeSubscription("u1", "anthropic");

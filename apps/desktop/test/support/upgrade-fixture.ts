@@ -1084,6 +1084,24 @@ function applicationExtras(): Record<string, Row[]> {
 				created_at: at(6),
 				settled_at: null,
 			},
+			{
+				// The paid Claude call behind the stop in subscription_pauses: the stop stays.
+				id: "lu4",
+				user_id: U,
+				application_id: null,
+				task: "score",
+				provider: "claude-subscription:claude-opus-5-5",
+				model: "claude-opus-5-5",
+				status: "settled",
+				estimate_micros: 90000,
+				cost_micros: 42000,
+				model_calls: 1,
+				price_basis: "paid extra usage on the Claude plan",
+				billing: "api",
+				error: "Subscription paused (extra_usage): paid",
+				created_at: at(5) - 600_000,
+				settled_at: at(5) - 60_000,
+			},
 		],
 	};
 }

@@ -1,8 +1,12 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fitAssessmentSchema } from "@offerfinch/core/scoring/fit";
 import { SubscriptionUnavailableError } from "@offerfinch/core/scoring/llm";
 import { meteredFor, type SpendStore } from "@offerfinch/core/scoring/metered";
+import { toStrictJsonSchema } from "@offerfinch/core/scoring/openai";
+import { claimsCheckSchema } from "@offerfinch/core/tailor/claims/types";
+import { tailorOutputSchema } from "@offerfinch/core/tailor/tailor";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -511,12 +515,14 @@ describe("payment after a sent call (ChatGPT login, fake turn runner)", () => {
 		result: CodexTurnResult,
 		breaker = new Breaker(),
 		fresh: Record<string, number> | null = null,
+		log?: (message: string) => void,
 	) {
 		let turns = 0;
 		let reads = 0;
 		const p = new CodexSubscriptionProvider({
 			ownerUserId: "user-1",
 			authFile,
+			log,
 			// Never the real CLI: a path that does not exist, and a fake turn runner.
 			binary: join(dir, "no-codex"),
 			breaker,
@@ -548,40 +554,45 @@ describe("payment after a sent call (ChatGPT login, fake turn runner)", () => {
 		onUsage,
 	});
 
-	it("pauses as payment unknown when an answered call's second credit read fails, and sends nothing further", async () => {
-		const breaker = new Breaker();
-		const { p, turns } = payProvider(answered({ codex: 100 }, null), breaker);
-		let usage = 0;
-		const error = await p
-			.generateObject(request(() => usage++))
-			.catch((e: unknown) => e);
-		expect(error).toBeInstanceOf(SubscriptionUnavailableError);
-		expect((error as SubscriptionUnavailableError).kind).toBe("extra_usage");
-		expect((error as SubscriptionUnavailableError).paid).toBe("unknown");
-		expect(usage).toBe(1);
-		expect(breaker.current(new Date())).toBe(error);
-		await expect(p.generateObject(request())).rejects.toBe(error);
-		expect(turns()).toBe(1);
+	it("returns the answer, logged, when an answered call's second credit read fails or lacks a bucket: no pause", async () => {
+		for (const after of [null, { other: 100 }]) {
+			const breaker = new Breaker();
+			const warnings: string[] = [];
+			const { p, turns } = payProvider(
+				answered({ codex: 100 }, after),
+				breaker,
+				null,
+				(message) => {
+					if (message.startsWith("warning")) warnings.push(message);
+				},
+			);
+			let usage = 0;
+			await expect(p.generateObject(request(() => usage++))).resolves.toEqual({
+				verdict: "fit",
+				reasons: [],
+			});
+			expect(usage).toBe(1);
+			expect(warnings).toHaveLength(1);
+			expect(breaker.current(new Date())).toBeNull();
+			await p.generateObject(request());
+			expect(turns()).toBe(2);
+		}
 	});
 
-	it("pauses as payment unknown when a sent turn failed and the second credit read failed", async () => {
+	it("fails a sent turn whose second credit read failed as an ordinary unpaid call", async () => {
 		const failed: CodexTurnResult = {
 			...answered({ codex: 100 }, null),
 			text: null,
 			status: "failed",
 			turnError: { message: "stream disconnected", info: null },
 		};
-		const error = await payProvider(failed)
+		const breaker = new Breaker();
+		const error = await payProvider(failed, breaker)
 			.p.generateObject(request())
 			.catch((e: unknown) => e);
-		expect(error).toBeInstanceOf(SubscriptionUnavailableError);
-		expect((error as SubscriptionUnavailableError).paid).toBe("unknown");
-	});
-
-	it("pauses as payment unknown when the second read lacks a bucket the first had", async () => {
-		const { p } = payProvider(answered({ codex: 100 }, { other: 100 }));
-		const error = await p.generateObject(request()).catch((e: unknown) => e);
-		expect((error as SubscriptionUnavailableError).paid).toBe("unknown");
+		expect(error).toBeInstanceOf(Error);
+		expect(error).not.toBeInstanceOf(SubscriptionUnavailableError);
+		expect(breaker.current(new Date())).toBeNull();
 	});
 
 	it("records a dropped balance as paid, and returns the answer only when the balances prove it unpaid", async () => {
@@ -600,7 +611,7 @@ describe("payment after a sent call (ChatGPT login, fake turn runner)", () => {
 		).resolves.toEqual({ verdict: "fit", reasons: [] });
 	});
 
-	it("resuming lifts only a paid or payment-unknown pause: a usage limit, a logout or unreadable credits stay", () => {
+	it("resuming lifts only a paid pause: a usage limit, a logout or unreadable credits stay", () => {
 		const now = new Date();
 		const stays = [
 			new SubscriptionUnavailableError("usage_limit", "p", "x"),
@@ -613,29 +624,27 @@ describe("payment after a sent call (ChatGPT login, fake turn runner)", () => {
 			resumeCodexCalls(breaker);
 			expect(breaker.current(now)).toBe(error);
 		}
-		for (const paid of [true, "unknown"] as const) {
-			const breaker = new Breaker();
-			breaker.trip(
-				new SubscriptionUnavailableError(
-					"extra_usage",
-					"p",
-					"x",
-					undefined,
-					paid,
-				),
-				now,
-			);
-			resumeCodexCalls(breaker);
-			expect(breaker.current(now)).toBeNull();
-		}
+		const breaker = new Breaker();
+		breaker.trip(
+			new SubscriptionUnavailableError(
+				"extra_usage",
+				"p",
+				"x",
+				undefined,
+				true,
+			),
+			now,
+		);
+		resumeCodexCalls(breaker);
+		expect(breaker.current(now)).toBeNull();
 	});
 
-	it("hold, reconcile, resume: the next call is sent, in the same process", async () => {
-		// The first call's second credit read fails (payment unknown); later ones read fine.
+	it("paid, stopped, resumed: the next call is sent, in the same process", async () => {
+		// The first call spent credits; later ones read the same balance after.
 		const results = [
-			answered({ codex: 100 }, null),
-			answered({ codex: 100 }, { codex: 100 }),
-			answered({ codex: 100 }, { codex: 100 }),
+			answered({ codex: 100 }, { codex: 98 }),
+			answered({ codex: 98 }, { codex: 98 }),
+			answered({ codex: 98 }, { codex: 98 }),
 		];
 		let turns = 0;
 		// The process-wide breaker, as the worker's provider has it (no `breaker` option).
@@ -647,41 +656,28 @@ describe("payment after a sent call (ChatGPT login, fake turn runner)", () => {
 			runTurn: async (input) => {
 				const result = results[Math.min(turns, results.length - 1)];
 				if (!result) throw new Error("no scripted turn");
-				if (input.creditsOnly)
-					return {
-						...result,
-						text: null,
-						sent: false,
-						creditsBefore: null,
-						creditsAfter: null,
-					};
 				turns++;
 				input.onModelCall?.();
 				return result;
 			},
 		});
-		// Gates like the SQLite store: a held or paused Codex row refuses until resumed.
-		const rows: { status: string }[] = [];
-		let resumed = true;
+		// Gates like the SQLite store: a paid Codex call stops Codex until resumed.
+		let stopped = false;
+		const stops: string[] = [];
 		const store = {
-			reserveSpend: async () => {
-				if (!resumed || rows.some((r) => r.status === "held"))
-					return {
-						ok: false as const,
-						reason: "payment_unresolved" as const,
-						detail: "a Codex call is held: reconcile it, then resume Codex",
-					};
-				rows.push({ status: "reserved" });
-				return { ok: true as const, id: String(rows.length - 1) };
-			},
-			settleSpend: async (id: string) => {
-				Object.assign(rows[Number(id)] ?? {}, { status: "settled" });
-			},
-			holdSpend: async (id: string) => {
-				Object.assign(rows[Number(id)] ?? {}, { status: "held" });
-			},
-			clearExtraUsageConfirmation: async () => {
-				resumed = false;
+			reserveSpend: async () =>
+				stopped
+					? {
+							ok: false as const,
+							reason: "vendor_stopped" as const,
+							detail: "Codex used paid credits. Calls are stopped.",
+						}
+					: { ok: true as const, id: "1" },
+			settleSpend: async () => {},
+			holdSpend: async () => {},
+			recordPaidStop: async (_user: string, vendor: string) => {
+				stops.push(vendor);
+				stopped = true;
 			},
 			recordRefusal: async () => {},
 		} as unknown as SpendStore;
@@ -691,13 +687,11 @@ describe("payment after a sent call (ChatGPT login, fake turn runner)", () => {
 				.catch((e: unknown) => e as Error);
 		try {
 			const first = await call();
-			expect((first as SubscriptionUnavailableError).paid).toBe("unknown");
-			expect(rows[0]?.status).toBe("held");
+			expect((first as SubscriptionUnavailableError).paid).toBe(true);
+			expect(stops).toEqual(["openai"]);
 			expect(await call()).toBeInstanceOf(SubscriptionUnavailableError);
-			// The user reconciles the held call and resumes Codex.
-			Object.assign(rows[0] ?? {}, { status: "settled" });
-			resumed = true;
-			// Without lifting the breaker the call would still not be sent.
+			// The user resumes Codex in the store: this process's breaker still stops it.
+			stopped = false;
 			expect(await call()).toBeInstanceOf(SubscriptionUnavailableError);
 			expect(turns).toBe(1);
 			resumeCodexCalls();
@@ -803,15 +797,14 @@ describe("the second credit read after an aborted turn", () => {
 		expect((error as SubscriptionUnavailableError).paid).toBe(true);
 	});
 
-	it("stays unknown when the fresh read fails or lacks a bucket", async () => {
+	it("is the tool attempt alone, never paid, when the fresh read fails or lacks a bucket", async () => {
 		for (const fresh of [null, "throws", { other: 100 }] as const) {
 			const error = await provider(fresh)
 				.p.generateObject(request)
 				.catch((e: unknown) => e);
-			expect(
-				(error as SubscriptionUnavailableError).paid,
-				JSON.stringify(fresh),
-			).toBe("unknown");
+			expect(error, JSON.stringify(fresh)).toBeInstanceOf(
+				CodexToolAttemptError,
+			);
 		}
 	});
 });
@@ -987,5 +980,45 @@ describe("plan usage reads (ChatGPT login, fake turn runner)", () => {
 			extraUsage: null,
 			credits: { balance: 10, unlimited: false },
 		});
+	});
+});
+
+describe("the schemas Codex answers for finding matches and drafting", () => {
+	/** Every node of a JSON Schema: its keywords and nested schemas, never property names. */
+	function nodes(node: unknown, out: Record<string, unknown>[] = []) {
+		if (Array.isArray(node)) for (const item of node) nodes(item, out);
+		else if (node && typeof node === "object") {
+			const o = node as Record<string, unknown>;
+			out.push(o);
+			for (const [key, value] of Object.entries(o))
+				nodes(
+					key === "properties" ? Object.values(value as object) : value,
+					out,
+				);
+		}
+		return out;
+	}
+	const keywordsOf = (json: unknown) =>
+		new Set(nodes(json).flatMap((o) => Object.keys(o)));
+	/** Objects that are not strict: a map, an open object, or a field left optional. */
+	const loose = (json: unknown) =>
+		nodes(json).filter((o) => {
+			if (o.type !== "object") return false;
+			const props = Object.keys((o.properties ?? {}) as object);
+			return (
+				!props.length ||
+				o.additionalProperties !== false ||
+				JSON.stringify(o.required) !== JSON.stringify(props)
+			);
+		});
+
+	it("convert to the same strict shape the real Codex backend accepted for the claims check", () => {
+		// The claims schema is proven on the real backend (decisions.md, real-login proof).
+		const proven = keywordsOf(toStrictJsonSchema(claimsCheckSchema));
+		for (const zod of [fitAssessmentSchema, tailorOutputSchema]) {
+			const json = toStrictJsonSchema(zod);
+			expect(loose(json)).toEqual([]);
+			expect([...keywordsOf(json)].filter((k) => !proven.has(k))).toEqual([]);
+		}
 	});
 });

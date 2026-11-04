@@ -584,6 +584,13 @@ export const documents = sqliteTable(
 		version: integer("version").notNull().default(1),
 		content: text("content"),
 		createdBy: actor("created_by").notNull().default("workflow"),
+		/**
+		 * The model that wrote this version's text (`anthropic:…`, `claude-subscription:…`,
+		 * `codex-subscription:…`). A user's edit keeps the version it edits' author, so the claims
+		 * check never goes to the company that wrote the words. Null: written before authors were
+		 * recorded (2026-11-04), when only Anthropic could draft.
+		 */
+		authorProvider: text("author_provider"),
 		/** For exports: the markdown version they were rendered from. */
 		sourceVersion: integer("source_version"),
 		/** For exports: page count, byte size, ATS findings. */
@@ -761,7 +768,7 @@ export const llmUsage = sqliteTable(
 		/**
 		 * `api`: per token, counted by the cap (an API key, or a subscription call that drew on
 		 * paid extra usage). `subscription`: the user's own plan through a local CLI, settled at $0
-		 * with real tokens; while reserved, its worst case counts against the cap.
+		 * with real tokens, never counted by the cap.
 		 */
 		billing: text("billing")
 			.$type<"api" | "subscription">()
@@ -895,10 +902,10 @@ export const linkedinSeen = sqliteTable(
 );
 
 /**
- * A subscription vendor stopped after a call that was paid or whose payment is unknown: its
- * calls are refused until the user has reconciled every held call and resumed it. Kept in the
- * database, so a restart does not lift it (the provider's breaker lives only in memory). The
- * Claude side also needs the extra-usage confirmation again, which the same event withdraws.
+ * A subscription vendor stopped after a paid call (Claude extra usage, ChatGPT credits): its
+ * calls are refused until the user resumes it in Settings > Models. Kept in the database, so a
+ * restart does not lift it (the provider's breaker lives only in memory). A paid Claude call also
+ * withdraws the Claude extra-usage confirmation; resuming Claude sets it again.
  */
 export const subscriptionPauses = sqliteTable(
 	"subscription_pauses",

@@ -46,6 +46,7 @@ import {
 	SqliteSiteStore,
 	SqliteWebStore,
 } from "@offerfinch/db";
+import { draftingVendor, type Vendor, vendorOf } from "../shared/auto-connect";
 import type { SecretName } from "../shared/bridge";
 import type { SiteTabHost } from "./checks";
 import {
@@ -103,9 +104,9 @@ const withTest = <P extends LlmProvider | undefined>(p: P, delayMs = 0): P =>
 		? new FakeWithConnectionTest(p, delayMs)
 		: p) as P;
 
-/** The claims check never runs on the vendor that wrote the draft (tailoring is Anthropic). */
+/** The claims check never runs on the company that wrote the draft. */
 export const VENDOR_RULE =
-	"A draft is never checked by the AI that wrote it: finding matches and drafting run on Anthropic (an API key or your Claude plan), checking drafts on OpenAI (an API key or your ChatGPT plan through Codex).";
+	"A draft is never checked by the company that wrote it. Drafts by Claude (your plan or an Anthropic key) are checked by OpenAI (Codex or an OpenAI key); drafts by Codex are checked by Claude (your plan or an Anthropic key).";
 
 export interface PipelineInputs {
 	db: Database;
@@ -150,6 +151,12 @@ export interface RoleState {
 
 type Role = "scoring" | "tailoring" | "claims";
 
+/** The company's name for messages. */
+const COMPANY: Record<Vendor, string> = {
+	anthropic: "Claude",
+	openai: "OpenAI",
+};
+
 /** Why a role's choice cannot run, or null when it can be built. */
 function problemOf(
 	role: Role,
@@ -162,28 +169,35 @@ function problemOf(
 		return input.fakeModels
 			? null
 			: "Test models are only available in test runs.";
-	if (role === "claims") {
-		if (mode === "claude-subscription")
-			return `Claude cannot check claims here: ${VENDOR_RULE}`;
-		if (mode === "codex-subscription")
-			return input.local
-				? null
-				: "Subscriptions are not available in this build.";
+	const drafting = draftingVendor(ai);
+	const vendor = vendorOf(role, mode, drafting);
+	if (role === "claims" && drafting && vendor === drafting)
+		return `${COMPANY[drafting]} writes the drafts, so it can't check them. ${VENDOR_RULE}`;
+	if (mode !== "api")
+		return input.local
+			? null
+			: "Subscriptions are not available in this build.";
+	if (vendor === "openai") {
 		if (!secrets.openai)
 			return "Add an OpenAI API key in Settings > Models for the claims check.";
 		if (!ai.claims.model)
 			return "Choose the OpenAI model for the claims check in Settings > Models.";
 		return null;
 	}
-	if (mode === "codex-subscription")
-		return `Codex runs the claims check only: ${VENDOR_RULE}`;
-	if (mode === "claude-subscription")
-		return input.local
-			? null
-			: "Subscriptions are not available in this build.";
 	return secrets.anthropic
 		? null
 		: "Add an Anthropic API key in Settings > Models.";
+}
+
+/**
+ * The model a role's setting names, when it belongs to the company the role runs on: a Claude
+ * model never goes to OpenAI or Codex, nor an OpenAI model to Claude (a choice made for one
+ * company stays stored when the role moves to the other). Unset: that company's default.
+ */
+function modelFor(vendor: Vendor | null, model: string | undefined) {
+	if (!model) return;
+	const claude = model.startsWith("claude");
+	return (vendor === "anthropic") === claude ? model : undefined;
 }
 
 /**
@@ -202,14 +216,19 @@ export function buildPipeline(input: PipelineInputs): {
 		tailoring: problemOf("tailoring", ai, secrets, input),
 		claims: problemOf("claims", ai, secrets, input),
 	};
+	const drafting = draftingVendor(ai);
+	const vendors = {
+		scoring: vendorOf("scoring", ai.scoring.mode, drafting),
+		tailoring: vendorOf("tailoring", ai.tailoring.mode, drafting),
+		claims: vendorOf("claims", ai.claims.mode, drafting),
+	};
 	const providerName = (role: Role) =>
 		ai[role].mode === "fake"
 			? "fake"
 			: ai[role].mode === "api"
-				? role === "claims"
-					? "openai"
-					: "anthropic"
+				? (vendors[role] ?? "anthropic")
 				: ai[role].mode;
+	const model = (role: Role) => modelFor(vendors[role], ai[role].model);
 	const env: ModelConfig = {
 		SUBMIT_ALLOWED_HOSTS: "",
 		ownerUserId: input.ownerUserId,
@@ -219,14 +238,15 @@ export function buildPipeline(input: PipelineInputs): {
 			? JSON.stringify(input.boardBases)
 			: undefined,
 	};
-	if (ai.scoring.model) env.scoringModel = ai.scoring.model;
+	env.scoringModel = model("scoring");
 	if (ai.scoring.effort) env.scoringEffort = ai.scoring.effort;
-	if (ai.tailoring.model) env.tailoringModel = ai.tailoring.model;
+	env.tailoringModel = model("tailoring");
 	if (ai.tailoring.effort) env.tailoringEffort = ai.tailoring.effort;
 	if (ai.claims.mode === "codex-subscription") {
-		if (ai.claims.model) env.codexModel = ai.claims.model;
+		env.codexModel = model("claims");
 		if (ai.claims.effort) env.codexEffort = ai.claims.effort;
-	} else if (ai.claims.model) env.openaiModel = ai.claims.model;
+	} else if (vendors.claims === "openai") env.openaiModel = model("claims");
+	else env.claimsModel = model("claims");
 	const options = { allowFake: input.fakeModels, local: input.local };
 	const notConnected = (role: Role) =>
 		new NotConnectedProvider(`not-connected:${role}`, problems[role] ?? "");

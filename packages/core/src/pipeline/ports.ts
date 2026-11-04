@@ -97,6 +97,11 @@ export interface StoredDocument {
 	version: number;
 	content: string;
 	createdBy: Actor;
+	/**
+	 * The model that wrote this text (`LlmProvider.name`); a user's edit keeps the author of the
+	 * version it edited. Null: saved before authors were recorded, when only Anthropic drafted.
+	 */
+	authorProvider?: string | null;
 }
 
 export interface Draft {
@@ -104,6 +109,8 @@ export interface Draft {
 	cv: string;
 	coverLetter: string;
 	formAnswers: { question: string; answer: string }[];
+	/** The model that wrote it (`LlmProvider.name`), stored as each version's author. */
+	provider?: string;
 }
 
 export interface StoredReview {
@@ -354,6 +361,8 @@ export interface PipelineRepository {
 		applicationId: string,
 		requestId: string,
 		versions: { kind: RedraftDocument; content: string }[],
+		/** The model that wrote the versions (`LlmProvider.name`). */
+		author?: string,
 	): Promise<"saved" | "gone" | "conflict">;
 	/** Records why a redraft has not run (paused, an error after retries) on its request. */
 	setRedraftProblem?(

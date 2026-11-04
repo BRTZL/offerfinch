@@ -263,9 +263,62 @@ describe("subscription providers", () => {
 			effort: "low",
 			ownerUserId: "user-123",
 		});
+	});
+
+	it("run finding matches and drafting on Codex, with the account's default model, and check on Claude", () => {
+		made.length = 0;
+		const codexEnv = {
+			...env,
+			scoringProvider: "codex-subscription",
+			tailoringProvider: "codex-subscription",
+		};
+		const scoring = createLlm(codexEnv, { local });
+		const tailoring = createTailorLlm(codexEnv, scoring, { local });
+		expect(scoring.name).toBe("codex-subscription:");
+		expect(tailoring.name).toBe("codex-subscription:");
+		expect(made.map((m) => [m.role, m.provider, m.model])).toEqual([
+			["scoring", "codex-subscription", ""],
+			["tailoring", "codex-subscription", ""],
+		]);
+		// Drafts by Codex: never checked by Codex or an OpenAI key.
 		expect(() =>
-			createLlm({ ...env, scoringProvider: "codex-subscription" }, { local }),
-		).toThrow(/only for the claims check/);
+			createClaimsLlm(
+				{ ...codexEnv, claimsProvider: "codex-subscription" },
+				{ tailoring, local },
+			),
+		).toThrow(/different provider from tailoring \(both openai\)/);
+		expect(() =>
+			createClaimsLlm(
+				{ ...codexEnv, openaiKey: "sk-o", openaiModel: "gpt-6.1-terra" },
+				{ tailoring, local },
+			),
+		).toThrow(/both openai/);
+		// Checked by Claude: the plan with Claude's model (never an OpenAI one), or an Anthropic key.
+		const plan = createClaimsLlm(
+			{
+				...codexEnv,
+				claimsProvider: "claude-subscription",
+				openaiModel: "gpt-api-model",
+			},
+			{ tailoring, local },
+		);
+		expect(plan.name).toBe("claude-subscription:claude-opus-5-5");
+		expect(made.at(-1)).toMatchObject({
+			role: "claims",
+			provider: "claude-subscription",
+			model: "claude-opus-5-5",
+		});
+		const key = createClaimsLlm(
+			{ ...codexEnv, claimsProvider: "anthropic" },
+			{ tailoring, local },
+		);
+		expect(key.name).toBe("anthropic:claude-opus-5-5");
+		expect(() =>
+			createClaimsLlm(
+				{ ownerUserId: "user-123", claimsProvider: "anthropic" },
+				{ tailoring, local },
+			),
+		).toThrow(/needs ANTHROPIC_API_KEY/);
 	});
 
 	it("wire a local pipeline end to end: subscription scoring and tailoring, API claims", () => {

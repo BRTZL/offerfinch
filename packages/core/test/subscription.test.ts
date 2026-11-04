@@ -17,13 +17,8 @@ import {
 	SubscriptionUnavailableError,
 } from "../src/scoring/llm";
 import {
-	ANSWERED_NO_USAGE_BASIS,
-	BILLING_UNCLEAR_BASIS,
-	EXTRA_USAGE_BASIS,
 	MeteredLlm,
-	OUTCOME_UNKNOWN_BASIS,
-	PAYMENT_UNKNOWN_BASIS,
-	SpendingCapReachedError,
+	paidBasis,
 	type SpendStore,
 	SUBSCRIPTION_BASIS,
 } from "../src/scoring/metered";
@@ -32,8 +27,9 @@ import { MemoryRepo } from "./memory-repo";
 
 /**
  * Subscription providers: every call is a $0 row marked `subscription` with the tokens the CLI
- * reported, the cap neither refuses nor counts them, and a usage limit or a logout pauses the
- * application (no step retries, never `failed`) until the sweep wakes it.
+ * reported, however it ended, the cap neither refuses nor counts them, and a usage limit or a
+ * logout pauses the application (no step retries, never `failed`) until the sweep wakes it. Only
+ * a call the vendor said was paid is priced (`api`), and it stops that vendor until resumed.
  */
 
 const PROFILE = await loadProfileFromDir(join(FIXTURES, "tailor-profile"));
@@ -62,14 +58,15 @@ interface Row {
 }
 
 /**
- * Mirrors DrizzleSpendStore: every reservation (subscription too) counts at its worst case
- * until settled; settled spend counts only `api` rows; a subscription call needs the user's
- * confirmation that extra usage is off.
+ * Mirrors DrizzleSpendStore: open API reservations count at their worst case until settled;
+ * settled spend counts only `api` rows; subscription calls never count against the cap, and a
+ * vendor stopped after a paid call takes no new call until resumed.
  */
 class MemorySpend implements SpendStore {
 	rows: Row[] = [];
 	pausedJobIds: string[] = [];
 	extraUsageOff = true;
+	stopped = new Set<string>();
 	budget = 40;
 	constructor(public capMicros: number) {}
 	async subscriptionBudget() {
@@ -83,25 +80,35 @@ class MemorySpend implements SpendStore {
 		return this.rows.reduce(
 			(n, r) =>
 				n +
-				(r.status === "reserved"
-					? r.estimate
-					: r.billing === "api"
-						? r.cost
-						: 0),
+				(r.billing !== "api"
+					? 0
+					: r.status === "reserved"
+						? r.estimate
+						: r.cost),
 			0,
 		);
 	}
 	async reserveSpend(input: Parameters<SpendStore["reserveSpend"]>[0]) {
 		const billing = input.billing ?? "api";
-		if (billing === "subscription" && !this.extraUsageOff)
-			return { ok: false as const, reason: "extra_usage_unconfirmed" as const };
+		const vendor = input.provider.startsWith("codex-subscription:")
+			? "openai"
+			: "anthropic";
+		if (billing === "subscription" && this.stopped.has(vendor))
+			return {
+				ok: false as const,
+				reason: "vendor_stopped" as const,
+				detail: `${vendor} is stopped after a paid call; resume it in Settings > Models.`,
+			};
 		const budget = await this.subscriptionBudget();
 		if (
 			billing === "subscription" &&
 			budget.used + (input.modelCalls ?? 0) > budget.budget
 		)
 			return { ok: false as const, reason: "call_budget" as const, ...budget };
-		if (this.used() + input.estimateMicros > this.capMicros)
+		if (
+			billing === "api" &&
+			this.used() + input.estimateMicros > this.capMicros
+		)
 			return {
 				ok: false as const,
 				reason: "cap" as const,
@@ -131,10 +138,9 @@ class MemorySpend implements SpendStore {
 			error: input.error,
 		});
 	}
-	clearedVendors: (string | undefined)[] = [];
-	async clearExtraUsageConfirmation(_userId: string, vendor?: string) {
-		this.clearedVendors.push(vendor);
-		this.extraUsageOff = false;
+	async recordPaidStop(_userId: string, vendor: string) {
+		this.stopped.add(vendor);
+		if (vendor === "anthropic") this.extraUsageOff = false;
 	}
 	async listCapPausedJobIds() {
 		return this.pausedJobIds;
@@ -152,8 +158,6 @@ class MemorySpend implements SpendStore {
 		if (!row) return;
 		row.error = input.error;
 		row.basis = input.basis;
-		if (input.billing) row.billing = input.billing;
-		if (input.modelCalls !== undefined) row.modelCalls = input.modelCalls;
 	}
 	async settleSpend(
 		id: string,
@@ -195,6 +199,7 @@ function priced(failure: () => string = () => "") {
 	const fake = new FakeSubscriptionProvider("u1", inner, failure);
 	return Object.assign(fake, {
 		name: "claude-subscription:claude-sonnet-5-5",
+		vendor: "anthropic",
 	}) as FakeSubscriptionProvider;
 }
 
@@ -225,7 +230,7 @@ async function setup(
 }
 
 describe("subscription billing", () => {
-	it("records $0 rows marked subscription with real tokens, after reserving each call's worst case", async () => {
+	it("records $0 rows marked subscription with real tokens", async () => {
 		const spend = new MemorySpend(100_000_000);
 		const { repo } = await setup(spend, {
 			llm: new FakeSubscriptionProvider("u1", new FakeLlmProvider(), () => ""),
@@ -253,23 +258,42 @@ describe("subscription billing", () => {
 		}
 	});
 
-	it("pauses a subscription call when the cap has no room for its worst case (it could turn out paid)", async () => {
+	it("prepares on plans even when the cap is used up: the cap stops API-key work only", async () => {
+		const spend = new MemorySpend(0);
+		const { repo } = await setup(spend, {
+			llm: new FakeSubscriptionProvider("u1", new FakeLlmProvider(), () => ""),
+			claimsLlm: new FakeSubscriptionProvider(
+				"u1",
+				new FakeLlmProvider(),
+				() => "",
+			),
+		});
+		expect(["ready_for_review", "needs_answers"]).toContain(
+			repo.apps[0]?.state,
+		);
+	});
+
+	it("never refuses or counts a subscription call against the cap", async () => {
 		const spend = new MemorySpend(0);
 		const provider = priced();
 		const metered = new MeteredLlm(provider, spend, {
 			userId: "u1",
 			applicationId: null,
 		});
-		const error = await metered
-			.generateObject({
+		await expect(
+			metered.generateObject({
 				task: "x",
 				system: "",
 				prompt: "x",
 				schema: {} as never,
-			})
-			.catch((e: unknown) => e);
-		expect(error).toBeInstanceOf(SpendingCapReachedError);
-		expect(provider.calls).toEqual([]);
+			}),
+		).resolves.toEqual({ ok: true });
+		expect(provider.calls).toEqual(["x"]);
+		expect(spend.rows[0]).toMatchObject({
+			billing: "subscription",
+			status: "settled",
+			cost: 0,
+		});
 	});
 
 	it("refuses a subscription call for any account but its owner, before the CLI runs", async () => {
@@ -425,25 +449,7 @@ describe("paid extra usage", () => {
 			})
 			.catch((e: unknown) => e);
 
-	it("refuses every subscription call until extra usage is confirmed off, before the CLI runs, and says how", async () => {
-		const spend = new MemorySpend(100_000_000);
-		spend.extraUsageOff = false;
-		const provider = priced();
-		const metered = new MeteredLlm(provider, spend, {
-			userId: "u1",
-			applicationId: null,
-		});
-		const error = await call(metered);
-		expect(error).toBeInstanceOf(SubscriptionUnavailableError);
-		expect((error as SubscriptionUnavailableError).kind).toBe("extra_usage");
-		expect(provider.calls).toEqual([]);
-		expect(spend.rows[0]?.error).toMatch(
-			new RegExp(`^${SUBSCRIPTION_PAUSE_PREFIX} \\(extra_usage`),
-		);
-		expect(spend.rows[0]?.error).toMatch(/Settings › Models/);
-	});
-
-	it("records a call that drew on extra usage at its API price, counted by the cap, and withdraws the confirmation", async () => {
+	it("records a call that drew on extra usage at its API price, counted by the cap, and stops Claude until resumed", async () => {
 		const spend = new MemorySpend(100_000_000);
 		let failure = "extra_usage";
 		const provider = priced(() => failure);
@@ -456,17 +462,23 @@ describe("paid extra usage", () => {
 		const row = spend.rows[0];
 		expect(row).toMatchObject({ billing: "api", status: "settled" });
 		expect(row?.cost).toBeGreaterThan(0);
-		expect(row?.basis).toMatch(new RegExp(`^${EXTRA_USAGE_BASIS}`));
+		expect(row?.basis).toMatch(new RegExp(`^${paidBasis("anthropic")}`));
+		expect(row?.basis).toMatch(/Claude plan/);
 		expect((await spend.spendingStatus()).spentMicros).toBe(row?.cost);
 		expect(spend.extraUsageOff).toBe(false);
-		// The next call is refused until the user confirms again.
+		// The next call is refused before the CLI starts, until the user resumes Claude.
 		failure = "";
 		const next = await call(metered);
 		expect((next as SubscriptionUnavailableError).kind).toBe("extra_usage");
+		expect((next as Error).message).toMatch(
+			new RegExp(`^${SUBSCRIPTION_PAUSE_PREFIX} \\(extra_usage`),
+		);
 		expect(provider.calls).toEqual(["x"]);
+		spend.stopped.clear();
+		await expect(call(metered)).resolves.toEqual({ ok: true });
 	});
 
-	it("holds a paid call that reported no usage at its worst case against the cap", async () => {
+	it("records a paid call that reported no usage at its worst case, as api, never held", async () => {
 		const spend = new MemorySpend(100_000_000);
 		const provider = priced(() => "extra_usage_no_usage");
 		const metered = new MeteredLlm(provider, spend, {
@@ -475,9 +487,10 @@ describe("paid extra usage", () => {
 		});
 		await call(metered);
 		const row = spend.rows[0];
-		expect(row).toMatchObject({ billing: "api", status: "reserved" });
-		expect((await spend.spendingStatus()).spentMicros).toBe(row?.estimate);
+		expect(row).toMatchObject({ billing: "api", status: "settled" });
 		expect(row?.estimate).toBeGreaterThan(0);
+		expect(row?.cost).toBe(row?.estimate);
+		expect((await spend.spendingStatus()).spentMicros).toBe(row?.estimate);
 	});
 });
 
@@ -495,20 +508,17 @@ describe("a subscription call that fails", () => {
 		usage?: boolean;
 		error: Error;
 		codex?: boolean;
-		/** The result arrived and the session showed no sign of paid extra usage. */
-		answered?: boolean;
 	}) {
 		const provider: LlmProvider = {
 			name: opts.codex
 				? "codex-subscription:gpt-6.1-sol"
 				: "claude-subscription:claude-sonnet-5-5",
-			...(opts.codex ? { vendor: "openai" } : {}),
+			vendor: opts.codex ? "openai" : "anthropic",
 			billing: "subscription",
 			ownerUserId: "u1",
 			async generateObject<T>(request: GenerateObjectRequest<T>): Promise<T> {
 				if (opts.sent) request.onModelCall?.();
 				if (opts.usage) request.onUsage?.(usage);
-				if (opts.answered) request.onAnswered?.();
 				throw opts.error;
 			},
 		};
@@ -530,26 +540,50 @@ describe("a subscription call that fails", () => {
 				schema: {} as never,
 			})
 			.catch(() => {});
-		const row = spend.rows[0];
+		const row = spend.rows.at(-1);
 		if (!row) throw new Error("no row");
 		return { row, spent: (await spend.spendingStatus()).spentMicros };
 	}
 
-	it("holds a sent prompt whose answer never came back at its reservation", async () => {
-		const { row, spent } = await run(
-			failing({
-				sent: true,
-				error: new Error("the CLI ended without an answer"),
-			}),
-		);
-		expect(row).toMatchObject({
-			status: "reserved",
-			billing: "subscription",
-			modelCalls: 1,
-			error: "the CLI ended without an answer",
-		});
-		expect(row.estimate).toBeGreaterThan(0);
-		expect(spent).toBe(row.estimate);
+	it("settles every unpaid ending at $0 on the plan, with its tokens, and stops nothing", async () => {
+		const endings: Record<string, Error> = {
+			"no answer": new Error("the CLI ended without an answer"),
+			"lost stream": new Error("lost response"),
+			"failed the schema": new Error(
+				"claude-subscription:claude-opus-5-5: no valid structured output for fit-score",
+			),
+			"a 429": new SubscriptionUnavailableError("usage_limit", "p", "limit"),
+			"a 401": new SubscriptionUnavailableError("logged_out", "p", "logout"),
+			"a boundary abort": new SubscriptionUnavailableError(
+				"boundary",
+				"p",
+				"a tool",
+			),
+			"a tool attempt": new Error("the model tried to use a tool"),
+		};
+		for (const [ending, error] of Object.entries(endings))
+			for (const codex of [false, true])
+				for (const withUsage of [false, true]) {
+					const spend = new MemorySpend(100_000_000);
+					const { row, spent } = await run(
+						failing({ sent: true, usage: withUsage, error, codex }),
+						spend,
+					);
+					const label = `${ending} ${codex ? "codex" : "claude"} ${withUsage}`;
+					expect(row, label).toMatchObject({
+						status: "settled",
+						billing: "subscription",
+						cost: 0,
+						modelCalls: 1,
+						basis: SUBSCRIPTION_BASIS,
+						error: error.message,
+					});
+					expect(row.tokens, label).toBe(withUsage ? 12_000 : undefined);
+					expect(spent, label).toBe(0);
+					// No stop: the confirmation stands and the next call is sent.
+					expect(spend.stopped.size, label).toBe(0);
+					expect(spend.extraUsageOff, label).toBe(true);
+				}
 	});
 
 	it("releases a call that failed before its prompt was sent", async () => {
@@ -560,32 +594,9 @@ describe("a subscription call that fails", () => {
 		expect(spent).toBe(0);
 	});
 
-	it("releases a sent prompt the vendor refused before processing (a 429 or 401 pause)", async () => {
-		for (const kind of ["usage_limit", "logged_out"] as const) {
-			const { row, spent } = await run(
-				failing({
-					sent: true,
-					error: new SubscriptionUnavailableError(kind, "p", "refused"),
-				}),
-			);
-			expect(row).toMatchObject({ status: "settled", cost: 0, modelCalls: 1 });
-			expect(spent).toBe(0);
-		}
-	});
-
-	it("holds a sent prompt the session aborted after sending (a boundary violation)", async () => {
-		const { row } = await run(
-			failing({
-				sent: true,
-				error: new SubscriptionUnavailableError("boundary", "p", "a tool"),
-			}),
-		);
-		expect(row.status).toBe("reserved");
-	});
-
-	it("releases a call refused before sending with an earlier paid call's error, keeping the confirmation", async () => {
+	it("releases a call refused before sending with an earlier paid call's error, stopping nothing new", async () => {
 		const spend = new MemorySpend(100_000_000);
-		const metered = new MeteredLlm(
+		const { row } = await run(
 			failing({
 				sent: false,
 				error: new SubscriptionUnavailableError(
@@ -597,230 +608,43 @@ describe("a subscription call that fails", () => {
 				),
 			}),
 			spend,
-			{ userId: "u1", applicationId: null },
 		);
-		await metered
-			.generateObject({
-				task: "x",
-				system: "",
-				prompt: "x",
-				schema: {} as never,
-			})
-			.catch(() => {});
-		expect(spend.rows[0]).toMatchObject({
+		expect(row).toMatchObject({
 			status: "settled",
 			billing: "subscription",
 			cost: 0,
 			modelCalls: 0,
 		});
+		expect(spend.stopped.size).toBe(0);
 		expect(spend.extraUsageOff).toBe(true);
 	});
 
-	it("holds a sent call whose payment is unknown at its reservation, tokens or not, and stops later calls until confirmed again", async () => {
-		for (const withUsage of [true, false]) {
-			const spend = new MemorySpend(100_000_000);
-			const unknown = new SubscriptionUnavailableError(
-				"extra_usage",
-				"p",
-				"the credit balance could not be read again",
-				undefined,
-				"unknown",
-			);
-			const metered = new MeteredLlm(
-				failing({ sent: true, usage: withUsage, error: unknown, codex: true }),
-				spend,
-				{ userId: "u1", applicationId: null },
-			);
-			const request = {
-				task: "x",
-				system: "",
-				prompt: "x",
-				schema: {} as never,
-			};
-			expect(await metered.generateObject(request).catch((e) => e)).toBe(
-				unknown,
-			);
-			const row = spend.rows[0];
-			expect(row).toMatchObject({
-				status: "reserved",
-				billing: "subscription",
-				modelCalls: 1,
-			});
-			expect(row?.basis?.startsWith(PAYMENT_UNKNOWN_BASIS)).toBe(true);
-			expect(row?.estimate).toBeGreaterThan(0);
-			expect((await spend.spendingStatus()).spentMicros).toBe(row?.estimate);
-			// Nothing further is sent until the user reconciles and confirms again: the paid-call
-			// path's withdrawal, for this provider's vendor.
-			expect(spend.extraUsageOff).toBe(false);
-			expect(spend.clearedVendors).toEqual(["openai"]);
-			const next = await metered.generateObject(request).catch((e) => e);
-			expect((next as SubscriptionUnavailableError).kind).toBe("extra_usage");
-			expect(spend.rows[1]).toMatchObject({ status: "settled", cost: 0 });
-		}
-	});
-
-	it("releases a call refused before sending with an earlier unknown-payment error, keeping the confirmation", async () => {
-		const { row } = await run(
-			failing({
-				sent: false,
-				error: new SubscriptionUnavailableError(
-					"extra_usage",
-					"p",
-					"unknown",
-					undefined,
-					"unknown",
-				),
-			}),
-		);
-		expect(row).toMatchObject({ status: "settled", cost: 0, modelCalls: 0 });
-	});
-
-	it("settles at $0 a call whose answer arrived but failed the schema, without usage, and keeps Claude running", async () => {
-		const spend = new MemorySpend(100_000_000);
-		const provider = failing({
-			sent: true,
-			answered: true,
-			error: new Error(
-				"claude-subscription:claude-opus-5-5: no valid structured output for fit-score: Failed to provide valid structured output after 1 attempts",
-			),
-		});
-		const { row, spent } = await run(provider, spend);
-		expect(row).toMatchObject({
-			status: "settled",
-			billing: "subscription",
-			cost: 0,
-			modelCalls: 1,
-			basis: ANSWERED_NO_USAGE_BASIS,
-		});
-		expect(row.error).toMatch(/no valid structured output/);
-		expect(spent).toBe(0);
-		// No pause: the confirmation stands and the next call is sent.
-		expect(spend.extraUsageOff).toBe(true);
-		expect(spend.clearedVendors).toEqual([]);
-		await run(provider, spend);
-		expect(spend.rows[1]).toMatchObject({ status: "settled", modelCalls: 1 });
-	});
-
-	it("still holds a sent call whose answer never arrived (no result)", async () => {
-		const { row, spent } = await run(
-			failing({ sent: true, error: new Error("lost response") }),
-		);
-		expect(row).toMatchObject({
-			status: "reserved",
-			billing: "subscription",
-			basis: OUTCOME_UNKNOWN_BASIS,
-		});
-		expect(spent).toBe(row.estimate);
-	});
-
-	it("records a paid call at its API price and withdraws the confirmation even when its answer arrived", async () => {
+	it("records a paid Codex call as ChatGPT credits and stops Codex only: Claude and its confirmation stay", async () => {
 		const spend = new MemorySpend(100_000_000);
 		const paid = new SubscriptionUnavailableError(
 			"extra_usage",
 			"p",
-			"drew on extra usage",
+			"the credit balance went down",
 			undefined,
 			true,
 		);
 		const { row, spent } = await run(
-			failing({ sent: true, usage: true, answered: true, error: paid }),
+			failing({ sent: true, usage: true, error: paid, codex: true }),
 			spend,
 		);
 		expect(row).toMatchObject({ status: "settled", billing: "api" });
 		expect(row.cost).toBeGreaterThan(0);
-		expect(row.basis).toMatch(new RegExp(`^${EXTRA_USAGE_BASIS}`));
+		expect(row.basis).toMatch(/ChatGPT credits on the Codex plan/);
+		expect(row.basis).not.toMatch(/Claude/);
 		expect(spent).toBe(row.cost);
-		expect(spend.extraUsageOff).toBe(false);
-		// Without usage, the paid call is still held at its worst case, as api.
-		const held = await run(
-			failing({ sent: true, answered: true, error: paid }),
+		expect([...spend.stopped]).toEqual(["openai"]);
+		expect(spend.extraUsageOff).toBe(true);
+		// Claude still runs.
+		const claude = await run(
+			failing({ sent: true, error: new Error("no answer") }),
+			spend,
 		);
-		expect(held.row).toMatchObject({ status: "reserved", billing: "api" });
-	});
-
-	it("still holds a sent call whose payment is unknown even when its answer arrived", async () => {
-		const { row } = await run(
-			failing({
-				sent: true,
-				answered: true,
-				error: new SubscriptionUnavailableError(
-					"extra_usage",
-					"p",
-					"unknown",
-					undefined,
-					"unknown",
-				),
-			}),
-		);
-		expect(row.status).toBe("reserved");
-		expect(row.basis?.startsWith(PAYMENT_UNKNOWN_BASIS)).toBe(true);
-	});
-
-	it("returns a valid answer from a session that also failed, but holds its spend", async () => {
-		const spend = new MemorySpend(100_000_000);
-		const provider: LlmProvider = {
-			name: "claude-subscription:claude-sonnet-5-5",
-			billing: "subscription",
-			ownerUserId: "u1",
-			async generateObject<T>(request: GenerateObjectRequest<T>): Promise<T> {
-				request.onModelCall?.();
-				request.onUsage?.(usage);
-				request.onBillingUnclear?.("a crash result after the answer");
-				return { ok: true } as T;
-			},
-		};
-		const metered = new MeteredLlm(provider, spend, {
-			userId: "u1",
-			applicationId: null,
-		});
-		await expect(
-			metered.generateObject({
-				task: "x",
-				system: "",
-				prompt: "x",
-				schema: {} as never,
-			}),
-		).resolves.toEqual({ ok: true });
-		const row = spend.rows[0];
-		expect(row).toMatchObject({
-			status: "reserved",
-			billing: "subscription",
-			error: "a crash result after the answer",
-			modelCalls: 1,
-		});
-		expect(row?.basis?.startsWith(BILLING_UNCLEAR_BASIS)).toBe(true);
-		expect((await spend.spendingStatus()).spentMicros).toBe(row?.estimate);
-	});
-
-	it("holds a call whose session failed around its answer even when the answer failed the schema, with tokens", async () => {
-		const provider: LlmProvider = {
-			name: "claude-subscription:claude-sonnet-5-5",
-			billing: "subscription",
-			ownerUserId: "u1",
-			async generateObject<T>(request: GenerateObjectRequest<T>): Promise<T> {
-				request.onModelCall?.();
-				request.onUsage?.(usage);
-				request.onBillingUnclear?.("a crash result after the answer");
-				throw new Error("no valid structured output");
-			},
-		};
-		const { row, spent } = await run(provider);
-		expect(row).toMatchObject({ status: "reserved", modelCalls: 1 });
-		expect(row.basis?.startsWith(BILLING_UNCLEAR_BASIS)).toBe(true);
-		expect(spent).toBe(row.estimate);
-	});
-
-	it("settles an answer that failed the schema at $0 with its tokens", async () => {
-		const { row, spent } = await run(
-			failing({ sent: true, usage: true, error: new Error("bad schema") }),
-		);
-		expect(row).toMatchObject({
-			status: "settled",
-			cost: 0,
-			basis: SUBSCRIPTION_BASIS,
-			tokens: 12_000,
-		});
-		expect(spent).toBe(0);
+		expect(claude.row).toMatchObject({ status: "settled", modelCalls: 1 });
 	});
 });
 
