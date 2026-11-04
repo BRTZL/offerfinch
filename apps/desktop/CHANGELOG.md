@@ -8,7 +8,7 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
-## Unreleased
+## 0.1.5 (2026-11-04)
 
 - The job filter now keeps or rejects, nothing in between, and what it rejects is hidden
   everywhere. A remote job that names no place ("Remote") is kept and ranked lower; a city or
