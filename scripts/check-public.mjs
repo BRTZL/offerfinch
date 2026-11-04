@@ -5,9 +5,11 @@
 // Usage: node scripts/check-public.mjs [--images] [--ci]
 //   PUBLIC_DENYLIST: the list's path (default ~/.config/offerfinch/public-denylist.txt), one term
 //   per line. In CI it comes from a secret; without it only the patterns run, with a warning.
-//   --images: also reads the text in PNG, JPEG and TIFF files with macOS Vision, and in video
-//   frames (one every 2 s, through ffmpeg); a file it still cannot read fails the check (slow).
+//   --images: also reads the text in PNG, JPEG and TIFF files with macOS Vision; a file it
+//   cannot read (a video, an archive, a document) fails the check (slow).
 //   --ci: a missing or empty denylist is a warning, not a failure (CI without the secret).
+//   OFFERFINCH_OCR_CACHE: a directory where the text read from each image is kept by the file's
+//   content hash, so an unchanged image is not read again.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -67,7 +69,6 @@ const PATTERNS = [
 const TEXT =
 	/\.(md|mdx|ts|tsx|mts|cts|js|mjs|cjs|json|jsonc|yml|yaml|toml|txt|css|html|svg|sh|swift|plist|sql|env|example|gitignore|schema)$/i;
 const IMAGE = /\.(png|jpe?g|tiff?)$/i;
-const VIDEO = /\.(mp4|mov|m4v|webm)$/i;
 /** Icons: shapes, no text worth reading. Anything else unread is listed. */
 const ICON = /\.(icns|ico|car)$/i;
 /** Sounds the app synthesizes (no speech, no text): nothing to read. */
@@ -151,28 +152,30 @@ function scan(file, text, skip = new Set()) {
 }
 
 let ocr = null;
-/** ffmpeg, for reading video frames with --images; without it a video is unread. */
-let ffmpeg = null;
-if (images)
-	for (const candidate of [
-		"ffmpeg",
-		"/opt/homebrew/bin/ffmpeg",
-		"/usr/local/bin/ffmpeg",
-	])
-		try {
-			execFileSync(candidate, ["-version"], { stdio: "ignore" });
-			ffmpeg = candidate;
-			break;
-		} catch {}
+const ocrCache = process.env.OFFERFINCH_OCR_CACHE || null;
+if (images && ocrCache) fs.mkdirSync(ocrCache, { recursive: true });
+/** The text Vision reads in an image, from the cache when the same bytes were read before. */
+function imageText(full) {
+	const cached =
+		ocrCache &&
+		path.join(
+			ocrCache,
+			`${createHash("sha256").update(fs.readFileSync(full)).digest("hex")}.txt`,
+		);
+	if (cached && fs.existsSync(cached)) return fs.readFileSync(cached, "utf8");
+	const text = execFileSync(ocr, [full], { encoding: "utf8" });
+	if (cached) fs.writeFileSync(cached, text);
+	return text;
+}
 if (images) {
 	ocr = path.join(os.tmpdir(), "offerfinch-ocr");
-	if (!fs.existsSync(ocr))
-		execFileSync("swiftc", [
-			"-O",
-			path.join(root, "scripts/ocr.swift"),
-			"-o",
-			ocr,
-		]);
+	const source = path.join(root, "scripts/ocr.swift");
+	// Compiled once, and again whenever the source is newer than the binary.
+	if (
+		!fs.existsSync(ocr) ||
+		fs.statSync(ocr).mtimeMs < fs.statSync(source).mtimeMs
+	)
+		execFileSync("swiftc", ["-O", source, "-o", ocr]);
 }
 for (const file of files) {
 	const full = path.join(root, file);
@@ -180,45 +183,17 @@ for (const file of files) {
 	if (TEXT.test(file) || !path.extname(file)) {
 		if (fs.statSync(full).size > 5_000_000) continue;
 		scan(file, fs.readFileSync(full, "utf8"));
-	} else if ((IMAGE.test(file) || VIDEO.test(file)) && !ocr) {
+	} else if (IMAGE.test(file) && !ocr) {
 		// Read with --images.
-	} else if (VIDEO.test(file) && ffmpeg) {
-		// One frame every 2 seconds, each read like an image.
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "offerfinch-frames-"));
-		try {
-			execFileSync(ffmpeg, [
-				"-loglevel",
-				"error",
-				"-i",
-				full,
-				"-vf",
-				"fps=1/2",
-				path.join(dir, "f%05d.png"),
-			]);
-			for (const frame of fs.readdirSync(dir).sort()) {
-				const second = (Number.parseInt(frame.slice(1), 10) - 1) * 2;
-				try {
-					scan(
-						`${file} (frame at ${second}s)`,
-						execFileSync(ocr, [path.join(dir, frame)], { encoding: "utf8" }),
-					);
-				} catch {}
-			}
-		} catch {
-			unread.push(file);
-		} finally {
-			fs.rmSync(dir, { recursive: true, force: true });
-		}
 	} else if (!IMAGE.test(file) && !ICON.test(file) && !SYNTHESIZED.has(file)) {
 		unread.push(file);
 	} else if (ocr && IMAGE.test(file)) {
+		// A read Vision could not do is an unread file, never a blank one (the check would pass).
 		try {
-			scan(
-				`${file} (image text)`,
-				execFileSync(ocr, [full], { encoding: "utf8" }),
-				imageSkips(file),
-			);
-		} catch {}
+			scan(`${file} (image text)`, imageText(full), imageSkips(file));
+		} catch {
+			unread.push(file);
+		}
 	}
 }
 
@@ -226,11 +201,7 @@ if (unread.length) {
 	const list = unread.map((f) => `  ${f}`).join("\n");
 	if (images)
 		// A full check that could not read a file has not checked the tree.
-		findings.push(
-			...unread.map(
-				(f) => `${f}: not read${VIDEO.test(f) ? " (install ffmpeg)" : ""}`,
-			),
-		);
+		findings.push(...unread.map((f) => `${f}: not read`));
 	else console.warn(`Not read without --images:\n${list}`);
 }
 if (!denylist)

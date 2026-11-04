@@ -57,7 +57,8 @@ function run(
 		},
 		files: { cv: pdf("cv.pdf"), coverLetter: pdf("cover-letter.pdf") },
 		claim: async () => ({ go: true }),
-		confirmTimeoutMs: 5_000,
+		// The fixtures answer at once; an outcome that never confirms waits this long.
+		confirmTimeoutMs: 3_000,
 	};
 }
 

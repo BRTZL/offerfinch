@@ -64,8 +64,10 @@ Desktop e2e defaults to background mode: windows stay hidden, never take focus, 
 no Dock or menu-bar icon. It uses temporary data folders, fake models, and local fixture
 boards. One foreground-only theme
 case is skipped in this mode. Never point tests, measurements, or screenshots at real app
-data. CI runs lint, types, unit tests, headless browser safety tests, and Knip on `macos-15`;
-desktop e2e runs locally and in the release workflow.
+data. CI runs lint, types, Knip, the core, SQLite and runner unit tests and the browser safety
+tests on Linux (the runner image's Google Chrome), and the local-LLM and desktop unit tests on
+`macos-15`, the only ones that need it (`sandbox-exec`, diagnostics zips). Desktop e2e runs
+locally and in the release workflow, in three shards.
 
 `node scripts/check-public.mjs --images` scans tracked text and image text for personal data.
 It is an optional local check, no longer run in CI; its accepted findings are recorded in

@@ -1,8 +1,12 @@
 name: CI
 
 # Every pull request, and on demand. Not on pushes to main: what lands there was checked in its
-# pull request, and a release runs these checks again (desktop-release.yml). macOS runners bill
-# at 10x on a private repository.
+# pull request, and a release runs these checks again (desktop-release.yml).
+#
+# Four jobs side by side; the slowest sets the time. Linux runners start at once and are
+# plentiful; macOS runners are few and queue, so only what needs macOS runs there: the Codex
+# boundary tests (sandbox-exec) and the desktop app's own tests (its diagnostics zips are
+# macOS-only). "check" gathers the four into the one status the main ruleset requires.
 on:
   pull_request:
   workflow_dispatch:
@@ -15,12 +19,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
-    runs-on: macos-15
-    timeout-minutes: 30
+  # Existing diagnostics are budgeted per file/rule/message; new warnings fail.
+  static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Reads the exact pnpm version from package.json's packageManager.
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm lint:ci
+      - run: pnpm -r check-types
+      - run: pnpm knip
+
+  # The unit tests that run anywhere: core, the store and the runner.
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm rebuild better-sqlite3
+      - name: Unit tests
+        run: pnpm --filter @offerfinch/core --filter @offerfinch/db --filter @offerfinch/runner test
+
+  # The unit tests that need macOS: the Codex boundary (sandbox-exec) and the desktop app.
+  unit-mac:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -37,11 +76,41 @@ jobs:
           pnpm --dir "$RUNNER_TEMP/codex-tests" add @openai/codex@0.166.0 --ignore-scripts
           # The sandbox needs the native executable, not pnpm's shell/Node wrapper.
           node scripts/codex-test-path.mjs "$RUNNER_TEMP/codex-tests/node_modules" >> "$GITHUB_PATH"
-      # Existing diagnostics are budgeted per file/rule/message; new warnings fail.
-      - run: pnpm lint:ci
-      - run: pnpm -r check-types
       - name: Unit tests
-        run: pnpm test
-      - name: Browser safety tests (headless system Chrome)
+        run: pnpm --filter @offerfinch/local-llm --filter @offerfinch/desktop test
+
+  # Fixture-only safety tests in the runner image's headless Google Chrome.
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OFFERFINCH_CHROME: /usr/bin/google-chrome
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Browser safety tests
         run: pnpm --filter @offerfinch/core test:browser
-      - run: pnpm knip
+
+  # The one status the main ruleset requires: green only when every job above passed.
+  check:
+    needs: [static, unit, unit-mac, browser]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed?
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if echo "$RESULTS" | jq -e 'to_entries | all(.value.result == "success")' > /dev/null; then
+            echo "All passed."
+          else
+            echo "::error::A job did not pass."
+            exit 1
+          fi

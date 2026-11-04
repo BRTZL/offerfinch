@@ -1,7 +1,7 @@
 # Releasing OfferFinch
 
 One workflow releases the macOS app: `.github/workflows/desktop-release.yml` ("Release" in the
-Actions tab). It runs only for a release, never on an ordinary push: CI and the public check run
+Actions tab). It runs only for a release, never on an ordinary push: CI runs
 on pull requests (and on demand from the Actions tab).
 
 A release publishes a GitHub Release in this repository with:
@@ -71,9 +71,10 @@ Three ways, all ending in the same jobs:
    origin v0.1.1-preview.1` releases a preview of the tagged commit. A stable tag must match
    `apps/desktop/package.json` (the script does that for you).
 
-How long a run takes is unknown until the first one (the end-to-end suite is the longest job;
-it is capped at 75 minutes). Only one release runs at a time and a running release is never
-cancelled. A second run waits; GitHub keeps only one waiting run, so a third replaces the
+A run takes about ten minutes once its macOS runners start (the checks and the build run side
+by side; the longest is the build at about six minutes, each e2e shard about four), plus however
+long GitHub takes to hand out macOS runners, which has been anything from seconds to twenty
+minutes. Only one release runs at a time and a running release is never cancelled. A second run waits; GitHub keeps only one waiting run, so a third replaces the
 waiting one. Installed apps find a new
 release within 6 hours (or at once with Settings › General › Updates › Check Now), download it in
 the background and offer **Restart to Update**.
@@ -84,16 +85,19 @@ the background and offer **Restart to Update**.
    ends the run here, green. Otherwise the channel, version, tag and notes
    (`scripts/release-plan.mjs`, tested by `scripts/release-plan.test.mjs`), and whether this is a
    dry run.
-2. **quality** (lint, types, knip, release plan tests, public check), **test** (unit tests) and
-   **e2e** (the whole desktop suite in the background, each failing test retried once), in
-   parallel.
+2. In parallel: **quality** (lint, types, knip, release plan tests) and **test**
+   (the core, store and runner unit tests) on Linux; **test-mac** (the Codex boundary tests,
+   which need `sandbox-exec`, and the desktop app's tests), **e2e** (the desktop suite in three
+   shards, in the background, each failing test retried once) and **build** on macOS.
 3. **build**, in the `release` environment (the signing secrets); it fails at once if a
    signing secret is missing. arm64 and x64 on one macOS runner, signed with the Developer ID,
    notarized and verified (`codesign`, `spctl`, `stapler`), then a launch check: the packaged
    arm64 app opens in background test mode against a temporary data folder and must reach its
-   setup screen. The files are kept as the run's `offerfinch-mac` artifact for 14 days.
-4. **finalize** (the button only), in the `release-push` environment: commit and tag, pushed over
-   SSH with the release deploy key.
+   setup screen. The files are kept as the run's `offerfinch-mac` artifact for 14 days. It does
+   not wait for the checks: a failed check leaves the signed build as that artifact and nothing
+   more.
+4. **finalize** (the button only), once every check and the build have passed, in the
+   `release-push` environment: commit and tag, pushed over SSH with the release deploy key.
 5. **publish**: the GitHub Release, titled "OfferFinch X.Y.Z", with the resolved notes.
 6. **notify**: one phone notification (ntfy) for success, failure or a finished dry run.
 
