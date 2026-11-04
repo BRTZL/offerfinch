@@ -98,7 +98,7 @@ function sameWindow(
 }
 
 /** A complete read older than the last complete read: it says nothing new about the whole. */
-export function stalePlanSnapshot(
+function stalePlanSnapshot(
 	state: PlanUsageState,
 	snapshot: PlanSnapshot,
 ): boolean {
