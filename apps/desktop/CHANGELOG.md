@@ -8,7 +8,7 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
-## Unreleased
+## 0.1.3 (2026-11-04)
 
 - The welcome screen shows what OfferFinch does in a short demo of the Inbox: roles arrive from
   the job boards, each is scored against your CV, the ones that don't fit are set aside with
