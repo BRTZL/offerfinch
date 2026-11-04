@@ -69,7 +69,7 @@ async function redraftStep(
 	};
 	const tailoring = deps.tailorLlm ?? deps.llm;
 	const capped =
-		(await capReached(deps.spend, userId)) ??
+		(await capReached(deps.spend, userId, [tailoring, deps.claimsLlm])) ??
 		(await subscriptionBudgetReached(deps.spend, userId, [tailoring]));
 	if (capped) {
 		if (!(capped instanceof SpendingCapReachedError))

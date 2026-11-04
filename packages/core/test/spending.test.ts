@@ -105,7 +105,7 @@ class MemorySpend implements SpendStore {
 	async subscriptionBudget() {
 		return { budget: 40, used: 0, resetsAt: null };
 	}
-	async clearExtraUsageConfirmation() {}
+	async recordPaidStop() {}
 	pausedJobIds: string[] = [];
 	async listCapPausedJobIds() {
 		return this.pausedJobIds;

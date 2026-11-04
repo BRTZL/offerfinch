@@ -7,10 +7,9 @@ import type {
 import { fitAssessmentSchema } from "@offerfinch/core/scoring/fit";
 import { SubscriptionUnavailableError } from "@offerfinch/core/scoring/llm";
 import {
-	ANSWERED_NO_USAGE_BASIS,
-	BILLING_UNCLEAR_BASIS,
 	meteredFor,
 	type SpendStore,
+	SUBSCRIPTION_BASIS,
 } from "@offerfinch/core/scoring/metered";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -615,7 +614,7 @@ describe("what the real CLI emits", () => {
 		expect(json.required).toEqual(["requirements", "summary"]);
 	});
 
-	describe("billing from the session, failing closed", () => {
+	describe("billing from the session", () => {
 		const invalid = {
 			type: "result",
 			subtype: "error_max_structured_output_retries",
@@ -640,64 +639,41 @@ describe("what the real CLI emits", () => {
 			error: "server_error",
 			error_status: 500,
 		} as unknown as SDKMessage;
+		/** The provider with its log captured: the warnings an unclear ending writes. */
+		function logged(script: Script, drainMs?: number) {
+			const warnings: string[] = [];
+			const { query, seen } = scripted(script);
+			const claude = new ClaudeSubscriptionProvider({
+				model: "claude-sonnet-5-5",
+				ownerUserId: "u1",
+				parentEnv: { PATH: "/usr/bin", HOME: "/Users/me" },
+				query,
+				breaker: new Breaker(),
+				log: (message) => {
+					if (message.startsWith("warning")) warnings.push(message);
+				},
+				...(drainMs !== undefined ? { drainMs } : {}),
+			});
+			return { claude, warnings, seen };
+		}
 		const outcome = async (script: Script, drainMs?: number) => {
-			let answered = 0;
-			const { claude } = provider(script, drainMs);
-			const error = await claude
-				.generateObject({ ...request(), onAnswered: () => answered++ })
-				.then(() => null)
-				.catch((e: unknown) => e as SubscriptionUnavailableError);
-			return { error, answered };
+			const { claude, warnings } = logged(script, drainMs);
+			const answer = await claude.generateObject(request()).catch((e) => e);
+			return {
+				error:
+					answer instanceof Error
+						? (answer as SubscriptionUnavailableError)
+						: null,
+				answer,
+				warnings,
+			};
 		};
 
-		it("answers output that failed the schema in a session that ended by itself, with no sign of paid", async () => {
-			const { error, answered } = await outcome({ runs: [[invalid]] });
+		it("fails an answer that failed the schema as an ordinary unpaid call", async () => {
+			const { error, warnings } = await outcome({ runs: [[invalid]] });
 			expect(error?.message).toMatch(/no valid structured output/);
 			expect(error?.paid).toBeFalsy();
-			expect(answered).toBe(1);
-		});
-
-		it("answers a success too", async () => {
-			const { error, answered } = await outcome({
-				runs: [[result({ greeting: "hi" })]],
-			});
-			expect(error).toBeNull();
-			expect(answered).toBe(1);
-		});
-
-		it("never answers a crash result, or a result from before the prompt was sent", async () => {
-			expect((await outcome({ runs: [[crash]] })).answered).toBe(0);
-			const early = await outcome({ early: [invalid], runs: [[]] });
-			expect(early.answered).toBe(0);
-		});
-
-		it("never answers a session aborted after its result (an abort ends it like a clean close)", async () => {
-			const { error, answered } = await outcome({ runs: [[invalid, retry]] });
-			expect(error?.message).toMatch(/not retried by the CLI/);
-			expect(answered).toBe(0);
-		});
-
-		it("never answers a session lost after its result, or one with no result", async () => {
-			expect((await outcome({ runs: [[invalid]], lose: true })).answered).toBe(
-				0,
-			);
-			const lost = await outcome({ runs: [[]], lose: true });
-			expect(lost.error?.message).toMatch(/lost response/);
-			expect(lost.answered).toBe(0);
-		});
-
-		it("holds a session still open after its answer: payment unknown, never answered", async () => {
-			for (const run of [[invalid], [result({ greeting: "hi" })]]) {
-				const started = Date.now();
-				const { error, answered } = await outcome(
-					{ runs: [run], hang: true },
-					50,
-				);
-				expect(error).toBeInstanceOf(SubscriptionUnavailableError);
-				expect(error?.paid).toBe("unknown");
-				expect(answered).toBe(0);
-				expect(Date.now() - started).toBeLessThan(5_000);
-			}
+			expect(warnings).toEqual([]);
 		});
 
 		it("a sign of paid extra usage wins wherever it is seen", async () => {
@@ -707,55 +683,45 @@ describe("what the real CLI emits", () => {
 				[overage, retry],
 				[result({ greeting: "hi" }), overage],
 			]) {
-				const { error, answered } = await outcome({ runs: [run] });
+				const { error } = await outcome({ runs: [run] });
 				expect(error).toBeInstanceOf(SubscriptionUnavailableError);
 				expect(error?.paid).toBe(true);
-				expect(answered).toBe(0);
 			}
 		});
 
-		it("never answers a session with any assistant error, paused or not", async () => {
-			const serverError = {
-				type: "assistant",
-				error: "server_error",
-				message: { role: "assistant", content: [] },
-			} as unknown as SDKMessage;
-			const { error, answered } = await outcome({
-				runs: [[serverError, invalid]],
-			});
-			expect(error?.message).toMatch(/no valid structured output/);
-			expect(answered).toBe(0);
+		it("keeps the answer of a session still open after it, logs a warning, and never calls it paid", async () => {
+			const started = Date.now();
+			const ok = await outcome(
+				{ runs: [[result({ greeting: "hi" })]], hang: true },
+				50,
+			);
+			expect(ok.answer).toEqual({ greeting: "hi" });
+			expect(ok.warnings).toHaveLength(1);
+			const bad = await outcome({ runs: [[invalid]], hang: true }, 50);
+			expect(bad.error?.message).toMatch(/no valid structured output/);
+			expect(bad.error?.paid).toBeFalsy();
+			expect(Date.now() - started).toBeLessThan(5_000);
 		});
 
-		it("keeps a valid answer from a session that also failed, but says its billing is unclear", async () => {
+		it("keeps a valid answer from a session that also failed, logs a warning, and stops nothing", async () => {
 			const ok = result({ greeting: "hi" });
 			for (const script of [
-				{ runs: [[ok, crash]] },
-				{ runs: [[crash, ok]] },
-				{ runs: [[ok]], lose: true },
+				{ runs: [[ok, crash], [ok]] },
+				{ runs: [[crash, ok], [ok]] },
+				{ runs: [[ok], [ok]], lose: true },
 			] as Script[]) {
-				let answered = 0;
-				const unclear: string[] = [];
-				const { claude } = provider(script);
-				await expect(
-					claude.generateObject({
-						...request(),
-						onAnswered: () => answered++,
-						onBillingUnclear: (d) => unclear.push(d),
-					}),
-				).resolves.toEqual({ greeting: "hi" });
-				expect(answered).toBe(0);
-				expect(unclear).toHaveLength(1);
-				expect(unclear[0]).toMatch(/session also failed/);
+				const { claude, warnings, seen } = logged(script);
+				await expect(claude.generateObject(request())).resolves.toEqual({
+					greeting: "hi",
+				});
+				expect(warnings).toHaveLength(1);
+				// No breaker trip: the next call is sent.
+				await claude.generateObject(request()).catch(() => {});
+				expect(seen).toHaveLength(2);
 			}
-			// A clean answer is never unclear.
-			const unclear: string[] = [];
-			const { claude } = provider({ runs: [[ok]] });
-			await claude.generateObject({
-				...request(),
-				onBillingUnclear: (d) => unclear.push(d),
-			});
-			expect(unclear).toEqual([]);
+			// A clean answer logs nothing.
+			const clean = await outcome({ runs: [[ok]] });
+			expect(clean.warnings).toEqual([]);
 		});
 
 		describe("a session that failed around its answer (Codex repros of 39848ba)", () => {
@@ -784,7 +750,7 @@ describe("what the real CLI emits", () => {
 				error: "server_error",
 				message: { role: "assistant", content: [] },
 			} as unknown as SDKMessage;
-			/** Records every settlement like the reviewer's store; refuses nothing itself. */
+			/** Records every settlement like the store; refuses nothing itself. */
 			function recordingStore() {
 				const rows: {
 					status: string;
@@ -793,6 +759,7 @@ describe("what the real CLI emits", () => {
 					costMicros?: number;
 					billing?: string;
 				}[] = [];
+				const stops: string[] = [];
 				const store = {
 					reserveSpend: async () => {
 						rows.push({ status: "reserved" });
@@ -804,16 +771,15 @@ describe("what the real CLI emits", () => {
 					) => {
 						Object.assign(rows[Number(id)] ?? {}, { status: "settled", ...x });
 					},
-					holdSpend: async (
-						id: string,
-						x: Parameters<SpendStore["holdSpend"]>[1],
-					) => {
-						Object.assign(rows[Number(id)] ?? {}, { status: "held", ...x });
+					holdSpend: async () => {
+						throw new Error("a subscription call is never held");
 					},
-					clearExtraUsageConfirmation: async () => {},
+					recordPaidStop: async (_user: string, vendor: string) => {
+						stops.push(vendor);
+					},
 					recordRefusal: async () => {},
 				} as unknown as SpendStore;
-				return { rows, store };
+				return { rows, store, stops };
 			}
 			const modes = (output: unknown, tokens: number) => ({
 				"success-crash": {
@@ -844,6 +810,10 @@ describe("what the real CLI emits", () => {
 						],
 					],
 				},
+				"success-still-open": {
+					runs: [[res("success", output, tokens)]],
+					hang: true,
+				},
 			});
 			const schemaOk = z.object({ ok: z.boolean() });
 			const call = (claude: ClaudeSubscriptionProvider, store: SpendStore) =>
@@ -856,52 +826,57 @@ describe("what the real CLI emits", () => {
 					})
 					.catch((e: unknown) => e as Error);
 
-			it("holds the spend whether the answer passed the schema or not, tokens or not", async () => {
+			it("settles at $0 on the plan whether the answer passed the schema or not, tokens or not", async () => {
 				for (const [output, tokens] of [
 					[{ ok: true }, 0],
 					[{ wrong: true }, 10],
 				] as const)
 					for (const [mode, script] of Object.entries(modes(output, tokens))) {
-						const { rows, store } = recordingStore();
-						const { claude } = provider(script as Script);
-						const outcome = await call(claude, store);
-						expect(rows[0], `${mode} ${JSON.stringify(output)}`).toMatchObject({
-							status: "held",
+						const { rows, store, stops } = recordingStore();
+						const { claude } = provider(script as Script, 50);
+						const result = await call(claude, store);
+						const label = `${mode} ${JSON.stringify(output)}`;
+						expect(rows[0], label).toMatchObject({
+							status: "settled",
+							costMicros: 0,
+							basis: SUBSCRIPTION_BASIS,
 							modelCalls: 1,
 						});
-						expect(rows[0]?.basis?.startsWith(BILLING_UNCLEAR_BASIS)).toBe(
-							true,
-						);
-						// A valid answer is still returned; an invalid one still fails.
+						expect(rows[0]?.billing, label).not.toBe("api");
+						expect(stops, label).toEqual([]);
+						// A valid answer is returned; an invalid one fails.
 						if ("ok" in output && mode !== "invalid-assistant-error")
-							expect(outcome).toEqual({ ok: true });
-						else expect(outcome).toBeInstanceOf(Error);
+							expect(result, label).toEqual({ ok: true });
+						else expect(result, label).toBeInstanceOf(Error);
 					}
 			});
 
-			it("stops the next Claude call before it is sent, even with a store that gates nothing", async () => {
+			it("never stops the next Claude call", async () => {
 				for (const [mode, script] of Object.entries(modes({ ok: true }, 0))) {
 					const { rows, store } = recordingStore();
-					const { claude, seen } = provider({
-						...(script as Script),
-						runs: [...((script as Script).runs ?? []), [result({ ok: true })]],
-					});
-					await call(claude, store);
-					const second = await call(claude, store);
-					expect(second, mode).toBeInstanceOf(SubscriptionUnavailableError);
-					expect((second as SubscriptionUnavailableError).kind).toBe(
-						"extra_usage",
+					const { claude, seen } = provider(
+						{
+							...(script as Script),
+							runs: [
+								...((script as Script).runs ?? []),
+								[result({ ok: true })],
+							],
+							hang: false,
+						},
+						50,
 					);
-					expect(seen, mode).toHaveLength(1);
-					expect(rows[1]).toMatchObject({ status: "settled", modelCalls: 0 });
+					await call(claude, store);
+					expect(await call(claude, store), mode).toEqual({ ok: true });
+					expect(seen, mode).toHaveLength(2);
+					expect(rows[1]).toMatchObject({ status: "settled", modelCalls: 1 });
 				}
 			});
 
 			it("settles an answer that failed the schema at $0 when the SDK only repeats its error result on exit", async () => {
 				// The 2026-11-03 false hold: the CLI's result is error_max_structured_output_retries,
 				// then the pinned SDK throws "Claude Code returned an error result: ..." as it exits.
-				const { rows, store } = recordingStore();
-				const { claude, seen } = provider({
+				const { rows, store, stops } = recordingStore();
+				const { query, seen } = scripted({
 					runs: [
 						[res("error_max_structured_output_retries", null, 0)],
 						[result({ ok: true })],
@@ -910,33 +885,36 @@ describe("what the real CLI emits", () => {
 					loseWith:
 						"Claude Code returned an error result: Output does not match required schema",
 				});
+				const warnings: string[] = [];
+				const claude = new ClaudeSubscriptionProvider({
+					model: "claude-sonnet-5-5",
+					ownerUserId: "u1",
+					parentEnv: { PATH: "/usr/bin", HOME: "/Users/me" },
+					query,
+					breaker: new Breaker(),
+					log: (message) => {
+						if (message.startsWith("warning")) warnings.push(message);
+					},
+				});
 				const first = await call(claude, store);
 				expect(first).toBeInstanceOf(Error);
 				expect((first as SubscriptionUnavailableError).paid).toBeFalsy();
 				expect(rows[0]).toMatchObject({
 					status: "settled",
 					costMicros: 0,
-					basis: ANSWERED_NO_USAGE_BASIS,
+					basis: SUBSCRIPTION_BASIS,
 					modelCalls: 1,
 				});
 				expect(rows[0]?.billing).not.toBe("api");
+				expect(stops).toEqual([]);
+				// The repeat is not a session failure: nothing unclear is logged.
+				expect(warnings).toEqual([]);
 				// No breaker trip: the next call is sent.
 				expect(await call(claude, store)).toEqual({ ok: true });
 				expect(seen).toHaveLength(2);
 			});
 
-			it("still counts a stream error that repeats nothing as a failed session", async () => {
-				const { rows, store } = recordingStore();
-				const { claude } = provider({
-					runs: [[res("error_max_structured_output_retries", null, 0)]],
-					lose: true,
-					loseWith: "the CLI was killed",
-				});
-				await call(claude, store);
-				expect(rows[0]?.status).not.toBe("settled");
-			});
-
-			it("keeps a vendor refusal (a 429) released, not held", async () => {
+			it("keeps a vendor refusal (a 429) released", async () => {
 				const { rows, store } = recordingStore();
 				const { claude } = provider({
 					runs: [
@@ -960,11 +938,35 @@ describe("what the real CLI emits", () => {
 				expect((error as SubscriptionUnavailableError).kind).toBe(
 					"usage_limit",
 				);
-				expect(rows[0]).toMatchObject({ status: "settled", modelCalls: 1 });
+				expect(rows[0]).toMatchObject({
+					status: "settled",
+					costMicros: 0,
+					modelCalls: 1,
+				});
+			});
+
+			it("records a paid call as api at its estimated price and stops Claude", async () => {
+				const { rows, store, stops } = recordingStore();
+				const { claude, seen } = provider({
+					runs: [
+						[res("success", { ok: true }, 1_000), overage],
+						[result({ ok: true })],
+					],
+				});
+				const error = await call(claude, store);
+				expect((error as SubscriptionUnavailableError).paid).toBe(true);
+				expect(rows[0]).toMatchObject({ status: "settled", billing: "api" });
+				expect(rows[0]?.costMicros).toBeGreaterThan(0);
+				expect(rows[0]?.basis).toMatch(/Claude plan/);
+				expect(stops).toEqual(["anthropic"]);
+				// This process's breaker stops the next call before it is sent.
+				const next = await call(claude, store);
+				expect((next as SubscriptionUnavailableError).kind).toBe("extra_usage");
+				expect(seen).toHaveLength(1);
 			});
 		});
 
-		describe("resuming Claude after a hold (Settings > Models)", () => {
+		describe("resuming Claude after a paid call (Settings > Models)", () => {
 			it("lifts only the extra-usage pause: a usage limit or logout stays", () => {
 				const now = new Date();
 				for (const kind of ["usage_limit", "logged_out"] as const) {
@@ -980,7 +982,7 @@ describe("what the real CLI emits", () => {
 						"p",
 						"x",
 						undefined,
-						"unknown",
+						true,
 					),
 					now,
 				);
@@ -988,17 +990,10 @@ describe("what the real CLI emits", () => {
 				expect(breaker.current(now)).toBeNull();
 			});
 
-			it("hold, reconcile, resume: the next call is sent, in the same process", async () => {
-				const crash = {
-					type: "result",
-					subtype: "error_during_execution",
-					is_error: true,
-					errors: ["crashed"],
-					modelUsage: {},
-				} as unknown as SDKMessage;
+			it("paid, stopped, resumed: the next call is sent, in the same process", async () => {
 				const { query, seen } = scripted({
 					runs: [
-						[result({ ok: true }), crash],
+						[result({ ok: true }), overage],
 						[result({ ok: true })],
 						[result({ ok: true })],
 					],
@@ -1010,29 +1005,22 @@ describe("what the real CLI emits", () => {
 					parentEnv: { PATH: "/usr/bin", HOME: "/Users/me" },
 					query,
 				});
-				// Gates like the SQLite store: a held Claude row refuses until reconciled and resumed.
-				const rows: { status: string }[] = [];
-				let resumed = true;
+				// Gates like the SQLite store: a paid Claude call stops Claude until resumed.
+				let stopped = false;
 				const store = {
-					reserveSpend: async () => {
-						if (!resumed || rows.some((r) => r.status === "held"))
-							return {
-								ok: false as const,
-								reason: "payment_unresolved" as const,
-								detail:
-									"a Claude call is held: reconcile it, then resume Claude",
-							};
-						rows.push({ status: "reserved" });
-						return { ok: true as const, id: String(rows.length - 1) };
+					reserveSpend: async () =>
+						stopped
+							? {
+									ok: false as const,
+									reason: "vendor_stopped" as const,
+									detail: "Claude used paid extra usage. Calls are stopped.",
+								}
+							: { ok: true as const, id: "1" },
+					settleSpend: async () => {},
+					holdSpend: async () => {},
+					recordPaidStop: async () => {
+						stopped = true;
 					},
-					settleSpend: async (id: string) => {
-						Object.assign(rows[Number(id)] ?? {}, { status: "settled" });
-					},
-					holdSpend: async (id: string) => {
-						Object.assign(rows[Number(id)] ?? {}, { status: "held" });
-						resumed = false;
-					},
-					clearExtraUsageConfirmation: async () => {},
 					recordRefusal: async () => {},
 				} as unknown as SpendStore;
 				const call = () =>
@@ -1045,14 +1033,13 @@ describe("what the real CLI emits", () => {
 						})
 						.catch((e: unknown) => e as Error);
 				try {
-					expect(await call()).toEqual({ ok: true });
-					expect(rows[0]?.status).toBe("held");
+					expect((await call()) as SubscriptionUnavailableError).toMatchObject({
+						paid: true,
+					});
 					// Stopped: by the store, and by this process's breaker.
 					expect(await call()).toBeInstanceOf(SubscriptionUnavailableError);
-					// The user reconciles the held call and resumes Claude.
-					Object.assign(rows[0] ?? {}, { status: "settled" });
-					resumed = true;
-					// Without lifting the breaker the call would still not be sent.
+					// The user resumes Claude in the store only: the breaker still stops it.
+					stopped = false;
 					expect(await call()).toBeInstanceOf(SubscriptionUnavailableError);
 					expect(seen).toHaveLength(1);
 					resumeClaudeCalls();
@@ -1064,12 +1051,9 @@ describe("what the real CLI emits", () => {
 			});
 		});
 
-		it("a sign of paid after this side aborted is not seen, and the call is never answered (held)", async () => {
-			const { error, answered } = await outcome({
-				runs: [[retry, overage]],
-			});
+		it("a sign of paid after this side aborted is not seen", async () => {
+			const { error } = await outcome({ runs: [[retry, overage]] });
 			expect(error?.paid).toBeFalsy();
-			expect(answered).toBe(0);
 		});
 	});
 

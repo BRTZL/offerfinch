@@ -761,7 +761,7 @@ export const llmUsage = sqliteTable(
 		/**
 		 * `api`: per token, counted by the cap (an API key, or a subscription call that drew on
 		 * paid extra usage). `subscription`: the user's own plan through a local CLI, settled at $0
-		 * with real tokens; while reserved, its worst case counts against the cap.
+		 * with real tokens, never counted by the cap.
 		 */
 		billing: text("billing")
 			.$type<"api" | "subscription">()
@@ -895,10 +895,10 @@ export const linkedinSeen = sqliteTable(
 );
 
 /**
- * A subscription vendor stopped after a call that was paid or whose payment is unknown: its
- * calls are refused until the user has reconciled every held call and resumed it. Kept in the
- * database, so a restart does not lift it (the provider's breaker lives only in memory). The
- * Claude side also needs the extra-usage confirmation again, which the same event withdraws.
+ * A subscription vendor stopped after a paid call (Claude extra usage, ChatGPT credits): its
+ * calls are refused until the user resumes it in Settings > Models. Kept in the database, so a
+ * restart does not lift it (the provider's breaker lives only in memory). A paid Claude call also
+ * withdraws the Claude extra-usage confirmation; resuming Claude sets it again.
  */
 export const subscriptionPauses = sqliteTable(
 	"subscription_pauses",

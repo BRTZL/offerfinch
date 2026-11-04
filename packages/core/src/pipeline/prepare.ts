@@ -86,11 +86,10 @@ export async function startPreparingStep(
 ): Promise<boolean | "capped"> {
 	const app = await load(deps, userId, jobId);
 	if (app.state !== "scored" || app.endedReason) return false;
-	// Subscription calls are held by the cap too: each reserves its worst case, since no vendor
-	// switch keeps a request off paid extra usage.
+	// The cap stops API-key work only: drafting and checking all on plans never wait for it.
 	const tailoring = deps.tailorLlm ?? deps.llm;
 	const capped =
-		(await capReached(deps.spend, userId)) ??
+		(await capReached(deps.spend, userId, [tailoring, deps.claimsLlm])) ??
 		(await subscriptionBudgetReached(deps.spend, userId, [tailoring]));
 	if (capped) {
 		// The application says why it waits (the cap shows on Settings > Spending).

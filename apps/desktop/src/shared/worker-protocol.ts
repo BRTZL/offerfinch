@@ -23,7 +23,7 @@ export interface WorkerInit {
 		noSchedule?: boolean;
 		/** Slows every fake model call (kill tests need a step that is still running). */
 		fakeDelayMs?: number;
-		/** A Codex subscription stand-in whose payment is unknown (src/worker/fake-codex.ts). */
+		/** A Codex subscription stand-in that spends credits (src/worker/fake-codex.ts). */
 		fakeCodex?: boolean;
 		/** The LinkedIn runner goes to this local fixture instead (headless, no gaps). */
 		linkedinOrigin?: string;

@@ -1,13 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
-import { HeldCalls } from "@/components/desktop/held-calls";
 import { PlanUsage } from "@/components/desktop/plan-usage";
 import {
 	QueryState,
 	SettingsPage,
 } from "@/components/pipeline/settings/shared";
-import { Badge, type Tone } from "@/components/system/bits";
+import { Badge, Notice, type Tone } from "@/components/system/bits";
 import { Group, Section } from "@/components/system/layout";
 import { Disclosure } from "@/components/system/pane";
 import { FormRow } from "@/components/system/rows";
@@ -50,7 +49,7 @@ const ROLES: {
 	{
 		role: "claims",
 		label: "Checking drafts",
-		hint: "An AI from another company checks every line against your profile.",
+		hint: "An AI from the other company checks each line against your profile.",
 		vendor: "openai",
 	},
 ];
@@ -314,9 +313,10 @@ export function SubscriptionTerms() {
 			className="text-muted-foreground text-xs"
 			data-testid="subscription-terms"
 		>
-			Using a Claude or ChatGPT subscription here is subject to Anthropic's and
-			OpenAI's terms. OfferFinch checks before each call that it cannot be
-			billed as extra usage or credits, and pauses if it could.
+			Your Claude and ChatGPT plans fall under Anthropic's and OpenAI's terms.
+			Before each call, OfferFinch checks that it can't be paid for with extra
+			usage or credits. If a call is paid anyway, that plan stops until you
+			resume it.
 		</p>
 	);
 }
@@ -349,7 +349,7 @@ export function PlanLimits() {
 				hint={
 					<span data-testid="call-budget-used">
 						{d.callBudget.used} used in the last 24 hours, Claude and Codex
-						together. It protects the plans you also work with.
+						together. Leaves room in the plans you also work with.
 					</span>
 				}
 			>
@@ -380,10 +380,72 @@ export function PlanLimits() {
 				className="text-muted-foreground px-4 text-xs"
 				data-testid="codex-guards"
 			>
-				A Codex call starts only while every usage window of your ChatGPT plan
-				is below {d.codexHeadroomPercent}% used; one that spent credits is
-				recorded as paid and pauses Codex.
+				Codex starts a call only while each usage window of your ChatGPT plan is
+				under {d.codexHeadroomPercent}% used.
 			</p>
+		</div>
+	);
+}
+
+/**
+ * A plan stopped after a paid call: "Claude used paid extra usage on <date>. Calls are stopped."
+ * with Resume. Nothing while both plans run.
+ */
+function PaidStops() {
+	const queryClient = useQueryClient();
+	const stops = useQuery({
+		...orpc.paidStops.list.queryOptions(),
+		refetchInterval: 15_000,
+	});
+	const resume = useMutation({
+		mutationFn: (vendor: "anthropic" | "openai") =>
+			client.paidStops.resume({ vendor }),
+		onSuccess: (_r, vendor) => {
+			toast.success(
+				`${vendor === "anthropic" ? "Claude" : "Codex"} calls run again.`,
+			);
+			void queryClient.invalidateQueries({ queryKey: orpc.paidStops.key() });
+			void queryClient.invalidateQueries({ queryKey: orpc.ai.key() });
+			void queryClient.invalidateQueries({ queryKey: orpc.desktop.key() });
+		},
+		onError: (e) => toast.error(e.message),
+	});
+	if (!stops.data?.length) return null;
+	return (
+		<div className="flex flex-col gap-2" data-testid="paid-stops">
+			{stops.data.map((stop) => {
+				const name = stop.vendor === "anthropic" ? "Claude" : "Codex";
+				const what =
+					stop.vendor === "anthropic" ? "paid extra usage" : "paid credits";
+				return (
+					<Notice
+						key={stop.vendor}
+						tone="warning"
+						data-testid={`stopped-${stop.vendor}`}
+						actions={
+							<Button
+								variant="outline"
+								disabled={resume.isPending}
+								onClick={() => resume.mutate(stop.vendor)}
+								data-testid={`resume-${stop.vendor}`}
+							>
+								Resume
+							</Button>
+						}
+					>
+						{name} used {what} on {new Date(stop.at).toLocaleDateString()}.
+						Calls are stopped.{" "}
+						<a
+							href={stop.usagePage}
+							target="_blank"
+							rel="noreferrer"
+							className="text-primary hover:underline"
+						>
+							Check usage
+						</a>
+					</Notice>
+				);
+			})}
 		</div>
 	);
 }
@@ -427,10 +489,10 @@ export function ModelSettings({
 	const body = (
 		<>
 			<QueryState isLoading={ai.isLoading} error={ai.error} what="the models" />
-			<HeldCalls />
+			<PaidStops />
 			<Section
 				title="API keys"
-				description="Encrypted with your macOS Keychain. Never shown, logged or sent anywhere but the vendor."
+				description="Kept in your macOS Keychain. Never shown, logged or sent anywhere but to the vendor."
 			>
 				<Group>
 					<KeyField
@@ -546,7 +608,7 @@ export function ModelSettings({
 					</Section>
 					<Section
 						title="Plan usage"
-						description="What each plan has left in its windows, and how much of it OfferFinch used."
+						description="What each plan has left, and how much OfferFinch used."
 					>
 						<PlanUsageSection />
 					</Section>

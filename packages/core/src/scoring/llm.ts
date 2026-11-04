@@ -29,22 +29,6 @@ export interface GenerateObjectRequest<T> {
 	 * most), for the daily call budget; never called means nothing was sent.
 	 */
 	onModelCall?: () => void;
-	/**
-	 * Subscription providers: called only on positive evidence that the call was answered on the
-	 * plan: the model produced output for the prompt that was sent (an answer that failed the
-	 * schema included), the session then ended by itself (not aborted, not timed out, no stream
-	 * error), and nothing in it showed paid extra usage. Such a call is billed like any answered
-	 * call, with or without usage reported. Anything less: never called, and a failed call
-	 * without usage stays held.
-	 */
-	onAnswered?: () => void;
-	/**
-	 * Subscription providers: an answer arrived, but its session also failed (an error or crash
-	 * result, an assistant error, an abort or a stream error after it), so what the call cost is
-	 * not clear, whatever the answer says or the tokens reported. The spend is held until
-	 * reconciled (the provider stops its later calls too); a valid answer is still returned.
-	 */
-	onBillingUnclear?: (detail: string) => void;
 }
 
 /** Tokens one call used, as the provider reported them. */
@@ -93,8 +77,8 @@ export function redactRequest<T>(
 /**
  * How a provider's calls are paid for. `api`: per token, on an API key (the default, counted
  * against the spending cap). `subscription`: the user's own flat-rate plan (Claude Pro or Max)
- * through the vendor's local CLI; settled at $0 with real tokens. Its worst case is held against
- * the cap while it runs, and a call that drew on paid extra usage settles as `api`.
+ * through the vendor's local CLI; settled at $0 with real tokens, outside the spending cap. A call
+ * the vendor said drew on paid extra usage (or ChatGPT credits) settles as `api` and counts.
  */
 export type LlmBilling = "api" | "subscription";
 
@@ -165,14 +149,11 @@ export class SubscriptionUnavailableError extends LlmPausedError {
 		/** When the usage limit resets, if the vendor said. */
 		readonly resetsAt?: Date,
 		/**
-		 * `true`: the request was already sent and the vendor said it drew on paid extra usage: it
-		 * was billed per token, so it is recorded at its API price and counted by the cap.
-		 * `"unknown"`: the request was sent and whether it was paid cannot be established (the
-		 * check that would say so failed): it is held at its reservation, whatever tokens it
-		 * reported, and further subscription calls stop until the user reconciles and confirms
-		 * again.
+		 * `true`: the request was already sent and the vendor said it drew on paid extra usage (or
+		 * ChatGPT credits): it was billed per token, so it is recorded at its API price, counted by
+		 * the cap, and that vendor's calls stop until the user resumes them.
 		 */
-		readonly paid: boolean | "unknown" = false,
+		readonly paid: boolean = false,
 	) {
 		super(`${SUBSCRIPTION_PAUSE_PREFIX} (${kind}, ${provider}): ${detail}`);
 		this.name = "SubscriptionUnavailableError";
@@ -193,7 +174,7 @@ export class LlmRefusalError extends Error {
  * The provider refused the request before processing it (HTTP 400, 401, 403, 404, 413, 422 or
  * 429), so nothing was billed. Only this lets the spending cap release a reservation for a call
  * that reported no usage; any other failure (a 5xx, a dropped stream, a timeout) may have been
- * billed and keeps its reservation until it is reconciled.
+ * billed and keeps its reservation, counted against this month's cap.
  */
 export class LlmNotBilledError extends Error {
 	constructor(

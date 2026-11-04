@@ -263,7 +263,8 @@ export function drawsOnExtraUsage(info: {
 const USAGE_CHECK_MS = 30_000;
 /**
  * How long a session may go on after its result or its first problem before it is closed. A
- * session closed this way after its result has an unknown payment (held).
+ * session closed this way after its result keeps its answer; the call is logged as unclear and
+ * settled on the plan.
  */
 const DRAIN_MS = 15_000;
 /**
@@ -402,9 +403,9 @@ export interface ClaudeSubscriptionOptions {
 const CLAUDE_BREAKER = new Breaker();
 
 /**
- * The user reconciled every held Claude call and resumed Claude (Settings > Models): lifts this
- * process's extra-usage pause (a paid call, a payment-unknown or unclear one, extra usage seen
- * on), so the next call is sent. A usage-limit or logout pause stays until it ends by itself.
+ * The user resumed Claude after a paid call (Settings > Models): lifts this process's
+ * extra-usage pause (a paid call, extra usage seen on), so the next call is sent. A usage-limit
+ * or logout pause stays until it ends by itself.
  */
 export function resumeClaudeCalls(breaker: Breaker = CLAUDE_BREAKER): void {
 	breaker.clear("extra_usage");
@@ -487,8 +488,6 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 					request.onModelCall?.();
 				},
 				request.onUsage,
-				request.onAnswered,
-				request.onBillingUnclear,
 				usageCall,
 			);
 			if (answer.invalid !== undefined)
@@ -554,17 +553,14 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 	 * skills) arrives with the first request; a violation there aborts and discards the answer,
 	 * a tripwire behind the pinned, wire-tested options.
 	 *
-	 * Billing is read from the session, and fails closed. A sign of paid extra usage anywhere
-	 * wins over every other outcome. `onAnswered` (billed like any answered call, $0 on the plan,
-	 * even without tokens) is reported only when all of these hold: the prompt was sent; every
-	 * result says the model produced output (`success` without `is_error`, or
-	 * `error_max_structured_output_retries`); the session then ended on its own (never aborted:
-	 * an abort closes the isolated session at once, exactly like a clean end, so it cannot be
-	 * told apart and counts against); no stream error; no problem; no paid sign. A session still
-	 * open `DRAIN_MS` after its result is closed and its payment is unknown (held, whatever its
-	 * tokens), since a paid sign could still have come.
+	 * Billing is read from the session. A sign of paid extra usage anywhere (a `rate_limit_event`
+	 * drawing on overage) wins over every other outcome: the call is paid and Claude stops. Any
+	 * other ending is on the plan, as T3 Code treats it: extra usage was confirmed off by the probe
+	 * just before. A session that ended unclearly around its answer (an error or crash result, an
+	 * assistant error, an abort, a stream error, or still open `DRAIN_MS` after its result) keeps
+	 * the answer and is logged as a warning.
 	 */
-	// biome-ignore lint/complexity/useMaxParams: Keep the protected billing callbacks and their positional contract unchanged.
+	// biome-ignore lint/complexity/useMaxParams: Keep the metering callbacks and their positional contract unchanged.
 	private async run(
 		system: string,
 		prompt: string,
@@ -572,8 +568,6 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 		maxTokens?: number,
 		onModelCall?: () => void,
 		onUsage?: (usage: LlmUsage) => void,
-		onAnswered?: () => void,
-		onBillingUnclear?: (detail: string) => void,
 		usageCall?: PlanUsageCall,
 	): Promise<{ output: unknown; invalid?: string }> {
 		const cwd = await mkdtemp(join(tmpdir(), "offerfinch-claude-"));
@@ -641,11 +635,9 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 		/**
 		 * Nothing in the session failed: every result says the model produced output (not a crash,
 		 * startup or error result), for the prompt that was sent, and no assistant message carried
-		 * an error (paused or not).
+		 * an error (paused or not). Only for the log.
 		 */
 		let clean = true;
-		/** The iterator ended by itself (also true after an abort; `aborted` tells them apart). */
-		let ended = false;
 		let timedOut = false;
 		let drainTimer: ReturnType<typeof setTimeout> | undefined;
 		let expire: () => void = () => {};
@@ -663,10 +655,7 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 					timedOut = true;
 					break;
 				}
-				if (next.done) {
-					ended = true;
-					break;
-				}
+				if (next.done) break;
 				const message = next.value;
 				if (message.type === "assistant" && message.error) clean = false;
 				const problem = this.inspect(message, ctx);
@@ -711,7 +700,6 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			// The SDK re-throws an error result it already delivered (an answer that failed the
 			// schema, for one) when the CLI exits: the result decides, not the repeat.
 			streamError = streamFailure(error, gotResult);
-			ended = streamError === null;
 		} finally {
 			clearTimeout(drainTimer);
 			release(false);
@@ -720,52 +708,25 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			await rm(cwd, { recursive: true, force: true });
 		}
 		if (paid) throw paid;
-		// Still open after its result: closed here, so a paid sign could have been missed.
-		if (timedOut && gotResult && !failure)
-			throw new SubscriptionUnavailableError(
-				"extra_usage",
-				this.name,
-				`the Claude session did not end within ${Math.round((this.options.drainMs ?? DRAIN_MS) / 1000)} s of its answer, so whether it drew on paid extra usage is unknown: the answer is discarded, the call is held at its worst case, and Claude calls stop until you check claude.ai usage, reconcile it in Settings > Models, and resume.`,
-				undefined,
-				"unknown",
-			);
-		const answeredOnPlan =
-			gotResult &&
-			clean &&
-			ended &&
-			!aborted &&
-			!timedOut &&
-			!streamError &&
-			!failure;
-		if (answeredOnPlan) onAnswered?.();
-		// A result arrived from a session that is not clean or did not end by itself (an error or
-		// crash result, an assistant error, an abort or a stream error after it): what it cost is
-		// unclear, whatever the answer says and whatever tokens it reported. Decided here, before
-		// the answer is checked against the schema. A vendor refusal (a 429 or a logout) is not.
-		if (gotResult && !answeredOnPlan && !refusal(failure)) {
-			const detail = `${this.name}: the answer arrived, but its session also failed (${
-				[
-					resultError,
-					!clean && resultError === null && "an error in the session",
-					aborted && failure && `stopped: ${(failure as Error).message}`,
-					streamError && `stream: ${streamError.message}`,
-				]
-					.filter(Boolean)
-					.join("; ")
-					.slice(0, 300) || "it did not end cleanly"
-			}); held until reconciled with claude.ai usage`;
-			// Every later caller in this process stops now; the held row stops the rest.
-			this.breaker.trip(
-				new SubscriptionUnavailableError(
-					"extra_usage",
-					this.name,
-					`${detail}. Claude calls stop until you check claude.ai usage, reconcile it in Settings > Models, and resume.`,
-					undefined,
-					"unknown",
-				),
-				this.now(),
-			);
-			onBillingUnclear?.(detail);
+		// The answer arrived from a session that did not end cleanly: on the plan all the same
+		// (extra usage was probed off just before; a paid sign would have won above), but logged.
+		if (gotResult && !refusal(failure)) {
+			const unclear = [
+				resultError,
+				!clean && resultError === null && "an error in the session",
+				aborted && failure && `stopped: ${(failure as Error).message}`,
+				streamError && `stream: ${streamError.message}`,
+				timedOut &&
+					`still open ${Math.round((this.options.drainMs ?? DRAIN_MS) / 1000)} s after its answer`,
+			].filter(Boolean);
+			if (!clean || aborted || streamError || timedOut)
+				this.options.log?.(
+					"warning: claude subscription call ended unclearly; settled on the plan",
+					{
+						provider: this.name,
+						detail: unclear.join("; ").slice(0, 300),
+					},
+				);
 		}
 		if (failure) throw failure;
 		// The CLI exits non-zero after an error result, or when aborted: the result decides.
@@ -824,7 +785,7 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 				return new SubscriptionUnavailableError(
 					"extra_usage",
 					this.name,
-					`Claude drew on paid extra usage for this call (billed per token; recorded at its estimated API price). Every subscription call is paused and the extra-usage confirmation is cleared. ${EXTRA_USAGE_OFF_HOWTO}`,
+					"Claude drew on paid extra usage for this call (billed per token; recorded at its estimated API price). Claude calls are stopped until you resume them in Settings > Models; turn extra usage off at claude.ai > Settings > Usage first.",
 					resetsAt,
 					true,
 				);

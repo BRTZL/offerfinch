@@ -978,18 +978,17 @@ export interface CodexSubscriptionOptions {
 const CODEX_BREAKER = new Breaker();
 
 /**
- * The user reconciled every held Codex call and resumed Codex (Settings > Models): lifts this
- * process's pause for a call that spent credits or whose payment is unknown, so the next call is
- * sent. Any other pause (a usage limit, a logout, credits or headroom not readable) stays.
+ * The user resumed Codex after a call that spent credits (Settings > Models): lifts this
+ * process's pause for it, so the next call is sent. Any other pause (a usage limit, a logout,
+ * credits or headroom not readable) stays.
  */
 export function resumeCodexCalls(breaker: Breaker = CODEX_BREAKER): void {
 	breaker.clear("extra_usage", { paidOnly: true });
 }
 
 /**
- * A tool attempt fails this call: it comes from the posting, not from the setup. On a ChatGPT
- * login whose account holds credits, the abort ends the session before the second credit read,
- * so the call is a payment-unknown pause instead (`codexPayment`).
+ * A tool attempt fails this call: it comes from the posting, not from the setup. Its credits are
+ * read again in a fresh process; a lower balance makes it a paid call instead.
  */
 export class CodexToolAttemptError extends Error {
 	constructor(provider: string, task: string, attempt: string) {
@@ -1199,8 +1198,8 @@ export class CodexSubscriptionProvider implements LlmProvider {
 			request.onUsage?.(usage);
 		}
 		if (result.refused) throw result.refused;
-		// One rule for every sent call, however the turn ended: unless the balances prove it was
-		// not paid, it is paid or unknown, and either pauses every later call.
+		// One rule for every sent call, however the turn ended: a lower credit balance is paid, and
+		// stops Codex until the user resumes it.
 		const payment =
 			auth.type === "chatgpt" && result.sent
 				? codexPayment(result.creditsBefore, result.creditsAfter)
@@ -1209,17 +1208,16 @@ export class CodexSubscriptionProvider implements LlmProvider {
 			throw new SubscriptionUnavailableError(
 				"extra_usage",
 				this.name,
-				`Codex spent ChatGPT credits on this call (the balance went down): it is recorded at its estimated API price and every subscription call is paused. ${CODEX_CREDITS_HOWTO}`,
+				`Codex spent ChatGPT credits on this call (the balance went down): it is recorded at its estimated API price, and Codex calls are stopped until you resume them in Settings > Models. ${CODEX_CREDITS_HOWTO}`,
 				undefined,
 				true,
 			);
+		// The balances could not be compared (a read missing or incomplete): the call started with
+		// headroom in every window, so it is on the plan; logged, never held.
 		if (payment === "unknown")
-			throw new SubscriptionUnavailableError(
-				"extra_usage",
-				this.name,
-				`the ChatGPT credit balance could not be read again after ${request.task}, so whether credits paid for it is unknown: the answer is discarded, the call is held at its worst case, and every subscription call is paused until you check the ChatGPT usage page, reconcile it, and confirm extra usage off again. ${CODEX_CREDITS_HOWTO}`,
-				undefined,
-				"unknown",
+			this.options.log?.(
+				"warning: codex credit balance not readable after the call; settled on the plan",
+				{ provider: this.name, task: request.task },
 			);
 		if (result.boundary)
 			throw this.pause(

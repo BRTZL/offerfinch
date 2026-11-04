@@ -9,8 +9,8 @@ import {
 /**
  * Test runs only (OFFERFINCH_FAKE_CODEX=1): a Codex subscription stand-in. Each call is "sent"
  * (onModelCall) and appended to `fake-codex-calls` in the data folder; until the file
- * `fake-codex-ok` exists there, the call ends with its payment unknown, as a real call does when
- * the credit balance cannot be read again.
+ * `fake-codex-ok` exists there, the call spent ChatGPT credits, as a real call does when the
+ * credit balance went down.
  */
 export class FakeCodexSubscription implements LlmProvider {
 	readonly name = "codex-subscription:gpt-6.1-terra";
@@ -33,9 +33,9 @@ export class FakeCodexSubscription implements LlmProvider {
 		throw new SubscriptionUnavailableError(
 			"extra_usage",
 			this.name,
-			"the ChatGPT credit balance could not be read again, so whether credits paid for it is unknown (test stand-in)",
+			"Codex spent ChatGPT credits on this call (test stand-in)",
 			undefined,
-			"unknown",
+			true,
 		);
 	}
 }

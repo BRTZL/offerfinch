@@ -76,7 +76,6 @@ export function SpendCells({
 }
 
 import { client, orpc } from "@/lib/orpc";
-import { Link } from "@/lib/router";
 
 /** The monthly cap on model spend and this month's estimated spend. */
 export function SpendingSettings() {
@@ -228,18 +227,11 @@ export function SpendingSettings() {
 						</Group>
 					</Section>
 					{(data.held?.count ?? 0) > 0 && (
-						<Notice tone="warning" title="Calls with an unknown cost">
+						<Notice tone="warning" title="API calls with an unknown cost">
 							<span data-testid="held-spend">
-								{data.held?.count} call(s) may still be billed, so{" "}
-								{usd(data.held?.micros ?? 0)} is held aside until you settle
-								each in{" "}
-								<Link
-									href="/settings/models"
-									className="text-primary hover:underline"
-								>
-									Settings › Models
-								</Link>
-								.
+								{data.held?.count} API-key call(s) failed without saying what
+								they cost. This month's cap counts them at their most:{" "}
+								{usd(data.held?.micros ?? 0)}.
 							</span>
 						</Notice>
 					)}
