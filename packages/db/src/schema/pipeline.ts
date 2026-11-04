@@ -16,6 +16,7 @@ import type {
 import type { RecordKind } from "@offerfinch/core/profile/records";
 import type { ProfileDocument } from "@offerfinch/core/profile/types";
 import type { FitResult } from "@offerfinch/core/scoring/fit";
+import type { PlanUsageJson } from "@offerfinch/core/scoring/plan-usage";
 import type { RankPenalty } from "@offerfinch/core/scoring/rank";
 import type {
 	CheckedSegment,
@@ -913,6 +914,23 @@ export const subscriptionPauses = sqliteTable(
 	(t) => [
 		uniqueIndex("subscription_pauses_user_vendor").on(t.userId, t.vendor),
 	],
+);
+
+/**
+ * What each subscription plan (Claude, ChatGPT for Codex) has used of its windows, as the vendor
+ * last reported it, and OfferFinch's share of it (core/scoring/plan-usage.ts). One row per
+ * vendor, the whole state as JSON, so a worker restart keeps the share.
+ */
+export const planUsage = sqliteTable(
+	"plan_usage",
+	{
+		userId: userId(),
+		/** "anthropic" (Claude) or "openai" (Codex). */
+		vendor: text("vendor").notNull(),
+		state: text("state", { mode: "json" }).$type<PlanUsageJson>().notNull(),
+		updatedAt: updatedAt(),
+	},
+	(t) => [uniqueIndex("plan_usage_user_vendor").on(t.userId, t.vendor)],
 );
 
 /**

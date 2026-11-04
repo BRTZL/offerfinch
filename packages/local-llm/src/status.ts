@@ -1,10 +1,21 @@
 import { execFile } from "node:child_process";
 import type { LlmLoginState } from "@offerfinch/core/scoring/llm-status";
+import type { PlanSnapshot } from "@offerfinch/core/scoring/plan-usage";
 
 import { probeExtraUsage } from "./claude";
-import { codexAuthFile, readCodexLogin } from "./codex";
+import {
+	type CodexTurnInput,
+	type CodexTurnResult,
+	codexAuthFile,
+	readCodexLogin,
+	runCodexTurn,
+} from "./codex";
 import { subscriptionEnv } from "./env";
 import { type ClaudeQuery, isolatedQuery } from "./isolated";
+import { claudeUsageSnapshot, codexUsageSnapshot } from "./plan-usage";
+
+/** A login state with the plan's usage as the same read reported it (null: not read). */
+export type LoginWithUsage = LlmLoginState & { planUsage: PlanSnapshot | null };
 
 /**
  * Claude Code's login as a subscription call would find it: the same options and environment,
@@ -13,14 +24,18 @@ import { type ClaudeQuery, isolatedQuery } from "./isolated";
 export async function claudeLogin(
 	parentEnv: Record<string, string | undefined> = process.env,
 	query: ClaudeQuery = isolatedQuery,
-): Promise<LlmLoginState> {
+	now: () => Date = () => new Date(),
+): Promise<LoginWithUsage> {
 	try {
 		// The same probe a call makes before its prompt: login and the plan's usage, nothing sent.
-		const { auth, extra, account } = await probeExtraUsage(
+		const { auth, extra, account, usage } = await probeExtraUsage(
 			query,
 			"claude-sonnet-5-5",
 			subscriptionEnv(parentEnv).env,
 		);
+		const planUsage = usage
+			? claudeUsageSnapshot(usage, now(), account?.subscriptionType ?? null)
+			: null;
 		const plan = account
 			? [
 					account.subscriptionType ? `plan ${account.subscriptionType}` : null,
@@ -33,21 +48,74 @@ export async function claudeLogin(
 					.filter(Boolean)
 					.join(", ")
 			: "";
-		if (!account && auth) return { state: "unknown", detail: auth.detail };
+		if (!account && auth)
+			return { state: "unknown", detail: auth.detail, planUsage };
 		if (!auth)
 			return {
 				state: "logged_in",
 				detail: `Claude subscription (${plan}); ${extra.detail}`,
 				extraUsage: extra.state,
+				planUsage,
 			};
 		return {
 			state: auth.kind === "logged_out" ? "logged_out" : "not_subscription",
 			detail: `${auth.detail}${plan ? ` (${plan})` : ""}`,
+			planUsage,
 		};
 	} catch (error) {
 		return {
 			state: "unknown",
 			detail: `Claude Code did not report its login: ${error instanceof Error ? error.message : String(error)}`,
+			planUsage: null,
+		};
+	}
+}
+
+/**
+ * The ChatGPT plan's Codex usage, read as a call reads it before its prompt: a locked-down
+ * `codex app-server` in a private temp root signs in with the user's token, reads
+ * `account/rateLimits/read`, and stops; no thread, no prompt. Null when the CLI could not
+ * report it, with why.
+ */
+export async function codexPlanUsage(input: {
+	binary: string;
+	parentEnv?: Record<string, string | undefined>;
+	now?: () => Date;
+	/** Tests only: stands in for `runCodexTurn`. */
+	runTurn?: (turn: CodexTurnInput) => Promise<CodexTurnResult>;
+}): Promise<{ snapshot: PlanSnapshot | null; error: string | null }> {
+	const parentEnv = input.parentEnv ?? process.env;
+	const now = input.now ?? (() => new Date());
+	const read = await readCodexLogin(codexAuthFile(parentEnv), now());
+	if (!read.ok) return { snapshot: null, error: read.detail };
+	try {
+		const result = await (input.runTurn ?? runCodexTurn)({
+			binary: input.binary,
+			auth: {
+				type: "chatgpt",
+				login: read.login,
+				authFile: codexAuthFile(parentEnv),
+			},
+			system: "",
+			prompt: "",
+			parentEnv,
+			timeoutMs: 30_000,
+			creditsOnly: true,
+		});
+		if (result.boundary) return { snapshot: null, error: result.boundary };
+		if (result.turnError)
+			return { snapshot: null, error: result.turnError.message };
+		const snapshot =
+			result.rateLimitsBefore &&
+			codexUsageSnapshot(result.rateLimitsBefore, now());
+		return {
+			snapshot,
+			error: snapshot ? null : "Codex did not report the plan's usage.",
+		};
+	} catch (error) {
+		return {
+			snapshot: null,
+			error: error instanceof Error ? error.message : String(error),
 		};
 	}
 }

@@ -58,7 +58,10 @@ and never the default. Anthropic and OpenAI recommend API keys for programs like
 their terms do not clearly allow it: personal use on your own Mac is not clearly allowed, and use
 in a product for other people is not allowed. You decide whether your use is within their terms.
 OfferFinch checks before each call that it cannot be billed as extra usage or credits, and pauses
-if it could. Calls run with the apps' telemetry, tools and history turned off.
+if it could. Calls run with the apps' telemetry, tools and history turned off. Settings › Models
+› Plan usage shows what each plan has used of its windows, as the vendor reports it, and
+OfferFinch's share of that; the reads are the same sign-in checks the calls make, with no prompt,
+and the result is stored on this Mac only.
 
 ### The job sites it reads
 

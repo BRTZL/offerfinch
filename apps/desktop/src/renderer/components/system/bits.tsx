@@ -353,3 +353,57 @@ export function IconSlot({ children }: { children: ReactNode }) {
 		</span>
 	);
 }
+
+/**
+ * A plan window as a bar: the share used in a quiet ink, OfferFinch's part of it in brand
+ * green from the left, and a tick where the window's elapsed time stands (even spending
+ * would reach it). The rest of the track is what is left.
+ */
+export function Meter({
+	used,
+	app = 0,
+	elapsed = null,
+	label,
+	className,
+}: {
+	/** 0 to 100. */
+	used: number;
+	/** 0 to `used`: OfferFinch's share. */
+	app?: number;
+	/** 0 to 100: how much of the window's time has passed, or null. */
+	elapsed?: number | null;
+	/** What the bar says, for screen readers. */
+	label: string;
+	className?: string;
+}) {
+	const usedWidth = Math.min(100, Math.max(0, used));
+	const appWidth = Math.min(usedWidth, Math.max(0, app));
+	return (
+		<span
+			role="img"
+			aria-label={label}
+			className={cn(
+				"bg-cell relative block h-2 w-full overflow-hidden rounded-full",
+				className,
+			)}
+			data-used={Math.round(usedWidth)}
+			data-app={Math.round(appWidth)}
+		>
+			<span
+				className="bg-foreground/30 absolute inset-y-0 left-0 rounded-full"
+				style={{ width: `${usedWidth}%` }}
+			/>
+			<span
+				className="bg-brand absolute inset-y-0 left-0 rounded-full"
+				style={{ width: `${appWidth}%` }}
+			/>
+			{elapsed !== null ? (
+				<span
+					aria-hidden
+					className="bg-foreground absolute inset-y-0 w-px"
+					style={{ left: `${Math.min(100, Math.max(0, elapsed))}%` }}
+				/>
+			) : null}
+		</span>
+	);
+}

@@ -11,6 +11,7 @@ import {
 	type CodexRateLimits,
 	CodexSubscriptionProvider,
 	CodexToolAttemptError,
+	type CodexTurnInput,
 	type CodexTurnResult,
 	creditBalances,
 	creditsSpent,
@@ -492,6 +493,8 @@ describe("payment after a sent call (ChatGPT login, fake turn runner)", () => {
 		refused: null,
 		creditsBefore: before,
 		creditsAfter: after,
+		rateLimitsBefore: null,
+		rateLimitsAfter: null,
 		turnError: null,
 		status: "completed",
 		sent: true,
@@ -744,6 +747,8 @@ describe("the second credit read after an aborted turn", () => {
 		refused: null,
 		creditsBefore: { codex: 100 },
 		creditsAfter: null,
+		rateLimitsBefore: null,
+		rateLimitsAfter: null,
 		turnError: null,
 		status: "interrupted",
 		sent: true,
@@ -836,5 +841,151 @@ describe("sandbox profile", () => {
 			),
 		).toBeGreaterThan(deny);
 		expect(profile).not.toContain('(allow file-read* (subpath "/Users/me"))');
+	});
+});
+
+describe("plan usage reads (ChatGPT login, fake turn runner)", () => {
+	let dir: string;
+	let authFile: string;
+	beforeAll(async () => {
+		dir = await mkdtemp(join(tmpdir(), "offerfinch-codex-usage-"));
+		authFile = join(dir, "auth.json");
+		const token = [
+			"e30",
+			Buffer.from(
+				JSON.stringify({
+					exp: Math.floor(Date.now() / 1000) + 86_400,
+					"https://api.openai.com/auth": {
+						chatgpt_account_id: "acct-synthetic",
+						chatgpt_plan_type: "pro",
+					},
+				}),
+			).toString("base64url"),
+			"sig",
+		].join(".");
+		await writeFile(
+			authFile,
+			JSON.stringify({
+				tokens: { access_token: token, account_id: "acct-synthetic" },
+			}),
+		);
+	});
+	afterAll(() => rm(dir, { recursive: true, force: true }));
+
+	const limits = (used: number): CodexRateLimits => ({
+		ordinaryUsageAllowed: true,
+		rateLimits: {
+			limitId: "codex",
+			primary: { usedPercent: used, resetsAt: 1_762_264_800 },
+			secondary: { usedPercent: 3, resetsAt: 1_762_646_400 },
+			credits: { hasCredits: true, unlimited: false, balance: "10" },
+			spendControlReached: false,
+			planType: "pro",
+			rateLimitReachedType: null,
+		},
+		rateLimitsByLimitId: null,
+	});
+	const turn = (before: number, after: number | null): CodexTurnResult => ({
+		text: JSON.stringify({ verdict: "fit", reasons: [] }),
+		usage: {
+			inputTokens: 100,
+			cachedInputTokens: 0,
+			cacheWriteTokens: 0,
+			outputTokens: 20,
+		},
+		model: "gpt-6.1-sol",
+		toolAttempt: null,
+		boundary: null,
+		refused: null,
+		creditsBefore: { codex: 10 },
+		creditsAfter: { codex: 10 },
+		rateLimitsBefore: limits(before),
+		rateLimitsAfter: after === null ? null : limits(after),
+		turnError: null,
+		status: "completed",
+		sent: true,
+		rawTypes: ["message"],
+		toolNames: [],
+		codexVersion: "0.166.0",
+		removedEnv: [],
+	});
+
+	it("reports the read before the prompt, the send, and the read after the answer", async () => {
+		const events: string[] = [];
+		const p = new CodexSubscriptionProvider({
+			ownerUserId: "user-1",
+			authFile,
+			binary: join(dir, "no-codex"),
+			breaker: new Breaker(),
+			parentEnv: { PATH: "/usr/bin:/bin", HOME: dir, CODEX_HOME: dir },
+			runTurn: async (input) => {
+				const result = turn(30, 32);
+				const refused = input.beforeTurn?.({
+					account: { type: "chatgpt", planType: "pro" },
+					rateLimits: result.rateLimitsBefore,
+				});
+				if (refused) return { ...result, refused, sent: false };
+				input.onModelCall?.();
+				return result;
+			},
+			planUsage: {
+				baselineNeeded: () => false,
+				sample: (s) =>
+					events.push(
+						`before:${s.windows.map((w) => `${w.id}=${w.usedPercent}`).join(",")}:${s.account?.credits?.balance}`,
+					),
+				call: () => ({
+					sent: () => events.push("sent"),
+					sample: (s) =>
+						events.push(
+							`after:${s.complete}:${s.windows.map((w) => `${w.id}=${w.usedPercent}`).join(",")}`,
+						),
+					done: () => events.push("done"),
+				}),
+			},
+		});
+		await expect(
+			p.generateObject({
+				system: "s",
+				prompt: "p",
+				schema,
+				task: "claims-check",
+			}),
+		).resolves.toEqual({ verdict: "fit", reasons: [] });
+		expect(events).toEqual([
+			"before:primary=30,secondary=3:10",
+			"sent",
+			"after:true:primary=32,secondary=3",
+			"done",
+		]);
+	});
+
+	it("reads the plan's usage on its own, with no thread and no prompt", async () => {
+		const { codexPlanUsage } = await import("../src/status");
+		const inputs: CodexTurnInput[] = [];
+		const read = await codexPlanUsage({
+			binary: join(dir, "no-codex"),
+			parentEnv: { PATH: "/usr/bin:/bin", HOME: dir, CODEX_HOME: dir },
+			now: () => new Date("2026-11-04T10:00:00Z"),
+			runTurn: async (input) => {
+				inputs.push(input);
+				return { ...turn(41, null), text: null, sent: false };
+			},
+		});
+		expect(inputs).toHaveLength(1);
+		expect(inputs[0]).toMatchObject({
+			creditsOnly: true,
+			prompt: "",
+			system: "",
+		});
+		expect(read.error).toBeNull();
+		expect(
+			read.snapshot?.windows.map((w) => `${w.id}=${w.usedPercent}`),
+		).toEqual(["primary=41", "secondary=3"]);
+		expect(read.snapshot?.account).toEqual({
+			plan: "pro",
+			extraUsage: null,
+			credits: { balance: 10, unlimited: false },
+		});
 	});
 });

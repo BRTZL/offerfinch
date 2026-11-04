@@ -8,6 +8,7 @@ import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 import { autoFill } from "../../shared/auto-connect";
 import { VENDOR_RULE } from "../pipeline";
+import { planUsageViews } from "../plan-usage";
 import { aiSettingsSchema } from "../settings";
 import { protectedProcedure } from "./procedure";
 import { worker } from "./shared";
@@ -51,6 +52,7 @@ export const aiRouter = {
 		return {
 			claude,
 			codex,
+			usage: await planUsageViews(w.planUsage, store, context.session.user.id),
 			vendorRule: VENDOR_RULE,
 			extraUsageOffConfirmedAt: await store.extraUsageOffConfirmedAt(
 				context.session.user.id,
@@ -59,6 +61,32 @@ export const aiRouter = {
 			codexHeadroomPercent: CODEX_HEADROOM_PERCENT,
 			codexCredits: CODEX_CREDITS_HOWTO,
 		};
+	}),
+	/**
+	 * What each plan has used of its windows and OfferFinch's share, as last read: nothing is
+	 * started. The reads happen with each call, with each CLI check, and on `refreshUsage`.
+	 */
+	planUsage: protectedProcedure.handler(async ({ context }) => {
+		const w = worker();
+		return planUsageViews(
+			w.planUsage,
+			new DrizzleSpendStore(w.db),
+			context.session.user.id,
+		);
+	}),
+	/** Reads both plans' usage again now (a probe per CLI, no prompt), then the views. */
+	refreshUsage: protectedProcedure.handler(async ({ context }) => {
+		const w = worker();
+		await w.pathRefresh;
+		await Promise.all([
+			w.subscriptions.claude({ fresh: true }),
+			w.subscriptions.codex({ fresh: true }),
+		]);
+		return planUsageViews(
+			w.planUsage,
+			new DrizzleSpendStore(w.db),
+			context.session.user.id,
+		);
 	}),
 	/**
 	 * Setup's Connect AI: finds Claude Code and Codex, and gives each role that is still open

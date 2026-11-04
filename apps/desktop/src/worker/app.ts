@@ -5,6 +5,7 @@ import type { Notifier } from "@offerfinch/core/notify/ntfy";
 import { runApplicationFlow } from "@offerfinch/core/pipeline/application-flow";
 import type { PipelineDeps } from "@offerfinch/core/pipeline/ports";
 import { runScanFlow } from "@offerfinch/core/pipeline/scan-flow";
+import { PlanUsageTracker } from "@offerfinch/core/scoring/plan-usage";
 import type {
 	ApplicationWorkflowParams,
 	ScanWorkflowParams,
@@ -14,6 +15,7 @@ import {
 	DashboardRepository,
 	type Database,
 	DrizzleClosedPostingStore,
+	DrizzlePlanUsageStore,
 	ensureLocationDefaults,
 	ensureUser,
 	listProviders,
@@ -142,6 +144,8 @@ export class WorkerApp {
 	private browsersOpen = 0;
 	private lastStatusJson = "";
 	readonly subscriptions: Subscriptions;
+	/** What each plan has used of its windows, and OfferFinch's share (Settings › Models). */
+	readonly planUsage: PlanUsageTracker;
 
 	private constructor(
 		readonly init: WorkerInit,
@@ -151,15 +155,32 @@ export class WorkerApp {
 		this.db = db;
 		this.secrets = init.secrets;
 		this.settings = new SettingsStore(db);
-		// Test runs never reach the CLIs on this Mac: their state is the test's (fake-clis.ts).
+		this.planUsage = new PlanUsageTracker({
+			userId: LOCAL_USER_ID,
+			store: new DrizzlePlanUsageStore(db),
+			// Claude reports one window as it answers; the full report needs a probe once the
+			// batch is over, so its weekly share is OfferFinch's too. Codex reads after each call.
+			onIdle: (vendor) => {
+				if (vendor !== "anthropic") return;
+				void this.subscriptions
+					.claude({ fresh: true })
+					.catch((error) =>
+						hooks.log("warn", "plan usage not read after calls", String(error)),
+					);
+			},
+			log: (message, data) => hooks.log("warn", message, data),
+		});
+		const planUsage = (vendor: "anthropic" | "openai") =>
+			this.planUsage.sink(vendor);
 		const local = subscriptions({
 			hostScript: init.claudeHost,
 			log: (message, data) => hooks.log("info", message, data),
+			planUsage,
 		});
 		// Test runs never reach the CLIs on this Mac: their state is the test's (fake-clis.ts).
 		// Main sets `fakeClis` only for an unpackaged build, so a shipped app never reads it.
 		this.subscriptions = init.test?.fakeClis
-			? fakeSubscriptions(init.userData, local)
+			? fakeSubscriptions(init.userData, local, planUsage)
 			: local;
 		this.blobs = new FsBlobStore(path.join(init.userData, "files"));
 		this.followUpDelivery = new FollowUpDelivery({
@@ -238,6 +259,7 @@ export class WorkerApp {
 			});
 		const app = new WorkerApp(init, hooks, db);
 		await app.ensureLocalUser();
+		await app.planUsage.load();
 		await app.retirePerSourceSettings();
 		app.notifications = await app.settings.get("notifications");
 		// Last start's login-shell PATH, so `claude` and `codex` are found without waiting for

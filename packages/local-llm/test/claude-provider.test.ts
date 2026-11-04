@@ -1031,3 +1031,128 @@ describe("what the real CLI emits", () => {
 		expect(seen[0]?.options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("4000");
 	});
 });
+
+describe("plan usage reads", () => {
+	const PLAN_USAGE = {
+		subscription_type: "max",
+		rate_limits_available: true,
+		rate_limits: {
+			...EXTRA_OFF.rate_limits,
+			five_hour: { utilization: 20, resets_at: "2026-11-04T14:00:00Z" },
+			seven_day: { utilization: 5, resets_at: "2026-11-09T00:00:00Z" },
+		},
+	};
+	const rateLimitEvent = (utilization: number): SDKMessage =>
+		({
+			type: "rate_limit_event",
+			rate_limit_info: {
+				status: "allowed",
+				rateLimitType: "five_hour",
+				utilization,
+				resetsAt: Date.parse("2026-11-04T14:00:00Z") / 1000,
+			},
+			uuid: "u",
+			session_id: "s",
+		}) as unknown as SDKMessage;
+
+	it("reports the probe's full read, then the call's own window as it answers", async () => {
+		const events: string[] = [];
+		const { query } = scripted({
+			usage: PLAN_USAGE,
+			runs: [[rateLimitEvent(0.23), result({ greeting: "hi" })]],
+		});
+		const claude = new ClaudeSubscriptionProvider({
+			model: "claude-sonnet-5-5",
+			ownerUserId: "u1",
+			parentEnv: { PATH: "/usr/bin", HOME: "/Users/me" },
+			query,
+			breaker: new Breaker(),
+			planUsage: {
+				baselineNeeded: () => false,
+				sample: (s) =>
+					events.push(
+						`probe:${s.complete}:${s.windows.map((w) => `${w.id}=${w.usedPercent}`).join(",")}:${s.account?.plan}`,
+					),
+				call: () => ({
+					sent: () => events.push("sent"),
+					sample: (s) =>
+						events.push(
+							`call:${s.complete}:${s.windows.map((w) => `${w.id}=${w.usedPercent}`).join(",")}`,
+						),
+					done: () => events.push("done"),
+				}),
+			},
+		});
+		await expect(claude.generateObject(request())).resolves.toEqual({
+			greeting: "hi",
+		});
+		expect(events).toEqual([
+			"probe:true:five_hour=20,seven_day=5:max",
+			"sent",
+			"call:false:five_hour=23",
+			"done",
+		]);
+	});
+
+	it("ends the call's handle without a send when the login is refused", async () => {
+		const events: string[] = [];
+		const { query } = scripted({
+			usage: PLAN_USAGE,
+			account: { apiKeySource: "ANTHROPIC_API_KEY", apiProvider: "firstParty" },
+		});
+		const claude = new ClaudeSubscriptionProvider({
+			model: "claude-sonnet-5-5",
+			ownerUserId: "u1",
+			parentEnv: { PATH: "/usr/bin", HOME: "/Users/me" },
+			query,
+			breaker: new Breaker(),
+			planUsage: {
+				baselineNeeded: () => false,
+				sample: () => events.push("probe"),
+				call: () => ({
+					sent: () => events.push("sent"),
+					sample: () => events.push("call"),
+					done: () => events.push("done"),
+				}),
+			},
+		});
+		await expect(claude.generateObject(request())).rejects.toBeInstanceOf(
+			SubscriptionUnavailableError,
+		);
+		// The probe read the plan (null-login probes report nothing); no call handle was opened.
+		expect(events).toEqual([]);
+	});
+});
+
+describe("plan usage baseline", () => {
+	it("probes again before a call when the last read is stale, even while extra usage is trusted", async () => {
+		let stale = false;
+		const { query, probes } = scripted({
+			usage: EXTRA_OFF,
+			runs: [
+				[result({ greeting: "hi" })],
+				[result({ greeting: "hi" })],
+				[result({ greeting: "hi" })],
+			],
+		});
+		const claude = new ClaudeSubscriptionProvider({
+			model: "claude-sonnet-5-5",
+			ownerUserId: "u1",
+			parentEnv: { PATH: "/usr/bin", HOME: "/Users/me" },
+			query,
+			breaker: new Breaker(),
+			planUsage: {
+				baselineNeeded: () => stale,
+				sample: () => {},
+				call: () => ({ sent: () => {}, sample: () => {}, done: () => {} }),
+			},
+		});
+		await claude.generateObject(request());
+		await claude.generateObject(request());
+		// Within the minute: the second call trusted the first probe.
+		expect(probes).toHaveLength(1);
+		stale = true;
+		await claude.generateObject(request());
+		expect(probes).toHaveLength(2);
+	});
+});
