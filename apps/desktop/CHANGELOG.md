@@ -8,8 +8,11 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
-## 0.1.2 (2026-11-03)
+## Unreleased
 
+- The welcome screen shows what OfferFinch does in a short demo of the Inbox: roles arrive from
+  the job boards, each is scored against your CV, the ones that don't fit are set aside with
+  the reason, and the one you pick is drafted and checked. You apply yourself; nothing is sent.
 - While a scan runs, the sidebar and Home show how many sources are done and which one is
   being read.
 - A "scan stopped" notification opens the scan history, where the fix is, instead of Models.
@@ -18,6 +21,9 @@ at the top, above the newest version. Only what is merged into main belongs here
 - A scan that runs past the hour is no longer joined by the next hour's scan.
 - Strong-match notifications follow the order of Matches: a job ranked lower (an unclear
   place, a company you passed on) no longer alerts on its raw score.
+
+## 0.1.2 (2026-11-03)
+
 - Setup is five short steps, finds Claude Code and Codex on your Mac and connects them for you,
   and tells you exactly what to run when one is missing.
 - Worked at the same company twice? The CV check now ties each role to its own entry, so lines
