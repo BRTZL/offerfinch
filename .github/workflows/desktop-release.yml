@@ -13,8 +13,11 @@
 #          -> finalize (button only) -> publish -> notify
 #
 # The checks and the build run side by side: signing and notarization take as long as the tests,
-# and nothing is committed, tagged or published until every job has passed. A failed check
-# leaves a signed build as a run artifact and nothing more. Only the jobs that need macOS run
+# and nothing is committed, tagged or published until quality, test, test-mac and build have
+# passed. A failed check leaves a signed build as a run artifact and nothing more. The e2e suite
+# runs beside them but does not hold a release: a failure keeps its traces as an artifact and the
+# notification says so, and the release goes out (slow, uneven macOS runners made it fail on
+# timing, not on the app). Only the jobs that need macOS run
 # there: the Codex boundary tests (sandbox-exec), the desktop app's tests, the e2e suite and the
 # build; macOS runners are few and queue.
 #
@@ -223,6 +226,7 @@ jobs:
         run: pnpm --filter @offerfinch/local-llm --filter @offerfinch/desktop test
 
   # The suite split three ways by file (Playwright shards); each shard is its own runner.
+  # Reported, not required: finalize and publish do not wait for it (the header).
   e2e:
     needs: resolve
     runs-on: macos-15
@@ -403,7 +407,7 @@ jobs:
   # It pushes over SSH with the release deploy key (release-push environment), which may bypass
   # the rulesets; the workflow's token never writes to main or creates a tag.
   finalize:
-    needs: [resolve, quality, test, test-mac, e2e, build]
+    needs: [resolve, quality, test, test-mac, build]
     if: github.event_name == 'workflow_dispatch' && needs.resolve.outputs.dry_run == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -446,11 +450,11 @@ jobs:
           fi
 
   publish:
-    needs: [resolve, quality, test, test-mac, e2e, build, finalize]
+    needs: [resolve, quality, test, test-mac, build, finalize]
     if: >-
       !cancelled() && needs.resolve.outputs.dry_run == 'false' &&
       needs.quality.result == 'success' && needs.test.result == 'success' &&
-      needs['test-mac'].result == 'success' && needs.e2e.result == 'success' &&
+      needs['test-mac'].result == 'success' &&
       needs.build.result == 'success' &&
       (needs.finalize.result == 'success' || needs.finalize.result == 'skipped')
     runs-on: ubuntu-latest
@@ -537,11 +541,15 @@ jobs:
           CHANNEL: ${{ needs.resolve.outputs.channel || 'release' }}
           TAG: ${{ needs.resolve.outputs.tag }}
           DRY_RUN: ${{ needs.resolve.outputs.dry_run }}
-          FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+          # Every job's result; FAILED below leaves e2e out (it does not hold a release).
+          NEEDS: ${{ toJSON(needs) }}
+          E2E: ${{ needs.e2e.result }}
           PUBLISHED: ${{ needs.publish.result == 'success' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.resolve.outputs.tag }}
         run: |
+          FAILED=$(jq -r '[to_entries[] | select(.key != "e2e") | .value.result]
+            | any(. == "failure" or . == "cancelled")' <<< "$NEEDS")
           if [ -z "$NTFY_TOPIC" ]; then
             echo "::notice::NTFY_TOPIC is not set: no notification."
             exit 0
@@ -555,6 +563,10 @@ jobs:
           else
             title="OfferFinch $VERSION dry run passed"; tags="test_tube"; priority=2; url="$RUN_URL"
             body="Dry run: nothing published. The build is a run artifact."
+          fi
+          if [ "$E2E" != "success" ] && [ "$E2E" != "skipped" ]; then
+            body="$body e2e: **$E2E** (not blocking); the traces are the run's e2e-results artifacts."
+            [ "$FAILED" = "true" ] || tags="$tags,warning"
           fi
           curl -sS --max-time 20 \
             -H "Title: $title" -H "Tags: $tags" -H "Priority: $priority" -H "Markdown: yes" \
