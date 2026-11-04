@@ -1380,6 +1380,40 @@ function fixtureRows(): Record<string, Row[]> {
 			},
 		],
 		submission_settings: [{ user_id: U, paused: 0, updated_at: at(2) }],
+		// What the Claude plan had used, and OfferFinch's share of it, as last read.
+		plan_usage: [
+			{
+				user_id: U,
+				vendor: "anthropic",
+				state: JSON.stringify({
+					vendor: "anthropic",
+					checkedAt: new Date(at(5)).toISOString(),
+					account: {
+						plan: "max",
+						extraUsage: {
+							enabled: false,
+							used: null,
+							limit: null,
+							currency: null,
+						},
+						credits: null,
+					},
+					windows: [
+						{
+							id: "five_hour",
+							label: "Session",
+							kind: "session",
+							usedPercent: 42,
+							appPercent: 7,
+							resetsAt: new Date(at(5) + 4 * 3_600_000).toISOString(),
+							durationMins: 300,
+							sampledAt: new Date(at(5)).toISOString(),
+						},
+					],
+				}),
+				updated_at: at(5),
+			},
+		],
 		subscription_pauses: [
 			{
 				user_id: U,

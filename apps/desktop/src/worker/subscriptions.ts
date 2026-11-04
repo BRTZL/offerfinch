@@ -13,12 +13,14 @@ import {
 	SubscriptionUnavailableError,
 } from "@offerfinch/core/scoring/llm";
 import type { LlmLoginState } from "@offerfinch/core/scoring/llm-status";
+import type { PlanUsageSink } from "@offerfinch/core/scoring/plan-usage";
 import {
 	CLAUDE_SUBSCRIPTION,
 	ClaudeSubscriptionProvider,
 	CODEX_SUBSCRIPTION,
 	CodexSubscriptionProvider,
 	claudeLogin,
+	codexPlanUsage,
 	codexSubscriptionLogin,
 	loginShellPath,
 	subscriptionEnv,
@@ -291,8 +293,12 @@ export interface Subscriptions {
 	/** Uses a known PATH now (the one cached from the last start), without starting a shell. */
 	usePath(pathEnv: string): void;
 	factory: LocalLlmFactory;
-	claude(): Promise<CliState>;
-	codex(): Promise<CliState>;
+	/**
+	 * Each CLI's state, kept for a minute. The read also reports the plan's usage to the plan
+	 * usage tracker. `fresh`: read again now (Refresh in Settings › Models).
+	 */
+	claude(options?: { fresh?: boolean }): Promise<CliState>;
+	codex(options?: { fresh?: boolean }): Promise<CliState>;
 }
 
 /** A role whose CLI is missing: its calls pause with what to install, never fail. */
@@ -316,6 +322,8 @@ class MissingCli implements LlmProvider {
 export function subscriptions(input: {
 	hostScript: string;
 	log?: (message: string, data?: Record<string, unknown>) => void;
+	/** Where every read of a plan's usage goes (Settings › Models). */
+	planUsage?: (vendor: "anthropic" | "openai") => PlanUsageSink;
 }): Subscriptions {
 	let env: Record<string, string | undefined> = { ...process.env };
 	let claudeBinary: string | null = null;
@@ -348,6 +356,7 @@ export function subscriptions(input: {
 							parentEnv: env,
 							log: input.log,
 							query: electronClaudeQuery(input.hostScript, claudeBinary),
+							planUsage: input.planUsage?.("anthropic"),
 						})
 					: new MissingCli(
 							`${CLAUDE_SUBSCRIPTION}:${model}`,
@@ -363,6 +372,7 @@ export function subscriptions(input: {
 							parentEnv: env,
 							binary: codexBinary,
 							log: input.log,
+							planUsage: input.planUsage?.("openai"),
 						})
 					: new MissingCli(
 							`${CODEX_SUBSCRIPTION}:${model || "default"}`,
@@ -371,15 +381,17 @@ export function subscriptions(input: {
 						);
 			throw new Error(`Unknown subscription provider: ${provider}`);
 		},
-		async claude() {
-			if (fresh(claudeCache)) return (claudeCache as { state: CliState }).state;
+		async claude(options = {}) {
+			if (!options.fresh && fresh(claudeCache))
+				return (claudeCache as { state: CliState }).state;
 			const binary = claudeBinary;
 			const state: CliState = binary
 				? await (async () => {
-						const login = await claudeLogin(
+						const { planUsage, ...login } = await claudeLogin(
 							env,
 							electronClaudeQuery(input.hostScript, binary),
 						);
+						if (planUsage) input.planUsage?.("anthropic").sample(planUsage);
 						return {
 							path: binary,
 							version: await version(binary, env as NodeJS.ProcessEnv),
@@ -406,12 +418,22 @@ export function subscriptions(input: {
 			claudeCache = { at: Date.now(), state };
 			return state;
 		},
-		async codex() {
-			if (fresh(codexCache)) return (codexCache as { state: CliState }).state;
+		async codex(options = {}) {
+			if (!options.fresh && fresh(codexCache))
+				return (codexCache as { state: CliState }).state;
 			const binary = codexBinary;
 			const login: LlmLoginState = binary
 				? await codexSubscriptionLogin(env)
 				: { state: "logged_out", detail: "The Codex CLI is not installed." };
+			// Signed in: the plan's usage, as a call reads it before its prompt (no prompt here).
+			if (binary && login.state === "logged_in" && input.planUsage) {
+				const read = await codexPlanUsage({ binary, parentEnv: env });
+				if (read.snapshot) input.planUsage("openai").sample(read.snapshot);
+				else
+					input.log?.("codex plan usage not read", {
+						error: read.error,
+					});
+			}
 			const state: CliState = {
 				path: binary,
 				version: binary

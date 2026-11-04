@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { HeldCalls } from "@/components/desktop/held-calls";
+import { PlanUsage } from "@/components/desktop/plan-usage";
 import {
 	QueryState,
 	SettingsPage,
@@ -287,6 +288,25 @@ function SubscriptionSection() {
 	);
 }
 
+/** The plans' usage, for the CLIs that are signed in (or were read before). */
+function PlanUsageSection() {
+	const subs = useQuery({
+		...orpc.ai.subscriptions.queryOptions(),
+		staleTime: 30_000,
+		meta: { quiet: true },
+	});
+	const d = subs.data;
+	if (!d) return <RowsSkeleton rows={2} twoLine />;
+	return (
+		<PlanUsage
+			signedIn={{
+				anthropic: d.claude.login.state === "logged_in",
+				openai: d.codex.login.state === "logged_in",
+			}}
+		/>
+	);
+}
+
 /** The plans' terms, shown wherever a subscription can be turned on. */
 export function SubscriptionTerms() {
 	return (
@@ -520,9 +540,17 @@ export function ModelSettings({
 				</Section>
 			) : null}
 			{subscriptions ? (
-				<Section title="Subscriptions">
-					<SubscriptionSection />
-				</Section>
+				<>
+					<Section title="Subscriptions">
+						<SubscriptionSection />
+					</Section>
+					<Section
+						title="Plan usage"
+						description="What each plan has left in its windows, and how much of it OfferFinch used."
+					>
+						<PlanUsageSection />
+					</Section>
+				</>
 			) : null}
 		</>
 	);

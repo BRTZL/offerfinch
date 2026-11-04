@@ -17,6 +17,10 @@ import {
 	type SubscriptionPauseKind,
 	SubscriptionUnavailableError,
 } from "@offerfinch/core/scoring/llm";
+import type {
+	PlanUsageCall,
+	PlanUsageSink,
+} from "@offerfinch/core/scoring/plan-usage";
 import { z } from "zod";
 
 import { Breaker } from "./breaker";
@@ -26,6 +30,7 @@ import {
 	type ClaudeSession,
 	isolatedQuery,
 } from "./isolated";
+import { claudeRateLimitSnapshot, claudeUsageSnapshot } from "./plan-usage";
 
 export const CLAUDE_SUBSCRIPTION = "claude-subscription";
 export type ClaudeEffort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -263,6 +268,12 @@ const USAGE_CHECK_MS = 30_000;
 const DRAIN_MS = 15_000;
 /** How long a probe's "extra usage is off" is trusted by the same provider. */
 const EXTRA_USAGE_TRUST_MS = 60_000;
+/**
+ * A call needs a plan-usage read this recent before it starts, or the probe runs even while
+ * the extra-usage answer is still trusted: what the plan did since (the user's own work)
+ * would otherwise be read as the call's.
+ */
+const USAGE_BASELINE_MS = 10_000;
 
 /** The system prompt of a probe session: it never receives a prompt. */
 export const USAGE_PROBE_SYSTEM = "usage probe; no prompt is sent";
@@ -280,6 +291,8 @@ export async function probeExtraUsage(
 	auth: { kind: SubscriptionPauseKind; detail: string } | null;
 	extra: ExtraUsageReport;
 	account: AuthReport | null;
+	/** The plan's usage report as read, for Settings › Models; null when it could not be. */
+	usage: SDKControlGetUsageResponse | null;
 }> {
 	const cwd = await mkdtemp(join(tmpdir(), "offerfinch-claude-probe-"));
 	let stop: () => void = () => {};
@@ -321,12 +334,14 @@ export async function probeExtraUsage(
 				},
 				extra: extraUsageReport(null),
 				account: null,
+				usage: null,
 			};
 		const account = authReport(init.account);
 		const auth = authProblem(account, "none");
-		if (auth) return { auth, extra: extraUsageReport(null), account };
+		if (auth)
+			return { auth, extra: extraUsageReport(null), account, usage: null };
 		const usage = await timeout(Promise.resolve().then(() => session.usage()));
-		return { auth: null, extra: extraUsageReport(usage), account };
+		return { auth: null, extra: extraUsageReport(usage), account, usage };
 	} finally {
 		stop();
 		session.close();
@@ -373,6 +388,8 @@ export interface ClaudeSubscriptionOptions {
 	now?: () => Date;
 	/** How long a session is read after its result or first problem. Default `DRAIN_MS`. */
 	drainMs?: number;
+	/** Where the plan's usage, as each probe and call reads it, is reported (Settings › Models). */
+	planUsage?: PlanUsageSink;
 }
 
 /** One process-wide breaker per vendor: a limit or logout stops every caller, not just one. */
@@ -385,6 +402,29 @@ const CLAUDE_BREAKER = new Breaker();
  */
 export function resumeClaudeCalls(breaker: Breaker = CLAUDE_BREAKER): void {
 	breaker.clear("extra_usage");
+}
+
+/** What `inspect` reads a message against. */
+interface InspectContext {
+	cwd: string;
+	removed: string[];
+	account: () => AuthReport | null;
+	usageCall?: PlanUsageCall;
+}
+
+/** The one prompt, handed over once the gate opens; nothing when it closes. */
+async function* promptInput(
+	gate: Promise<boolean>,
+	prompt: string,
+	sent: () => void,
+): AsyncGenerator<SDKUserMessage> {
+	if (!(await gate)) return;
+	sent();
+	yield {
+		type: "user",
+		message: { role: "user", content: prompt },
+		parent_tool_use_id: null,
+	} as SDKUserMessage;
 }
 
 /**
@@ -426,6 +466,7 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			throw error;
 		}
 		const schema = jsonSchemaOf(request.schema as z.ZodType);
+		const usageCall = this.options.planUsage?.call();
 		try {
 			// One prompt, exactly the request the caller reserved for. An answer that fails the
 			// schema (the CLI's own check, MAX_STRUCTURED_OUTPUT_RETRIES=1: one attempt, or Zod's)
@@ -435,10 +476,14 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 				fullPrompt(request),
 				schema,
 				request.maxTokens,
-				request.onModelCall,
+				() => {
+					usageCall?.sent();
+					request.onModelCall?.();
+				},
 				request.onUsage,
 				request.onAnswered,
 				request.onBillingUnclear,
+				usageCall,
 			);
 			if (answer.invalid !== undefined)
 				throw new Error(
@@ -449,6 +494,8 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			if (error instanceof SubscriptionUnavailableError)
 				this.breaker.trip(error, this.now());
 			throw error;
+		} finally {
+			usageCall?.done();
 		}
 	}
 
@@ -464,12 +511,20 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 	 */
 	private async checkExtraUsage(): Promise<void> {
 		const now = this.now().getTime();
-		if (now < this.extraUsageOffUntil) return;
+		if (
+			now < this.extraUsageOffUntil &&
+			!this.options.planUsage?.baselineNeeded(USAGE_BASELINE_MS)
+		)
+			return;
 		const report = await probeExtraUsage(
 			this.query,
 			this.options.model,
 			subscriptionEnv(this.options.parentEnv).env,
 		);
+		if (report.usage) {
+			const snapshot = claudeUsageSnapshot(report.usage, this.now());
+			if (snapshot) this.options.planUsage?.sample(snapshot);
+		}
 		if (report.auth) throw this.pause(report.auth.kind, report.auth.detail);
 		if (report.extra.state !== "off")
 			throw this.pause(
@@ -513,6 +568,7 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 		onUsage?: (usage: LlmUsage) => void,
 		onAnswered?: () => void,
 		onBillingUnclear?: (detail: string) => void,
+		usageCall?: PlanUsageCall,
 	): Promise<{ output: unknown; invalid?: string }> {
 		const cwd = await mkdtemp(join(tmpdir(), "offerfinch-claude-"));
 		const abort = new AbortController();
@@ -522,18 +578,11 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 		});
 		/** The prompt was handed to the CLI: a result before it answers nothing of ours. */
 		let promptSent = false;
-		async function* input(): AsyncGenerator<SDKUserMessage> {
-			if (!(await gate)) return;
-			promptSent = true;
-			yield {
-				type: "user",
-				message: { role: "user", content: prompt },
-				parent_tool_use_id: null,
-			} as SDKUserMessage;
-		}
 		const { env, removed } = subscriptionEnv(this.options.parentEnv);
 		const session: ClaudeSession = this.query({
-			prompt: input(),
+			prompt: promptInput(gate, prompt, () => {
+				promptSent = true;
+			}),
 			options: claudeQueryOptions({
 				model: this.options.model,
 				effort: this.options.effort,
@@ -555,6 +604,7 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			abort.abort();
 		};
 		let account: AuthReport | null = null;
+		const ctx = { cwd, removed, account: () => account, usageCall };
 		const authChecked = session.initializationResult().then(
 			async (init) => {
 				account = authReport(init.account);
@@ -613,7 +663,7 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 				}
 				const message = next.value;
 				if (message.type === "assistant" && message.error) clean = false;
-				const problem = this.inspect(message, cwd, removed, () => account);
+				const problem = this.inspect(message, ctx);
 				if (problem) {
 					if (
 						problem instanceof SubscriptionUnavailableError &&
@@ -722,9 +772,7 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 	/** A reason to stop the session now, from one of its messages, or null. */
 	private inspect(
 		message: SDKMessage,
-		cwd: string,
-		removed: string[],
-		account: () => AuthReport | null,
+		{ cwd, removed, account, usageCall }: InspectContext,
 	): Error | null {
 		if (message.type === "system" && message.subtype === "init") {
 			const report = sessionReport(message);
@@ -757,6 +805,8 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 		}
 		if (message.type === "rate_limit_event") {
 			const info = message.rate_limit_info;
+			const snapshot = usageCall && claudeRateLimitSnapshot(info, this.now());
+			if (snapshot) usageCall?.sample(snapshot);
 			const resetsAt = info.resetsAt
 				? new Date(info.resetsAt * 1000)
 				: undefined;

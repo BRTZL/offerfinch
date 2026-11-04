@@ -19,6 +19,7 @@ import {
 	SubscriptionUnavailableError,
 } from "@offerfinch/core/scoring/llm";
 import { toStrictJsonSchema } from "@offerfinch/core/scoring/openai";
+import type { PlanUsageSink } from "@offerfinch/core/scoring/plan-usage";
 import type { z } from "zod";
 
 import { Breaker } from "./breaker";
@@ -29,6 +30,7 @@ import {
 	startAppServer,
 } from "./codex-rpc";
 import { subscriptionEnv } from "./env";
+import { codexUsageSnapshot } from "./plan-usage";
 
 export const CODEX_SUBSCRIPTION = "codex-subscription";
 
@@ -325,6 +327,8 @@ interface CreditsSnapshot {
 interface RateLimitWindow {
 	usedPercent: number;
 	resetsAt: number | null;
+	/** Newer CLIs say how long the window is, in minutes. */
+	windowDurationMins?: number | null;
 }
 interface RateLimitSnapshot {
 	limitId: string | null;
@@ -565,6 +569,9 @@ export interface CodexTurnResult {
 	/** ChatGPT credit balances read before the prompt, and again after the answer. */
 	creditsBefore: Record<string, number> | null;
 	creditsAfter: Record<string, number> | null;
+	/** The plan's usage as read before the prompt, and again after the answer. */
+	rateLimitsBefore: CodexRateLimits | null;
+	rateLimitsAfter: CodexRateLimits | null;
 	/** A turn error Codex reported, with its classification. */
 	turnError: { message: string; info: unknown } | null;
 	status: string | null;
@@ -577,6 +584,28 @@ export interface CodexTurnResult {
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function emptyTurnResult(removedEnv: string[]): CodexTurnResult {
+	return {
+		text: null,
+		usage: null,
+		model: null,
+		toolAttempt: null,
+		boundary: null,
+		refused: null,
+		creditsBefore: null,
+		creditsAfter: null,
+		rateLimitsBefore: null,
+		rateLimitsAfter: null,
+		turnError: null,
+		status: null,
+		sent: false,
+		rawTypes: [],
+		toolNames: [],
+		codexVersion: null,
+		removedEnv,
+	};
 }
 
 /**
@@ -608,23 +637,7 @@ export async function runCodexTurn(
 		CODEX_HOME: dirs.codexHome,
 		TMPDIR: dirs.tmp,
 	};
-	const result: CodexTurnResult = {
-		text: null,
-		usage: null,
-		model: null,
-		toolAttempt: null,
-		boundary: null,
-		refused: null,
-		creditsBefore: null,
-		creditsAfter: null,
-		turnError: null,
-		status: null,
-		sent: false,
-		rawTypes: [],
-		toolNames: [],
-		codexVersion: null,
-		removedEnv: removed,
-	};
+	const result = emptyTurnResult(removed);
 	const extraConfig =
 		input.auth.type === "capture"
 			? [
@@ -866,6 +879,7 @@ export async function runCodexTurn(
 			rateLimits = await server
 				.request<CodexRateLimits>("account/rateLimits/read", {})
 				.catch(() => null);
+		result.rateLimitsBefore = rateLimits;
 		if (rateLimits) result.creditsBefore = creditBalances(rateLimits);
 		if (input.creditsOnly) return result;
 		result.refused =
@@ -916,6 +930,7 @@ export async function runCodexTurn(
 					.catch(() => null),
 				new Promise<null>((r) => setTimeout(() => r(null), 15_000)),
 			]);
+			result.rateLimitsAfter = after;
 			result.creditsAfter = after ? creditBalances(after) : null;
 		}
 	} catch (error) {
@@ -955,6 +970,8 @@ export interface CodexSubscriptionOptions {
 	captureChatgptBaseUrl?: string;
 	/** Tests only: stands in for `runCodexTurn` (no process, no network). */
 	runTurn?: (input: CodexTurnInput) => Promise<CodexTurnResult>;
+	/** Where the plan's usage, as each call reads it, is reported (Settings › Models). */
+	planUsage?: PlanUsageSink;
 }
 
 /** One process-wide breaker for Codex: a limit or logout stops every caller. */
@@ -1067,6 +1084,35 @@ export class CodexSubscriptionProvider implements LlmProvider {
 			};
 		}
 		const schema = toStrictJsonSchema(request.schema as z.ZodType);
+		const usageCall = this.options.planUsage?.call();
+		const report = (limits: CodexRateLimits | null, after: boolean) => {
+			const snapshot = limits && codexUsageSnapshot(limits, this.now());
+			if (!snapshot) return;
+			if (after) usageCall?.sample(snapshot);
+			else this.options.planUsage?.sample(snapshot);
+		};
+		try {
+			return await this.turn(request, binary, auth, schema, parentEnv, {
+				sent: () => usageCall?.sent(),
+				report,
+			});
+		} finally {
+			usageCall?.done();
+		}
+	}
+
+	// biome-ignore lint/complexity/useMaxParams: One turn's inputs, kept positional so the call above stays readable.
+	private async turn<T>(
+		request: GenerateObjectRequest<T>,
+		binary: string,
+		auth: CodexAuthInput,
+		schema: Record<string, unknown>,
+		parentEnv: Record<string, string | undefined>,
+		plan: {
+			sent: () => void;
+			report: (limits: CodexRateLimits | null, after: boolean) => void;
+		},
+	): Promise<T> {
 		const result = await (this.options.runTurn ?? runCodexTurn)({
 			binary,
 			auth,
@@ -1077,8 +1123,12 @@ export class CodexSubscriptionProvider implements LlmProvider {
 			effort: this.options.effort,
 			parentEnv,
 			timeoutMs: this.options.timeoutMs,
-			onModelCall: request.onModelCall,
+			onModelCall: () => {
+				plan.sent();
+				request.onModelCall?.();
+			},
 			beforeTurn: ({ account, rateLimits }) => {
+				plan.report(rateLimits, false);
 				if (auth.type === "capture") return null;
 				const acct = account as { type?: string; planType?: string } | null;
 				if (acct?.type !== "chatgpt")
@@ -1118,11 +1168,13 @@ export class CodexSubscriptionProvider implements LlmProvider {
 				creditsOnly: true,
 			}).catch(() => null);
 			result.creditsAfter = fresh?.creditsBefore ?? null;
+			result.rateLimitsAfter = fresh?.rateLimitsBefore ?? null;
 			this.options.log?.("codex credits read again in a fresh process", {
 				provider: this.name,
 				read: result.creditsAfter !== null,
 			});
 		}
+		if (result.sent) plan.report(result.rateLimitsAfter, true);
 		this.options.log?.("codex subscription session", {
 			provider: this.name,
 			codexVersion: result.codexVersion,

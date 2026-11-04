@@ -151,6 +151,36 @@ export class DrizzleSpendStore implements SpendStore {
 		return this.budget(this.db, userId);
 	}
 
+	/**
+	 * A vendor's subscription calls since `since` (a plan window's start): prompts sent, and the
+	 * tokens they reported. Open reservations count as one call each.
+	 */
+	async subscriptionCallsSince(
+		userId: string,
+		vendor: SubscriptionVendor,
+		since: Date,
+	): Promise<{ calls: number; inputTokens: number; outputTokens: number }> {
+		const [row] = await this.db
+			.select({
+				calls: sql<number>`coalesce(sum(${llmUsage.modelCalls}), 0)`,
+				inputTokens: sql<number>`coalesce(sum(${llmUsage.inputTokens} + ${llmUsage.cachedInputTokens} + ${llmUsage.cacheWriteTokens}), 0)`,
+				outputTokens: sql<number>`coalesce(sum(${llmUsage.outputTokens}), 0)`,
+			})
+			.from(llmUsage)
+			.where(
+				and(
+					eq(llmUsage.userId, userId),
+					gte(llmUsage.createdAt, since),
+					sql`${llmUsage.provider} like ${`${SUBSCRIPTION_PREFIX[vendor]}%`}`,
+				),
+			);
+		return {
+			calls: Number(row?.calls ?? 0),
+			inputTokens: Number(row?.inputTokens ?? 0),
+			outputTokens: Number(row?.outputTokens ?? 0),
+		};
+	}
+
 	/** Sets the user's subscription call budget per rolling 24 hours (null: the default). */
 	async setSubscriptionDailyCalls(
 		userId: string,
