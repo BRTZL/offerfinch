@@ -18,6 +18,16 @@ at the top, above the newest version. Only what is merged into main belongs here
   once more against the filter; the ones it rejects leave the Inbox.
 - Jobs are filtered and scored as soon as a source finds them, while the scan goes on, so the
   first matches show up well before the scan ends.
+- Plan calls are no longer held when their billing is unclear. Before each call OfferFinch
+  still checks that extra usage is off (Claude) or that the plan has room (Codex). A call that
+  ends unclearly now counts as a plan call, like in T3 Code. The "calls with unknown billing"
+  section, with "Save what it cost" and "Not charged", is gone.
+- If Claude or Codex really bills a call as extra usage or credits, that plan stops. Settings ›
+  Models then says "Claude used paid extra usage on <date>. Calls are stopped." with Resume.
+- Calls stuck as held by earlier versions are settled as plan calls when you update.
+- Codex can now find matches and write drafts. A draft is still never checked by the company
+  that wrote it: Claude drafts are checked by OpenAI, and Codex drafts by Claude. Settings ›
+  Models greys out a choice that would break this and says why.
 
 ## 0.1.4 (2026-11-04)
 
