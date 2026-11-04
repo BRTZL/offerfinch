@@ -8,12 +8,15 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
-## 0.1.3 (2026-11-04)
+## Unreleased
 
 - Settings › Models shows your plan's usage, as T3 Code does: for Claude Code and Codex, how
   much of each window (session, weekly) is used and left, when it resets, and how much of that
   OfferFinch itself used, with its calls and tokens in the window. Refresh reads both plans
   again without sending a prompt.
+
+## 0.1.3 (2026-11-04)
+
 - The welcome screen shows what OfferFinch does in a short demo of the Inbox: roles arrive from
   the job boards, each is scored against your CV, the ones that don't fit are set aside with
   the reason, and the one you pick is drafted and checked. You apply yourself; nothing is sent.
