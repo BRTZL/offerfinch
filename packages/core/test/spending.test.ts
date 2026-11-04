@@ -46,10 +46,13 @@ const POSTING: NormalizedJob = {
 		"Requirements\n- TypeScript and React with Next.js\n- Node.js and PostgreSQL",
 };
 
-/** The fake's answers, billed as Claude Opus 5.5 would bill 10k input and 2k output tokens. */
+/**
+ * The fake's answers, billed as Claude Opus 5.5 would bill 10k input and 2k output tokens. The
+ * claims check goes under OpenAI's name: a draft is never checked by the company that wrote it.
+ */
 class PricedFake implements LlmProvider {
-	readonly name = "anthropic:claude-opus-5-5";
 	readonly fake = new FakeLlmProvider();
+	constructor(readonly name = "anthropic:claude-opus-5-5") {}
 	async generateObject<T>(request: GenerateObjectRequest<T>): Promise<T> {
 		const output = await this.fake.generateObject({
 			...request,
@@ -152,7 +155,7 @@ async function setup(spend: MemorySpend) {
 			greenhouse: { kind: "greenhouse", listJobs: async () => [POSTING] },
 		},
 		llm: new PricedFake(),
-		claimsLlm: new PricedFake(),
+		claimsLlm: new PricedFake("openai:claude-opus-5-5"),
 		exporter: fakeExporter(),
 		now: () => new Date("2026-10-30T12:00:00Z"),
 		notifier: new NoopNotifier(),

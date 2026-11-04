@@ -81,13 +81,15 @@ export const redraftMethods = {
 
 	/**
 	 * The redraft's versions and its cleared request, in one transaction. Written as the workflow's
-	 * (the model wrote them), with the request in `meta` so the version says it was a redraft.
+	 * (the model wrote them), with the request in `meta` so the version says it was a redraft,
+	 * and `author` (the model) as each version's author.
 	 */
 	async saveRedraft(
 		userId: string,
 		applicationId: string,
 		requestId: string,
 		versions: { kind: RedraftDocument; content: string }[],
+		author?: string,
 	): Promise<"saved" | "gone" | "conflict"> {
 		return this.db.transaction(async (tx) => {
 			const app = await this.lockOwned(tx, userId, applicationId);
@@ -128,6 +130,7 @@ export const redraftMethods = {
 					version,
 					content: v.content,
 					createdBy: "workflow",
+					authorProvider: author ?? null,
 					meta: {
 						redraft: {
 							requestId: request.id,

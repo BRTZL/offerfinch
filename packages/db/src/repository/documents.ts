@@ -35,10 +35,16 @@ export const documentsMethods = {
 					format,
 					content,
 					actor,
+					draft.provider ?? null,
 				);
 		});
 	},
 
+	/**
+	 * A new version of one document. `author` is the model that wrote it; unset (a user's edit,
+	 * added answers) the previous version's author carries over: an edit does not change who
+	 * wrote the draft.
+	 */
 	// biome-ignore lint/complexity/useMaxParams: Keep document-version and state-transition transaction contracts intact.
 	async insertVersion(
 		t: Tx,
@@ -48,9 +54,13 @@ export const documentsMethods = {
 		format: "markdown" | "json",
 		content: string,
 		actor: Actor,
+		author?: string | null,
 	): Promise<number> {
 		const [last] = await t
-			.select({ version: documents.version })
+			.select({
+				version: documents.version,
+				authorProvider: documents.authorProvider,
+			})
 			.from(documents)
 			.where(
 				and(
@@ -70,6 +80,8 @@ export const documentsMethods = {
 			version,
 			content,
 			createdBy: actor,
+			authorProvider:
+				author === undefined ? (last?.authorProvider ?? null) : author,
 		});
 		return version;
 	},
@@ -86,6 +98,7 @@ export const documentsMethods = {
 				version: documents.version,
 				content: documents.content,
 				createdBy: documents.createdBy,
+				authorProvider: documents.authorProvider,
 			})
 			.from(documents)
 			.where(

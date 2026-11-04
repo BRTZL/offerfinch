@@ -1,5 +1,9 @@
 import type { BlobStore } from "@offerfinch/core/export/export";
-import type { LlmProvider } from "@offerfinch/core/scoring/llm";
+import {
+	companyOf,
+	type LlmProvider,
+	vendorOf,
+} from "@offerfinch/core/scoring/llm";
 import type { BrowserProvider } from "@offerfinch/core/scrape/browser";
 import { describe, expect, it } from "vitest";
 
@@ -99,6 +103,38 @@ describe("model roles", () => {
 			["claims", "claude-subscription:claude-opus-5-5", true],
 		]);
 		expect(deps.claimsLlm?.name).toBe("claude-subscription:claude-opus-5-5");
+	});
+
+	it("names the company of every checker it builds, so a saved draft's author can be refused", () => {
+		// The review refuses a checker of the draft's own company (core `reviewStep`): the desktop's
+		// checkers must say which company they are.
+		const company = (ai: AiSettings, secrets = {}) => {
+			const claims = build(ai, secrets).deps.claimsLlm;
+			return claims && companyOf(vendorOf(claims));
+		};
+		const codexDrafts = {
+			scoring: { mode: "codex-subscription" },
+			tailoring: { mode: "codex-subscription" },
+		} as const;
+		expect(
+			company({ ...codexDrafts, claims: { mode: "claude-subscription" } }),
+		).toBe("anthropic");
+		expect(
+			company(
+				{ ...codexDrafts, claims: { mode: "api" } },
+				{ anthropic: "sk-a" },
+			),
+		).toBe("anthropic");
+		expect(
+			company(
+				{
+					scoring: { mode: "api" },
+					tailoring: { mode: "api" },
+					claims: { mode: "api", model: "gpt-6.1-terra" },
+				},
+				{ anthropic: "sk-a", openai: "sk-o" },
+			),
+		).toBe("openai");
 	});
 
 	it("an API-key checker takes the other company's key, and never the other company's model", () => {

@@ -1,6 +1,13 @@
 import { compareApproval, hashDocuments } from "../domain/approval";
 import { type ExportInput, exportDocuments } from "../export/export";
-import { LlmPausedError } from "../scoring/llm";
+import {
+	billingOf,
+	type Company,
+	companyOf,
+	LlmPausedError,
+	type LlmProvider,
+	vendorOf,
+} from "../scoring/llm";
 import {
 	capReached,
 	meteredFor,
@@ -43,6 +50,7 @@ import {
 import {
 	ApplicationNotFoundError,
 	type PipelineDeps,
+	type StoredDocument,
 	type StoredReview,
 } from "./ports";
 
@@ -286,6 +294,9 @@ export async function reviewStep(
 				: null;
 		let checked: Checked;
 		try {
+			// The settings keep the checker on the other company from drafting, but a saved draft
+			// can predate a change of Drafting: the draft's own author decides.
+			await refuseOwnDraft(deps, userId, app.applicationId, docs);
 			checked = base
 				? await recheckChanged(deps, userId, app.applicationId, input, base)
 				: await checkAll(deps, userId, app.applicationId, input);
@@ -365,6 +376,70 @@ export async function reviewStep(
 		atsIssues: atsIssues.length,
 	});
 	return { outcome: "reviewed", passed, reviewId };
+}
+
+/**
+ * Versions saved before authors were recorded (null) were written by Anthropic: until Codex
+ * could draft (2026-11-04), drafting ran only on Claude (a plan or an Anthropic key).
+ */
+const LEGACY_AUTHOR: Company = "anthropic";
+
+const COMPANY_NAME: Record<Company, string> = {
+	anthropic: "Claude",
+	openai: "OpenAI",
+};
+/** What Drafting is set to for a company, in Settings > Models. */
+const DRAFTER_NAME: Record<Company, string> = {
+	anthropic: "Claude",
+	openai: "Codex",
+};
+
+/**
+ * Why `claims` may not check these documents, or null: one of the checked documents was written
+ * by the checker's own company (fakes are never refused). A user's edit keeps the author of the
+ * version it edited, so an edited draft is still its model's.
+ */
+function sameCompanyRefusal(
+	claims: LlmProvider,
+	docs: StoredDocument[],
+): string | null {
+	const checker = companyOf(vendorOf(claims)) ?? companyOf(claims.name);
+	if (!checker) return null;
+	const own = docs.some(
+		(d) =>
+			d.kind !== "notes" &&
+			(d.authorProvider ? companyOf(d.authorProvider) : LEGACY_AUTHOR) ===
+				checker,
+	);
+	if (!own) return null;
+	const other: Company = checker === "anthropic" ? "openai" : "anthropic";
+	return `${COMPANY_NAME[checker]} wrote this draft, so ${COMPANY_NAME[checker]} can't check it. Redraft it, or set Drafting back to ${DRAFTER_NAME[checker]} in Settings > Models so ${COMPANY_NAME[other]} checks it.`;
+}
+
+/**
+ * Pauses the review (`LlmPausedError`, before any call) when the claims check would check its
+ * own company's draft (`sameCompanyRefusal`); a plan records it on the application like any
+ * refused plan call.
+ */
+async function refuseOwnDraft(
+	deps: PipelineDeps,
+	userId: string,
+	applicationId: string,
+	docs: StoredDocument[],
+): Promise<void> {
+	const claims = deps.claimsLlm;
+	const refused = claims && sameCompanyRefusal(claims, docs);
+	if (!claims || !refused) return;
+	if (billingOf(claims) === "subscription")
+		await deps.spend?.recordRefusal({
+			userId,
+			applicationId,
+			task: "claims",
+			provider: claims.name,
+			error: refused,
+		});
+	deps.log?.("review paused", { applicationId, reason: refused });
+	throw new LlmPausedError(refused);
 }
 
 interface Checked {

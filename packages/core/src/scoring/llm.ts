@@ -103,6 +103,25 @@ export function vendorOf(provider: LlmProvider): string {
 	return provider.vendor ?? provider.name.split(":")[0] ?? provider.name;
 }
 
+/** A model company: Anthropic (an API key, Claude plans) or OpenAI (an API key, Codex plans). */
+export type Company = "anthropic" | "openai";
+
+const COMPANY_PREFIXES: Record<string, Company> = {
+	anthropic: "anthropic",
+	"claude-subscription": "anthropic",
+	openai: "openai",
+	"codex-subscription": "openai",
+};
+
+/**
+ * The company behind a provider name or vendor (`anthropic:…`, `claude-subscription:…` →
+ * "anthropic"; `openai:…`, `codex-subscription:…` → "openai"); null for fakes and anything
+ * else.
+ */
+export function companyOf(nameOrVendor: string): Company | null {
+	return COMPANY_PREFIXES[nameOrVendor.split(":")[0] ?? ""] ?? null;
+}
+
 /**
  * A call that cannot run now and should wait instead of failing: the workflow step returns
  * (no retries, no `failed` application) and the application stays where it is until the sweep

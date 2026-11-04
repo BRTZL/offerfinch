@@ -91,6 +91,7 @@ export class MemoryRepo implements PipelineRepository {
 		version: number;
 		content: string;
 		createdBy?: Actor;
+		authorProvider?: string | null;
 	}[] = [];
 	questions: {
 		id: string;
@@ -381,23 +382,32 @@ export class MemoryRepo implements PipelineRepository {
 			["form_answers", JSON.stringify(draft.formAnswers)],
 		];
 		for (const [kind, content] of contents)
-			this.addVersion(userId, applicationId, kind, content, actor);
+			this.addVersion(
+				userId,
+				applicationId,
+				kind,
+				content,
+				actor,
+				draft.provider ?? null,
+			);
 	}
-	/** Test helper standing in for a dashboard edit. */
+	/**
+	 * Test helper standing in for a dashboard edit. `author` unset: the previous version's author
+	 * carries over, as in the database.
+	 */
+	// biome-ignore lint/complexity/useMaxParams: Mirrors the database's insertVersion.
 	addVersion(
 		userId: string,
 		applicationId: string,
 		kind: string,
 		content: string,
 		actor: Actor = "user",
+		author?: string | null,
 	) {
-		const version =
-			Math.max(
-				0,
-				...this.documents
-					.filter((d) => d.applicationId === applicationId && d.kind === kind)
-					.map((d) => d.version),
-			) + 1;
+		const previous = this.documents
+			.filter((d) => d.applicationId === applicationId && d.kind === kind)
+			.sort((a, b) => b.version - a.version)[0];
+		const version = (previous?.version ?? 0) + 1;
 		this.documents.push({
 			userId,
 			applicationId,
@@ -405,6 +415,8 @@ export class MemoryRepo implements PipelineRepository {
 			version,
 			content,
 			createdBy: actor,
+			authorProvider:
+				author === undefined ? (previous?.authorProvider ?? null) : author,
 		});
 		return version;
 	}
@@ -419,6 +431,7 @@ export class MemoryRepo implements PipelineRepository {
 					version: d.version,
 					content: d.content,
 					createdBy: d.createdBy ?? "workflow",
+					authorProvider: d.authorProvider ?? null,
 				});
 		}
 		return [...latest.values()];

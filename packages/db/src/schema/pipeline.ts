@@ -584,6 +584,13 @@ export const documents = sqliteTable(
 		version: integer("version").notNull().default(1),
 		content: text("content"),
 		createdBy: actor("created_by").notNull().default("workflow"),
+		/**
+		 * The model that wrote this version's text (`anthropic:…`, `claude-subscription:…`,
+		 * `codex-subscription:…`). A user's edit keeps the version it edits' author, so the claims
+		 * check never goes to the company that wrote the words. Null: written before authors were
+		 * recorded (2026-11-04), when only Anthropic could draft.
+		 */
+		authorProvider: text("author_provider"),
 		/** For exports: the markdown version they were rendered from. */
 		sourceVersion: integer("source_version"),
 		/** For exports: page count, byte size, ATS findings. */

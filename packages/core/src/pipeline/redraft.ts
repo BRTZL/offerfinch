@@ -145,6 +145,7 @@ async function redraftStep(
 		app.applicationId,
 		request.id,
 		versions,
+		drafted.provider,
 	);
 	deps.log?.("application redrafted", {
 		applicationId: app.applicationId,
