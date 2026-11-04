@@ -266,6 +266,12 @@ const USAGE_CHECK_MS = 30_000;
  * session closed this way after its result has an unknown payment (held).
  */
 const DRAIN_MS = 15_000;
+/**
+ * How the pinned SDK (0.3.316) ends a session whose CLI exited after an error result: it throws
+ * `Error("Claude Code returned an error result: <the result's text>")`. When that result was
+ * already read, the throw only repeats it; the session ended by itself.
+ */
+const SDK_ERROR_RESULT_ECHO = "Claude Code returned an error result";
 /** How long a probe's "extra usage is off" is trusted by the same provider. */
 const EXTRA_USAGE_TRUST_MS = 60_000;
 /**
@@ -702,7 +708,10 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 				}
 			}
 		} catch (error) {
-			streamError = error instanceof Error ? error : new Error(String(error));
+			// The SDK re-throws an error result it already delivered (an answer that failed the
+			// schema, for one) when the CLI exits: the result decides, not the repeat.
+			streamError = streamFailure(error, gotResult);
+			ended = streamError === null;
 		} finally {
 			clearTimeout(drainTimer);
 			release(false);
@@ -841,6 +850,17 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 		}
 		return null;
 	}
+}
+
+/**
+ * A stream error that is a session failure, or null when the SDK only repeated an error result
+ * the session already delivered (the session then ended by itself).
+ */
+function streamFailure(error: unknown, gotResult: boolean): Error | null {
+	const thrown = error instanceof Error ? error : new Error(String(error));
+	return gotResult && thrown.message.startsWith(SDK_ERROR_RESULT_ECHO)
+		? null
+		: thrown;
 }
 
 /** The vendor refused the request before processing it (a 429 or a logout): not billed. */

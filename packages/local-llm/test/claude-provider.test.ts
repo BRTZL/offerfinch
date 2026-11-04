@@ -7,6 +7,7 @@ import type {
 import { fitAssessmentSchema } from "@offerfinch/core/scoring/fit";
 import { SubscriptionUnavailableError } from "@offerfinch/core/scoring/llm";
 import {
+	ANSWERED_NO_USAGE_BASIS,
 	BILLING_UNCLEAR_BASIS,
 	meteredFor,
 	type SpendStore,
@@ -38,6 +39,8 @@ interface Script {
 	hang?: boolean;
 	/** After its messages, the stream fails (a lost connection, the CLI killed). */
 	lose?: boolean;
+	/** The message the lost stream throws; default "lost response". */
+	loseWith?: string;
 	/** Emitted before the prompt is read (a result here answers nothing that was sent). */
 	early?: SDKMessage[];
 }
@@ -126,6 +129,7 @@ function scripted(script: Script) {
 		const record = { options: params.options, prompts: [] as string[] };
 		seen.push(record);
 		const messages = script.runs?.[run++] ?? [];
+		const lost = new Error(script.loseWith || "lost response");
 		const ready = Promise.resolve({ account: script.account ?? SUBSCRIBED });
 		// Like the isolated session: an abort closes it at once, and it ends as if cleanly.
 		const aborted = () => params.options.abortController?.signal.aborted;
@@ -139,7 +143,7 @@ function scripted(script: Script) {
 					yield m;
 				}
 				if (aborted()) return;
-				if (script.lose) throw new Error("lost response");
+				if (script.lose) throw lost;
 				if (script.hang) await new Promise(() => {});
 				return;
 			}
@@ -782,8 +786,13 @@ describe("what the real CLI emits", () => {
 			} as unknown as SDKMessage;
 			/** Records every settlement like the reviewer's store; refuses nothing itself. */
 			function recordingStore() {
-				const rows: { status: string; basis?: string; modelCalls?: number }[] =
-					[];
+				const rows: {
+					status: string;
+					basis?: string;
+					modelCalls?: number;
+					costMicros?: number;
+					billing?: string;
+				}[] = [];
 				const store = {
 					reserveSpend: async () => {
 						rows.push({ status: "reserved" });
@@ -886,6 +895,45 @@ describe("what the real CLI emits", () => {
 					expect(seen, mode).toHaveLength(1);
 					expect(rows[1]).toMatchObject({ status: "settled", modelCalls: 0 });
 				}
+			});
+
+			it("settles an answer that failed the schema at $0 when the SDK only repeats its error result on exit", async () => {
+				// The 2026-11-03 false hold: the CLI's result is error_max_structured_output_retries,
+				// then the pinned SDK throws "Claude Code returned an error result: ..." as it exits.
+				const { rows, store } = recordingStore();
+				const { claude, seen } = provider({
+					runs: [
+						[res("error_max_structured_output_retries", null, 0)],
+						[result({ ok: true })],
+					],
+					lose: true,
+					loseWith:
+						"Claude Code returned an error result: Output does not match required schema",
+				});
+				const first = await call(claude, store);
+				expect(first).toBeInstanceOf(Error);
+				expect((first as SubscriptionUnavailableError).paid).toBeFalsy();
+				expect(rows[0]).toMatchObject({
+					status: "settled",
+					costMicros: 0,
+					basis: ANSWERED_NO_USAGE_BASIS,
+					modelCalls: 1,
+				});
+				expect(rows[0]?.billing).not.toBe("api");
+				// No breaker trip: the next call is sent.
+				expect(await call(claude, store)).toEqual({ ok: true });
+				expect(seen).toHaveLength(2);
+			});
+
+			it("still counts a stream error that repeats nothing as a failed session", async () => {
+				const { rows, store } = recordingStore();
+				const { claude } = provider({
+					runs: [[res("error_max_structured_output_retries", null, 0)]],
+					lose: true,
+					loseWith: "the CLI was killed",
+				});
+				await call(claude, store);
+				expect(rows[0]?.status).not.toBe("settled");
 			});
 
 			it("keeps a vendor refusal (a 429) released, not held", async () => {
