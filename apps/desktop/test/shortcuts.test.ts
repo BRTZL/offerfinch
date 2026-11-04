@@ -129,7 +129,13 @@ describe("keyboard shortcuts", () => {
 		const root = path.resolve(import.meta.dirname, "../src/renderer");
 		const offenders: string[] = [];
 		const walk = (dir: string) => {
-			for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+			// Vendored code (the stageshow kit draws keycaps for its demos) is not the app's.
+			const entries = fs
+				.readdirSync(dir, { withFileTypes: true })
+				.filter(
+					(e) => path.relative(root, path.join(dir, e.name)) !== "vendor",
+				);
+			for (const entry of entries) {
 				const file = path.join(dir, entry.name);
 				if (entry.isDirectory()) walk(file);
 				else if (/\.tsx?$/.test(entry.name)) {

@@ -51,6 +51,14 @@ export function Badge({
 	);
 }
 
+/** The fit's ink: green (the beak) from 85, the high-fit line; muted under 50. */
+export const fitTone = (value: number) =>
+	value >= 85
+		? "text-brand"
+		: value >= 50
+			? "text-foreground"
+			: "text-muted-foreground";
+
 /** A fit score in tabular figures; green (the beak) from 85, the high-fit line. */
 export function Fit({
 	value,
@@ -69,11 +77,7 @@ export function Fit({
 			className={cn(
 				"font-mono font-semibold tabular-nums",
 				size === "lg" ? "text-xl" : "text-xs",
-				value >= 85
-					? "text-brand"
-					: value >= 50
-						? "text-foreground"
-						: "text-muted-foreground",
+				fitTone(value),
 				className,
 			)}
 		>

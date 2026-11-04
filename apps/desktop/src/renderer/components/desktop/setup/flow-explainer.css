@@ -1,0 +1,178 @@
+/* The Welcome's flow explainer: the stageshow kit's stage and window, coloured with the app's
+   own tokens so it follows light and dark. Scoped under .ofx. */
+
+.ofx .ss-stage {
+	--ss-font: var(--font-sans);
+	--ss-surface: var(--background);
+	--ss-chrome: var(--background);
+	--ss-canvas: var(--sidebar);
+	--ss-line: var(--border);
+	--ss-line-faint: var(--border);
+	--ss-text-strong: var(--foreground);
+	--ss-text: var(--muted-foreground);
+	--ss-accent: var(--primary);
+	--ss-shadow-window:
+		0 0 0 1px var(--border), 0 18px 40px -16px rgb(0 0 0 / 0.22),
+		0 6px 14px -8px rgb(0 0 0 / 0.12);
+	color: var(--foreground);
+	background: transparent;
+}
+
+.dark .ofx .ss-stage {
+	--ss-shadow-window:
+		0 0 0 1px rgb(255 255 255 / 0.1), 0 18px 40px -16px rgb(0 0 0 / 0.8);
+}
+
+/* The window: inset top and sides, fading out at its foot over the older rows. The fade sits on
+   a wrapper padded past the window, so the window's edge and shadow are not cut by the mask. */
+.ofx .ofx-frame {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 640px;
+	height: 448px;
+	padding: 12px;
+	box-sizing: border-box;
+	-webkit-mask-image: linear-gradient(
+		to bottom,
+		#000 0,
+		#000 calc(100% - 68px),
+		transparent 100%
+	);
+	mask-image: linear-gradient(
+		to bottom,
+		#000 0,
+		#000 calc(100% - 68px),
+		transparent 100%
+	);
+}
+
+.ofx .ofx-window {
+	position: relative;
+	width: 616px;
+	height: 448px;
+}
+
+.ofx .ofx-window .ss-window__main > .ss-window__bar {
+	/* The heading and the toolbar line up with the rows' text (list inset plus row inset). */
+	padding: 0 20px 0 28px;
+}
+
+.ofx .ofx-window .ss-window__heading {
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--foreground);
+}
+
+.ofx .ofx-list {
+	padding: 4px 8px 0;
+	font-size: 14px;
+}
+
+/* A fit slot holds its widest figure, so the status beside it never moves. */
+.ofx .ofx-fit {
+	width: 18px;
+	flex: none;
+	font-size: 12px;
+}
+
+.ofx .ofx-check {
+	--ss-success: var(--brand);
+}
+
+.ofx .ofx-prepare {
+	cursor: default;
+}
+
+.ofx .ofx-prepare[data-pressed] {
+	scale: 0.97;
+}
+
+.ofx .ofx-bar {
+	display: inline-block;
+	height: 7px;
+	border-radius: 4px;
+	background: var(--cell);
+	vertical-align: middle;
+}
+
+.ofx .ofx-bar--faint {
+	opacity: 0.6;
+}
+
+/* The steps under the window: the one playing now in ink, with a green cell before it. */
+.ofx .ofx-caption {
+	position: absolute;
+	left: 12px;
+	right: 12px;
+	bottom: 4px;
+	display: flex;
+	justify-content: center;
+	gap: 24px;
+	font-size: 13px;
+	line-height: 20px;
+}
+
+.ofx .ofx-caption__item {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	transition: color 300ms var(--ease-standard, ease);
+}
+
+.ofx .ofx-caption__num {
+	display: inline-grid;
+	place-items: center;
+	width: 16px;
+	height: 16px;
+	border-radius: 4px;
+	font-family: var(--font-mono);
+	font-size: 10px;
+	font-weight: 600;
+	background: var(--cell);
+	transition:
+		background-color 300ms,
+		color 300ms;
+}
+
+.ofx .ofx-caption__item[data-now] .ofx-caption__num {
+	background: var(--brand);
+	color: #fff;
+}
+
+/* Kept mounted so they fade rather than pop. */
+.ofx .ofx-spin {
+	display: inline-flex;
+	opacity: 0;
+	transition: opacity 250ms ease;
+}
+
+.ofx .ofx-spin[data-on] {
+	opacity: 1;
+}
+
+.ofx .ofx-count {
+	opacity: 0;
+	transition: opacity 250ms ease;
+}
+
+.ofx .ofx-count[data-on] {
+	opacity: 1;
+}
+
+.ofx .ofx-prepare__label,
+.ofx .ofx-prepare__spin {
+	transition: opacity 200ms ease;
+}
+
+.ofx .ofx-prepare__spin {
+	opacity: 0;
+}
+
+.ofx .ofx-prepare[data-state="busy"] .ofx-prepare__label {
+	opacity: 0;
+}
+
+.ofx .ofx-prepare[data-state="busy"] .ofx-prepare__spin {
+	opacity: 1;
+}

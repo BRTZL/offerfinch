@@ -16,6 +16,8 @@ const EXEMPT = [
 	"components/system/",
 	"components/ui/",
 	"components/brand-mark.tsx",
+	// Vendored third-party code (the stageshow kit): its own geometry, not the app's system.
+	"vendor/",
 ];
 
 /**
@@ -166,7 +168,10 @@ describe("design system", () => {
 			...EXEMPT.flatMap((e) =>
 				fs.existsSync(path.join(RENDERER, e)) &&
 				fs.statSync(path.join(RENDERER, e)).isDirectory()
-					? fs.readdirSync(path.join(RENDERER, e)).map((f) => e + f)
+					? fs
+							.readdirSync(path.join(RENDERER, e), { recursive: true })
+							.map((f) => e + String(f))
+							.filter((f) => fs.statSync(path.join(RENDERER, f)).isFile())
 					: [],
 			),
 		].filter((f) =>

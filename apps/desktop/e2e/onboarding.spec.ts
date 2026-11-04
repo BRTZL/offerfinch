@@ -104,6 +104,11 @@ test("onboarding: centred, steady footer, keyboard and drag and drop on the resu
 			const col = await page.getByTestId("welcome").boundingBox();
 			const center = (col?.x ?? 0) + (col?.width ?? 0) / 2;
 			expect(Math.abs(center - w / 2), `${w}x${h}: centred`).toBeLessThan(3);
+			// The flow explainer fills the column (in a centred flex column it once shrank to 0).
+			const demo = await page.getByTestId("flow-explainer").boundingBox();
+			expect(demo?.width ?? 0, `${w}x${h}: explainer width`).toBeGreaterThan(
+				600,
+			);
 		}
 
 		await page.getByTestId("welcome-start").click();

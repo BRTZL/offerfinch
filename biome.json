@@ -10,6 +10,7 @@
 		"includes": [
 			"**",
 			"!docs/design/desktop/src",
+			"!apps/desktop/src/renderer/vendor",
 			"!apps/desktop/build/OfferFinch.icon",
 			"!**/dist",
 			"!apps/desktop/out",
