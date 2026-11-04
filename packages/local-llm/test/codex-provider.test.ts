@@ -1,8 +1,12 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fitAssessmentSchema } from "@offerfinch/core/scoring/fit";
 import { SubscriptionUnavailableError } from "@offerfinch/core/scoring/llm";
 import { meteredFor, type SpendStore } from "@offerfinch/core/scoring/metered";
+import { toStrictJsonSchema } from "@offerfinch/core/scoring/openai";
+import { claimsCheckSchema } from "@offerfinch/core/tailor/claims/types";
+import { tailorOutputSchema } from "@offerfinch/core/tailor/tailor";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -976,5 +980,45 @@ describe("plan usage reads (ChatGPT login, fake turn runner)", () => {
 			extraUsage: null,
 			credits: { balance: 10, unlimited: false },
 		});
+	});
+});
+
+describe("the schemas Codex answers for finding matches and drafting", () => {
+	/** Every node of a JSON Schema: its keywords and nested schemas, never property names. */
+	function nodes(node: unknown, out: Record<string, unknown>[] = []) {
+		if (Array.isArray(node)) for (const item of node) nodes(item, out);
+		else if (node && typeof node === "object") {
+			const o = node as Record<string, unknown>;
+			out.push(o);
+			for (const [key, value] of Object.entries(o))
+				nodes(
+					key === "properties" ? Object.values(value as object) : value,
+					out,
+				);
+		}
+		return out;
+	}
+	const keywordsOf = (json: unknown) =>
+		new Set(nodes(json).flatMap((o) => Object.keys(o)));
+	/** Objects that are not strict: a map, an open object, or a field left optional. */
+	const loose = (json: unknown) =>
+		nodes(json).filter((o) => {
+			if (o.type !== "object") return false;
+			const props = Object.keys((o.properties ?? {}) as object);
+			return (
+				!props.length ||
+				o.additionalProperties !== false ||
+				JSON.stringify(o.required) !== JSON.stringify(props)
+			);
+		});
+
+	it("convert to the same strict shape the real Codex backend accepted for the claims check", () => {
+		// The claims schema is proven on the real backend (decisions.md, real-login proof).
+		const proven = keywordsOf(toStrictJsonSchema(claimsCheckSchema));
+		for (const zod of [fitAssessmentSchema, tailorOutputSchema]) {
+			const json = toStrictJsonSchema(zod);
+			expect(loose(json)).toEqual([]);
+			expect([...keywordsOf(json)].filter((k) => !proven.has(k))).toEqual([]);
+		}
 	});
 });

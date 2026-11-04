@@ -1266,7 +1266,7 @@ export class CodexSubscriptionProvider implements LlmProvider {
 
 /** What codex-subscription is, for `llm:status` and Settings > Models. */
 export const CODEX_STATUS = [
-	"codex-subscription runs the claims check on your ChatGPT plan through the installed Codex CLI (`codex app-server`), on your Mac only.",
+	"codex-subscription runs finding matches, drafting or the claims check on your ChatGPT plan through the installed Codex CLI (`codex app-server`), on your Mac only. A draft is checked by the other company: Codex drafts by Claude, Claude drafts by Codex.",
 	"Each call is a pure model call: no tool can run (every tool feature off, no execution environment, untrusted approval with every request declined and the turn aborted), the process runs in sandbox-exec with your home unreadable, in an empty temp directory deleted afterwards, and Codex keeps no session.",
 	"It reads Codex's ChatGPT access token without changing your login, starts only while every usage window is below 90%, and records a call that spent ChatGPT credits as paid.",
 ].join(" ");

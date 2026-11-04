@@ -65,15 +65,63 @@ describe("model roles", () => {
 		expect(deps.claimsLlm?.name).toBe("codex-subscription:default");
 	});
 
-	it("refuses Claude for the claims check and Codex for drafting, with the rule", () => {
-		const { roles } = build({
+	it("never checks a draft on the company that wrote it", () => {
+		// Drafts by Claude: Claude can't check them.
+		const claude = build(
+			{
+				scoring: { mode: "api" },
+				tailoring: { mode: "api" },
+				claims: { mode: "claude-subscription" },
+			},
+			{ anthropic: "sk-ant-test" },
+		);
+		expect(claude.roles[2]?.problem).toContain(VENDOR_RULE);
+		expect(claude.roles[2]?.ready).toBe(false);
+		// Drafts by Codex: Codex can't check them.
+		const codex = build({
 			scoring: { mode: "codex-subscription" },
-			tailoring: { mode: "api" },
+			tailoring: { mode: "codex-subscription" },
+			claims: { mode: "codex-subscription" },
+		});
+		expect(codex.roles[2]?.problem).toMatch(/OpenAI writes the drafts/);
+		expect(codex.roles.slice(0, 2).every((r) => r.ready)).toBe(true);
+	});
+
+	it("runs finding matches and drafting on Codex and the check on Claude", () => {
+		const { roles, deps } = build({
+			scoring: { mode: "codex-subscription" },
+			tailoring: { mode: "codex-subscription" },
 			claims: { mode: "claude-subscription" },
 		});
-		expect(roles[0]?.problem).toContain("Codex runs the claims check only");
-		expect(roles[2]?.problem).toContain(VENDOR_RULE);
-		expect(roles.every((r) => !r.ready)).toBe(true);
+		expect(roles.map((r) => [r.role, r.provider, r.ready])).toEqual([
+			["scoring", "codex-subscription:default", true],
+			["tailoring", "codex-subscription:default", true],
+			["claims", "claude-subscription:claude-opus-5-5", true],
+		]);
+		expect(deps.claimsLlm?.name).toBe("claude-subscription:claude-opus-5-5");
+	});
+
+	it("an API-key checker takes the other company's key, and never the other company's model", () => {
+		const ai: AiSettings = {
+			scoring: { mode: "codex-subscription" },
+			tailoring: { mode: "codex-subscription" },
+			// An OpenAI model stored from when drafting was on Claude.
+			claims: { mode: "api", model: "gpt-6.1-terra" },
+		};
+		const noKey = build(ai, { openai: "sk-o" });
+		expect(noKey.roles[2]?.problem).toMatch(/Anthropic API key/);
+		const { roles } = build(ai, { anthropic: "sk-ant-test" });
+		expect(roles[2]).toMatchObject({
+			provider: "anthropic:claude-opus-5-5",
+			ready: true,
+		});
+		// A Claude model stored for scoring never reaches Codex.
+		const codex = build({
+			scoring: { mode: "codex-subscription", model: "claude-opus-5-5" },
+			tailoring: { mode: "codex-subscription" },
+			claims: { mode: "claude-subscription" },
+		});
+		expect(codex.roles[0]?.provider).toBe("codex-subscription:default");
 	});
 
 	it("pauses roles without keys instead of failing, and mixes keys with a subscription", () => {

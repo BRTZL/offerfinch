@@ -91,23 +91,64 @@ describe("Connect AI picks Claude Code and Codex", () => {
 		expect(r.settings.claims).toEqual({ mode: "api" });
 	});
 
-	it("respects unavailable(): Claude never checks, Codex never drafts", () => {
-		expect(unavailable("claims", "claude-subscription")).not.toBeNull();
-		expect(unavailable("scoring", "codex-subscription")).not.toBeNull();
-		expect(unavailable("tailoring", "codex-subscription")).not.toBeNull();
-		expect(unavailable("claims", "codex-subscription")).toBeNull();
-		expect(unavailable("tailoring", "claude-subscription")).toBeNull();
-		for (const claude of [true, false])
-			for (const codex of [true, false]) {
+	it("respects unavailable(): a draft is never checked by the company that wrote it", () => {
+		const claude: AiChoice = {
+			scoring: { mode: "claude-subscription" },
+			tailoring: { mode: "claude-subscription" },
+			claims: { mode: "codex-subscription" },
+		};
+		expect(unavailable("claims", "claude-subscription", claude)).toMatch(
+			/written by Claude/,
+		);
+		expect(unavailable("claims", "codex-subscription", claude)).toBeNull();
+		expect(unavailable("claims", "api", claude)).toBeNull();
+		// Codex may find matches; it may draft only once the checker is not Codex.
+		expect(unavailable("scoring", "codex-subscription", claude)).toBeNull();
+		expect(unavailable("tailoring", "codex-subscription", claude)).toMatch(
+			/checked by OpenAI/,
+		);
+		const codex: AiChoice = {
+			scoring: { mode: "codex-subscription" },
+			tailoring: { mode: "codex-subscription" },
+			claims: { mode: "claude-subscription" },
+		};
+		expect(unavailable("claims", "codex-subscription", codex)).toMatch(
+			/written by OpenAI/,
+		);
+		expect(unavailable("claims", "claude-subscription", codex)).toBeNull();
+		// An API-key checker follows drafting to the other company's key.
+		expect(unavailable("claims", "api", codex)).toBeNull();
+		expect(
+			unavailable("tailoring", "codex-subscription", {
+				...claude,
+				claims: { mode: "api" },
+			}),
+		).toBeNull();
+		for (const claudeIn of [true, false])
+			for (const codexIn of [true, false]) {
 				const { settings } = autoFill({
 					settings: fresh,
-					claude,
-					codex,
+					claude: claudeIn,
+					codex: codexIn,
 					keys: noKeys,
 				});
 				for (const role of ["scoring", "tailoring", "claims"] as const)
-					expect(unavailable(role, settings[role].mode)).toBeNull();
+					expect(unavailable(role, settings[role].mode, settings)).toBeNull();
 			}
+	});
+
+	it("never fills the checker with the drafting company", () => {
+		const r = autoFill({
+			settings: {
+				scoring: { mode: "codex-subscription" },
+				tailoring: { mode: "codex-subscription" },
+				claims: { mode: "api" },
+			},
+			claude: false,
+			codex: true,
+			keys: noKeys,
+		});
+		expect(r.filled).toEqual([]);
 	});
 });
 

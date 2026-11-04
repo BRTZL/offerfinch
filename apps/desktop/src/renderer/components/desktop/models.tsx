@@ -23,34 +23,29 @@ import {
 import { desktop } from "@/lib/desktop";
 import { client, orpc } from "@/lib/orpc";
 import {
+	type AiChoice,
+	draftingVendor,
 	type Mode,
 	type Role,
 	unavailable,
+	vendorOf,
 } from "../../../shared/auto-connect";
 
-const ROLES: {
-	role: Role;
-	label: string;
-	hint: string;
-	vendor: "anthropic" | "openai";
-}[] = [
+const ROLES: { role: Role; label: string; hint: string }[] = [
 	{
 		role: "scoring",
 		label: "Finding matches",
 		hint: "Scores how well each job that passes your rules fits you.",
-		vendor: "anthropic",
 	},
 	{
 		role: "tailoring",
 		label: "Drafting",
 		hint: "Writes the CV, letter and answers when you press Prepare.",
-		vendor: "anthropic",
 	},
 	{
 		role: "claims",
 		label: "Checking drafts",
-		hint: "An AI from the other company checks each line against your profile.",
-		vendor: "openai",
+		hint: "The other company's AI checks each line against your profile.",
 	},
 ];
 
@@ -60,6 +55,14 @@ const MODE_LABEL: Record<Mode, string> = {
 	"codex-subscription": "Codex subscription",
 	fake: "Test models",
 };
+
+/** "Anthropic API key" or "OpenAI API key": checking drafts takes the other company's key. */
+function modeLabel(role: Role, mode: Mode, settings: AiChoice): string {
+	if (mode !== "api") return MODE_LABEL[mode];
+	return vendorOf(role, mode, draftingVendor(settings)) === "openai"
+		? "OpenAI API key"
+		: "Anthropic API key";
+}
 
 function useKeys() {
 	return useQuery({
@@ -550,8 +553,11 @@ export function ModelSettings({
 													</span>
 												) : null}
 												{role === "claims" &&
-												(current.mode === "api" ||
-													current.mode === "codex-subscription") ? (
+												vendorOf(
+													"claims",
+													current.mode as Mode,
+													draftingVendor(settings as AiChoice),
+												) === "openai" ? (
 													<ModelInput
 														value={current.model ?? ""}
 														placeholder={
@@ -577,6 +583,7 @@ export function ModelSettings({
 											label={label}
 											value={current.mode as Mode}
 											modes={modes}
+											settings={settings as AiChoice}
 											disabled={save.isPending}
 											onChange={(mode) =>
 												save.mutate({
@@ -673,6 +680,7 @@ function ModeSelect({
 	label,
 	value,
 	modes,
+	settings,
 	disabled,
 	onChange,
 }: {
@@ -680,6 +688,8 @@ function ModeSelect({
 	label: string;
 	value: Mode;
 	modes: Mode[];
+	/** Every role's choice: checking drafts must stay on the other company than drafting. */
+	settings: AiChoice;
 	disabled?: boolean;
 	onChange: (mode: Mode) => void;
 }) {
@@ -690,7 +700,10 @@ function ModeSelect({
 			onValueChange={(next) => {
 				if (next && next !== value) onChange(next as Mode);
 			}}
-			items={modes.map((mode) => ({ value: mode, label: MODE_LABEL[mode] }))}
+			items={modes.map((mode) => ({
+				value: mode,
+				label: modeLabel(role, mode, settings),
+			}))}
 		>
 			<SelectTrigger
 				aria-label={`${label}: paid with`}
@@ -701,7 +714,7 @@ function ModeSelect({
 			</SelectTrigger>
 			<SelectContent>
 				{modes.map((mode) => {
-					const why = unavailable(role, mode);
+					const why = unavailable(role, mode, settings);
 					return (
 						<SelectItem
 							key={mode}
@@ -710,7 +723,12 @@ function ModeSelect({
 							title={why ?? undefined}
 							data-testid={`role-${role}-${mode}`}
 						>
-							{MODE_LABEL[mode]}
+							{modeLabel(role, mode, settings)}
+							{why ? (
+								<span className="text-muted-foreground block text-xs">
+									{why}
+								</span>
+							) : null}
 						</SelectItem>
 					);
 				})}
