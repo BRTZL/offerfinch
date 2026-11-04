@@ -88,7 +88,10 @@ the background and offer **Restart to Update**.
 2. In parallel: **quality** (lint, types, knip, release plan tests) and **test**
    (the core, store and runner unit tests) on Linux; **test-mac** (the Codex boundary tests,
    which need `sandbox-exec`, and the desktop app's tests), **e2e** (the desktop suite in three
-   shards, in the background, each failing test retried once) and **build** on macOS.
+   shards, in the background, each failing test retried once) and **build** on macOS. The e2e
+   suite is reported, never required: it does not hold a release. Slow, uneven macOS runners
+   failed it on timing rather than on the app, and each rerun cost a full release. A failure
+   keeps its traces as the run's `e2e-results-N` artifacts and the notification says so.
 3. **build**, in the `release` environment (the signing secrets); it fails at once if a
    signing secret is missing. arm64 and x64 on one macOS runner, signed with the Developer ID,
    notarized and verified (`codesign`, `spctl`, `stapler`), then a launch check: the packaged
@@ -96,10 +99,11 @@ the background and offer **Restart to Update**.
    setup screen. The files are kept as the run's `offerfinch-mac` artifact for 14 days. It does
    not wait for the checks: a failed check leaves the signed build as that artifact and nothing
    more.
-4. **finalize** (the button only), once every check and the build have passed, in the
+4. **finalize** (the button only), once quality, test, test-mac and the build have passed, in the
    `release-push` environment: commit and tag, pushed over SSH with the release deploy key.
 5. **publish**: the GitHub Release, titled "OfferFinch X.Y.Z", with the resolved notes.
-6. **notify**: one phone notification (ntfy) for success, failure or a finished dry run.
+6. **notify**: one phone notification (ntfy) for success, failure or a finished dry run, with a
+   warning line when e2e failed.
 
 ## Dry run
 

@@ -31,6 +31,13 @@ async function size(app: ElectronApplication, width: number, height: number) {
 		},
 		[width, height],
 	);
+	// The resize lands a few frames later, later still on a busy CI runner: measuring after a fixed
+	// pause once read a 984 px page as 960 (a 12 px "off centre").
+	const page = app.windows()[0];
+	if (page)
+		await expect
+			.poll(() => page.evaluate(() => [innerWidth, innerHeight]))
+			.toEqual([width, height]);
 }
 async function theme(
 	app: ElectronApplication,
