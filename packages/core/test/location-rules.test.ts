@@ -270,6 +270,11 @@ describe("remote roles", () => {
 			"Remote, US time zones",
 			"Remote (Pacific Time Zone)",
 			"Remote, UTC-8 to UTC-5",
+			"Remote (cet)",
+			"Remote (pst)",
+			"Remote (Eastern Time)",
+			"Remote (Pacific Standard Time)",
+			"Remote - Central European Time",
 		]) {
 			const result = evaluate({
 				locations: [location],
@@ -280,6 +285,8 @@ describe("remote roles", () => {
 		for (const text of [
 			"You must be based in CET.",
 			"You must be based in the EST time zone.",
+			"Work from anywhere in US time zones.",
+			"Work from anywhere in the CET time zone.",
 		])
 			expect(
 				evaluate({
@@ -289,6 +296,19 @@ describe("remote roles", () => {
 				}).decision,
 				text,
 			).toBe("keep");
+		// A region in the text that may not include Turkey limits the role, as in a location field.
+		for (const text of [
+			"Remote in Europe only.",
+			"Work from anywhere in Europe.",
+		])
+			expect(
+				evaluate({
+					locations: ["Remote"],
+					workplaceType: "remote",
+					descriptionText: `${BODY}\n${text}`,
+				}).decision,
+				text,
+			).toBe("reject");
 		// A place next to the time zone still counts.
 		expect(
 			evaluate({

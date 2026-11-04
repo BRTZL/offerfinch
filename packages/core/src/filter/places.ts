@@ -392,12 +392,16 @@ const TIME_ZONE_PHRASE =
 const TIME_ZONE_OFFSET =
 	/\b(?:GMT|UTC)\s*(?:[+\-−±]\s*\d{1,2}(?::?\d{2})?)?(?:\s*(?:to|-|–)\s*(?:GMT|UTC)?\s*[+\-−±]?\s*\d{1,2}(?::?\d{2})?)?(?![\p{L}\d])|[+\-−±]\s*\d{1,2}\s*(?:hours?|hrs?|h)\b/giu;
 const TIME_ZONE_CODE =
-	/\b(?:CET|CEST|EET|EEST|WET|WEST|BST|PST|PDT|MST|MDT|CST|CDT|EST|EDT|AEST|AEDT|IST|SGT|JST|KST|TRT|MSK)\b/g;
+	/\b(?:CET|CEST|EET|EEST|BST|PST|PDT|MST|MDT|CST|CDT|EST|EDT|AEST|AEDT|IST|SGT|JST|KST|TRT|MSK)\b/gi;
+/** "Eastern Time", "Pacific Standard Time", "Central European Summer Time". */
+const TIME_ZONE_NAME =
+	/\b(?:(?:pacific|mountain|central|eastern|atlantic|alaska|hawaii|greenwich mean|coordinated universal|(?:central|eastern|western) europe(?:an)?|british|irish|india|japan|china|korea|singapore|australian (?:eastern|central|western)|moscow|turkey|turkish)\s+(?:standard\s+|daylight\s+|summer\s+)?time)\b/gi;
 
 /** The text with every time zone blanked out, so only places are left to judge. */
 export function withoutTimeZones(text: string): string {
 	return text
 		.replace(TIME_ZONE_PHRASE, " ")
+		.replace(TIME_ZONE_NAME, " ")
 		.replace(TIME_ZONE_OFFSET, " ")
 		.replace(TIME_ZONE_CODE, " ");
 }

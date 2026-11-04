@@ -466,6 +466,28 @@ describe("set aside with older settings, brought back by newer ones (re-check, 2
 		expect(back).toEqual({ state: "scored", at: null });
 	});
 
+	it("a run that read Prepare before the re-filter cleared it does not start drafting", async () => {
+		const id = await add({
+			company: "nimbus",
+			locations: ["Remote – Turkey"],
+			workplaceType: "remote",
+		});
+		const start = () =>
+			repo.transition("u1", id, {
+				from: ["scored"],
+				to: "preparing",
+				reason: "test",
+				actor: "workflow",
+				requirePrepareRequest: true,
+			});
+		// Hidden and brought back in between: Prepare is cleared, so the stale run stops here.
+		expect(await start()).toBe(false);
+		expect((await row(id))?.state).toBe("scored");
+		await repo.requestPrepare({ userId: "u1", applicationId: id });
+		expect(await start()).toBe(true);
+		expect((await row(id))?.state).toBe("preparing");
+	});
+
 	it("brings a set-aside match back to Matches with an event that starts its run again", async () => {
 		await saveFilterSettings(db, "u1", TURKEY);
 		const id = await add({ company: "nimbus", locations: ["Berlin"] });

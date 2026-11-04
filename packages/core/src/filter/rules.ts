@@ -1106,11 +1106,13 @@ function placeNames(
 /** A place that is clearly not where the user may work (a country or region without them). */
 function isForeignPlace(place: string, home: readonly string[]): boolean {
 	const p = placesIn(place);
-	return (
-		(p.countries.length > 0 &&
-			!p.countries.some((c) => isHomeCountry(c, home))) ||
-		Boolean(p.regionsWithout && !regionIncludes(p.regionsWithout, home))
+	if (p.countries.some((c) => isHomeCountry(c, home))) return false;
+	const regions = [p.regionsWithout, p.regionMaybe, p.legalArea].filter(
+		(r): r is string => Boolean(r),
 	);
+	if (regions.some((r) => regionIncludes(r, home))) return false;
+	// A region that may not include home ("Remote in Europe only" for Turkey) is foreign too.
+	return p.countries.length > 0 || regions.length > 0;
 }
 
 /** Global wording that leaves no doubt, beyond a loose "work from anywhere". */
@@ -1138,7 +1140,15 @@ function globalRemoteInText(
 		const within = after.match(
 			/^[\s*_]*(?:with)?in\s+(?:the\s+)?([^.;\n*]{2,60})/i,
 		);
-		const place = within?.[1]?.trim();
+		const raw = within?.[1]?.trim();
+		// "Anywhere in US time zones": hours, not a place, so still anywhere.
+		const place =
+			raw &&
+			withoutTimeZones(raw)
+				.replace(/\bthe\b/gi, "")
+				.trim()
+				? raw
+				: undefined;
 		if (!place || /^(?:the\s+)?world\b/i.test(place)) {
 			global ??= {
 				evidence: quote(`${match[0]}${place ? " in the world" : ""}`),
@@ -1146,14 +1156,14 @@ function globalRemoteInText(
 			};
 			continue;
 		}
-		const p = placesIn(place);
+		const p = placesIn(withoutTimeZones(place));
 		const includesHome =
 			p.countries.some((c) => isHomeCountry(c, home)) ||
 			[p.regionsWithout, p.legalArea, p.regionMaybe].some(
 				(r) => r && regionIncludes(r, home),
 			);
 		if (includesHome) continue;
-		if (p.regionMaybe && p.countries.length === 0) continue;
+		// A region that may not include home ("anywhere in Europe" for Turkey) limits it too.
 		limitedTo ??= {
 			place,
 			evidence: quote(`${match[0]}${after.slice(0, within?.[0].length ?? 0)}`),

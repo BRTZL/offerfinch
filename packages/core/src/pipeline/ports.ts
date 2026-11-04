@@ -262,6 +262,8 @@ export interface PipelineRepository {
 			to: ApplicationState;
 			reason: string;
 			actor: Actor;
+			/** Only while the application's Prepare request still stands, checked atomically. */
+			requirePrepareRequest?: boolean;
 		},
 	): Promise<boolean>;
 	/* Phase 2: preparation and review. */
