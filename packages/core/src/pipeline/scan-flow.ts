@@ -251,6 +251,73 @@ async function checkClosedPostings(
 	}
 }
 
+/** Starts the application runs of these jobs and marks them started. Idempotent per job. */
+async function startRuns(
+	deps: PipelineDeps,
+	userId: string,
+	jobIds: string[],
+): Promise<StartBatchResult> {
+	const started = await deps.workflows.startBatch(
+		jobIds.map((jobId) => ({ userId, jobId })),
+	);
+	await deps.repo.markWorkflowsStarted(
+		userId,
+		[...started.created, ...started.existing],
+		deps.workflows.runtime,
+	);
+	return started;
+}
+
+/**
+ * While the sources run: every `everyMs`, starts the runs of the jobs saved so far, so each one
+ * is filtered and scored while the next source is still searching. Not a step: starting is
+ * idempotent (run ids come from job ids), and a job a failed start left behind is picked up by
+ * "list unstarted jobs" after the sources. A failure is logged, never the scan's.
+ */
+function startWhileScanning(
+	deps: PipelineDeps,
+	userId: string,
+	everyMs: number,
+	result: ScanFlowResult,
+): { stop(): Promise<void> } {
+	let stopped = false;
+	let wake: (() => void) | null = null;
+	const pass = async () => {
+		const jobIds = await deps.repo.listUnstartedJobIds(
+			userId,
+			WORKFLOW_BATCH_SIZE,
+		);
+		if (jobIds.length === 0) return;
+		const started = await startRuns(deps, userId, jobIds);
+		result.workflows.created.push(...started.created);
+	};
+	const loop = (async () => {
+		while (!stopped) {
+			await new Promise<void>((resolve) => {
+				const timer = setTimeout(resolve, everyMs);
+				wake = () => {
+					clearTimeout(timer);
+					resolve();
+				};
+			});
+			wake = null;
+			if (stopped) return;
+			try {
+				await pass();
+			} catch (error) {
+				deps.log?.("early start failed", { error: String(error) });
+			}
+		}
+	})();
+	return {
+		async stop() {
+			stopped = true;
+			(wake as (() => void) | null)?.();
+			await loop;
+		},
+	};
+}
+
 function chunk<T>(items: T[], size: number): T[][] {
 	const chunks: T[][] = [];
 	for (let i = 0; i < items.length; i += size)
@@ -260,7 +327,8 @@ function chunk<T>(items: T[], size: number): T[][] {
 
 /**
  * ScanWorkflow body: each source is its own retryable step, then one ApplicationWorkflow is
- * started per new job, in batches of 100. Instance ids come from job ids, so a retry cannot
+ * started per new job, in batches of 100. With `startDuringScanMs`, jobs saved by a source start
+ * their run while the scan goes on, and the batches after the sources only catch what is left. Instance ids come from job ids, so a retry cannot
  * start a job twice; jobs a failed run left unstarted are picked up here too.
  */
 export async function runScanFlow(
@@ -297,16 +365,24 @@ export async function runScanFlow(
 			? await step.do("search plan", () => searchPlanFor(deps, userId))
 			: undefined;
 	if (plan?.note) deps.log?.("search plan", { note: plan.note });
-	for (const provider of providers ?? []) {
-		const run = await runProvider(step, deps, userId, provider, {
-			plan,
-			history,
-		});
-		result.providers?.push(run);
-		for (const r of [run, ...(run.parts ?? [])]) {
-			result.jobsFetched += r.fetched;
-			result.jobsInserted += r.newJobIds.length;
+	const early =
+		providers && providers.length > 0 && deps.startDuringScanMs
+			? startWhileScanning(deps, userId, deps.startDuringScanMs, result)
+			: null;
+	try {
+		for (const provider of providers ?? []) {
+			const run = await runProvider(step, deps, userId, provider, {
+				plan,
+				history,
+			});
+			result.providers?.push(run);
+			for (const r of [run, ...(run.parts ?? [])]) {
+				result.jobsFetched += r.fetched;
+				result.jobsInserted += r.newJobIds.length;
+			}
 		}
+	} finally {
+		await early?.stop();
 	}
 	if (providers) await history("progress", () => deps.scanLog?.progress(null));
 	const companies = providers
@@ -360,19 +436,8 @@ export async function runScanFlow(
 		unstarted,
 		WORKFLOW_BATCH_SIZE,
 	).entries()) {
-		const batch = await step.do(
-			`start application workflows ${index}`,
-			async () => {
-				const started = await deps.workflows.startBatch(
-					jobIds.map((jobId) => ({ userId, jobId })),
-				);
-				await deps.repo.markWorkflowsStarted(
-					userId,
-					[...started.created, ...started.existing],
-					deps.workflows.runtime,
-				);
-				return started;
-			},
+		const batch = await step.do(`start application workflows ${index}`, () =>
+			startRuns(deps, userId, jobIds),
 		);
 		result.workflows.created.push(...batch.created);
 		result.workflows.existing.push(...batch.existing);

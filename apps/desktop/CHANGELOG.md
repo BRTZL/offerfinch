@@ -8,6 +8,17 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
+## Unreleased
+
+- The job filter now keeps or rejects, nothing in between, and what it rejects is hidden
+  everywhere. A remote job that names no place ("Remote") is kept and ranked lower; a city or
+  region that may not hire from your country (such as EMEA or Europe for Turkey) is rejected.
+  A time zone (CET, PST, "US time zones") is never a reason to reject a job.
+- After this update, open matches, drafts waiting for answers and drafts in review are checked
+  once more against the filter; the ones it rejects leave the Inbox.
+- Jobs are filtered and scored as soon as a source finds them, while the scan goes on, so the
+  first matches show up well before the scan ends.
+
 ## 0.1.4 (2026-11-04)
 
 - Settings › Models shows your plan's usage, as T3 Code does: for Claude Code and Codex, how

@@ -224,18 +224,21 @@ export function ChecksSection({ app }: { app: AppDetail }) {
 type FilterResult = {
 	decision?: string;
 	summary?: string;
+	/** "unclear": kept with no place given, ranked lower. */
+	locationVerdict?: string;
 	reasons?: { rule: string; outcome: string; message: string }[];
 } | null;
 
 /**
- * Flags about the job itself: what the job filter could not settle (hybrid abroad, a language)
- * and why the job was kept anyway.
+ * Flags about the job itself: a posting kept with no place given ("Remote", nothing), which the
+ * user should check before preparing.
  */
 export function JobFlagsSection({ app }: { app: AppDetail }) {
 	const filter = app.filter as FilterResult;
-	const unclear = (filter?.reasons ?? []).filter(
-		(r) => r.outcome === "unclear",
-	);
+	const unclear =
+		filter?.locationVerdict === "unclear"
+			? (filter.reasons ?? []).filter((r) => r.rule === "location")
+			: [];
 	if (unclear.length === 0) return null;
 	return (
 		<InspectorSection title="Flags" end={unclear.length}>
@@ -317,12 +320,7 @@ export function WhyDisclosure({ app }: { app: AppDetail }) {
 				{filter?.summary && (
 					<div>
 						<div className="text-2xs text-muted-foreground">
-							Job filter:{" "}
-							{filter.decision === "reject"
-								? "rejected"
-								: filter.decision === "unclear"
-									? "kept for you to check"
-									: "passed"}
+							Job filter: {filter.decision === "reject" ? "rejected" : "passed"}
 						</div>
 						<p className="text-foreground">{filter.summary}</p>
 						{filter.reasons && filter.reasons.length > 0 && (
@@ -334,7 +332,10 @@ export function WhyDisclosure({ app }: { app: AppDetail }) {
 										</span>
 										<span
 											className={
-												r.outcome === "unclear" ? "text-warning" : undefined
+												r.rule === "location" &&
+												filter.locationVerdict === "unclear"
+													? "text-warning"
+													: undefined
 											}
 										>
 											{r.message}

@@ -118,7 +118,7 @@ test("job search pickers: filled from the profile, changed with the keyboard, ke
 		).run(JSON.stringify({ rightToWork: [], minScore: 60 }), Date.now());
 		db.prepare("delete from app_settings where key = 'jobSearchVersion'").run();
 		// Three open matches scored before the update: one in the US that needs citizenship and a
-		// clearance, one remote in EMEA, one remote in Turkey.
+		// clearance, one remote that names no place, one remote in Turkey.
 		const now = Date.now();
 		const seed = (
 			id: keyof typeof APP_IDS,
@@ -176,8 +176,8 @@ test("job search pickers: filled from the profile, changed with the keyboard, ke
 			score: 90,
 		});
 		seed("emea", {
-			title: "Frontend Engineer, EMEA",
-			locations: ["Remote (EMEA)"],
+			title: "Frontend Engineer, Distributed Team",
+			locations: ["Remote"],
 			workplace: "remote",
 			text: body,
 			score: 85,
@@ -209,8 +209,8 @@ test("job search pickers: filled from the profile, changed with the keyboard, ke
 			minScore: 60,
 		});
 
-		// The update filtered the open matches once: the US one is set aside with its reason, the
-		// EMEA one ranks below the Turkey one despite its higher score, and says why.
+		// The update filtered the open matches once: the US one is rejected with its reason, the
+		// one with no place ranks below the Turkey one despite its higher score, and says why.
 		await expect
 			.poll(() => readApps(), { timeout: 15_000 })
 			.toMatchObject({
@@ -230,9 +230,9 @@ test("job search pickers: filled from the profile, changed with the keyboard, ke
 		await expect(rows.filter({ hasText: "Mission Systems" })).toHaveCount(0);
 		const titles = await rows.allInnerTexts();
 		expect(titles.findIndex((t) => t.includes("Turkey"))).toBeLessThan(
-			titles.findIndex((t) => t.includes("EMEA")),
+			titles.findIndex((t) => t.includes("Distributed")),
 		);
-		await rows.filter({ hasText: "EMEA" }).click();
+		await rows.filter({ hasText: "Distributed" }).click();
 		// The Fit section is in the Details inspector.
 		await page.getByRole("button", { name: "Details" }).click();
 		await expect(page.getByTestId("rank-reason")).toHaveText(

@@ -1,8 +1,9 @@
 import { COUNTRIES } from "./countries";
 
 /**
- * Small gazetteer for classifying job locations. Anything not recognized is treated as unclear,
- * never as a reason to drop a job.
+ * Small gazetteer for classifying job locations. A location entry it does not recognize is a
+ * reject (only jobs that clearly hire from the user's country are kept), so the user's own
+ * country needs its towns and districts here, not just its big cities.
  */
 
 const COUNTRY_ALIASES: Record<string, string[]> = {
@@ -20,6 +21,57 @@ const COUNTRY_ALIASES: Record<string, string[]> = {
 		"kocaeli",
 		"eskisehir",
 		"eskişehir",
+		"konya",
+		"adana",
+		"gaziantep",
+		"kayseri",
+		"mersin",
+		"trabzon",
+		"samsun",
+		"denizli",
+		"sakarya",
+		"tekirdag",
+		"tekirdağ",
+		"gebze",
+		// Istanbul districts, as job boards write them.
+		"kadikoy",
+		"kadıköy",
+		"besiktas",
+		"beşiktaş",
+		"sisli",
+		"şişli",
+		"uskudar",
+		"üsküdar",
+		"atasehir",
+		"ataşehir",
+		"maslak",
+		"sariyer",
+		"sarıyer",
+		"pendik",
+		"kartal",
+		"tuzla",
+		"umraniye",
+		"ümraniye",
+		"beyoglu",
+		"beyoğlu",
+		"bakirkoy",
+		"bakırköy",
+		"esenyurt",
+		"beylikduzu",
+		"beylikdüzü",
+		"maltepe",
+		"kagithane",
+		"kağıthane",
+		"basaksehir",
+		"başakşehir",
+		// Ankara and Izmir districts.
+		"cankaya",
+		"çankaya",
+		"yenimahalle",
+		"etimesgut",
+		"bornova",
+		"karsiyaka",
+		"karşıyaka",
 	],
 	"United States": [
 		"united states",
@@ -326,18 +378,36 @@ export const REGIONS_MAYBE_TURKEY = [
 	"eu",
 	"european union",
 	"eea",
-	"cet",
-	"cest",
-	"eet",
 	"middle east",
 	"mena",
-	"gmt+3",
-	"utc+3",
 	"international",
 ];
 
+/**
+ * Time zones: working hours, never a place. A role limited to one ("Remote (CET)", "US time
+ * zones", "GMT+3") is never rejected for it; only the user decides whether the hours suit them.
+ */
+const TIME_ZONE_PHRASE =
+	/(?:[\p{L}.&-]+\s+)?(?:[\p{L}.&-]+\s+)?\btime\s?zones?\b(?:\s+only)?/giu;
+const TIME_ZONE_OFFSET =
+	/\b(?:GMT|UTC)\s*(?:[+\-−±]\s*\d{1,2}(?::?\d{2})?)?(?:\s*(?:to|-|–)\s*(?:GMT|UTC)?\s*[+\-−±]?\s*\d{1,2}(?::?\d{2})?)?(?![\p{L}\d])|[+\-−±]\s*\d{1,2}\s*(?:hours?|hrs?|h)\b/giu;
+const TIME_ZONE_CODE =
+	/\b(?:CET|CEST|EET|EEST|BST|PST|PDT|MST|MDT|CST|CDT|EST|EDT|AEST|AEDT|IST|SGT|JST|KST|TRT|MSK)\b/gi;
+/** "Eastern Time", "Pacific Standard Time", "Central European Summer Time". */
+const TIME_ZONE_NAME =
+	/\b(?:(?:pacific|mountain|central|eastern|atlantic|alaska|hawaii|greenwich mean|coordinated universal|(?:central|eastern|western) europe(?:an)?|british|irish|india|japan|china|korea|singapore|australian (?:eastern|central|western)|moscow|turkey|turkish)\s+(?:standard\s+|daylight\s+|summer\s+)?time)\b/gi;
+
+/** The text with every time zone blanked out, so only places are left to judge. */
+export function withoutTimeZones(text: string): string {
+	return text
+		.replace(TIME_ZONE_PHRASE, " ")
+		.replace(TIME_ZONE_NAME, " ")
+		.replace(TIME_ZONE_OFFSET, " ")
+		.replace(TIME_ZONE_CODE, " ");
+}
+
 export const GLOBAL_REMOTE_LOCATION =
-	/\b(anywhere|worldwide|world wide|global|globally|any location|any country|all countries|location[- ]independent|fully distributed)\b/i;
+	/\b(anywhere|worldwide|world wide|global|globally|international|any location|any country|all countries|location[- ]independent|fully distributed)\b/i;
 
 export const GLOBAL_REMOTE_DESCRIPTION =
 	/\b(work from anywhere|remote from anywhere|from anywhere in the world|hire (?:from )?anywhere|(?:fully )?remote[^.\n]{0,40}\b(?:anywhere|worldwide|any country|any time ?zone)\b|location[- ]independent)\b/i;

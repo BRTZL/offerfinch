@@ -113,6 +113,8 @@ export async function startPreparingStep(
 		to: "preparing",
 		reason: `Fit score ${app.score} passed; preparing documents`,
 		actor: "workflow",
+		// Unless the run was started on demand: then only on a Prepare request that still stands.
+		requirePrepareRequest: deps.repo.prepareRequested !== undefined,
 	});
 }
 

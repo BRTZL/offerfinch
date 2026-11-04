@@ -180,7 +180,19 @@ describe("scan against Postgres", () => {
 		const prepared = Object.assign(
 			Object.create(Object.getPrototypeOf(repo)) as DrizzlePipelineRepository,
 			repo,
-			{ prepareRequested: async () => true },
+			{
+				prepareRequested: async () => true,
+				// Nor is a stored Prepare request needed to start drafting.
+				transition: (
+					...[userId, applicationId, input]: Parameters<
+						DrizzlePipelineRepository["transition"]
+					>
+				) =>
+					repo.transition(userId, applicationId, {
+						...input,
+						requirePrepareRequest: false,
+					}),
+			},
 		);
 		const deps: PipelineDeps = {
 			repo: prepared,

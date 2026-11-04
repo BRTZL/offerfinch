@@ -262,6 +262,8 @@ export interface PipelineRepository {
 			to: ApplicationState;
 			reason: string;
 			actor: Actor;
+			/** Only while the application's Prepare request still stands, checked atomically. */
+			requirePrepareRequest?: boolean;
 		},
 	): Promise<boolean>;
 	/* Phase 2: preparation and review. */
@@ -431,6 +433,12 @@ export interface PipelineDeps {
 	claimsLlm?: LlmProvider;
 	notifier: Notifier;
 	workflows: WorkflowStarter;
+	/**
+	 * While a scan's sources run, how often (ms) it starts the runs of jobs they saved so far, so
+	 * each job is filtered and scored as soon as it is saved, not after the last source. Unset:
+	 * runs start once, after every source (tests, and runtimes with their own queue).
+	 */
+	startDuringScanMs?: number;
 	/** Prints documents to PDF: Browser Run in the worker, local Playwright otherwise. */
 	browser?: BrowserProvider;
 	/**

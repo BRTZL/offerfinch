@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, or, sql } from "drizzle-orm";
 import {
 	applications,
 	companies,
@@ -38,6 +38,11 @@ export const questionsMethods = {
 				and(
 					eq(questions.userId, userId),
 					status ? eq(questions.status, status) : undefined,
+					// A job the filter rejected is hidden, and so are its questions.
+					or(
+						isNull(applications.state),
+						ne(applications.state, "rejected_by_filter"),
+					),
 				),
 			)
 			.orderBy(desc(questions.createdAt), desc(sql`${questions}.rowid`));

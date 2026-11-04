@@ -15,6 +15,7 @@ import {
 	inArray,
 	isNotNull,
 	isNull,
+	ne,
 	or,
 	sql,
 } from "drizzle-orm";
@@ -106,6 +107,8 @@ export const desktopStatusRouter = {
 					and(
 						eq(applications.userId, userId),
 						isNotNull(applications.score),
+						// A match the re-filter rejected keeps its score, but is hidden.
+						ne(applications.state, "rejected_by_filter"),
 						isNull(jobs.closedAt),
 						gte(
 							applications.scoredAt,

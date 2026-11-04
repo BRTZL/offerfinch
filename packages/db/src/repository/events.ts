@@ -152,16 +152,35 @@ export const eventsMethods = {
 			to: ApplicationState;
 			reason: string;
 			actor: Actor;
+			requirePrepareRequest?: boolean;
 		},
 	): Promise<boolean> {
-		return this.move(
-			userId,
-			applicationId,
-			input.from,
-			input.to,
-			input.reason,
-			input.actor,
-		);
+		const move = (t?: Tx) =>
+			this.move(
+				userId,
+				applicationId,
+				input.from,
+				input.to,
+				input.reason,
+				input.actor,
+				{},
+				t,
+			);
+		if (!input.requirePrepareRequest) return move();
+		// Checked under the move's own transaction: a request the re-filter cleared in between
+		// (it hid the job, then brought it back) does not start a draft.
+		return this.db.transaction(async (t) => {
+			const [row] = await t
+				.select({ at: applications.prepareRequestedAt })
+				.from(applications)
+				.where(
+					and(
+						eq(applications.id, applicationId),
+						eq(applications.userId, userId),
+					),
+				);
+			return row?.at ? move(t) : false;
+		});
 	},
 
 	async consumeEvent(

@@ -72,7 +72,7 @@ export function settingsFor(latest: boolean) {
 		},
 		stalls: { "run-fixture-1 draft#1": 1 },
 		// Older databases were filtered with version 0 (the start re-filters them once).
-		jobSearchVersion: latest ? 1 : 0,
+		jobSearchVersion: latest ? 2 : 0,
 		noticeWatermark: at(5),
 		whatsNewSeen: "0.0.9",
 	} as const satisfies Record<SettingName, unknown>;

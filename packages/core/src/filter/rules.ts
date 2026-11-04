@@ -11,6 +11,7 @@ import {
 	mentionsAny,
 	REGIONS_MAYBE_TURKEY,
 	REGIONS_WITHOUT_TURKEY,
+	withoutTimeZones,
 } from "./places";
 import type { FilterSettings } from "./settings";
 
@@ -20,7 +21,7 @@ export type FilterRule =
 	| "citizenship"
 	| "language"
 	| "role";
-type RuleOutcome = "pass" | "reject" | "unclear";
+type RuleOutcome = "pass" | "reject";
 
 interface FilterReason {
 	rule: FilterRule;
@@ -32,8 +33,8 @@ interface FilterReason {
 
 /**
  * How the job's place fits the user, for ranking and the scorer: in a country they may work in,
- * remote from their country, remote worldwide, abroad with relocation or visa support, unclear,
- * or rejected.
+ * remote from their country, remote worldwide, abroad with relocation or visa support, kept with
+ * no place given (`unclear`: ranked lower), or rejected.
  */
 export type LocationVerdict =
 	| "home"
@@ -44,8 +45,11 @@ export type LocationVerdict =
 	| "rejected";
 
 export interface FilterResult {
-	/** `unclear` jobs still go on to scoring, flagged and ranked lower; never dropped silently. */
-	decision: "keep" | "reject" | "unclear";
+	/**
+	 * Keep or reject, nothing in between. A rejected job is hidden; a kept job with no place given
+	 * (`locationVerdict: "unclear"`) is scored, flagged and ranked lower.
+	 */
+	decision: "keep" | "reject";
 	/** Absent on results stored before it existed. */
 	locationVerdict?: LocationVerdict;
 	/**
@@ -434,6 +438,22 @@ function willMoveTo(ctx: WorkContext, countries: readonly string[]): boolean {
 /* ------------------------------------------------------------------ places */
 
 /** Countries clearly inside a region; a home country here makes the region decisive. */
+const MIDDLE_EAST = [
+	"Turkey",
+	"Israel",
+	"United Arab Emirates",
+	"Saudi Arabia",
+	"Egypt",
+	"Jordan",
+	"Lebanon",
+	"Qatar",
+	"Kuwait",
+	"Bahrain",
+	"Oman",
+	"Iraq",
+	"Cyprus",
+];
+
 const REGION_MEMBERS: Record<string, readonly string[]> = {
 	namer: ["United States", "Canada"],
 	"north america": ["United States", "Canada", "Mexico"],
@@ -451,7 +471,10 @@ const REGION_MEMBERS: Record<string, readonly string[]> = {
 	schengen: [...EU_MEMBERS, ...EEA_EXTRA, "Switzerland"],
 	europe: [...EU_MEMBERS, ...EEA_EXTRA, "Switzerland", "United Kingdom"],
 	emea: [...EU_MEMBERS, ...EEA_EXTRA, "Switzerland", "United Kingdom"],
-	cet: EU_MEMBERS,
+	// Regions that hold Turkey: a remote role limited to them hires from Turkey. Unclear regions
+	// reject, so these must be listed, not guessed. Time zones are never regions (`withoutTimeZones`).
+	"middle east": MIDDLE_EAST,
+	mena: [...MIDDLE_EAST, "Morocco", "Algeria", "Tunisia", "Libya"],
 };
 
 function regionIncludes(region: string, countries: readonly string[]): boolean {
@@ -490,13 +513,14 @@ function displayPlace(place: string): string {
 
 /**
  * Work-permit rule. Two kinds of requirement are told apart:
- * - residence ("must be based in X"): where the candidate lives. A geographic region that may
- *   include the user's country (Europe, EMEA, CET for Turkey) is ambiguous, so `unclear`. A place
- *   clearly elsewhere is a reject, unless relocation is on, the user would move there and the
- *   posting offers relocation or visa support.
+ * - residence ("must be based in X"): where the candidate lives. A place clearly elsewhere is a
+ *   reject, unless relocation is on, the user would move there and the posting offers relocation
+ *   or visa support. A geographic region that may not include the user's country (Europe, EMEA,
+ *   CET for Turkey) is a reject too: only jobs that clearly hire from it are kept.
  * - work authorization ("authorized to work in X"): a legal right. A country or legal area the
- *   user lacks (US, EU, EEA) is a reject; a geographic region is ambiguous, so `unclear`.
- * The first decisive sentence wins; ambiguous ones only matter when nothing is decisive.
+ *   user lacks (US, EU, EEA) is a reject; so is a geographic region that may not include it.
+ *   A mention that does not say it is required is no requirement.
+ * The first decisive sentence wins; the others only matter when nothing is decisive.
  */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keep ordered location, citizenship, and work-right exceptions together so fallback verdicts retain precedence.
 function permitRule(job: FilterInput, ctx: WorkContext): FilterReason {
@@ -510,7 +534,7 @@ function permitRule(job: FilterInput, ctx: WorkContext): FilterReason {
 		// A requirement the posting waives is no requirement.
 		if (NEGATED_REQUIREMENT.test(sentence)) continue;
 		// "authorising employment in the region" refers back to the residency place in the same sentence.
-		const places = placesIn(target);
+		const places = placesIn(withoutTimeZones(target));
 		const named = [
 			...places.countries,
 			places.regionsWithout,
@@ -541,7 +565,7 @@ function permitRule(job: FilterInput, ctx: WorkContext): FilterReason {
 		if (!residency && !AFFIRMATIVE_REQUIREMENT.test(sentence)) {
 			ambiguous ??= {
 				rule: "work_permit",
-				outcome: "unclear",
+				outcome: "pass",
 				message: `Mentions work authorization in ${named.join(", ")} without saying it is required.`,
 				evidence: quote(sentence),
 			};
@@ -554,8 +578,8 @@ function permitRule(job: FilterInput, ctx: WorkContext): FilterReason {
 		if (!clearlyElsewhere) {
 			ambiguous ??= {
 				rule: "work_permit",
-				outcome: "unclear",
-				message: `Asks for ${kind} in ${named.join(", ")}, which may or may not include ${ctx.label}.`,
+				outcome: "reject",
+				message: `Asks for ${kind} in ${named.join(", ")}, which may not include ${ctx.label}.`,
 				evidence: quote(sentence),
 			};
 			continue;
@@ -930,8 +954,8 @@ function citizenshipRuleBody(job: FilterInput, ctx: WorkContext): FilterReason {
 	if (ctx.citizenship.length === 0)
 		return {
 			rule: "citizenship",
-			outcome: "unclear",
-			message: `Requires ${what}; set your citizenship in Settings › Job search.`,
+			outcome: "pass",
+			message: `Requires ${what}; set your citizenship in Settings › Job search to decide.`,
 			evidence: first.evidence,
 		};
 	return {
@@ -1000,13 +1024,57 @@ const reject = (message: string, evidence?: string): LocationOutcome => ({
 	message,
 	evidence,
 });
-const unclear = (message: string, evidence?: string): LocationOutcome => ({
+/** Kept with no place to judge ("Remote", nothing given): scored, flagged and ranked lower. */
+const noPlace = (message: string, evidence?: string): LocationOutcome => ({
 	rule: "location",
-	outcome: "unclear",
+	outcome: "pass",
 	verdict: "unclear",
 	message,
 	evidence,
 });
+
+/** Words a location entry may hold that name no place: "Remote", "Remote (100%)", "WFH". */
+const PLACELESS_WORDS =
+	/\b(?:remote(?:ly)?|fully|full[- ]time|work from home|wfh|home[- ]based|distributed|first|only|n\/a)\b|100\s*%/gi;
+
+/** "Remote", "100% remote": an entry that names no place at all, unlike an unknown town. */
+function namesNoPlace(location: string): boolean {
+	return (
+		withoutTimeZones(location)
+			.replace(PLACELESS_WORDS, "")
+			.replace(/[\s\-–—|,/()&+:.]/g, "").length === 0
+	);
+}
+
+/** A place the app cannot place, or a mix: a reject, as only clear hires from home are kept. */
+const cannotTell = (joined: string, label: string): LocationOutcome =>
+	reject(
+		`Cannot tell whether ${joined} hires from ${label}; only jobs that clearly do are kept.`,
+		joined,
+	);
+
+/**
+ * A posting that is not remote by its fields but names no place to judge: nothing given, only
+ * "Worldwide" (worldwide is remote), or words that name no place. Null when it names one.
+ */
+function placelessOutcome(
+	locations: string[],
+	perLocation: { global: boolean }[],
+	ctx: WorkContext,
+): LocationOutcome | null {
+	const joined = locations.join(" | ");
+	if (locations.length === 0) return noPlace("No location given.");
+	if (perLocation.every((p) => p.global))
+		return ctx.keepGlobalRemote
+			? pass("remote_global", "Global remote.", joined)
+			: reject(
+					"Remote worldwide; worldwide remote jobs are off in your settings.",
+					joined,
+				);
+	if (locations.every(namesNoPlace))
+		return noPlace("The posting does not say where the job is.", joined);
+	return null;
+}
 
 function workplaceLabel(workplace: NormalizedJob["workplaceType"]): string {
 	return workplace === "hybrid"
@@ -1038,11 +1106,13 @@ function placeNames(
 /** A place that is clearly not where the user may work (a country or region without them). */
 function isForeignPlace(place: string, home: readonly string[]): boolean {
 	const p = placesIn(place);
-	return (
-		(p.countries.length > 0 &&
-			!p.countries.some((c) => isHomeCountry(c, home))) ||
-		Boolean(p.regionsWithout && !regionIncludes(p.regionsWithout, home))
+	if (p.countries.some((c) => isHomeCountry(c, home))) return false;
+	const regions = [p.regionsWithout, p.regionMaybe, p.legalArea].filter(
+		(r): r is string => Boolean(r),
 	);
+	if (regions.some((r) => regionIncludes(r, home))) return false;
+	// A region that may not include home ("Remote in Europe only" for Turkey) is foreign too.
+	return p.countries.length > 0 || regions.length > 0;
 }
 
 /** Global wording that leaves no doubt, beyond a loose "work from anywhere". */
@@ -1070,7 +1140,15 @@ function globalRemoteInText(
 		const within = after.match(
 			/^[\s*_]*(?:with)?in\s+(?:the\s+)?([^.;\n*]{2,60})/i,
 		);
-		const place = within?.[1]?.trim();
+		const raw = within?.[1]?.trim();
+		// "Anywhere in US time zones": hours, not a place, so still anywhere.
+		const place =
+			raw &&
+			withoutTimeZones(raw)
+				.replace(/\bthe\b/gi, "")
+				.trim()
+				? raw
+				: undefined;
 		if (!place || /^(?:the\s+)?world\b/i.test(place)) {
 			global ??= {
 				evidence: quote(`${match[0]}${place ? " in the world" : ""}`),
@@ -1078,14 +1156,14 @@ function globalRemoteInText(
 			};
 			continue;
 		}
-		const p = placesIn(place);
+		const p = placesIn(withoutTimeZones(place));
 		const includesHome =
 			p.countries.some((c) => isHomeCountry(c, home)) ||
 			[p.regionsWithout, p.legalArea, p.regionMaybe].some(
 				(r) => r && regionIncludes(r, home),
 			);
 		if (includesHome) continue;
-		if (p.regionMaybe && p.countries.length === 0) continue;
+		// A region that may not include home ("anywhere in Europe" for Turkey) limits it too.
 		limitedTo ??= {
 			place,
 			evidence: quote(`${match[0]}${after.slice(0, within?.[0].length ?? 0)}`),
@@ -1101,9 +1179,10 @@ function globalRemoteInText(
  *     includes it; or
  * (c) it is abroad, relocation is on (and the country is on the user's move-to list, when set),
  *     and the posting offers relocation or visa support.
- * Anything else is a reject with the reason. `unclear` is kept for postings that are genuinely
- * ambiguous: a region that may or may not include the user's country ("EMEA" for Turkey), no
- * place at all, or a remote role that does not say from where.
+ * Anything else is a reject with the reason, including a place the app cannot place and a region
+ * that may not include the user's country ("EMEA" for Turkey): only jobs that clearly hire from
+ * it are kept. A posting that names no place at all ("Remote", nothing given) is kept, flagged
+ * and ranked lower (`noPlace`).
  */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keep ordered location, citizenship, and work-right exceptions together so fallback verdicts retain precedence.
 function locationRule(job: FilterInput, ctx: WorkContext): LocationOutcome {
@@ -1125,7 +1204,7 @@ function locationRule(job: FilterInput, ctx: WorkContext): LocationOutcome {
 		[...loc.matchAll(LOCATION_EXCLUSION)].map((m) => m[1] ?? ""),
 	);
 	const perLocation = locations.map((loc) => {
-		const kept = loc.replace(LOCATION_EXCLUSION, " ");
+		const kept = withoutTimeZones(loc.replace(LOCATION_EXCLUSION, " "));
 		return {
 			loc,
 			...placesIn(kept, countriesInLocation),
@@ -1194,7 +1273,9 @@ function locationRule(job: FilterInput, ctx: WorkContext): LocationOutcome {
 	const inText = globalRemoteInText(description, home);
 	const limitedSentence = sentences(description)
 		.map((s) => ({ s, place: s.match(REMOTE_LIMITED)?.slice(1).find(Boolean) }))
-		.find(({ place }) => place && isForeignPlace(place, home));
+		.find(
+			({ place }) => place && isForeignPlace(withoutTimeZones(place), home),
+		);
 	const limited = limitedSentence?.place
 		? {
 				place: limitedSentence.place.trim().replace(/\s+only$/i, ""),
@@ -1272,8 +1353,8 @@ function locationRule(job: FilterInput, ctx: WorkContext): LocationOutcome {
 				(p) => p.regionMaybe && !p.legalArea && !p.countries.length,
 			)
 		)
-			return unclear(
-				`Cannot tell whether ${joined} hires from ${label}.`,
+			return reject(
+				`${joined} may not include ${label}; only jobs that clearly hire from ${label} are kept.`,
 				joined,
 			);
 		if (foreignOnly)
@@ -1286,15 +1367,16 @@ function locationRule(job: FilterInput, ctx: WorkContext): LocationOutcome {
 				"Remote worldwide; worldwide remote jobs are off in your settings.",
 				globalEvidence,
 			);
-		return unclear(
-			locations.length === 0
-				? "Remote, but the posting does not say from where."
-				: `Cannot tell whether ${joined} hires from ${label}.`,
-			joined || undefined,
-		);
+		if (locations.every(namesNoPlace))
+			return noPlace(
+				"Remote, but the posting does not say from where.",
+				joined || undefined,
+			);
+		return cannotTell(joined, label);
 	}
 
-	if (locations.length === 0) return unclear("No location given.");
+	const placeless = placelessOutcome(locations, perLocation, ctx);
+	if (placeless) return placeless;
 
 	// Every location is a known place outside the user's countries.
 	const allForeign = perLocation.every(
@@ -1304,11 +1386,7 @@ function locationRule(job: FilterInput, ctx: WorkContext): LocationOutcome {
 			(p.countries.length > 0 || p.regionsWithout) &&
 			!p.countries.some((c) => isHomeCountry(c, ctx.onsite)),
 	);
-	if (!allForeign)
-		return unclear(
-			`Cannot tell whether ${joined} hires from ${label}.`,
-			joined,
-		);
+	if (!allForeign) return cannotTell(joined, label);
 
 	const countries = perLocation.flatMap((p) => p.countries);
 	const where = `${workplaceLabel(workplace)} in ${joined}`;
@@ -1327,8 +1405,8 @@ function locationRule(job: FilterInput, ctx: WorkContext): LocationOutcome {
 				`${where}; remote only within ${displayPlace(limited.place)}, and you live and can work in ${label}.`,
 				limited.evidence,
 			);
-		return unclear(
-			`${where}; the posting mentions remote work but not from where.`,
+		return reject(
+			`${where}; the posting mentions remote work but not from where, and you can work in ${label}.`,
 			joined,
 		);
 	}
@@ -1421,7 +1499,7 @@ export function evaluateHardRequirements(
 	if (ctx.onsite.length === 0) {
 		for (const reason of [permit, locationReason]) {
 			if (reason.outcome !== "reject") continue;
-			reason.outcome = "unclear";
+			reason.outcome = "pass";
 			reason.message = `${reason.message.split(";")[0]}; set where you live in Settings › Job search to decide.`;
 		}
 		if (locationVerdict === "rejected") locationVerdict = "unclear";
@@ -1435,9 +1513,10 @@ export function evaluateHardRequirements(
 		roleRule(job, settings),
 	];
 
-	// A residency or permit requirement that names the user's country settles an unclear location.
+	// A residency or permit requirement that names the user's country settles a missing place.
 	if (
-		locationReason.outcome === "unclear" &&
+		locationVerdict === "unclear" &&
+		locationReason.outcome === "pass" &&
 		permit.outcome === "pass" &&
 		permit.evidence &&
 		/includes/.test(permit.message)
@@ -1458,24 +1537,17 @@ export function evaluateHardRequirements(
 			flags: [],
 		};
 	}
-	const unclearReasons = reasons.filter((r) => r.outcome === "unclear");
-	if (unclearReasons.length > 0) {
-		return {
-			decision: "unclear",
-			locationVerdict,
-			...(preferred.length > 0 ? { preferred } : {}),
-			summary: unclearReasons.map((r) => r.message).join(" "),
-			reasons,
-			flags: unclearReasons.map((r) => `${r.rule.replace("_", " ")} unclear`),
-		};
-	}
 	return {
 		decision: "keep",
 		locationVerdict,
 		...(preferred.length > 0 ? { preferred } : {}),
 		summary:
-			"Passes location, citizenship, work-permit, language and role rules.",
+			ctx.onsite.length === 0
+				? "Passes the rules; set where you live in Settings › Job search to decide on place."
+				: locationVerdict === "unclear"
+					? `Passes the rules; ${locationReason.message.charAt(0).toLowerCase()}${locationReason.message.slice(1)}`
+					: "Passes location, citizenship, work-permit, language and role rules.",
 		reasons,
-		flags: [],
+		flags: locationVerdict === "unclear" ? ["location unclear"] : [],
 	};
 }
