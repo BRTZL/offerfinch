@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,6 +21,7 @@ import {
 	redactDiagnostics,
 	zipDiagnostics,
 } from "../src/main/diagnostics";
+import { createZipTools } from "../src/main/zip";
 import { personalFields } from "../src/worker/diagnostics";
 
 /**
@@ -268,13 +268,14 @@ describe("diagnostics size limits", () => {
 	});
 });
 
-describe.skipIf(process.platform !== "darwin")("diagnostics zip", () => {
+describe("diagnostics zip", () => {
 	it("holds exactly the reviewed files, and none of the canaries", async () => {
 		const { files, dirs } = bundleWithCanaries();
 		const zip = path.join(dirs.root, "out.zip");
 		await zipDiagnostics(files, zip);
 		const unzipped = path.join(dirs.root, "unzipped");
-		execFileSync("/usr/bin/ditto", ["-x", "-k", zip, unzipped]);
+		fs.mkdirSync(unzipped);
+		await createZipTools().extract(zip, unzipped);
 		const read = (dir: string, prefix = ""): DiagnosticFile[] =>
 			fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
 				const name = `${prefix}${entry.name}`;
