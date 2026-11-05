@@ -25,7 +25,7 @@ step use any available model, and removes API keys. Decisions are dated in
 | `claude` | Claude Code through the Agent SDK (unchanged) | the user's Claude Code login | plan | as #128 |
 | `codex` | `codex app-server` (unchanged) | the user's Codex login | plan | off, macOS only (#128) |
 | `opencode` | `opencode serve --stdio --port 0`, one process per call, v2 HTTP API | the user's OpenCode login, in place (T3 Code's way) | per source: plan or pay-per-use | off, unverified |
-| `antigravity` | Google's `agy_acp_server`, ACP over stdio, one process per call | the user's `agy` login (shared Keychain entry), in place | plan (Google AI Pro/Ultra) | off, unverified |
+| `antigravity` | Google's `agy_acp_server` 1.4.1, ACP over stdio, one process per call | OfferFinch's own Google sign-in (as T3 Code does), kept in its own folder | plan (Google AI Pro/Ultra) | off, unverified |
 
 Gemini CLI is not a provider: Google refuses it for individual accounts
 ([research/gemini-cli-refused.md](research/gemini-cli-refused.md)).
@@ -85,24 +85,34 @@ From [research/opencode-v2-lockdown.md](research/opencode-v2-lockdown.md) and
    `event_sequence` and legacy `session` rows, `PRAGMA wal_checkpoint(TRUNCATE)`. The same sweep at
    app start for sessions a crash left. Schema-dependent: part of the version gate.
 
-### Antigravity recipe
+### Antigravity recipe (1.4.1)
 
-From [research/antigravity-acp-lockdown.md](research/antigravity-acp-lockdown.md):
+From [research/antigravity-acp-lockdown.md](research/antigravity-acp-lockdown.md) and
+[research/antigravity-1.4.1-pin.md](research/antigravity-1.4.1-pin.md):
 
-1. OfferFinch downloads Google's ACP server release (as T3 Code does) into its own app-data
-   folder and runs it only if the archive's sha256 matches the pinned release. The lockdown proof
-   is re-run on exactly that release before it is enabled.
-2. Private root per call (mode 700, per-user temp folder): empty cwd, `HOME`, `TMPDIR`,
-   `GEMINI_HOME` with only `{"auth":{"type":"oauth-personal"}}`; no forced file storage, so the
-   server uses the user's shared `agy` Keychain login (to be proven on the pinned release; if it
-   rotates or needs a copy, fall back to an OfferFinch sign-in in its own `GEMINI_HOME`).
-3. ACP: `initialize` without fs or terminal capabilities; `authenticate oauth-personal`;
-   `session/new` with `mcpServers: []` and `_meta.agy.enabledTools: []`; set the model; prompt;
-   cancel every permission request, refuse fs and terminal requests, kill on any tool call.
-4. `AGY_ACP_CCPA_BASE_URL` points at a local gate that forwards one model request, checks it has
-   no tools, and refuses the rest.
-5. No JSON schema over ACP: the answer is prompted as JSON, fences stripped, parsed against the
-   schema. Delete the private root after the call; sweep stale roots at start.
+1. OfferFinch downloads Google's ACP server release 1.4.1
+   (`dl.google.com/agy-extensions/releases/{macos|linux|windows}/agy-acp-server-1.4.1-<os>-<arch>.zip`)
+   into its own app-data folder and runs it only if the archive's sha256 and size match the pinned
+   table (all six platforms are in the pin report). Every pin bump re-runs the lockdown proof: the
+   switches below are undocumented and were renamed between 1.3.0 and 1.4.1.
+2. Login: 1.4.1 cannot reuse the `agy` CLI's login (its Keychain entry is separate, with no
+   import). OfferFinch signs in once with Google (`authenticate oauth-personal`, the sign-in URL
+   opened in the user's browser) in file mode (`AGY_ACP_FORCE_FILE_STORAGE=1`) with a
+   `GEMINI_HOME` in OfferFinch's app-data folder that holds only the auth file and
+   `{"auth":{"type":"oauth-personal"}}`.
+3. Per call: private root (mode 700, per-user temp folder) with an empty cwd, `HOME` and `TMPDIR`;
+   the token file copied in (no rotation seen); env from the allowlist.
+4. ACP: `initialize` without fs or terminal capabilities; `authenticate oauth-personal`;
+   `session/new` with `mcpServers: []` and `_meta.antigravity.enabledTools: []` (ACP MCP servers
+   are not filtered, so the list must be empty); set the model family, then `thinking_level`
+   (`low | medium | high`, default high); prompt; cancel every permission request, refuse fs and
+   terminal requests, kill on any tool call.
+5. `AGY_ACP_CCPA_BASE_URL` points at a local gate on the consumer endpoint (`daily-cloudcode-pa`):
+   it forwards `fetchAvailableModels` and exactly one model request, checks that request has no
+   tools, and refuses the rest (the server retries `unknown_tool` and 503s).
+6. No JSON schema over ACP: the answer is prompted as JSON, fences stripped, parsed against the
+   schema. About 3.7k tokens of Antigravity's own prompt ride on every call. Delete the private
+   root after the call; sweep stale roots at start.
 
 ## Contract (code)
 
@@ -133,6 +143,6 @@ From [research/antigravity-acp-lockdown.md](research/antigravity-acp-lockdown.md
 ## Not verified yet
 
 - A successful real OpenCode call (free-tier limit hit during the spikes).
-- Antigravity on the pinned release, and its shared-Keychain login.
+- OfferFinch's own Antigravity sign-in flow end to end.
 - Prompted JSON on Antigravity beyond one call.
 - Anything on Windows beyond unit tests in CI.
