@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 import { ChevronLeft } from "lucide-react";
 import { Suspense, useRef, useState } from "react";
+import { TryDemoButton } from "@/components/desktop/demo";
 import { STEP_META, StepBody } from "@/components/desktop/setup/steps";
 import { Welcome } from "@/components/desktop/setup/welcome";
 import {
@@ -97,7 +98,10 @@ function StepHeader({
 	);
 }
 
-/** Back on the left; Skip and the step's primary action on the right. They never move. */
+/**
+ * Back on the left; Skip and the step's primary action on the right. They never move. On the
+ * welcome, Skip's place holds the second way in: Try it with sample data.
+ */
 function SetupFooter({
 	welcome,
 	canSkip,
@@ -125,15 +129,19 @@ function SetupFooter({
 					Back
 				</Button>
 				<div className="flex items-center gap-2">
-					<Button
-						variant="ghost"
-						onClick={onSkip}
-						className={cn(!canSkip && "invisible")}
-						tabIndex={canSkip ? undefined : -1}
-						data-testid="step-skip"
-					>
-						Skip for now
-					</Button>
+					{welcome ? (
+						<TryDemoButton />
+					) : (
+						<Button
+							variant="ghost"
+							onClick={onSkip}
+							className={cn(!canSkip && "invisible")}
+							tabIndex={canSkip ? undefined : -1}
+							data-testid="step-skip"
+						>
+							Skip for now
+						</Button>
+					)}
 					<Button
 						className="min-w-36"
 						onClick={primary.onClick}

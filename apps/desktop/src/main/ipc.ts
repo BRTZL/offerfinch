@@ -18,6 +18,8 @@ import {
 	type LoginItemState,
 	NOTIFICATION_SOUNDS,
 	type NotificationSound,
+	SECRET_NAMES,
+	type SecretName,
 } from "../shared/bridge";
 import {
 	checkBackup,
@@ -25,17 +27,20 @@ import {
 	restoreBackup,
 	saveBackup,
 } from "./backup-actions";
+import { DEMO_REFUSAL, demoStatus, switchDemo } from "./demo-actions";
 import {
 	discardDiagnostics,
 	prepareDiagnostics,
 	releaseNotes,
 	saveDiagnostics,
 } from "./diagnostics-export";
+import { openExternalLink } from "./external-links";
 import { saveInterviewEvent } from "./interview-event";
+import { lifecycle } from "./lifecycle";
 import { contextMenu } from "./menu";
 import { NOTIFICATION_SETTINGS_URL } from "./notifications";
 import { APP_ORIGIN } from "./protocol";
-import { secretUpdater } from "./secret-updates";
+import { keysToWorker, secretUpdater } from "./secret-updates";
 import { mainState, TEST_MODE } from "./state";
 import { testHooks } from "./test-hooks";
 import { connectRenderer } from "./window";
@@ -92,7 +97,91 @@ function registerDiagnosticsIpc() {
 	handle(IPC.releaseNotes, () => releaseNotes());
 }
 
+/**
+ * Saves or removes a key while holding the app's lock (main/lifecycle.ts), shared: try-it mode
+ * cannot be entered (nor a restore start) until the key is saved and sent, and a key save is
+ * refused while one runs. The demo check is made under the lock, so it holds until the end.
+ */
+async function withKeyLock(write: () => Promise<void>) {
+	const hold = lifecycle.share();
+	if ("busy" in hold) throw new Error(hold.busy);
+	try {
+		if (mainState.demo) throw new Error(DEMO_REFUSAL);
+		await write();
+	} finally {
+		hold.release();
+	}
+}
+
+/**
+ * The API keys, in main only. Try-it mode never reads or changes the real keys (and never sends
+ * them to its worker): a save's keys go to the worker running once they are written, unless it
+ * is the demo's.
+ */
+function registerSecretsIpc() {
+	const secretUpdates = secretUpdater(
+		mainState.secrets,
+		(all) => void keysToWorker(mainState.worker, () => mainState.demo, all),
+	);
+	handle(IPC.secretSet, async (name: unknown, value: unknown) => {
+		if (!isSecretName(name) || typeof value !== "string")
+			throw new Error("Bad request");
+		await withKeyLock(() => secretUpdates.set(name, value));
+	});
+	handle(IPC.secretRemove, async (name: unknown) => {
+		if (!isSecretName(name)) throw new Error("Bad request");
+		await withKeyLock(() => secretUpdates.remove(name));
+	});
+	handle(IPC.secretStatus, () =>
+		mainState.demo
+			? (Object.fromEntries(SECRET_NAMES.map((n) => [n, false])) as Record<
+					SecretName,
+					boolean
+				>)
+			: mainState.secrets.status(),
+	);
+	handle(IPC.secretAvailable, () => mainState.secrets.available());
+	handle(IPC.secretUnreadable, () =>
+		mainState.demo ? [] : mainState.secrets.unreadable(),
+	);
+}
+
+/**
+ * Backup and restore, in main. Refused in try-it mode: a backup would hold the sample data, a
+ * restore would replace it.
+ */
+function registerBackupIpc() {
+	handle(IPC.backupSave, () =>
+		mainState.demo
+			? { status: "failed" as const, error: DEMO_REFUSAL }
+			: saveBackup(),
+	);
+	handle(IPC.backupCheck, () =>
+		mainState.demo
+			? { status: "refused" as const, error: DEMO_REFUSAL }
+			: checkBackup(),
+	);
+	handle(IPC.backupDiscard, (id: unknown) => {
+		if (typeof id !== "string") throw new Error("Bad request");
+		discardBackup(id);
+	});
+	handle(IPC.backupRestore, (id: unknown) => {
+		if (typeof id !== "string") throw new Error("Bad request");
+		if (mainState.demo)
+			return { status: "failed" as const, error: DEMO_REFUSAL };
+		return restoreBackup(id);
+	});
+}
+
+/** Try-it mode: whether it runs, and the switch both ways (main/demo-actions.ts). */
+function registerDemoIpc() {
+	handle(IPC.demoState, () => demoStatus());
+	handle(IPC.demoEnter, () => switchDemo(true));
+	handle(IPC.demoLeave, () => switchDemo(false));
+}
+
 export function registerIpc() {
+	registerDemoIpc();
 	handle(
 		IPC.info,
 		(): AppInfo => ({
@@ -106,12 +195,15 @@ export function registerIpc() {
 		}),
 	);
 	handle(IPC.updateState, () => mainState.updates.get());
+	// Try-it mode makes no network call: Updates itself refuses while suspended.
 	handle(IPC.updateCheck, () => mainState.updates.check());
 	handle(IPC.updateInstall, () => mainState.updates.install());
-	handle(IPC.openExternal, async (url: unknown) => {
+	// The page that asked is told when a link is refused (try-it mode): main/external-links.ts.
+	ipcMain.handle(IPC.openExternal, async (event, url: unknown) => {
+		if (!isAppSender(event)) throw new Error("Refused: not the app's window");
 		if (typeof url !== "string" || !/^https?:\/\//.test(url))
 			throw new Error("Only web links open outside the app");
-		await shell.openExternal(url);
+		await openExternalLink(url, event.sender);
 	});
 	const tempFile = async (name: string, bytes: Uint8Array) => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "offerfinch-"));
@@ -165,33 +257,10 @@ export function registerIpc() {
 		await fs.promises.writeFile(target.filePath, json, { mode: 0o600 });
 		return true;
 	});
-	handle(IPC.backupSave, () => saveBackup());
-	handle(IPC.backupCheck, () => checkBackup());
-	handle(IPC.backupDiscard, (id: unknown) => {
-		if (typeof id !== "string") throw new Error("Bad request");
-		discardBackup(id);
-	});
-	handle(IPC.backupRestore, (id: unknown) => {
-		if (typeof id !== "string") throw new Error("Bad request");
-		return restoreBackup(id);
-	});
+	registerBackupIpc();
 	handle(IPC.saveInterviewEvent, saveInterviewEvent);
 	registerDiagnosticsIpc();
-	const secretUpdates = secretUpdater(mainState.secrets, (all) =>
-		mainState.worker.post({ type: "secrets", secrets: all }),
-	);
-	handle(IPC.secretSet, async (name: unknown, value: unknown) => {
-		if (!isSecretName(name) || typeof value !== "string")
-			throw new Error("Bad request");
-		await secretUpdates.set(name, value);
-	});
-	handle(IPC.secretRemove, async (name: unknown) => {
-		if (!isSecretName(name)) throw new Error("Bad request");
-		await secretUpdates.remove(name);
-	});
-	handle(IPC.secretStatus, () => mainState.secrets.status());
-	handle(IPC.secretAvailable, () => mainState.secrets.available());
-	handle(IPC.secretUnreadable, () => mainState.secrets.unreadable());
+	registerSecretsIpc();
 	handle(IPC.openLoginItems, async () => {
 		if (TEST_MODE) return;
 		await shell.openExternal(
@@ -201,6 +270,7 @@ export function registerIpc() {
 	handle(IPC.loginGet, () => loginItemState());
 	handle(IPC.loginSet, (open: unknown) => {
 		if (typeof open !== "boolean") throw new Error("Bad request");
+		if (mainState.demo) throw new Error(DEMO_REFUSAL);
 		if (!TEST_MODE) app.setLoginItemSettings({ openAtLogin: open });
 		return loginItemState();
 	});
@@ -215,6 +285,7 @@ export function registerIpc() {
 		clipboard.writeText(text);
 	});
 	handle(IPC.notifyTest, async () => {
+		if (mainState.demo) throw new Error(DEMO_REFUSAL);
 		await mainState.notifier.show({
 			title: "Notifications are on",
 			body: "You'll hear about strong matches, questions and applications ready for review.",
@@ -230,10 +301,14 @@ export function registerIpc() {
 		return mainState.notifier.get();
 	});
 	handle(IPC.notifyState, () => mainState.notifier.get());
-	handle(IPC.notifyClearMissed, () => mainState.notifier.clearMissed());
+	handle(IPC.notifyClearMissed, () => {
+		if (mainState.demo) throw new Error(DEMO_REFUSAL);
+		return mainState.notifier.clearMissed();
+	});
 	handle(IPC.notifySetSound, (sound: unknown) => {
 		if (!NOTIFICATION_SOUNDS.includes(sound as NotificationSound))
 			throw new Error("Bad request");
+		if (mainState.demo) throw new Error(DEMO_REFUSAL);
 		return mainState.notifier.setSound(sound as NotificationSound);
 	});
 	handle(IPC.notifyChirp, () => {
@@ -253,6 +328,8 @@ export function registerIpc() {
 			bounds === null
 		)
 			throw new Error("Bad request");
+		// Try-it mode opens no site: a sign-in would reach the real one.
+		if (mainState.demo) throw new Error(DEMO_REFUSAL);
 		const win = mainState.mainWindow;
 		if (!win || win.isDestroyed()) throw new Error("No window");
 		return mainState.sites.show(site, mode, win, bounds as never);

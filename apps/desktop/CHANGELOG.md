@@ -17,6 +17,10 @@ at the top, above the newest version. Only what is merged into main belongs here
 - Setup's first search is live: every job it finds appears as it is read, the ones that break
   one of your rules show which rule and leave, and the rest get their fit score in place. When
   it is done, a line sums up how many were read, set aside and matched.
+- Try OfferFinch before connecting anything: Try it with sample data, on the first screen,
+  opens the app with a made-up profile and eight sample jobs. Matches, drafts and Applied all
+  work, with no AI connection and nothing sent anywhere. Leave demo deletes the sample data and
+  takes you back; your own data is never touched.
 
 ## 0.1.5 (2026-11-04)
 

@@ -19,6 +19,12 @@ export const mainState = {
 	notifier: undefined as unknown as Notifier,
 	updates: undefined as unknown as Updates,
 	databaseFile: "",
+	/** Try-it mode (main/demo.ts): the worker runs on the demo folder's database. */
+	demo: false,
+	/** The real database while demo mode runs, restored exactly on leaving. */
+	realDatabaseFile: null as string | null,
+	/** Leaving demo mode did not finish (main/demo.ts): why; Leave tries again. */
+	leaveFailed: null as string | null,
 	testShown: true,
 	startedAt: 0,
 };

@@ -1,6 +1,6 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
-import { Toaster } from "sonner";
+import { Toaster, toast } from "sonner";
 import { Redirect, Route, Router, Switch, useLocation } from "wouter";
 
 import { Sidebar } from "@/components/shell/sidebar";
@@ -50,6 +50,11 @@ const screens = [
 // ⌘K: its own chunk, fetched the first time it opens.
 const CommandMenu = lazy(() => import("./components/shell/command-menu"));
 
+import {
+	DEMO_STRIP_HEIGHT,
+	DemoBanner,
+	useDemoMode,
+} from "@/components/desktop/demo";
 import { PASTE_FOR_EVENT, type PasteFor } from "@/components/pipeline/added";
 import { AddJobDialog } from "./components/pipeline/add-job";
 import { DiagnosticsHost } from "./components/shell/diagnostics-sheet";
@@ -114,6 +119,8 @@ function NavigationBridge() {
 		[],
 	);
 	useEffect(() => desktop.onCommand(sendCommand), []);
+	// Try-it mode opens no link (main/external-links.ts): say so.
+	useEffect(() => desktop.onLinkRefused((message) => toast(message)), []);
 	useEffect(() => {
 		const idle = window.requestIdleCallback(() => {
 			for (const screen of screens) void screen.preload();
@@ -130,13 +137,19 @@ const SETUP_FOOTER_OFFSET = 64 + 16;
 function AppToaster() {
 	const [location] = useLocation();
 	const setup = location.startsWith("/onboarding");
+	// The demo strip runs along the bottom: toasts sit above it.
+	const strip = useDemoMode() ? DEMO_STRIP_HEIGHT : 0;
 	return (
 		<Toaster
 			theme="system"
 			// Bottom centre: bottom-right sat on the footers' primary button (onboarding's
 			// Continue), and a pointer resting on a toast keeps it open.
 			position="bottom-center"
-			offset={setup ? { bottom: SETUP_FOOTER_OFFSET } : undefined}
+			offset={
+				setup || strip
+					? { bottom: (setup ? SETUP_FOOTER_OFFSET : 16) + strip }
+					: undefined
+			}
 			toastOptions={{
 				className:
 					"rounded-xl border border-border bg-popover text-sm text-popover-foreground shadow-lg",
@@ -179,7 +192,15 @@ function Shell() {
 			</Switch>
 		</Suspense>
 	);
-	return <AppShell sidebar={bare ? undefined : <Sidebar />}>{routes}</AppShell>;
+	// Try-it mode: the strip saying so (and Leave demo) under every screen, setup's too.
+	return (
+		<div className="flex h-full flex-col">
+			<div className="min-h-0 flex-1">
+				<AppShell sidebar={bare ? undefined : <Sidebar />}>{routes}</AppShell>
+			</div>
+			<DemoBanner />
+		</div>
+	);
 }
 
 export function App() {

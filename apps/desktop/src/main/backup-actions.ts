@@ -14,12 +14,11 @@ import {
 	type StagedRestore,
 	stageRestore,
 } from "./backup";
+import { BACKUP_RUNNING, lifecycle } from "./lifecycle";
 import { log, mainState } from "./state";
 
 /** Unpacked backups waiting for the user's yes, by id. Only one at a time is kept. */
 const waiting = new Map<string, StagedRestore>();
-/** One backup or restore at a time: a second click waits for nothing and is refused. */
-let busy = false;
 
 const message = (error: unknown) =>
 	error instanceof BackupError
@@ -32,11 +31,14 @@ function discardAll() {
 	waiting.clear();
 }
 
+/**
+ * One backup or restore at a time, never while try-it mode switches (main/lifecycle.ts): a
+ * second click waits for nothing and is refused.
+ */
 export async function saveBackup(): Promise<BackupSaveResult> {
-	if (busy)
-		return { status: "failed", error: "A backup or restore is running." };
-	// Busy from the dialog on: a second action started while it is open waits its turn.
-	busy = true;
+	// Held from the dialog on: a second action started while it is open is refused.
+	const hold = lifecycle.take(BACKUP_RUNNING);
+	if ("busy" in hold) return { status: "failed", error: hold.busy };
 	try {
 		const target = await dialog.showSaveDialog({
 			defaultPath: path.join(
@@ -58,14 +60,13 @@ export async function saveBackup(): Promise<BackupSaveResult> {
 		log("backup failed", String(error));
 		return { status: "failed", error: message(error) };
 	} finally {
-		busy = false;
+		hold.release();
 	}
 }
 
 export async function checkBackup(): Promise<RestoreCheck> {
-	if (busy)
-		return { status: "refused", error: "A backup or restore is running." };
-	busy = true;
+	const hold = lifecycle.take(BACKUP_RUNNING);
+	if ("busy" in hold) return { status: "refused", error: hold.busy };
 	try {
 		const chosen = await dialog.showOpenDialog({
 			properties: ["openFile"],
@@ -85,7 +86,7 @@ export async function checkBackup(): Promise<RestoreCheck> {
 		log("backup refused", String(error));
 		return { status: "refused", error: message(error) };
 	} finally {
-		busy = false;
+		hold.release();
 	}
 }
 
@@ -102,9 +103,9 @@ export async function restoreBackup(id: string): Promise<RestoreResult> {
 			status: "failed",
 			error: "Choose the backup again: it is no longer ready to restore.",
 		};
-	if (busy)
-		return { status: "failed", error: "A backup or restore is running." };
-	busy = true;
+	// Refused before the staged backup is taken, so the same restore can be tried again.
+	const hold = lifecycle.take(BACKUP_RUNNING);
+	if ("busy" in hold) return { status: "failed", error: hold.busy };
 	waiting.delete(id);
 	try {
 		const result = await applyRestore({
@@ -128,6 +129,6 @@ export async function restoreBackup(id: string): Promise<RestoreResult> {
 		fs.rmSync(staged.dir, { recursive: true, force: true });
 		return { status: "failed", error: message(error) };
 	} finally {
-		busy = false;
+		hold.release();
 	}
 }

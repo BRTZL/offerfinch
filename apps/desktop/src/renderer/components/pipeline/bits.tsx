@@ -148,6 +148,7 @@ const SOURCE_LABEL: Record<string, string> = {
 	weworkremotely: "We Work Remotely",
 	hackernews: "Hacker News",
 	manual: "Added by hand",
+	sample: "Sample job",
 };
 
 /**

@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { useDemoMode } from "@/components/desktop/demo";
 import {
 	type AppDetail,
 	DOC_LABEL,
@@ -133,6 +134,8 @@ export function SubmissionPanel({
 	dryRunning: boolean;
 }) {
 	const [appliedOn, setAppliedOn] = useState(today);
+	// Try-it mode opens no link: the step names the form without one.
+	const demo = useDemoMode();
 	useHandoffCheck(app);
 	const relevant = ["approved", "applying", "applied", "needs_human"].includes(
 		app.state,
@@ -161,15 +164,19 @@ export function SubmissionPanel({
 						<Step
 							n={1}
 							title={
-								<a
-									href={app.handoff.formUrl}
-									target="_blank"
-									rel="noreferrer"
-									className="text-primary hover:underline"
-									data-testid="handoff-link"
-								>
-									{formLink} ↗
-								</a>
+								demo ? (
+									<span data-testid="handoff-link">{formLink}</span>
+								) : (
+									<a
+										href={app.handoff.formUrl}
+										target="_blank"
+										rel="noreferrer"
+										className="text-primary hover:underline"
+										data-testid="handoff-link"
+									>
+										{formLink} ↗
+									</a>
+								)
 							}
 						>
 							{app.submission?.reason && (

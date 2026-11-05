@@ -96,7 +96,42 @@ export class SiteBrowser {
 	/** Worker processes that have exited: their calls still queued are refused. */
 	private readonly gone = new Set<number>();
 
+	/**
+	 * Why no tab may open now (try-it mode and its switch: main/demo-actions.ts), else null. A
+	 * sign-in sheet and a run's claim are refused with it; closeAll() closes the ones open.
+	 */
+	private blocked: string | null = null;
+
 	constructor(private readonly options: SiteBrowserOptions) {}
+
+	/**
+	 * Refuses every new tab (sheets and runs) and every operation on a site's session (sign out,
+	 * reads, clearing) with `reason` until called with null.
+	 */
+	block(reason: string | null) {
+		this.blocked = reason;
+	}
+
+	/**
+	 * Waits for every operation already running on a site's session (a sign out clearing its
+	 * storage, a read) to end: block() refuses what has not started, but one in flight carries on
+	 * in this process whatever the worker does. True once every queue is idle, false when one is
+	 * still busy after `timeoutMs`; the switch to try-it mode is refused then.
+	 */
+	async drain(timeoutMs: number): Promise<boolean> {
+		const idle = Promise.all(
+			[...this.queues.values()].map((q) => q.catch(() => {})),
+		).then(() => true);
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const late = new Promise<boolean>((resolve) => {
+			timer = setTimeout(() => resolve(false), timeoutMs);
+		});
+		try {
+			return await Promise.race([idle, late]);
+		} finally {
+			clearTimeout(timer);
+		}
+	}
 
 	static partition(site: SiteTabId): string {
 		return `persist:site-${site}`;
@@ -344,6 +379,47 @@ export class SiteBrowser {
 		return tab;
 	}
 
+	/** A run takes the site's tab (opened if needed); refused while one is blocked or in use. */
+	private async claim(site: SiteTabId, generation: number): Promise<true> {
+		// Web search starts each run clean: no cookies, storage, caches or service worker a
+		// page of an earlier run left behind. Never while blocked (handle() refused it already).
+		if (this.blocked) throw new Error(this.blocked);
+		if (site === "web" && !this.alive(site)?.run) {
+			const ses = this.session(site);
+			// The HTTP cache too: a page cached by an earlier run would be served without
+			// a request, skipping this run's checks.
+			await ses.clearCache().catch(() => {});
+			await ses
+				.clearStorageData({
+					storages: [
+						"cookies",
+						"filesystem",
+						"indexdb",
+						"localstorage",
+						"shadercache",
+						"serviceworkers",
+						"cachestorage",
+					],
+				})
+				.catch(() => {});
+		}
+		// Checked after the clearing above: a block set meanwhile still holds.
+		if (this.blocked) throw new Error(this.blocked);
+		const current = this.alive(site);
+		if (current?.sheet === "sign-in")
+			throw new Error(
+				`The ${SITES[site].label} sign-in sheet is open: close it, then run again`,
+			);
+		if (current?.run)
+			throw new Error(`${SITES[site].label} is already being read`);
+		const tab = current ?? this.create(site);
+		if (tab.idleTimer) clearTimeout(tab.idleTimer);
+		tab.run = true;
+		tab.owner = generation;
+		this.sendPage(tab);
+		return true;
+	}
+
 	/**
 	 * One operation a worker process asked for; `generation` says which one. A claim belongs to
 	 * that process: when it exits (`workerGone`) its claims are let go and its queued calls
@@ -354,43 +430,15 @@ export class SiteBrowser {
 		return this.enqueue(site, async () => {
 			if (this.gone.has(generation))
 				throw new Error("The worker that asked has stopped");
+			// Try-it mode and its switch (block()): no call reaches a site's session, which is the
+			// real one with its sign-in (no sign out, read, clearing or claim). Checked when the call
+			// runs, so one queued before the block is refused too. Letting a run's tab go and
+			// closing an idle tab touch no session.
+			if (this.blocked && call.op !== "release" && call.op !== "closeIdle")
+				throw new Error(this.blocked);
 			switch (call.op) {
-				case "claim": {
-					// Web search starts each run clean: no cookies, storage, caches or service worker a
-					// page of an earlier run left behind.
-					if (site === "web" && !this.alive(site)?.run) {
-						const ses = this.session(site);
-						// The HTTP cache too: a page cached by an earlier run would be served without
-						// a request, skipping this run's checks.
-						await ses.clearCache().catch(() => {});
-						await ses
-							.clearStorageData({
-								storages: [
-									"cookies",
-									"filesystem",
-									"indexdb",
-									"localstorage",
-									"shadercache",
-									"serviceworkers",
-									"cachestorage",
-								],
-							})
-							.catch(() => {});
-					}
-					const current = this.alive(site);
-					if (current?.sheet === "sign-in")
-						throw new Error(
-							`The ${SITES[site].label} sign-in sheet is open: close it, then run again`,
-						);
-					if (current?.run)
-						throw new Error(`${SITES[site].label} is already being read`);
-					const tab = current ?? this.create(site);
-					if (tab.idleTimer) clearTimeout(tab.idleTimer);
-					tab.run = true;
-					tab.owner = generation;
-					this.sendPage(tab);
-					return true;
-				}
+				case "claim":
+					return this.claim(site, generation);
 				case "release": {
 					const tab = this.alive(site);
 					// Only the run's own process lets it go.
@@ -572,6 +620,7 @@ export class SiteBrowser {
 		win: BrowserWindow,
 		bounds: SiteBounds,
 	): SiteShowResult {
+		if (this.blocked) return { ok: false, reason: this.blocked };
 		const label = SITES[site].label;
 		const existing = this.alive(site);
 		if (mode === "live" && !existing?.run && existing?.sheet !== "live")
@@ -639,6 +688,7 @@ export class SiteBrowser {
 			if (tab.window === win) this.hide(tab.site);
 	}
 
+	/** Closes every tab: a run's, a sheet's, and a sign-in tab kept after its sheet closed. */
 	closeAll() {
 		for (const tab of [...this.tabs.values()]) this.close(tab);
 	}

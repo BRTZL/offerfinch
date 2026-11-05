@@ -1,4 +1,5 @@
 import { ExternalLink } from "lucide-react";
+import { useDemoMode } from "@/components/desktop/demo";
 import { AddedProgress, linkHost } from "@/components/pipeline/added";
 import { Locations } from "@/components/pipeline/application/locations";
 import {
@@ -268,6 +269,8 @@ function PostingLinks({
 	id: string;
 	job: { url: string; source: string };
 }) {
+	// Try-it mode opens no link (the default browser holds the real sessions).
+	const demo = useDemoMode();
 	return (
 		<>
 			{fromFeed(job.source) ? (
@@ -275,15 +278,17 @@ function PostingLinks({
 			) : (
 				<RereadPosting id={id} className="ml-auto" />
 			)}
-			<a
-				href={job.url}
-				target="_blank"
-				rel="noreferrer"
-				className="text-primary flex items-center gap-1 text-xs hover:underline"
-			>
-				{postingLinkLabel(job.source)}
-				<ExternalLink className="size-3" />
-			</a>
+			{!demo && (
+				<a
+					href={job.url}
+					target="_blank"
+					rel="noreferrer"
+					className="text-primary flex items-center gap-1 text-xs hover:underline"
+				>
+					{postingLinkLabel(job.source)}
+					<ExternalLink className="size-3" />
+				</a>
+			)}
 		</>
 	);
 }

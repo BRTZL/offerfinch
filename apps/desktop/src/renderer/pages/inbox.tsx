@@ -16,6 +16,7 @@ import {
 	useState,
 } from "react";
 import { toast } from "sonner";
+import { useDemoMode } from "@/components/desktop/demo";
 import {
 	AddedActions,
 	addedStep,
@@ -927,6 +928,8 @@ function InboxList({
 	empty: ReactNode;
 }) {
 	const router = useRouter();
+	// Try-it mode opens no link (the default browser holds the real sessions).
+	const demo = useDemoMode();
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [focused, setFocused] = useState(false);
 	const virtualizer = useVirtualizer({
@@ -1010,7 +1013,7 @@ function InboxList({
 		}
 		const row = item.row;
 		const choice = await desktop.contextMenu([
-			{ id: "open-posting", label: "Open Posting" },
+			...(demo ? [] : [{ id: "open-posting" as const, label: "Open Posting" }]),
 			{ id: "copy-link", label: "Copy Posting Link" },
 			...(isOpenMatch(row)
 				? [

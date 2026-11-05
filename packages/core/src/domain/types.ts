@@ -16,6 +16,8 @@ export const JOB_SOURCES = [
 	"hackernews",
 	// Added by hand (`dev:seed-job`): no board claimed.
 	"manual",
+	// Try-it mode's fabricated jobs (apps/desktop worker/demo.ts): never read, checked or sent.
+	"sample",
 ] as const;
 export type JobSourceKind = (typeof JOB_SOURCES)[number];
 

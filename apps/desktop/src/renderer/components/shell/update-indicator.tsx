@@ -1,5 +1,6 @@
 import { ArrowDown, Check, RefreshCw } from "lucide-react";
 import { useState } from "react";
+import { useDemoMode } from "@/components/desktop/demo";
 import { Button } from "@/components/ui/button";
 import {
 	Popover,
@@ -147,7 +148,13 @@ function Ready({
  * a new version downloads in the background, then a restart button with a green check that
  * opens what's new, Later and Restart now.
  */
+/** Nothing while try-it mode runs: it installs no update (main refuses it too). */
 export function UpdateIndicator() {
+	const demo = useDemoMode();
+	return demo ? null : <LiveUpdateIndicator />;
+}
+
+function LiveUpdateIndicator() {
 	const update = useUpdateState();
 	// Leaving "ready" (an install that fails turns it into an error) unmounts Ready and its
 	// popover, so it never floats with nothing to restart into.

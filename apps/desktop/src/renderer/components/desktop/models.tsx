@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useDemoMode } from "@/components/desktop/demo";
 import { PlanUsage } from "@/components/desktop/plan-usage";
 import {
 	QueryState,
@@ -196,6 +197,9 @@ function _ExternalLink({
 	href: string;
 	children: React.ReactNode;
 }) {
+	// Try-it mode opens no link (the default browser holds the real sessions).
+	const demo = useDemoMode();
+	if (demo) return <span>{children}</span>;
 	return (
 		<a
 			href={href}

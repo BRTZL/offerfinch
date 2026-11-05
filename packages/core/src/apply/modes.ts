@@ -72,6 +72,8 @@ export const HANDOFF_SOURCES: Readonly<Record<string, string>> = Object.freeze({
 		"Found on We Work Remotely: open the posting on We Work Remotely and apply yourself. Nothing is filled or sent automatically.",
 	hackernews:
 		"Found in Hacker News' Who is hiring thread: open the post and apply the way it asks, yourself. Nothing is filled or sent automatically.",
+	sample:
+		"A sample job from try-it mode: there is no real posting to apply to. Mark it applied to see the Applied list. Nothing is filled or sent.",
 });
 
 /** The mode for an application from `source`: a hand-off source decides before its board does. */

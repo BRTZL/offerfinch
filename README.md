@@ -10,6 +10,14 @@ a crash. Closing its window keeps scans running; **Quit** stops the app. There a
 accounts or hosted services to deploy. The retired web product and its database migration
 tool have been removed.
 
+## Try it
+
+On the first screen, **Try it with sample data** opens the app with a made-up profile and
+eight sample jobs, scored and drafted by built-in test models: no AI connection, no keys,
+no network. A strip at the bottom of every screen (and "Demo" in the menu bar) says the data
+is not real. **Leave demo** deletes the sample data and returns to the first screen; your
+real data, if any, is never opened while the demo runs.
+
 ## Run from source
 
 Use macOS, Node 24, and the pnpm version in `package.json` (`pnpm@11.9.0`). Google Chrome

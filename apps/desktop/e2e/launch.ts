@@ -7,6 +7,7 @@ import {
 	expect,
 	type Page,
 } from "@playwright/test";
+import { SAMPLE_RESUME } from "../src/worker/demo-data";
 
 export const APP_DIR = path.resolve(import.meta.dirname, "..");
 
@@ -143,33 +144,8 @@ export function workerPid(
 	);
 }
 
-export const RESUME = `Sam Rivera
-sam.rivera@example.test · +1 555 010 0199 · linkedin.com/in/samrivera-example
-Fabricated resume for end-to-end runs. Nothing here describes a real person.
-Skills: TypeScript, React, Next.js, Node.js, PostgreSQL, Cloudflare Workers, Go, Tailwind
-Senior Frontend Engineer at Tidewater Health, Jan 2025 - Present
-- Rebuilt the CarePortal appointment booking flow in React with server-rendered pages.
-- Led a WCAG accessibility pass across the patient web app with screen reader testing on every release.
-- Wrote the design-system components the patient web app and the clinic dashboard share.
-- Moved the patient web app from client-side rendering to Next.js server rendering.
-Senior Full-Stack Engineer at Northwind Logistics, Mar 2024 - Dec 2024
-- Built TypeScript services on Node.js and PostgreSQL for shipment tracking.
-- Designed event-driven workflows with queues, retries and webhooks on Cloudflare Workers.
-- Tuned slow PostgreSQL queries behind the carrier dashboard and added the missing indexes.
-- Reviewed code for a team of five engineers and wrote the team's deployment checklist.
-Software Engineer at Bluefin Labs, Feb 2021 - Feb 2024
-- Shipped React and Next.js interfaces used by warehouse operators every day.
-- Wrote two internal Go services for label printing and stock counts.
-- Built the Node.js API that the operator interfaces and the mobile scanners share.
-- Ran the weekly on-call rotation and wrote incident reviews for the platform team.
-Software Engineer at Quarry Systems, Jun 2018 - Jan 2021
-- Built production web applications in TypeScript and React for construction clients.
-- Wrote PostgreSQL schemas and migrations for the project scheduling product.
-- Added end-to-end tests that ran on every pull request.
-- Built the invoice export that construction clients used to send monthly statements.
-- Moved the scheduling product's front end from jQuery to React and TypeScript, one screen at a time.
-- Wrote the onboarding guide new engineers used in their first week.
-`;
+/** The fabricated resume (Sam Rivera): one copy, shared with try-it mode's sample profile. */
+export const RESUME = SAMPLE_RESUME;
 
 /**
  * A stand-in for Chrome (OFFERFINCH_CHROME): any launch writes its arguments to a file and

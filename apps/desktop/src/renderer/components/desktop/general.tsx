@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { useDemoMode } from "@/components/desktop/demo";
 import { SettingsPage, Toggle } from "@/components/pipeline/settings/shared";
 import { Group, Section } from "@/components/system/layout";
 import { FormRow } from "@/components/system/rows";
@@ -23,6 +24,8 @@ export function GeneralSettings({ compact = false }: { compact?: boolean }) {
 	});
 	const status = useQuery(orpc.desktop.status.queryOptions());
 	const update = useUpdateState();
+	// Try-it mode checks and installs nothing (main refuses both too).
+	const demo = useDemoMode();
 	const check = useMutation({
 		mutationFn: () => desktop.updates.check(),
 		onError: (e) => toast.error(e.message),
@@ -95,7 +98,7 @@ export function GeneralSettings({ compact = false }: { compact?: boolean }) {
 						label="Updates"
 						hint={<span data-testid="update-status">{updateLine(update)}</span>}
 					>
-						{update?.status === "ready" ? (
+						{update?.status === "ready" && !demo ? (
 							<Button
 								size="sm"
 								data-testid="update-install"
@@ -110,7 +113,9 @@ export function GeneralSettings({ compact = false }: { compact?: boolean }) {
 								data-testid="update-check"
 								disabled={
 									!update ||
+									demo ||
 									update.status === "disabled" ||
+									update.status === "ready" ||
 									update.status === "checking" ||
 									update.status === "downloading" ||
 									check.isPending

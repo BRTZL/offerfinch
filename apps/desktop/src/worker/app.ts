@@ -57,6 +57,7 @@ import {
 import { cleanStoredPostings, readPostingForJob } from "./add-job";
 import { localChromeProvider } from "./browser";
 import type { CheckStop, SiteTabHost } from "./checks";
+import { DEMO_SITE_REFUSAL, demoSubscriptions, seedDemo } from "./demo";
 import { fakeSubscriptions } from "./fake-clis";
 import { FakeCodexSubscription } from "./fake-codex";
 import {
@@ -153,7 +154,8 @@ export class WorkerApp {
 		db: Database,
 	) {
 		this.db = db;
-		this.secrets = init.secrets;
+		// Try-it mode never holds a key, whatever main sends (setSecrets refuses them too).
+		this.secrets = init.demo ? {} : init.secrets;
 		this.settings = new SettingsStore(db);
 		this.planUsage = new PlanUsageTracker({
 			userId: LOCAL_USER_ID,
@@ -172,16 +174,21 @@ export class WorkerApp {
 		});
 		const planUsage = (vendor: "anthropic" | "openai") =>
 			this.planUsage.sink(vendor);
-		const local = subscriptions({
-			hostScript: init.claudeHost,
-			log: (message, data) => hooks.log("info", message, data),
-			planUsage,
-		});
+		// Try-it mode looks for no CLI at all, whatever the test flags say: the real subscriptions
+		// are never built (building them searches this Mac's PATH for `claude` and `codex`).
 		// Test runs never reach the CLIs on this Mac: their state is the test's (fake-clis.ts).
 		// Main sets `fakeClis` only for an unpackaged build, so a shipped app never reads it.
-		this.subscriptions = init.test?.fakeClis
-			? fakeSubscriptions(init.userData, local, planUsage)
-			: local;
+		if (init.demo) this.subscriptions = demoSubscriptions();
+		else {
+			const local = subscriptions({
+				hostScript: init.claudeHost,
+				log: (message, data) => hooks.log("info", message, data),
+				planUsage,
+			});
+			this.subscriptions = init.test?.fakeClis
+				? fakeSubscriptions(init.userData, local, planUsage)
+				: local;
+		}
 		this.blobs = new FsBlobStore(path.join(init.userData, "files"));
 		this.followUpDelivery = new FollowUpDelivery({
 			db,
@@ -254,6 +261,15 @@ export class WorkerApp {
 		});
 		if (migrated.applied.length > 0)
 			hooks.log("info", "migrations applied", migrated);
+		// Try-it mode: a new demo database gets the sample profile, rules and test models.
+		if (init.demo) {
+			await ensureUser(db, {
+				id: LOCAL_USER_ID,
+				name: "You",
+				email: LOCAL_USER_EMAIL,
+			});
+			await seedDemo(db, init.version);
+		}
 		// A chat reply the last worker left unanswered says so instead of waiting forever.
 		await sweepWorkingMessages(db);
 		// Brave Search or SearXNG settings of earlier versions: job-board search uses DuckDuckGo now.
@@ -269,7 +285,7 @@ export class WorkerApp {
 		app.notifications = await app.settings.get("notifications");
 		// Last start's login-shell PATH, so `claude` and `codex` are found without waiting for
 		// the shell (seconds); start() reads it again in the background.
-		const cachedPath = await app.settings.get("shellPath");
+		const cachedPath = init.demo ? "" : await app.settings.get("shellPath");
 		if (cachedPath) app.subscriptions.usePath(cachedPath);
 		if ((await app.settings.get("noticeWatermark")) === 0)
 			await app.settings.set("noticeWatermark", Date.now());
@@ -347,7 +363,8 @@ export class WorkerApp {
 			}),
 			blobs: this.blobs,
 			notifier: quietNotifier,
-			fakeModels: Boolean(this.init.test?.fakeModels),
+			fakeModels: Boolean(this.init.demo || this.init.test?.fakeModels),
+			demo: Boolean(this.init.demo),
 			fakeDelayMs: this.init.test?.fakeDelayMs,
 			boardBases: this.init.test?.boardBases,
 			standInHosts: Object.keys(this.init.test?.fetchRewrite ?? {}),
@@ -358,13 +375,23 @@ export class WorkerApp {
 			...built.deps,
 			// Jobs added by link: read as the first step of their run (see add-job.ts).
 			postingReader: (userId, jobId) => readPostingForJob(this, userId, jobId),
-			// The scan's re-check of listed board matches for closed postings.
-			closedPostings: new DrizzleClosedPostingStore(this.db),
+			// The scan's re-check of listed board matches for closed postings (it reads the
+			// boards: never with sample data).
+			...(this.init.demo
+				? {}
+				: { closedPostings: new DrizzleClosedPostingStore(this.db) }),
 		};
 		this.roles = built.roles;
 	}
 
 	async setSecrets(secrets: Partial<Record<SecretName, string>>) {
+		// Try-it mode's worker takes no key: main sends none, and one that arrives is dropped.
+		if (this.init.demo) {
+			this.hooks.log("warn", "keys refused: sample data", {
+				names: Object.keys(secrets),
+			});
+			return;
+		}
 		this.secrets = secrets;
 		await this.rebuild();
 		// Work paused for want of a model can go on now.
@@ -394,7 +421,12 @@ export class WorkerApp {
 	 */
 	siteHost(): SiteTabHost {
 		return {
-			site: this.hooks.site,
+			// Try-it mode reaches no site tab: they hold the real sessions (main refuses too).
+			site: this.init.demo
+				? async () => {
+						throw new Error(DEMO_SITE_REFUSAL);
+					}
+				: this.hooks.site,
 			checkTimeoutMs: this.init.test?.checkTimeoutMs,
 			checkPollMs: this.init.test ? 250 : undefined,
 			onCheck: async (site, stop) => {
@@ -518,9 +550,11 @@ export class WorkerApp {
 	pathRefresh: Promise<void> = Promise.resolve();
 
 	async start(): Promise<void> {
-		this.pathRefresh = this.refreshClis().catch((error) =>
-			this.hooks.log("warn", "login shell PATH not read", String(error)),
-		);
+		// Try-it mode starts no login shell: no CLI is looked for.
+		if (!this.init.demo)
+			this.pathRefresh = this.refreshClis().catch((error) =>
+				this.hooks.log("warn", "login shell PATH not read", String(error)),
+			);
 		// The window's first queries go first: the queue (recovery, replays, the hourly scan)
 		// starts a moment later, so a busy queue does not hold the first screen back.
 		this.background = new Promise<void>((resolve) => {
@@ -567,13 +601,7 @@ export class WorkerApp {
 					if (this.init.test?.stallProbe)
 						await queueTestStall(this.db, LOCAL_USER_ID);
 					await this.runner.start();
-					if (!this.init.test?.noSchedule) {
-						await this.scheduleTick("start");
-						this.scheduleTimer = setInterval(
-							() => void this.scheduleTick("timer"),
-							SCHEDULE_EVERY_MS,
-						);
-					}
+					await this.startScans();
 				} catch (error) {
 					this.hooks.log("error", "queue start failed", String(error));
 				}
@@ -591,6 +619,24 @@ export class WorkerApp {
 			FOLLOW_UP_EVERY_MS,
 		);
 		await this.pushStatus();
+	}
+
+	/**
+	 * The hourly scans, after the queue started. Try-it mode instead searches the sample jobs
+	 * once, at once (a new demo), and never on a timer.
+	 */
+	private async startScans(): Promise<void> {
+		if (this.init.demo) {
+			if ((await recentScans(this.db, LOCAL_USER_ID, 1)).length === 0)
+				await this.scanNow();
+			return;
+		}
+		if (this.init.test?.noSchedule) return;
+		await this.scheduleTick("start");
+		this.scheduleTimer = setInterval(
+			() => void this.scheduleTick("timer"),
+			SCHEDULE_EVERY_MS,
+		);
 	}
 
 	async stop(): Promise<void> {

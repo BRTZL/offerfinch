@@ -1,5 +1,6 @@
 import path from "node:path";
 import { app, Menu, nativeImage, Tray } from "electron";
+import { showsDemo, switchDemo } from "./demo-actions";
 import { assets, mainState } from "./state";
 import { showWindow } from "./window";
 
@@ -30,6 +31,19 @@ function trayMenu() {
 		? `${s.counts.review} to review · ${s.counts.questions} question${s.counts.questions === 1 ? "" : "s"} · ${s.counts.applied} applied`
 		: "";
 	return Menu.buildFromTemplate([
+		...(showsDemo()
+			? [
+					{ label: "Demo: sample data, nothing here is real", enabled: false },
+					{
+						label:
+							mainState.leaveFailed === null
+								? "Leave Demo"
+								: "Leave Demo (Try Again)",
+						click: () => void switchDemo(false),
+					},
+					{ type: "separator" as const },
+				]
+			: []),
 		{ label: state, enabled: false },
 		{ label: `Last scan: ${relative(s?.lastScanAt ?? null)}`, enabled: false },
 		...(s?.lastScanSummary
@@ -49,7 +63,8 @@ function trayMenu() {
 				void mainState.worker.request("setPaused", !s?.paused).catch(() => {}),
 		},
 		{ type: "separator" },
-		...(mainState.updates?.get().status === "ready"
+		// Not while try-it mode runs: installing is refused then (updates are suspended).
+		...(mainState.updates?.canInstall()
 			? [
 					{
 						label: `Restart to Update to ${(mainState.updates.get() as { version: string }).version}`,
@@ -101,15 +116,20 @@ export function updateTray() {
 	}
 	mainState.tray.setContextMenu(trayMenu());
 	const review = mainState.lastStatus?.counts.review ?? 0;
-	mainState.tray.setTitle(review > 0 ? String(review) : "", {
-		fontType: "monospacedDigit",
-	});
+	// Try-it mode says so in the menu bar, next to the finch.
+	const count = review > 0 ? String(review) : "";
+	mainState.tray.setTitle(
+		showsDemo() ? `Demo${count ? ` ${count}` : ""}` : count,
+		{ fontType: "monospacedDigit" },
+	);
 	mainState.tray.setToolTip(
-		mainState.lastStatus?.state === "scanning"
-			? "OfferFinch: scanning"
-			: variant === "attention"
-				? "OfferFinch: the last scan stopped"
-				: "OfferFinch",
+		showsDemo()
+			? "OfferFinch: demo with sample data"
+			: mainState.lastStatus?.state === "scanning"
+				? "OfferFinch: scanning"
+				: variant === "attention"
+					? "OfferFinch: the last scan stopped"
+					: "OfferFinch",
 	);
 }
 

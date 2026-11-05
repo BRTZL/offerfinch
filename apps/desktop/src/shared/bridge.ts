@@ -213,9 +213,21 @@ export type RestoreResult =
 	| { status: "restored"; safetyBackup: string }
 	| { status: "failed"; error: string };
 
+/** Entering or leaving try-it mode: done (the window reloads on its own), or why not. */
+export type DemoResult = { ok: true } | { ok: false; error: string };
+
+/** Whether the app shows the sample data, and why a leave did not finish (Leave tries again). */
+export interface DemoStatus {
+	demo: boolean;
+	leaveFailed: string | null;
+}
+
 export interface DesktopBridge {
 	info(): Promise<AppInfo>;
-	/** Opens an http(s) link in the default browser. Anything else is refused. */
+	/**
+	 * Opens an http(s) link in the default browser. Anything else is refused. In try-it mode no
+	 * link opens (`onLinkRefused` is called instead).
+	 */
 	openExternal(url: string): Promise<void>;
 	/** Writes an exported file (PDF, DOCX) to a temp file and opens it in its default app. */
 	openDocument(documentId: string): Promise<void>;
@@ -227,6 +239,17 @@ export interface DesktopBridge {
 	 * Backup and restore of the whole data folder's database and files (main/backup.ts). The
 	 * renderer passes no paths: main asks with its own dialogs.
 	 */
+	/**
+	 * Try-it mode (sample data in a folder of its own, docs/decisions.md 2026-11-05). Entering
+	 * and leaving restart the worker and reload every window at Home.
+	 */
+	demo: {
+		/** Whether the app runs on the sample data now (or a leave is unfinished). */
+		state(): Promise<DemoStatus>;
+		enter(): Promise<DemoResult>;
+		/** Deletes the sample data and goes back to the real data (or the first-run welcome). */
+		leave(): Promise<DemoResult>;
+	};
 	backup: {
 		/** Saves a backup zip where the user picks. */
 		save(): Promise<BackupSaveResult>;
@@ -330,6 +353,8 @@ export interface DesktopBridge {
 	reconnect(): void;
 	/** Called when the worker restarted; the renderer reconnects. */
 	onWorkerRestart(callback: () => void): () => void;
+	/** A link was not opened (try-it mode): why, for a toast. */
+	onLinkRefused(callback: (message: string) => void): () => void;
 	/** Whether the window is focused, shown and not minimised: motion runs only then. */
 	onWindowActive(callback: (active: boolean) => void): () => void;
 }
@@ -349,6 +374,9 @@ export const IPC = {
 	backupCheck: "backup:check",
 	backupDiscard: "backup:discard",
 	backupRestore: "backup:restore",
+	demoState: "demo:state",
+	demoEnter: "demo:enter",
+	demoLeave: "demo:leave",
 	saveInterviewEvent: "files:save-interview",
 	openProof: "files:proof",
 	diagnosticsPrepare: "diagnostics:prepare",
@@ -377,6 +405,7 @@ export const IPC = {
 	copyText: "app:copy-text",
 	clipboardLink: "app:clipboard-link",
 	workerRestart: "app:worker-restart",
+	linkRefused: "app:link-refused",
 	updateState: "update:state",
 	updateCheck: "update:check",
 	updateInstall: "update:install",
