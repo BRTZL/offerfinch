@@ -30,7 +30,11 @@ import {
 import { ApplicationDetail } from "@/components/pipeline/application/detail";
 import { prepareRefused } from "@/components/pipeline/application/use-application-actions";
 import { FilterSelect } from "@/components/pipeline/filter-select";
-import { inboxStatus, rowToOpen } from "@/components/pipeline/inbox-status";
+import {
+	inboxStatus,
+	lineAfter,
+	rowToOpen,
+} from "@/components/pipeline/inbox-status";
 import {
 	CompanySummary,
 	SelectionSummary,
@@ -439,6 +443,8 @@ export default function InboxPage() {
 		items,
 		selected: Boolean(selectedId || groupKey || multi.length > 0),
 		settled: list.isSuccess && !list.isPlaceholderData,
+		// A row fading out is gone already: the last one leaving leaves the detail empty.
+		leaving: (item) => rowsOf(item).every((r) => leaving.has(r.id)),
 	});
 	const firstId = firstLine ? itemId(firstLine) : null;
 	// biome-ignore lint/correctness/useExhaustiveDependencies: Opens the first line when it changes; `firstLine` is the same line by id.
@@ -484,18 +490,8 @@ export default function InboxPage() {
 	}
 
 	/** The line to select after `ids` leave the list: the next one, else the one before. */
-	const nextAfter = (ids: string[]): Item | null => {
-		const leavingNow = new Set(ids);
-		const stays = (item: Item) =>
-			rowsOf(item).some((r) => !leavingNow.has(r.id));
-		const at = items.findIndex((item) =>
-			rowsOf(item).some((r) => leavingNow.has(r.id)),
-		);
-		if (at < 0) return null;
-		const after = items.slice(at + 1).find(stays);
-		if (after) return after;
-		return [...items.slice(0, at)].reverse().find(stays) ?? null;
-	};
+	const nextAfter = (ids: string[]): Item | null =>
+		lineAfter(items, ids, (item) => rowsOf(item).map((r) => r.id), leaving);
 	const select = (item: Item | null) => {
 		setMulti([]);
 		if (!item) open(null);
@@ -531,10 +527,7 @@ export default function InboxPage() {
 			toast.success(`Drafting ${row.title}.`);
 			if (view === "matches") leave([row.id]);
 			else {
-				const at = items.findIndex(
-					(i) => i.kind === "row" && i.row.id === row.id,
-				);
-				const next = items[at + 1];
+				const next = nextAfter([row.id]);
 				if (next) select(next);
 			}
 			void queryClient.invalidateQueries({ queryKey: ["inbox"] });

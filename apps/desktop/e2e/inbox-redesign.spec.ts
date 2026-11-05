@@ -347,6 +347,38 @@ test("Inbox redesign: one list, unread dots, the action bar, Rejected chips and 
 		await page.getByTestId("reason-all").click();
 		await page.getByTestId("rejected-row").first().click();
 		await shot(page, "rejected");
+
+		// Not interested on every match, one by one: when the last one leaves, the list is
+		// empty and nothing stays open beside it (the leaving row is never opened again).
+		await sidebar(page, "Inbox").click();
+		await showStatus(page, /^Matches/);
+		const lines = page.locator(
+			"[data-testid=inbox-row], [data-testid=inbox-group]",
+		);
+		await expect(lines.first()).toBeVisible({ timeout: 30_000 });
+		for (let i = 0; i < 12 && (await lines.count()) > 0; i++) {
+			const group = page.getByTestId("inbox-group").first();
+			if (
+				(await group.count()) > 0 &&
+				(await group.getAttribute("aria-expanded")) !== "true"
+			)
+				await group.click();
+			const left = await page.getByTestId("inbox-row").count();
+			await page.getByTestId("inbox-row").first().click();
+			await page
+				.getByTestId("action-bar")
+				.getByTestId("not-interested")
+				.click();
+			await page.getByTestId("dismiss-confirm").click();
+			await expect(page.getByTestId("inbox-row")).toHaveCount(left - 1);
+		}
+		await expect(lines).toHaveCount(0);
+		await expect(page.getByTestId("inbox-empty")).toBeVisible();
+		// Past the leaving row's fade: still nothing open.
+		await page.waitForTimeout(1_000);
+		await expect(page.locator("#application-detail")).toHaveCount(0);
+		await expect(page.getByTestId("action-bar")).toHaveCount(0);
+		expect(new URL(page.url()).pathname).toBe("/inbox");
 		expect(errors).toEqual([]);
 	} finally {
 		await launched.app.close();

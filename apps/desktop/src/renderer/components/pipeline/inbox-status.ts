@@ -97,8 +97,9 @@ export function inboxStatus(row: StatusRow): Status {
 
 /**
  * The row to open when nothing is: the first of the list, once the list shows what was asked
- * for (not the previous filter's rows, kept on screen while the new ones load). Null when the
- * selection should stay as it is.
+ * for (not the previous filter's rows, kept on screen while the new ones load), and never one
+ * that is leaving (fading out after Not interested or Interested). Null when the selection
+ * should stay as it is, or nothing is left to open.
  */
 export function rowToOpen<T>(input: {
 	items: T[];
@@ -106,7 +107,30 @@ export function rowToOpen<T>(input: {
 	selected: boolean;
 	/** The list holds the current filter's rows (loaded, not a placeholder). */
 	settled: boolean;
+	/** The line is on its way out of the list. */
+	leaving?: (item: T) => boolean;
 }): T | null {
 	if (input.selected || !input.settled) return null;
-	return input.items[0] ?? null;
+	return input.items.find((item) => !input.leaving?.(item)) ?? null;
+}
+
+/**
+ * The line to open after `ids` leave the list: the next one that stays, else the one before.
+ * Lines already leaving (`leaving`) do not stay either; null when nothing does.
+ */
+export function lineAfter<T>(
+	items: T[],
+	ids: string[],
+	idsOf: (item: T) => string[],
+	leaving: ReadonlySet<string> = new Set(),
+): T | null {
+	const goes = new Set([...ids, ...leaving]);
+	const stays = (item: T) => idsOf(item).some((id) => !goes.has(id));
+	const at = items.findIndex((item) =>
+		idsOf(item).some((id) => ids.includes(id)),
+	);
+	if (at < 0) return null;
+	const after = items.slice(at + 1).find(stays);
+	if (after) return after;
+	return [...items.slice(0, at)].reverse().find(stays) ?? null;
 }

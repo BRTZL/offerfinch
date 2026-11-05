@@ -6,6 +6,7 @@ import {
 } from "../src/renderer/components/pipeline/application/bar-model";
 import {
 	inboxStatus,
+	lineAfter,
 	rowToOpen,
 } from "../src/renderer/components/pipeline/inbox-status";
 import {
@@ -121,6 +122,37 @@ describe("Inbox status filter", () => {
 		expect(
 			rowToOpen({ items: ["old"], selected: false, settled: false }),
 		).toBeNull();
+	});
+
+	it("never reopens a row that is leaving: the last one gone leaves the detail empty", () => {
+		// Not interested on the only match: the selection clears while the row fades out.
+		const leaving = new Set(["only"]);
+		expect(
+			rowToOpen({
+				items: ["only"],
+				selected: false,
+				settled: true,
+				leaving: (id) => leaving.has(id),
+			}),
+		).toBeNull();
+		expect(
+			rowToOpen({
+				items: ["only", "next"],
+				selected: false,
+				settled: true,
+				leaving: (id) => leaving.has(id),
+			}),
+		).toBe("next");
+	});
+
+	it("opens the next row that stays after one leaves, skipping rows already leaving", () => {
+		const ids = (id: string) => [id];
+		expect(lineAfter(["a", "b", "c"], ["a"], ids)).toBe("b");
+		expect(lineAfter(["a", "b", "c"], ["a"], ids, new Set(["b"]))).toBe("c");
+		expect(lineAfter(["a", "b", "c"], ["c"], ids, new Set(["b"]))).toBe("a");
+		// The last row leaving: nothing to open.
+		expect(lineAfter(["a"], ["a"], ids)).toBeNull();
+		expect(lineAfter(["a", "b"], ["b"], ids, new Set(["a"]))).toBeNull();
 	});
 
 	it("keeps a row the user opened, and opens nothing in an empty list", () => {
