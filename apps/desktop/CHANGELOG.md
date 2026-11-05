@@ -8,6 +8,12 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
+## Unreleased
+
+- Setup's first search is live: every job it finds appears as it is read, the ones that break
+  one of your rules show which rule and leave, and the rest get their fit score in place. When
+  it is done, a line sums up how many were read, set aside and matched.
+
 ## 0.1.5 (2026-11-04)
 
 - The job filter now keeps or rejects, nothing in between, and what it rejects is hidden

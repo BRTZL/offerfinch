@@ -157,20 +157,19 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 		await page.getByTestId("step-continue").click();
 		await expect(page.getByTestId("step-count")).toContainText("Step 5 of 5");
 
-		// 5. First search, with progress; the first matches arrive with a chirp.
+		// 5. First search, live; the first match arrives with a chirp.
 		await page.getByTestId("first-scan-start").click();
 		await expect(page.getByTestId("first-scan-progress")).toContainText(
 			"Done:",
-			{ timeout: 60_000 },
+			{ timeout: 90_000 },
 		);
 		await shot(page, "onboarding-first-scan");
 		await expect(page.getByTestId("first-scan-progress")).toContainText(
-			"3 jobs read, 3 new",
+			"3 jobs read",
 		);
-		// The first scored match: "Your first matches are in", with the second chirp.
+		// Scored matches: "N matches. They are waiting in your Inbox", with the second chirp.
 		await expect(page.getByTestId("first-scan-progress")).toContainText(
-			/first .*in\./,
-			{ timeout: 90_000 },
+			/match(es)?\. (They are|It is) waiting in your Inbox\./,
 		);
 		await expect.poll(async () => (await chirps(app)).length).toBe(2);
 		// The searches came from the profile's role titles; no company board was listed by name.

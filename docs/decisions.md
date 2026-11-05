@@ -683,3 +683,22 @@ and no money held per call. They also asked for Codex on Finding matches and Dra
 | The claims check on Claude was not wired before (the pipeline refused it, and the factory passed the OpenAI model to the Claude plan); it now runs on `claude-opus-5-5` by default, on the plan or an Anthropic key | The builder's default: the scoring model; the claims check is the strictest call |
 | Fit and draft schemas sent to Codex use only the keywords the real Codex backend accepted for the claims check (unit test); no real Codex scoring or drafting call was made in this change | One real call per role is the open check |
 
+
+## 2026-11-05: Setup's first search, live
+
+Setup's last step showed one progress line while the scan ran and up to three matches at the
+end. It now lists every job the search finds as it is read, the way the approved stageshow
+prototype (`offerfinch-first-search`) shows it, so the user walks into the Inbox having watched
+their first matches arrive.
+
+| Decision | Why |
+|---|---|
+| `desktop.scanJobs({ id })` returns the run's jobs, oldest first, each with its company, title, source, state (`found`, `fits` when a passing filter result is stored and it is still `found`, `rejected_by_filter` with the reason, `scored` with the fit; later states and a low score count as scored, a job from a hidden company is set aside "From a company you hid"), whether it is a match (fit at or above the user's minimum score), and totals over all of them (rows capped at 300) | One read for the whole list; the state comes from `jobFate`, the same reading the Scans screen uses |
+| A run's jobs are the user's jobs created at or after the run's `createdAt` and, once it ended, not after its `endedAt` | `scan_runs.sources[].newJobIds` is written only when a source ends, so it cannot show jobs as they are read; only one scan runs at a time (`startManualScan` returns the busy one), so the window is the run's |
+| The step polls the run, its jobs and `desktop.scoring` every second and stops once settled: the scan complete, no scoring pending, and a read of the jobs taken after that (an errored scan settles at once). The done line also waits for the list's own beats (a new row still held as found, a set-aside row not yet gone); a job the server still has as found (its run never started) does not hold it | The scan ends before its jobs are scored; the same rule as before, so a paused or slow score never reads as "no matches"; the sum never arrives before the rows it sums |
+| A new row reads "Found" for 0.7 s before its real state; a set-aside row shows its reason, dims, and leaves 1.2 s later once no row is still being checked (or after 3 s on its own), so set-aside rows leave together; the fit fades up in the slot where the pending arc turned. Times are kept per job on the client | Jobs are filtered during the scan, often between two polls; the beats make the rules pass visible and match the prototype |
+| Status line: "Reading <source> · n of N sources", "N jobs read. Checking them against your rules…", "N fit your rules. Scoring them…", then "Done: N jobs read, N set aside, N matches. They are waiting in your Inbox." (or the no-match wording); "Search done. Checking what it found…" when the scan ended before the first read of its jobs. "Jobs read" is the number of new jobs in the list. The source name is a new `source` field on `desktop.scan`, not its `line` | The list and the line agree; `line` carries the search query, and the polite live region would read out every query |
+| The list shows the first 12 rows still in it, in the order found, with "and N more" under them; a set-aside row frees its place for the next | Stable order (no row jumps); the step stays one screen tall |
+| Rows use the vendored stageshow `Collapse` (opened on the frame after mount, so a row opens instead of popping in) and `Check` (the pending arc); motion classes live in `index.css` (`.first-search*`). Reduce Motion: rows appear and leave without moving | Same motion as the prototype and the setup explainer; screens keep to the design system's classes |
+| The chirp and burst fire once, on the first scored match (fit at or above the minimum), not on a low fit | A low fit is not the moment setup celebrates |
+| The status line is a polite live region; the list is a `ul` named "Jobs found"; each row's text reads its company, title, reason, "Fit" and number, and its state badge; rows that left are `aria-hidden` | Readable without seeing the motion |

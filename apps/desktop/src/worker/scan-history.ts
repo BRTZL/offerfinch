@@ -160,7 +160,13 @@ export function scanLogFor(
 export async function scanProgressOf(
 	db: Database,
 	run: { id: string; userId: string },
-): Promise<{ total: number; done: number; line: string | null } | null> {
+): Promise<{
+	total: number;
+	done: number;
+	line: string | null;
+	/** The source being read now, by name ("Job-board search"); null between sources. */
+	source: string | null;
+} | null> {
 	const [row] = await db
 		.select({ sources: scanRuns.sources, progress: scanRuns.progress })
 		.from(scanRuns)
@@ -183,7 +189,7 @@ export async function scanProgressOf(
 			? `Reading ${label}: ${p.query}`
 			: `Reading ${label}…`
 		: null;
-	return { total, done, line };
+	return { total, done, line, source: label };
 }
 
 /** Sources that ran first (in scan order), then the ones that could not, then off. */
