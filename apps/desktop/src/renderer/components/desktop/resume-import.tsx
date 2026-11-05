@@ -39,6 +39,14 @@ const sizeLabel = (bytes: number) =>
 		: `${Math.max(1, Math.round(bytes / 1000))} KB`;
 const ACCEPT = ".pdf,.txt,.md,application/pdf,text/plain,text/markdown";
 
+/** Why a picked file cannot be read, or null when it can. */
+function refuseFile(file: File): string | null {
+	if (!/\.(pdf|txt|md|markdown)$/i.test(file.name))
+		return "Choose a PDF, TXT or Markdown file.";
+	if (file.size > 5 * MB) return "That file is over 5 MB.";
+	return null;
+}
+
 type Mode = "choose" | "upload" | "paste";
 type Picked = {
 	name: string;
@@ -80,8 +88,8 @@ function useFileDrop(onFile: (file: File) => void, enabled: boolean) {
 }
 
 /**
- * The three ways in. `blocked` (no model can draft yet) shows above them and turns Upload and
- * Paste off; Start from scratch needs no model.
+ * The three ways in. `blocked` (no model can draft yet) turns Upload and Paste off; Start from
+ * scratch needs no model.
  */
 function ResumeOptions({
 	blocked,
@@ -98,38 +106,35 @@ function ResumeOptions({
 }) {
 	const off = Boolean(blocked);
 	return (
-		<>
-			{blocked}
-			<fieldset className="flex flex-col gap-2">
-				<legend className="sr-only">How to add your resume</legend>
+		<fieldset className="flex flex-col gap-2">
+			<legend className="sr-only">How to add your resume</legend>
+			<OptionCard
+				icon={<FileUp />}
+				title="Upload a file"
+				description="PDF, TXT or Markdown, up to 5 MB. Click, or drop it anywhere here."
+				onClick={onUpload}
+				dragging={dragging}
+				disabled={off}
+				testId="resume-option-upload"
+			/>
+			<OptionCard
+				icon={<Type />}
+				title="Paste or type it"
+				description="Your resume or a few notes about your work."
+				onClick={onPaste}
+				disabled={off}
+				testId="resume-option-paste"
+			/>
+			{onScratch ? (
 				<OptionCard
-					icon={<FileUp />}
-					title="Upload a file"
-					description="PDF, TXT or Markdown, up to 5 MB. Click, or drop it anywhere here."
-					onClick={onUpload}
-					dragging={dragging}
-					disabled={off}
-					testId="resume-option-upload"
+					icon={<PenLine />}
+					title="Start from scratch"
+					description="Add your roles and skills by hand in Profile."
+					onClick={onScratch}
+					testId="resume-option-scratch"
 				/>
-				<OptionCard
-					icon={<Type />}
-					title="Paste or type it"
-					description="Your resume or a few notes about your work."
-					onClick={onPaste}
-					disabled={off}
-					testId="resume-option-paste"
-				/>
-				{onScratch ? (
-					<OptionCard
-						icon={<PenLine />}
-						title="Start from scratch"
-						description="Add your roles and skills by hand in Profile."
-						onClick={onScratch}
-						testId="resume-option-scratch"
-					/>
-				) : null}
-			</fieldset>
-		</>
+			) : null}
+		</fieldset>
 	);
 }
 
@@ -165,24 +170,17 @@ export function ResumeImport({
 		onSuccess: (result) => onDraft(result.records),
 	});
 	const read = async (file: File) => {
+		if (blocked) return;
 		setMode("upload");
 		setText("");
 		structure.reset();
-		if (!/\.(pdf|txt|md|markdown)$/i.test(file.name)) {
+		const refused = refuseFile(file);
+		if (refused) {
 			setPicked({
 				name: file.name,
 				size: file.size,
 				state: "error",
-				error: "Choose a PDF, TXT or Markdown file.",
-			});
-			return;
-		}
-		if (file.size > 5 * MB) {
-			setPicked({
-				name: file.name,
-				size: file.size,
-				state: "error",
-				error: "That file is over 5 MB.",
+				error: refused,
 			});
 			return;
 		}
@@ -217,7 +215,8 @@ export function ResumeImport({
 	const inFooter = useStepAction({
 		label: "Draft my profile",
 		onClick: () => structure.mutate(),
-		disabled: mode === "choose" || !ready || structure.isPending,
+		disabled:
+			mode === "choose" || !ready || structure.isPending || Boolean(blocked),
 		busy: structure.isPending,
 		testId: "onboarding-structure",
 		title:
@@ -263,6 +262,8 @@ export function ResumeImport({
 					your answers to questions stay.
 				</Notice>
 			)}
+			{/* Readiness can arrive after a way in was opened: the notice shows in every mode. */}
+			{blocked}
 			{picker}
 			{mode === "choose" && (
 				<ResumeOptions
@@ -367,7 +368,7 @@ export function ResumeImport({
 			{!inFooter && mode !== "choose" ? (
 				<div>
 					<Button
-						disabled={!ready}
+						disabled={!ready || Boolean(blocked)}
 						pending={structure.isPending}
 						onClick={() => structure.mutate()}
 						data-testid="onboarding-structure"

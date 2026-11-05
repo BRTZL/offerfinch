@@ -135,6 +135,36 @@ function scanningLine(
 	return `${p.line ?? "Scanning"} (${Math.min(p.done + 1, p.total)} of ${of})`;
 }
 
+/** Steps skipped or not done yet, by name; Continue setup opens the first of them. */
+function SetupNotice({
+	o,
+	aiReady,
+}: {
+	o: { completedAt: string | null; hasProfile: boolean } & Parameters<
+		typeof openSteps
+	>[0];
+	aiReady: boolean;
+}) {
+	const open = openSteps(o);
+	if (o.completedAt || open.length === 0) return null;
+	return (
+		<Notice
+			data-testid="home-setup"
+			actions={
+				<Link
+					href={`/onboarding?step=${open[0]}`}
+					className="text-primary text-sm hover:underline"
+					data-testid="resume-setup"
+				>
+					Continue setup
+				</Link>
+			}
+		>
+			{openStepsLine(open, { aiReady, hasProfile: o.hasProfile })}
+		</Notice>
+	);
+}
+
 /** Where the app opens: what needs you now, new matches, the scans and the spend. */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Stateful home orchestration stays unchanged; current e2e does not cover every scan and resume state.
 export default function HomePage() {
@@ -291,8 +321,6 @@ export default function HomePage() {
 			"home-needs-chrome",
 		);
 
-	// Steps skipped or not done yet, by name; Continue setup opens the first of them.
-	const openSetup = openSteps(o);
 	const reviewCount = h.waiting.filter(
 		(a) => a.state === "ready_for_review" || a.state === "needs_human",
 	).length;
@@ -329,25 +357,7 @@ export default function HomePage() {
 					title={name ? `${greeting()}, ${name}` : greeting()}
 					description={summary}
 				/>
-				{!o.completedAt && openSetup.length > 0 && (
-					<Notice
-						data-testid="home-setup"
-						actions={
-							<Link
-								href={`/onboarding?step=${openSetup[0]}`}
-								className="text-primary text-sm hover:underline"
-								data-testid="resume-setup"
-							>
-								Continue setup
-							</Link>
-						}
-					>
-						{openStepsLine(openSetup, {
-							aiReady: unready.length === 0,
-							hasProfile: o.hasProfile,
-						})}
-					</Notice>
-				)}
+				<SetupNotice o={o} aiReady={unready.length === 0} />
 
 				<Section
 					title="Needs you"

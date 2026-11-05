@@ -223,12 +223,23 @@ export default function OnboardingPage() {
 			}
 		}
 		// The first search is marked done only by the search itself (`onFinished`).
-		if (step !== "scan") mark.mutate({ step, outcome });
-		// On to the next step still open (a skipped one is open), else simply the next.
+		const marking =
+			step !== "scan"
+				? mark.mutateAsync({ step, outcome }).catch(() => undefined)
+				: Promise.resolve();
+		// On to the next step still open (a skipped one is open), the later ones first; a step
+		// already finished is never asked again. None left: setup is complete, back to Home once
+		// the mark is stored, so Home reads the finished state.
+		const remaining = open.filter((s) => s !== step);
 		const after =
-			SETUP_STEPS.slice(index + 1).find((s) => open.includes(s)) ??
-			SETUP_STEPS[index + 1];
-		go(after ?? "scan");
+			SETUP_STEPS.slice(index + 1).find((s) => remaining.includes(s)) ??
+			remaining[0];
+		if (after) {
+			go(after);
+			return;
+		}
+		await marking;
+		router.push("/");
 	};
 	const back = () => {
 		if (index <= 0) {
