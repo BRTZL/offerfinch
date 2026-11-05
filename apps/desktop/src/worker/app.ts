@@ -68,7 +68,7 @@ import { movedSearchesNote, upgradeJobSearch } from "./job-search";
 import { linkedinScanDeps } from "./linkedin";
 import { NoticeBatcher } from "./notices";
 import { buildPipeline, type RoleState } from "./pipeline";
-import { scanLogFor } from "./scan-history";
+import { scanLogFor, scanRunRepo } from "./scan-history";
 import {
 	LOCAL_USER_EMAIL,
 	LOCAL_USER_ID,
@@ -211,7 +211,11 @@ export class WorkerApp {
 				[SCAN_KIND]: (step, params, run) =>
 					runScanFlow(
 						step,
-						{ ...this.deps, ...scanLogFor(this, run, params) },
+						{
+							...this.deps,
+							repo: scanRunRepo(this.deps.repo, run),
+							...scanLogFor(this, run, params),
+						},
 						params as unknown as ScanWorkflowParams,
 					),
 				[APPLICATION_KIND]: (step, params) =>

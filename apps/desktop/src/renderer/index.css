@@ -352,6 +352,78 @@ textarea:focus-visible,
 	}
 }
 
+/* Setup's first search, live (components/desktop/setup/first-scan.tsx): rows arrive and leave
+   through the stageshow Collapse; a set-aside row dims its job while its reason shows; the fit
+   lands in the slot where the pending arc turned. The arc (stageshow Check) reads its colours
+   from these. */
+.first-search {
+	--ss-ink-4: var(--border);
+	--ss-text-strong: var(--foreground);
+	--ss-success: var(--brand);
+}
+/* Every row draws the line above it; the list's own edge hides the first one, so a row that
+   left at the top never leaves a doubled line. */
+.first-search-rows {
+	margin-top: -1px;
+}
+.first-search-row {
+	border-top: 1px solid var(--border);
+}
+.first-search-row .first-search-job {
+	transition: opacity 300ms var(--ease-standard);
+}
+.first-search-row[data-state="rejected_by_filter"] .first-search-job {
+	opacity: 0.45;
+	transition-delay: 150ms;
+}
+.first-search-slot {
+	display: grid;
+	align-items: center;
+	justify-items: end;
+}
+.first-search-slot > * {
+	grid-area: 1 / 1;
+}
+.first-search-arc {
+	opacity: 0;
+	transition: opacity 200ms var(--ease-standard);
+}
+.first-search-arc[data-show] {
+	opacity: 1;
+}
+/* The kit's spin lives in its stage.css; this one does not depend on a Stage being loaded. */
+.first-search-arc .ss-check__arc {
+	animation-name: first-search-spin;
+}
+@keyframes first-search-spin {
+	to {
+		transform: rotate(1turn);
+	}
+}
+.first-search-fit {
+	opacity: 0;
+	transform: translateY(4px);
+	transition:
+		opacity 300ms var(--ease-standard),
+		transform 400ms var(--ease-standard);
+}
+.first-search-fit[data-on] {
+	opacity: 1;
+	transform: none;
+}
+.first-search-reason {
+	animation: first-search-fade 300ms var(--ease-standard) 100ms both;
+}
+/* The status line: each new line fades in where the last one was. */
+.first-search-line {
+	animation: first-search-fade 200ms var(--ease-standard) both;
+}
+@keyframes first-search-fade {
+	from {
+		opacity: 0;
+	}
+}
+
 @media (prefers-reduced-motion: reduce) {
 	*,
 	*::before,

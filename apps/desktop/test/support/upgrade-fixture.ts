@@ -1440,6 +1440,15 @@ function fixtureRows(): Record<string, Row[]> {
 				reason: "extra_usage",
 			},
 		],
+		// The jobs the fixture's scan inserted, as the scan records them while it runs.
+		scan_run_jobs: [
+			{
+				flow_run_id: "scan-fixture-1",
+				user_id: U,
+				job_id: "j1",
+				created_at: at(3),
+			},
+		],
 	};
 }
 

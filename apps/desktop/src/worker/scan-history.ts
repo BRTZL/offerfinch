@@ -19,6 +19,7 @@ import {
 	listProviders,
 	listScanRuns,
 	recordIdleSources,
+	recordScanRunJobs,
 	recordScanSource,
 	type ScanRunRow,
 	scanJobs,
@@ -125,6 +126,13 @@ export function scanLogFor(
 			await setScanProgress(db, run.id, progress);
 		},
 		async source(result, label) {
+			// The source's new jobs were recorded as each was inserted, in its insert's transaction;
+			// again here (safe to repeat) for a source whose inserts went another way.
+			await recordScanRunJobs(db, {
+				flowRunId: run.id,
+				userId: run.userId,
+				jobIds: result.newJobIds,
+			});
 			const states = await listProviders(db, run.userId);
 			const stop =
 				(states.find((s) => s.provider === result.provider)?.config.stop as
@@ -153,6 +161,39 @@ export function scanLogFor(
 }
 
 /**
+ * The repository one scan run uses: as the original, except that each job it inserts is recorded
+ * as this run's (`scan_run_jobs`) in the insert's own transaction, so setup's live first search
+ * lists exactly the jobs the scan found while it runs, and a job is never stored without its run.
+ * Every source inserts through it: the board, feed, site and web-search readers take the scan's
+ * deps, and LinkedIn's store is handed it (`LinkedInRunnerDeps.jobs`). A job added by link or
+ * paste goes through another repository and is not recorded.
+ */
+export function scanRunRepo(
+	repo: PipelineDeps["repo"],
+	run: { id: string; userId: string },
+): PipelineDeps["repo"] {
+	const upsertJob: PipelineDeps["repo"]["upsertJob"] = (
+		userId,
+		companyId,
+		job,
+		options,
+	) =>
+		repo.upsertJob(
+			userId,
+			companyId,
+			job,
+			userId === run.userId ? { ...options, scanRunId: run.id } : options,
+		);
+	return new Proxy(repo, {
+		get(target, key) {
+			if (key === "upsertJob") return upsertJob;
+			const value = Reflect.get(target, key, target);
+			return typeof value === "function" ? value.bind(target) : value;
+		},
+	});
+}
+
+/**
  * How far a running scan is, for the sidebar and Home meters: sources done of the ones that run
  * (every provider less those recorded idle when the scan started), and what runs now. Null
  * before the scan's history row exists.
@@ -160,7 +201,13 @@ export function scanLogFor(
 export async function scanProgressOf(
 	db: Database,
 	run: { id: string; userId: string },
-): Promise<{ total: number; done: number; line: string | null } | null> {
+): Promise<{
+	total: number;
+	done: number;
+	line: string | null;
+	/** The source being read now, by name ("Job-board search"); null between sources. */
+	source: string | null;
+} | null> {
 	const [row] = await db
 		.select({ sources: scanRuns.sources, progress: scanRuns.progress })
 		.from(scanRuns)
@@ -183,7 +230,7 @@ export async function scanProgressOf(
 			? `Reading ${label}: ${p.query}`
 			: `Reading ${label}…`
 		: null;
-	return { total, done, line };
+	return { total, done, line, source: label };
 }
 
 /** Sources that ran first (in scan order), then the ones that could not, then off. */

@@ -21,6 +21,7 @@ import {
 } from "drizzle-orm";
 import { z } from "zod";
 import { findChrome } from "../browser";
+import { firstSearchView, jobsFoundBy } from "../first-search";
 import { scanProgressOf } from "../scan-history";
 import { nextScan } from "../schedule";
 import { protectedProcedure } from "./procedure";
@@ -293,6 +294,7 @@ export const desktopStatusRouter = {
 					).length,
 					unit: "companies" as const,
 					line: null,
+					source: null,
 					error: run.error,
 					result,
 				};
@@ -307,8 +309,33 @@ export const desktopStatusRouter = {
 				done: sources?.done ?? 0,
 				unit: "sources" as const,
 				line: sources?.line ?? null,
+				source: sources?.source ?? null,
 				error: run.error,
 				result,
 			};
+		}),
+	/**
+	 * The jobs one scan run found, for setup's live first search: each with its state (found, fits
+	 * the rules, set aside with the rule's reason, scored with its fit and whether it is a match,
+	 * waiting on a paused model, or failed to score), in the order they arrived, and totals. Reads
+	 * only.
+	 */
+	scanJobs: protectedProcedure
+		.input(z.object({ id: z.string().max(200) }))
+		.handler(async ({ context, input }) => {
+			const w = worker();
+			const userId = context.session.user.id;
+			const [run] = await w.db
+				.select({ id: flowRuns.id })
+				.from(flowRuns)
+				.where(and(eq(flowRuns.id, input.id), eq(flowRuns.userId, userId)));
+			if (!run) throw new ORPCError("NOT_FOUND");
+			const { minScore } = await new DashboardRepository(
+				w.db,
+			).getFilterSettings(userId);
+			return firstSearchView(
+				await jobsFoundBy(w.db, { id: run.id, userId }),
+				minScore,
+			);
 		}),
 };

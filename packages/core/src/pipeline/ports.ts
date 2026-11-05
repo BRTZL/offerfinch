@@ -176,6 +176,12 @@ export interface CheckError {
 	at: string;
 }
 
+/** How `upsertJob` records what it inserts. */
+export interface UpsertJobOptions {
+	/** The scan run inserting the job: a new job is recorded as that run's. */
+	scanRunId?: string;
+}
+
 export interface PipelineRepository {
 	listActiveCompanies(
 		userId: string,
@@ -190,12 +196,15 @@ export interface PipelineRepository {
 	/**
 	 * Inserts the job and its `found` application in one transaction, unless a job with the same
 	 * source + external id or normalized URL exists (then it only refreshes `last_seen_at`).
-	 * Throws when the company is not the user's.
+	 * Throws when the company is not the user's. With `scanRunId`, a job it inserts is recorded
+	 * as that scan run's in the same transaction (setup's live first search), so a job is never
+	 * stored without the run that found it.
 	 */
 	upsertJob(
 		userId: string,
 		companyId: string,
 		job: NormalizedJob,
+		options?: UpsertJobOptions,
 	): Promise<{ jobId: string; inserted: boolean }>;
 	/** Jobs whose ApplicationWorkflow was never started (new, or left over from a failed run). */
 	listUnstartedJobIds(userId: string, limit: number): Promise<string[]>;

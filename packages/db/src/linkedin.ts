@@ -5,6 +5,7 @@ import type { LinkedInScanStore } from "@offerfinch/core/linkedin/provider";
 import {
 	LINKEDIN_PACE,
 	type LinkedInBlock,
+	type LinkedInJobInserter,
 	type LinkedInRunResult,
 	type LinkedInStore,
 	type SaveOutcome,
@@ -236,8 +237,9 @@ export class DrizzleLinkedInStore implements LinkedInStore, LinkedInScanStore {
 		userId: string,
 		listing: LinkedInListing,
 		url: string,
+		inserter?: LinkedInJobInserter,
 	): Promise<{ outcome: SaveOutcome; jobId: string | null }> {
-		const { outcome, jobId } = await this.store(userId, listing, url);
+		const { outcome, jobId } = await this.store(userId, listing, url, inserter);
 		await this.db
 			.insert(linkedinSeen)
 			.values({ userId, linkedinJobId: listing.jobId, outcome })
@@ -252,6 +254,7 @@ export class DrizzleLinkedInStore implements LinkedInStore, LinkedInScanStore {
 		userId: string,
 		listing: LinkedInListing,
 		url: string,
+		repo: LinkedInJobInserter = new DrizzlePipelineRepository(this.db),
 	): Promise<{ outcome: SaveOutcome; jobId: string | null }> {
 		const nameKey = companyNameKey(listing.company);
 		const known = await this.db
@@ -327,9 +330,7 @@ export class DrizzleLinkedInStore implements LinkedInStore, LinkedInScanStore {
 			companyId = row?.id;
 		}
 		if (!companyId) throw new Error("linkedin company not created");
-		const { inserted, jobId } = await new DrizzlePipelineRepository(
-			this.db,
-		).upsertJob(userId, companyId, {
+		const { inserted, jobId } = await repo.upsertJob(userId, companyId, {
 			source: "linkedin",
 			externalId: listing.jobId,
 			url,
