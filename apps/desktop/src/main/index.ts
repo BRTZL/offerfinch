@@ -253,7 +253,10 @@ async function main() {
 		mainState.sites.closeAll();
 		if (mainState.worker.pid === undefined) return;
 		event.preventDefault();
-		void mainState.worker.stop().finally(() => app.exit(0));
+		void mainState.worker
+			.stop()
+			.catch((error) => log("worker did not stop at quit", String(error)))
+			.finally(() => app.exit(0));
 	});
 	app.on("window-all-closed", () => {
 		// Stay in the menu bar.

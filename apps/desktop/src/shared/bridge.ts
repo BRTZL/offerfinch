@@ -209,6 +209,12 @@ export type RestoreResult =
 /** Entering or leaving try-it mode: done (the window reloads on its own), or why not. */
 export type DemoResult = { ok: true } | { ok: false; error: string };
 
+/** Whether the app shows the sample data, and why a leave did not finish (Leave tries again). */
+export interface DemoStatus {
+	demo: boolean;
+	leaveFailed: string | null;
+}
+
 export interface DesktopBridge {
 	info(): Promise<AppInfo>;
 	/** Opens an http(s) link in the default browser. Anything else is refused. */
@@ -228,8 +234,8 @@ export interface DesktopBridge {
 	 * and leaving restart the worker and reload every window at Home.
 	 */
 	demo: {
-		/** Whether the app runs on the sample data now. */
-		state(): Promise<boolean>;
+		/** Whether the app runs on the sample data now (or a leave is unfinished). */
+		state(): Promise<DemoStatus>;
 		enter(): Promise<DemoResult>;
 		/** Deletes the sample data and goes back to the real data (or the first-run welcome). */
 		leave(): Promise<DemoResult>;

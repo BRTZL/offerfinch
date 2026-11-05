@@ -1,6 +1,6 @@
 import path from "node:path";
 import { app, Menu, nativeImage, Tray } from "electron";
-import { switchDemo } from "./demo-actions";
+import { showsDemo, switchDemo } from "./demo-actions";
 import { assets, mainState } from "./state";
 import { showWindow } from "./window";
 
@@ -31,11 +31,14 @@ function trayMenu() {
 		? `${s.counts.review} to review · ${s.counts.questions} question${s.counts.questions === 1 ? "" : "s"} · ${s.counts.applied} applied`
 		: "";
 	return Menu.buildFromTemplate([
-		...(mainState.demo
+		...(showsDemo()
 			? [
 					{ label: "Demo: sample data, nothing here is real", enabled: false },
 					{
-						label: "Leave Demo",
+						label:
+							mainState.leaveFailed === null
+								? "Leave Demo"
+								: "Leave Demo (Try Again)",
 						click: () => void switchDemo(false),
 					},
 					{ type: "separator" as const },
@@ -115,11 +118,11 @@ export function updateTray() {
 	// Try-it mode says so in the menu bar, next to the finch.
 	const count = review > 0 ? String(review) : "";
 	mainState.tray.setTitle(
-		mainState.demo ? `Demo${count ? ` ${count}` : ""}` : count,
+		showsDemo() ? `Demo${count ? ` ${count}` : ""}` : count,
 		{ fontType: "monospacedDigit" },
 	);
 	mainState.tray.setToolTip(
-		mainState.demo
+		showsDemo()
 			? "OfferFinch: demo with sample data"
 			: mainState.lastStatus?.state === "scanning"
 				? "OfferFinch: scanning"

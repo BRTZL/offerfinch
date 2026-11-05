@@ -27,7 +27,7 @@ import {
 	restoreBackup,
 	saveBackup,
 } from "./backup-actions";
-import { DEMO_REFUSAL, switchDemo } from "./demo-actions";
+import { DEMO_REFUSAL, demoStatus, switchDemo } from "./demo-actions";
 import {
 	discardDiagnostics,
 	prepareDiagnostics,
@@ -35,6 +35,7 @@ import {
 	saveDiagnostics,
 } from "./diagnostics-export";
 import { saveInterviewEvent } from "./interview-event";
+import { lifecycle } from "./lifecycle";
 import { contextMenu } from "./menu";
 import { NOTIFICATION_SETTINGS_URL } from "./notifications";
 import { APP_ORIGIN } from "./protocol";
@@ -96,23 +97,39 @@ function registerDiagnosticsIpc() {
 }
 
 /**
+ * Saves or removes a key while holding the app's lock (main/lifecycle.ts), shared: try-it mode
+ * cannot be entered (nor a restore start) until the key is saved and sent, and a key save is
+ * refused while one runs. The demo check is made under the lock, so it holds until the end.
+ */
+async function withKeyLock(write: () => Promise<void>) {
+	const hold = lifecycle.share();
+	if ("busy" in hold) throw new Error(hold.busy);
+	try {
+		if (mainState.demo) throw new Error(DEMO_REFUSAL);
+		await write();
+	} finally {
+		hold.release();
+	}
+}
+
+/**
  * The API keys, in main only. Try-it mode never reads or changes the real keys (and never sends
- * them to its worker).
+ * them to its worker): a save's keys go only to the worker that ran when it began.
  */
 function registerSecretsIpc() {
-	const secretUpdates = secretUpdater(mainState.secrets, (all) =>
-		mainState.worker.post({ type: "secrets", secrets: all }),
-	);
+	const secretUpdates = secretUpdater(mainState.secrets, () => {
+		const generation = mainState.worker.currentGeneration;
+		return (all) =>
+			mainState.worker.postTo(generation, { type: "secrets", secrets: all });
+	});
 	handle(IPC.secretSet, async (name: unknown, value: unknown) => {
 		if (!isSecretName(name) || typeof value !== "string")
 			throw new Error("Bad request");
-		if (mainState.demo) throw new Error(DEMO_REFUSAL);
-		await secretUpdates.set(name, value);
+		await withKeyLock(() => secretUpdates.set(name, value));
 	});
 	handle(IPC.secretRemove, async (name: unknown) => {
 		if (!isSecretName(name)) throw new Error("Bad request");
-		if (mainState.demo) throw new Error(DEMO_REFUSAL);
-		await secretUpdates.remove(name);
+		await withKeyLock(() => secretUpdates.remove(name));
 	});
 	handle(IPC.secretStatus, () =>
 		mainState.demo
@@ -157,7 +174,7 @@ function registerBackupIpc() {
 
 /** Try-it mode: whether it runs, and the switch both ways (main/demo-actions.ts). */
 function registerDemoIpc() {
-	handle(IPC.demoState, () => mainState.demo);
+	handle(IPC.demoState, () => demoStatus());
 	handle(IPC.demoEnter, () => switchDemo(true));
 	handle(IPC.demoLeave, () => switchDemo(false));
 }
@@ -177,10 +194,8 @@ export function registerIpc() {
 		}),
 	);
 	handle(IPC.updateState, () => mainState.updates.get());
-	// Try-it mode makes no network call: no update check either.
-	handle(IPC.updateCheck, () =>
-		mainState.demo ? mainState.updates.get() : mainState.updates.check(),
-	);
+	// Try-it mode makes no network call: Updates itself refuses while suspended.
+	handle(IPC.updateCheck, () => mainState.updates.check());
 	handle(IPC.updateInstall, () => mainState.updates.install());
 	handle(IPC.openExternal, async (url: unknown) => {
 		if (typeof url !== "string" || !/^https?:\/\//.test(url))

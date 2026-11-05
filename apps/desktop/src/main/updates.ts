@@ -7,11 +7,20 @@ import type { UpdateState } from "../shared/bridge";
  * update: macOS checks that the new app is signed by the same team as the running one.
  */
 
+/**
+ * What a check started (electron-updater's UpdateCheckResult): with `autoDownload`, the
+ * download's promise and the token that cancels it.
+ */
+interface UpdateCheck {
+	cancellationToken?: { cancel(): void } | null;
+	downloadPromise?: Promise<unknown> | null;
+}
+
 /** The part of electron-updater's AppUpdater this uses (a fake stands in for it in tests). */
 export interface Updater {
 	autoDownload: boolean;
 	autoInstallOnAppQuit: boolean;
-	checkForUpdates(): Promise<unknown>;
+	checkForUpdates(): Promise<UpdateCheck | null>;
 	quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
 	on(event: "checking-for-update", fn: () => void): unknown;
 	on(
@@ -34,6 +43,8 @@ export interface Updater {
 }
 
 const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
+/** How long suspend() waits for a running check or a cancelled download to end. */
+const DRAIN_MS = 5_000;
 
 /** The first line of an updater error, without stack or response dumps. */
 export function shortError(error: unknown): string {
@@ -56,6 +67,14 @@ export class Updates {
 	private timer: ReturnType<typeof setInterval> | null = null;
 	/** The version the "ready" notice was shown for (once per version). */
 	private announced: string | null = null;
+	/** Try-it mode (main/demo-actions.ts): no check starts, no notice is shown. */
+	private suspended = false;
+	/** The check running now, if any. */
+	private checking: Promise<void> | null = null;
+	/** The download a check started, until it ends: cancelled by suspend(). */
+	private download: { cancel: () => void; done: Promise<void> } | null = null;
+	/** A download that finished while suspended: announced on resume(). */
+	private readyWhileSuspended: string | null = null;
 
 	constructor(
 		private readonly updater: Updater | null,
@@ -108,10 +127,8 @@ export class Updates {
 				currentVersion: this.current,
 				version: info.version,
 			});
-			if (this.announced !== info.version) {
-				this.announced = info.version;
-				options.onReady(info.version);
-			}
+			if (this.suspended) this.readyWhileSuspended = info.version;
+			else this.announce(info.version);
 		});
 		updater.on("error", (error) => {
 			options.log("update failed", { error: String(error) });
@@ -135,6 +152,12 @@ export class Updates {
 		return (this.options.now?.() ?? new Date()).toISOString();
 	}
 
+	private announce(version: string) {
+		if (this.announced === version) return;
+		this.announced = version;
+		this.options.onReady(version);
+	}
+
 	private set(state: UpdateState) {
 		this.state = state;
 		this.options.onChange(state);
@@ -144,9 +167,11 @@ export class Updates {
 		return this.state;
 	}
 
-	/** Checks now and then every 6 hours. */
+	/** Checks now and then every 6 hours (not while suspended). */
 	start() {
 		if (!this.updater || this.state.status === "disabled") return;
+		if (this.suspended) return;
+		this.stop();
 		void this.check();
 		this.timer = setInterval(() => void this.check(), CHECK_EVERY_MS);
 		this.timer.unref?.();
@@ -157,17 +182,66 @@ export class Updates {
 		this.timer = null;
 	}
 
-	/** Checks for an update; does nothing while one is downloading or ready. */
+	/**
+	 * Try-it mode: no network from here on. Every entry point (the timer, Settings, the app
+	 * menu) is refused while suspended; a running check is waited for and the download it
+	 * started cancelled (each for at most DRAIN_MS: a hung request cannot hold the switch up,
+	 * and still shows nothing). A download that ends anyway is announced only on resume().
+	 */
+	async suspend(drainMs = DRAIN_MS): Promise<void> {
+		this.suspended = true;
+		this.stop();
+		const deadline = Date.now() + drainMs;
+		const within = (promise: Promise<void>) =>
+			Promise.race([
+				promise,
+				new Promise<void>((resolve) =>
+					setTimeout(resolve, Math.max(0, deadline - Date.now())).unref?.(),
+				),
+			]);
+		if (this.checking !== null) await within(this.checking);
+		this.download?.cancel();
+		if (this.download !== null) await within(this.download.done);
+	}
+
+	/** Out of try-it mode: checks again (now and every 6 hours), and announces a ready update. */
+	resume() {
+		if (!this.suspended) return;
+		this.suspended = false;
+		// A cancelled download reports no event of its own: back to idle, so a check can run.
+		const status = this.state.status;
+		if (
+			(status === "checking" || status === "downloading") &&
+			!this.checking &&
+			!this.download
+		)
+			this.set({ status: "idle", currentVersion: this.current });
+		const ready = this.readyWhileSuspended;
+		this.readyWhileSuspended = null;
+		if (ready) this.announce(ready);
+		this.start();
+	}
+
+	/** Checks for an update; does nothing while one is downloading or ready, or suspended. */
 	async check(): Promise<UpdateState> {
 		if (!this.updater || this.state.status === "disabled") return this.state;
 		if (
+			this.suspended ||
 			this.state.status === "checking" ||
 			this.state.status === "downloading" ||
 			this.state.status === "ready"
 		)
 			return this.state;
+		const run = this.runCheck(this.updater);
+		this.checking = run;
+		await run;
+		if (this.checking === run) this.checking = null;
+		return this.state;
+	}
+
+	private async runCheck(updater: Updater): Promise<void> {
 		try {
-			await this.updater.checkForUpdates();
+			this.track(await updater.checkForUpdates());
 		} catch (error) {
 			// The "error" event usually reports it too; this covers a rejection without one.
 			const now = this.state.status as UpdateState["status"];
@@ -179,7 +253,26 @@ export class Updates {
 					checkedAt: this.nowIso(),
 				});
 		}
-		return this.state;
+	}
+
+	/** Keeps hold of the download a check started, so suspend() can cancel it. */
+	private track(result: UpdateCheck | null) {
+		const promise = result?.downloadPromise;
+		if (!promise) return;
+		const token = result.cancellationToken;
+		const download = {
+			cancel: () => token?.cancel(),
+			// Its failures are reported by the "error" event; a cancel by none.
+			done: promise.then(
+				() => {},
+				() => {},
+			),
+		};
+		this.download = download;
+		void download.done.then(() => {
+			if (this.download === download) this.download = null;
+		});
+		if (this.suspended) download.cancel();
 	}
 
 	/** Quits, installs the downloaded update and opens the new version. */

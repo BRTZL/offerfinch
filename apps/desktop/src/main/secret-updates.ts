@@ -8,20 +8,26 @@ export interface SecretWrites<Name extends string> {
 /**
  * Saves a secret, then sends the worker what was saved. The worker must not read the store
  * before the write finishes, or it keeps using a missing or old key until it restarts.
+ *
+ * `target` is asked when the save begins and returns where its keys go: the worker running
+ * then, and only that one (main/ipc.ts binds it to the worker's generation). A worker started
+ * while the save ran (try-it mode's, or a restart's, which reads the store itself) never gets
+ * keys meant for the one before it.
  */
 export function secretUpdater<Name extends string>(
 	store: SecretWrites<Name>,
-	send: (all: Record<string, string>) => void,
+	target: () => (all: Record<string, string>) => void,
 ) {
-	const push = async () => send(await store.all());
 	return {
 		async set(name: Name, value: string) {
+			const send = target();
 			await store.set(name, value);
-			await push();
+			send(await store.all());
 		},
 		async remove(name: Name) {
+			const send = target();
 			await store.remove(name);
-			await push();
+			send(await store.all());
 		},
 	};
 }

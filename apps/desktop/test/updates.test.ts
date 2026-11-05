@@ -115,3 +115,78 @@ describe("Updates", () => {
 		).toMatch(/Developer ID/);
 	});
 });
+
+describe("Updates while try-it mode runs", () => {
+	it("refuses every check while suspended, and checks again on resume", async () => {
+		const { updater, updates } = make();
+		await updates.suspend();
+		// Settings, the app menu and the timer all go through check() or start().
+		await updates.check();
+		updates.start();
+		expect(updater.check).not.toHaveBeenCalled();
+		updates.resume();
+		expect(updater.check).toHaveBeenCalledTimes(1);
+		updates.stop();
+	});
+
+	it("waits for a running check and cancels the download it started", async () => {
+		const { updater, updates, ready } = make();
+		let cancelled = false;
+		let endDownload = () => {};
+		let answer = (_: unknown) => {};
+		updater.check.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					answer = resolve;
+				}) as never,
+		);
+		void updates.check();
+		updater.emit("checking-for-update");
+		let suspended = false;
+		const suspending = updates.suspend().then(() => {
+			suspended = true;
+		});
+		await new Promise((r) => setTimeout(r, 10));
+		expect(suspended).toBe(false);
+		// The check finds an update; its download starts and is cancelled at once.
+		updater.emit("update-available", { version: "0.2.0" });
+		answer({
+			cancellationToken: {
+				cancel: () => {
+					cancelled = true;
+					endDownload();
+				},
+			},
+			downloadPromise: new Promise<void>((_, reject) => {
+				endDownload = () => reject(new Error("cancelled"));
+			}),
+		});
+		await suspending;
+		expect(cancelled).toBe(true);
+		expect(ready).toEqual([]);
+		// Leaving: the cancelled download reported nothing, so it is checked again.
+		updates.resume();
+		expect(updates.get().status).toBe("idle");
+		expect(updater.check).toHaveBeenCalledTimes(2);
+		updates.stop();
+	});
+
+	it("does not hold the switch for a check that hangs", async () => {
+		const { updater, updates } = make();
+		updater.check.mockImplementationOnce(() => new Promise(() => {}) as never);
+		void updates.check();
+		const started = Date.now();
+		await updates.suspend(30);
+		expect(Date.now() - started).toBeLessThan(1_000);
+	});
+
+	it("announces a download that finished while suspended only on resume", async () => {
+		const { updater, updates, ready } = make();
+		await updates.suspend();
+		updater.emit("update-downloaded", { version: "0.3.0" });
+		expect(ready).toEqual([]);
+		updates.resume();
+		expect(ready).toEqual(["0.3.0"]);
+		updates.stop();
+	});
+});

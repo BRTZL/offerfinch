@@ -154,7 +154,8 @@ export class WorkerApp {
 		db: Database,
 	) {
 		this.db = db;
-		this.secrets = init.secrets;
+		// Try-it mode never holds a key, whatever main sends (setSecrets refuses them too).
+		this.secrets = init.demo ? {} : init.secrets;
 		this.settings = new SettingsStore(db);
 		this.planUsage = new PlanUsageTracker({
 			userId: LOCAL_USER_ID,
@@ -173,19 +174,21 @@ export class WorkerApp {
 		});
 		const planUsage = (vendor: "anthropic" | "openai") =>
 			this.planUsage.sink(vendor);
-		const local = subscriptions({
-			hostScript: init.claudeHost,
-			log: (message, data) => hooks.log("info", message, data),
-			planUsage,
-		});
+		// Try-it mode looks for no CLI at all, whatever the test flags say: the real subscriptions
+		// are never built (building them searches this Mac's PATH for `claude` and `codex`).
 		// Test runs never reach the CLIs on this Mac: their state is the test's (fake-clis.ts).
 		// Main sets `fakeClis` only for an unpackaged build, so a shipped app never reads it.
-		// Try-it mode looks for no CLI at all, whatever the test flags say.
-		this.subscriptions = init.demo
-			? demoSubscriptions()
-			: init.test?.fakeClis
+		if (init.demo) this.subscriptions = demoSubscriptions();
+		else {
+			const local = subscriptions({
+				hostScript: init.claudeHost,
+				log: (message, data) => hooks.log("info", message, data),
+				planUsage,
+			});
+			this.subscriptions = init.test?.fakeClis
 				? fakeSubscriptions(init.userData, local, planUsage)
 				: local;
+		}
 		this.blobs = new FsBlobStore(path.join(init.userData, "files"));
 		this.followUpDelivery = new FollowUpDelivery({
 			db,
@@ -278,7 +281,7 @@ export class WorkerApp {
 		app.notifications = await app.settings.get("notifications");
 		// Last start's login-shell PATH, so `claude` and `codex` are found without waiting for
 		// the shell (seconds); start() reads it again in the background.
-		const cachedPath = await app.settings.get("shellPath");
+		const cachedPath = init.demo ? "" : await app.settings.get("shellPath");
 		if (cachedPath) app.subscriptions.usePath(cachedPath);
 		if ((await app.settings.get("noticeWatermark")) === 0)
 			await app.settings.set("noticeWatermark", Date.now());
@@ -378,6 +381,13 @@ export class WorkerApp {
 	}
 
 	async setSecrets(secrets: Partial<Record<SecretName, string>>) {
+		// Try-it mode's worker takes no key: main sends none, and one that arrives is dropped.
+		if (this.init.demo) {
+			this.hooks.log("warn", "keys refused: sample data", {
+				names: Object.keys(secrets),
+			});
+			return;
+		}
 		this.secrets = secrets;
 		await this.rebuild();
 		// Work paused for want of a model can go on now.

@@ -22,7 +22,7 @@ const slowStore = (initial: Record<string, string> = {}) => {
 describe("secretUpdater", () => {
 	it("sends the worker a first key only after it is saved", async () => {
 		const sent: Record<string, string>[] = [];
-		await secretUpdater(slowStore(), (all) => sent.push(all)).set(
+		await secretUpdater(slowStore(), () => (all) => sent.push(all)).set(
 			"openai",
 			"k1",
 		);
@@ -31,8 +31,9 @@ describe("secretUpdater", () => {
 
 	it("never leaves the worker on the replaced key", async () => {
 		const sent: Record<string, string>[] = [];
-		await secretUpdater(slowStore({ openai: "old" }), (all) =>
-			sent.push(all),
+		await secretUpdater(
+			slowStore({ openai: "old" }),
+			() => (all) => sent.push(all),
 		).set("openai", "new");
 		expect(sent.at(-1)).toEqual({ openai: "new" });
 	});
@@ -46,16 +47,37 @@ describe("secretUpdater", () => {
 			},
 		};
 		await expect(
-			secretUpdater(store, (all) => sent.push(all)).set("openai", "k"),
+			secretUpdater(store, () => (all) => sent.push(all)).set("openai", "k"),
 		).rejects.toThrow("no keychain");
 		expect(sent).toEqual([]);
 	});
 
 	it("sends the worker the removal after it is saved", async () => {
 		const sent: Record<string, string>[] = [];
-		await secretUpdater(slowStore({ openai: "k" }), (all) =>
-			sent.push(all),
+		await secretUpdater(
+			slowStore({ openai: "k" }),
+			() => (all) => sent.push(all),
 		).remove("openai");
 		expect(sent).toEqual([{}]);
+	});
+
+	it("sends nothing to a worker started while the save ran", async () => {
+		const sent: { generation: number; all: Record<string, string> }[] = [];
+		let generation = 1;
+		const updates = secretUpdater(slowStore(), () => {
+			const at = generation;
+			return (all) => {
+				if (generation === at) sent.push({ generation: at, all });
+			};
+		});
+		const saving = updates.set("openai", "real-key");
+		// Try-it mode starts its worker while the key is being encrypted.
+		generation = 2;
+		await saving;
+		expect(sent).toEqual([]);
+		await updates.set("anthropic", "k2");
+		expect(sent).toEqual([
+			{ generation: 2, all: { openai: "real-key", anthropic: "k2" } },
+		]);
 	});
 });

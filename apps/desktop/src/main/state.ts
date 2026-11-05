@@ -23,6 +23,8 @@ export const mainState = {
 	demo: false,
 	/** The real database while demo mode runs, restored exactly on leaving. */
 	realDatabaseFile: null as string | null,
+	/** Leaving demo mode did not finish (main/demo.ts): why; Leave tries again. */
+	leaveFailed: null as string | null,
 	testShown: true,
 	startedAt: 0,
 };

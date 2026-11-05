@@ -18,7 +18,7 @@ import {
 import { migrate } from "@offerfinch/db/migrate";
 import { appSettings } from "@offerfinch/db/schema/jobs";
 import { jobs } from "@offerfinch/db/schema/pipeline";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DB_FILE } from "../src/main/database-file";
 import {
 	DEMO_DIR,
@@ -28,6 +28,8 @@ import {
 	eraseDemo,
 	leaveDemo,
 } from "../src/main/demo";
+import type { WorkerInit } from "../src/shared/worker-protocol";
+import { WorkerApp } from "../src/worker/app";
 import {
 	demoSubscriptions,
 	SAMPLE_PROVIDER_ID,
@@ -36,6 +38,13 @@ import {
 } from "../src/worker/demo";
 import { SAMPLE_JOBS, SAMPLE_RULES } from "../src/worker/demo-data";
 import { LOCAL_USER_ID, SettingsStore } from "../src/worker/settings";
+import * as subscriptionsModule from "../src/worker/subscriptions";
+
+// The real subscriptions, watched: building them searches this Mac's PATH for the CLIs.
+vi.mock("../src/worker/subscriptions", async (original) => {
+	const actual = await original<typeof import("../src/worker/subscriptions")>();
+	return { ...actual, subscriptions: vi.fn(actual.subscriptions) };
+});
 
 const tempDir = (name: string) =>
 	fs.mkdtempSync(path.join(os.tmpdir(), `offerfinch-demo-${name}-`));
@@ -163,6 +172,43 @@ describe("try-it mode's sample data", () => {
 		).toBe(true);
 	});
 
+	it("a demo worker builds no real subscriptions and takes no key", async () => {
+		const built = vi.mocked(subscriptionsModule.subscriptions);
+		const open = async (demo: boolean) => {
+			const userData = tempDir(demo ? "worker-demo" : "worker-real");
+			const init: WorkerInit = {
+				type: "init",
+				userData,
+				dbFile: path.join(userData, DB_FILE),
+				version: "1.0.0",
+				claudeHost: path.join(userData, "no-claude-host.js"),
+				secrets: { openai: "real-key" },
+				...(demo ? { demo: true } : {}),
+			};
+			return WorkerApp.open(init, {
+				exit: () => {},
+				status: () => {},
+				notify: () => {},
+				site: async () => {
+					throw new Error("no site tabs here");
+				},
+				log: () => {},
+			});
+		};
+		built.mockClear();
+		const demoWorker = await open(true);
+		expect(built).not.toHaveBeenCalled();
+		expect(demoWorker.secretValues()).toEqual({});
+		await demoWorker.setSecrets({ openai: "real-key" });
+		expect(demoWorker.hasSecret("openai")).toBe(false);
+		await demoWorker.stop();
+		// The same start without demo mode does build them (the check above means something).
+		const real = await open(false);
+		expect(built).toHaveBeenCalledTimes(1);
+		expect(real.hasSecret("openai")).toBe(true);
+		await real.stop();
+	});
+
 	it("looks for no CLI and runs none", async () => {
 		const subs = demoSubscriptions();
 		expect(await subs.refresh()).toBe("");
@@ -230,6 +276,7 @@ describe("entering and leaving try-it mode", () => {
 			demo: false,
 			databaseFile: realDb,
 			realDatabaseFile: null,
+			leaveFailed: null,
 		};
 		const worker = workerOn(state);
 		await enterDemo(state, { userData, ...worker });
@@ -250,6 +297,7 @@ describe("entering and leaving try-it mode", () => {
 			demo: false,
 			databaseFile: realDb,
 			realDatabaseFile: null,
+			leaveFailed: null,
 		});
 		expect(fs.existsSync(demoFolder(userData))).toBe(false);
 		expect(worker.opened).toEqual([
@@ -270,6 +318,7 @@ describe("entering and leaving try-it mode", () => {
 			demo: false,
 			databaseFile: realDb,
 			realDatabaseFile: null,
+			leaveFailed: null,
 		};
 		const worker = workerOn(state);
 		await enterDemo(state, { userData, ...worker });
@@ -293,6 +342,7 @@ describe("entering and leaving try-it mode", () => {
 			demo: false,
 			databaseFile: realDb,
 			realDatabaseFile: null,
+			leaveFailed: null,
 		};
 		const starts: boolean[] = [];
 		await expect(
@@ -310,8 +360,45 @@ describe("entering and leaving try-it mode", () => {
 			demo: false,
 			databaseFile: realDb,
 			realDatabaseFile: null,
+			leaveFailed: null,
 		});
 		expect(fs.existsSync(demoFolder(userData))).toBe(false);
+	});
+
+	it("keeps a failed leave unfinished, and leaving again starts the real worker", async () => {
+		const { userData, realDb } = await realInstall();
+		const state: DemoState = {
+			demo: false,
+			databaseFile: realDb,
+			realDatabaseFile: null,
+			leaveFailed: null,
+		};
+		const worker = workerOn(state);
+		await enterDemo(state, { userData, ...worker });
+		await expect(
+			leaveDemo(state, {
+				userData,
+				stopWorker: worker.stopWorker,
+				startWorker: async () => {
+					throw new Error("The worker did not start in time");
+				},
+			}),
+		).rejects.toThrow("did not start");
+		expect(state).toEqual({
+			demo: false,
+			databaseFile: realDb,
+			realDatabaseFile: null,
+			leaveFailed: "The worker did not start in time",
+		});
+		expect(fs.existsSync(demoFolder(userData))).toBe(false);
+		// Entering is refused until the leave is done; leaving again finishes it.
+		await expect(enterDemo(state, { userData, ...worker })).rejects.toThrow(
+			/leave it first/,
+		);
+		await leaveDemo(state, { userData, ...worker });
+		expect(state.leaveFailed).toBeNull();
+		expect(worker.opened.at(-1)).toBe(realDb);
+		await worker.stopWorker();
 	});
 
 	it("erases only the demo folder", async () => {

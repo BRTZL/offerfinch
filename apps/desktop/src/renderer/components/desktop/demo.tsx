@@ -5,17 +5,21 @@ import { Button } from "@/components/ui/button";
 import { desktop } from "@/lib/desktop";
 
 /**
- * Try-it mode (docs/decisions.md, 2026-11-05). Main knows whether the sample data is shown; it
- * only changes with a reload (entering and leaving reload the window), so it is read once.
+ * Try-it mode (docs/decisions.md, 2026-11-05). Main knows whether the sample data is shown, and
+ * why a leave did not finish; it only changes with a reload (entering and leaving reload the
+ * window, a failed leave too), so it is read once.
  */
-export function useDemoMode(): boolean {
-	const state = useQuery({
+function useDemoStatus() {
+	return useQuery({
 		queryKey: ["desktop-demo-state"],
 		queryFn: () => desktop.demo.state(),
 		staleTime: Number.POSITIVE_INFINITY,
 		meta: { quiet: true },
-	});
-	return state.data === true;
+	}).data;
+}
+
+export function useDemoMode(): boolean {
+	return useDemoStatus()?.demo === true;
 }
 
 /** Enters or leaves the demo; main reloads the window when it is done. */
@@ -52,9 +56,10 @@ export const DEMO_STRIP_HEIGHT = 36;
 
 /** On every screen while the demo runs: what this is, and the way out. */
 export function DemoBanner() {
-	const demo = useDemoMode();
+	const status = useDemoStatus();
 	const leave = useDemoSwitch(false);
-	if (!demo) return null;
+	if (!status?.demo) return null;
+	const failed = status.leaveFailed;
 	return (
 		<div
 			role="status"
@@ -66,10 +71,17 @@ export function DemoBanner() {
 				style={{ height: DEMO_STRIP_HEIGHT }}
 			>
 				<FlaskConical className="text-muted-foreground size-4" aria-hidden />
-				<span>
-					<span className="font-medium">Sample data.</span> Nothing here is
-					real.
-				</span>
+				{failed === null ? (
+					<span>
+						<span className="font-medium">Sample data.</span> Nothing here is
+						real.
+					</span>
+				) : (
+					<span className="truncate" data-testid="demo-leave-failed">
+						<span className="font-medium">Could not go back to your data.</span>{" "}
+						{failed}
+					</span>
+				)}
 				<Button
 					variant="outline"
 					size="xs"
@@ -77,7 +89,7 @@ export function DemoBanner() {
 					pending={leave.isPending || leave.isSuccess}
 					data-testid="demo-leave"
 				>
-					Leave demo
+					{failed === null ? "Leave demo" : "Try again"}
 				</Button>
 			</div>
 		</div>
