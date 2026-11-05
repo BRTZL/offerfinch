@@ -64,6 +64,67 @@ export function setupProgress(stored: {
 	return out;
 }
 
+/**
+ * The steps still open, in order: not done, or skipped. A skipped step is stored in `done` too
+ * (the wizard moves past it), but setup is not finished while one is.
+ */
+export function openSteps(progress: {
+	done: readonly SetupStep[];
+	skipped: readonly SetupStep[];
+}): SetupStep[] {
+	return SETUP_STEPS.filter(
+		(s) => !progress.done.includes(s) || progress.skipped.includes(s),
+	);
+}
+
+/** Every step done, none skipped. */
+export function setupComplete(progress: {
+	done: readonly SetupStep[];
+	skipped: readonly SetupStep[];
+}): boolean {
+	return openSteps(progress).length === 0;
+}
+
+/**
+ * What an open step leaves undone, for Home's "Setup: AI not connected, no resume yet." The AI
+ * and the resume can be set up outside setup (Settings › Models, Profile), so those two read
+ * from the live state: a skipped step whose work is there anyway only says it was skipped.
+ */
+function openStepText(
+	step: SetupStep,
+	live: { aiReady: boolean; hasProfile: boolean },
+): string {
+	switch (step) {
+		case "ai":
+			return live.aiReady ? "AI step skipped" : "AI not connected";
+		case "profile":
+			return live.hasProfile ? "resume step skipped" : "no resume yet";
+		case "wants":
+			return "no rules or sources chosen";
+		case "loop":
+			return "notifications not set up";
+		case "scan":
+			return "no first search yet";
+	}
+}
+
+/** "Setup: AI not connected, no resume yet." for the open steps, or null when none is. */
+export function openStepsLine(
+	open: readonly SetupStep[],
+	live: { aiReady: boolean; hasProfile: boolean },
+): string | null {
+	if (!open.length) return null;
+	const text = open.map((s) => openStepText(s, live)).join(", ");
+	return `Setup: ${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
+}
+
+/** A step named in `/onboarding?step=`, or null. */
+export function stepFrom(value: string | null | undefined): SetupStep | null {
+	return (SETUP_STEPS as readonly string[]).includes(value ?? "")
+		? (value as SetupStep)
+		: null;
+}
+
 /** Rough minutes each step takes, for "about N minutes left". */
 const MINUTES: Record<SetupStep, number> = {
 	ai: 1,

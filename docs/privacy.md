@@ -82,8 +82,8 @@ site; you apply yourself.
 
 ### App updates
 
-Official builds check GitHub Releases for a new version at launch and every six hours, and
-download it. GitHub sees your IP address and a random install ID the updater keeps
+Official builds check GitHub Releases for a new version at launch, every 30 minutes, and when
+the Mac wakes or the window comes forward (at most every 10 minutes), and download it. GitHub sees your IP address and a random install ID the updater keeps
 (`.updaterId`), which it uses to stage releases. Builds made from source never check.
 
 ### Nothing else

@@ -137,8 +137,9 @@ test("setup's happy path: found both CLIs, five steps, first matches with a chir
 
 		// 4. Stay in the loop.
 		await expect(page.getByTestId("step-count")).toContainText("Step 4 of 5");
-		await page.getByTestId("notify-test").click();
+		// Continue never waits for a test notification.
 		await expect(page.getByTestId("step-continue")).toBeEnabled();
+		await page.getByTestId("notify-test").click();
 		await beat(page);
 		await frames(app, page, "6-stay-in-the-loop");
 		await page.getByTestId("step-continue").click();

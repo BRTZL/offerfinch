@@ -142,9 +142,9 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 			languages: ["English"],
 		});
 
-		// 4. Stay in the loop: a test notification is shown (captured in test runs). Not done
-		// until one was really delivered (or the step is skipped). Open at login stays off.
-		await expect(page.getByTestId("step-continue")).toBeDisabled();
+		// 4. Stay in the loop: Continue works before any test (Home asks for one later if none is
+		// shown); a test notification is shown (captured in test runs). Open at login stays off.
+		await expect(page.getByTestId("step-continue")).toBeEnabled();
 		await page.getByTestId("notify-test").click();
 		await expect(page.getByTestId("notify-status")).toHaveAttribute(
 			"data-status",

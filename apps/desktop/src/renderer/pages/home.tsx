@@ -30,6 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { desktop } from "@/lib/desktop";
 import { type client, orpc } from "@/lib/orpc";
 import { Link } from "@/lib/router";
+import { openSteps, openStepsLine } from "../../shared/setup-steps";
 
 type HomeData = Awaited<ReturnType<typeof client.desktop.home>>;
 type Waiting = HomeData["waiting"][number];
@@ -132,6 +133,36 @@ function scanningLine(
 			? plural(p.total, "source")
 			: plural(p.total, "company", "companies");
 	return `${p.line ?? "Scanning"} (${Math.min(p.done + 1, p.total)} of ${of})`;
+}
+
+/** Steps skipped or not done yet, by name; Continue setup opens the first of them. */
+function SetupNotice({
+	o,
+	aiReady,
+}: {
+	o: { completedAt: string | null; hasProfile: boolean } & Parameters<
+		typeof openSteps
+	>[0];
+	aiReady: boolean;
+}) {
+	const open = openSteps(o);
+	if (o.completedAt || open.length === 0) return null;
+	return (
+		<Notice
+			data-testid="home-setup"
+			actions={
+				<Link
+					href={`/onboarding?step=${open[0]}`}
+					className="text-primary text-sm hover:underline"
+					data-testid="resume-setup"
+				>
+					Continue setup
+				</Link>
+			}
+		>
+			{openStepsLine(open, { aiReady, hasProfile: o.hasProfile })}
+		</Notice>
+	);
 }
 
 /** Where the app opens: what needs you now, new matches, the scans and the spend. */
@@ -271,6 +302,16 @@ export default function HomePage() {
 				: "Allow OfferFinch in System Settings › Notifications",
 			"home-needs-notifications",
 		);
+	// Setup no longer waits for a test notification: one never shown reads here instead, once the
+	// Stay in the loop step was passed (done or skipped).
+	if (notify.data?.status === "unknown" && o.done.includes("loop"))
+		fix(
+			"notifications-untested",
+			"/settings/notifications",
+			"Notifications are not tested yet",
+			"Send a test so you hear about new matches. macOS may ask to allow OfferFinch",
+			"home-needs-notify-test",
+		);
 	if (!s.chrome)
 		fix(
 			"chrome",
@@ -316,22 +357,7 @@ export default function HomePage() {
 					title={name ? `${greeting()}, ${name}` : greeting()}
 					description={summary}
 				/>
-				{!o.completedAt && (
-					<Notice
-						data-testid="home-setup"
-						actions={
-							<Link
-								href="/onboarding"
-								className="text-primary text-sm hover:underline"
-								data-testid="resume-setup"
-							>
-								Continue setup
-							</Link>
-						}
-					>
-						{o.done.length} of {o.steps.length} setup steps done.
-					</Notice>
-				)}
+				<SetupNotice o={o} aiReady={unready.length === 0} />
 
 				<Section
 					title="Needs you"

@@ -6,7 +6,6 @@ import {
 } from "@tanstack/react-query";
 import { ChevronLeft } from "lucide-react";
 import { Suspense, useRef, useState } from "react";
-import { useNotificationState } from "@/components/desktop/notifications";
 import { STEP_META, StepBody } from "@/components/desktop/setup/steps";
 import { Welcome } from "@/components/desktop/setup/welcome";
 import {
@@ -26,11 +25,13 @@ import { RowsSkeleton } from "@/components/system/skeletons";
 import { StepTrail } from "@/components/system/step-trail";
 import { Button } from "@/components/ui/button";
 import { client, orpc } from "@/lib/orpc";
-import { useRouter } from "@/lib/router";
+import { useRouter, useSearchParams } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import {
+	openSteps,
 	SETUP_STEPS,
 	type SetupStep,
+	stepFrom,
 	timeLeft,
 } from "../../shared/setup-steps";
 
@@ -173,7 +174,8 @@ export default function OnboardingPage() {
 		...orpc.desktop.status.queryOptions(),
 		meta: { quiet: true },
 	});
-	const notify = useNotificationState();
+	// Home's "Continue setup" names the step to open (`?step=profile`): the first one still open.
+	const asked = stepFrom(useSearchParams().get("step"));
 	const [current, setCurrent] = useState<SetupStep | null>(null);
 	// The welcome opens a first start (nothing done or skipped yet) until Get started.
 	const [welcome, setWelcome] = useState<boolean | null>(null);
@@ -192,11 +194,15 @@ export default function OnboardingPage() {
 	// Which way the last move went, for the slide.
 	const [direction, setDirection] = useState<"forward" | "back">("forward");
 
-	const done = state.data?.done ?? [];
-	const firstOpen = SETUP_STEPS.find((s) => !done.includes(s)) ?? "scan";
-	const step = current ?? (state.data ? firstOpen : null);
+	// Done or skipped: the wizard moves past both. Finished: done and not skipped, for the trail.
+	const passed = state.data?.done ?? [];
+	const open = state.data ? openSteps(state.data) : [...SETUP_STEPS];
+	const finished = SETUP_STEPS.filter((s) => !open.includes(s));
+	const firstOpen = SETUP_STEPS.find((s) => !passed.includes(s)) ?? "scan";
+	const step = current ?? asked ?? (state.data ? firstOpen : null);
 	const index = step ? SETUP_STEPS.indexOf(step) : -1;
-	const showWelcome = welcome ?? (done.length === 0 && current === null);
+	const showWelcome =
+		welcome ?? (passed.length === 0 && current === null && asked === null);
 
 	const go = (key: SetupStep, dir: "forward" | "back" = "forward") => {
 		setDirection(dir);
@@ -216,11 +222,24 @@ export default function OnboardingPage() {
 				setSaving(false);
 			}
 		}
-		mark.mutate({ step, outcome });
+		// The first search is marked done only by the search itself (`onFinished`).
+		const marking =
+			step !== "scan"
+				? mark.mutateAsync({ step, outcome }).catch(() => undefined)
+				: Promise.resolve();
+		// On to the next step still open (a skipped one is open), the later ones first; a step
+		// already finished is never asked again. None left: setup is complete, back to Home once
+		// the mark is stored, so Home reads the finished state.
+		const remaining = open.filter((s) => s !== step);
 		const after =
-			SETUP_STEPS.slice(index + 1).find((s) => !done.includes(s)) ??
-			SETUP_STEPS[index + 1];
-		go(after ?? "scan");
+			SETUP_STEPS.slice(index + 1).find((s) => remaining.includes(s)) ??
+			remaining[0];
+		if (after) {
+			go(after);
+			return;
+		}
+		await marking;
+		router.push("/");
 	};
 	const back = () => {
 		if (index <= 0) {
@@ -233,21 +252,16 @@ export default function OnboardingPage() {
 
 	if (!state.data || !step) return <Loading />;
 
-	const notifyBlocked =
-		!showWelcome && step === "loop" && notify.data?.status !== "delivered";
 	// The primary action in the footer: the step's own (Draft my profile, Save profile, the first
-	// search), Get started on the welcome, otherwise Continue.
+	// search, or the step a blocked search needs), Get started on the welcome, otherwise Continue.
 	const primary: StepAction = showWelcome
 		? { label: "Get started", onClick: () => go(step), testId: "welcome-start" }
 		: (action ?? {
 				label: "Continue",
 				onClick: () => void next("done"),
-				disabled: saving || notifyBlocked,
+				disabled: saving,
 				busy: saving,
 				testId: "step-continue",
-				title: notifyBlocked
-					? "Send a test notification first, or skip this step"
-					: undefined,
 			});
 	// The resume step can be skipped once there is a profile; the first search never.
 	const canSkip =
@@ -278,7 +292,7 @@ export default function OnboardingPage() {
 				<div className="flex min-h-full items-center justify-center px-6 py-6">
 					<div className="flex w-full max-w-160 flex-col gap-6">
 						{showWelcome ? null : (
-							<StepHeader step={step} done={done} go={go} />
+							<StepHeader step={step} done={finished} go={go} />
 						)}
 						<AnimatedHeight>
 							<div
@@ -299,6 +313,14 @@ export default function OnboardingPage() {
 														hasProfile={state.data.hasProfile}
 														sources={state.data.sources}
 														onDone={() => void next("done")}
+														go={(key) =>
+															go(
+																key,
+																SETUP_STEPS.indexOf(key) < index
+																	? "back"
+																	: "forward",
+															)
+														}
 														onFinished={() => {
 															mark.mutate({ step: "scan", outcome: "done" });
 															router.push("/inbox");

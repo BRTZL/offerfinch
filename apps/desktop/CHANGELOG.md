@@ -10,6 +10,10 @@ at the top, above the newest version. Only what is merged into main belongs here
 
 ## Unreleased
 
+- OfferFinch checks for a new version every 30 minutes, and again when your Mac wakes or you
+  come back to the window, instead of every 6 hours.
+- A new version shows at the bottom of the sidebar: a ring while it downloads in the background,
+  then a restart button with a green check. Click it to see what's new and restart.
 - Setup's first search is live: every job it finds appears as it is read, the ones that break
   one of your rules show which rule and leave, and the rest get their fit score in place. When
   it is done, a line sums up how many were read, set aside and matched.
