@@ -87,7 +87,7 @@ export interface LlmProvider {
 	readonly name: string;
 	/** Unset means `api`. */
 	readonly billing?: LlmBilling;
-	/** The vendor behind the model, for keeping the claims check on another vendor. Unset: the name's prefix. */
+	/** The vendor behind the model (plan pauses and usage are kept per vendor). Unset: the name's prefix. */
 	readonly vendor?: string;
 	/** Subscription providers: the one user whose plan this is; calls for anyone else are refused. */
 	readonly ownerUserId?: string;
@@ -101,25 +101,6 @@ export function billingOf(provider: LlmProvider): LlmBilling {
 /** "anthropic", "openai", "fake": the company whose model answers. */
 export function vendorOf(provider: LlmProvider): string {
 	return provider.vendor ?? provider.name.split(":")[0] ?? provider.name;
-}
-
-/** A model company: Anthropic (an API key, Claude plans) or OpenAI (an API key, Codex plans). */
-export type Company = "anthropic" | "openai";
-
-const COMPANY_PREFIXES: Record<string, Company> = {
-	anthropic: "anthropic",
-	"claude-subscription": "anthropic",
-	openai: "openai",
-	"codex-subscription": "openai",
-};
-
-/**
- * The company behind a provider name or vendor (`anthropic:…`, `claude-subscription:…` →
- * "anthropic"; `openai:…`, `codex-subscription:…` → "openai"); null for fakes and anything
- * else.
- */
-export function companyOf(nameOrVendor: string): Company | null {
-	return COMPANY_PREFIXES[nameOrVendor.split(":")[0] ?? ""] ?? null;
 }
 
 /**
