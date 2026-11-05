@@ -85,6 +85,8 @@ export function moreItems(input: {
 	document: string | null;
 	pdf: boolean;
 	docx: boolean;
+	/** Try-it mode opens no link (the default browser holds the real sessions). */
+	demo?: boolean;
 }): MoreItem[] {
 	const { app } = input;
 	const items: MoreItem[] = [];
@@ -103,10 +105,8 @@ export function moreItems(input: {
 						? "The current version is still being checked"
 						: null,
 		});
-	items.push(
-		{ id: "open-posting", label: "Open Posting" },
-		{ id: "copy-link", label: "Copy Posting Link" },
-	);
+	if (!input.demo) items.push({ id: "open-posting", label: "Open Posting" });
+	items.push({ id: "copy-link", label: "Copy Posting Link" });
 	if (input.document) {
 		const group = input.document;
 		items.push(

@@ -297,6 +297,19 @@ describe("Action bar", () => {
 		for (const item of items) expect(item.label).not.toMatch(/(…|\.\.\.)$/);
 	});
 
+	it("opens no posting from More in try-it mode, and still copies its link", () => {
+		const items = moreItems({
+			app: app(),
+			hasDocuments: true,
+			document: "CV",
+			pdf: true,
+			docx: false,
+			demo: true,
+		});
+		expect(items.map((i) => i.id)).not.toContain("open-posting");
+		expect(items.map((i) => i.id)).toContain("copy-link");
+	});
+
 	it("leaves the document's exports out of More while an earlier version is on screen", () => {
 		expect(exportTarget("Letter", false)).toBe("Letter");
 		expect(exportTarget("Letter", true)).toBeNull();

@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import { toast } from "sonner";
+import { useDemoMode } from "@/components/desktop/demo";
 import {
 	ActionBar,
 	ActionBarButton,
@@ -102,6 +103,7 @@ export function DetailActionBar({
 	const captionId = useId();
 	const [redrafting, setRedrafting] = useState(false);
 	const kind = barKind(loaded, listState);
+	const demo = useDemoMode();
 
 	const chat = (
 		<ActionBarButton
@@ -123,6 +125,7 @@ export function DetailActionBar({
 					document: exports.label,
 					pdf: Boolean(exports.pdfId),
 					docx: Boolean(exports.docxId),
+					demo,
 				})
 			: [];
 	const pick = (id: MoreItem["id"]) => {
