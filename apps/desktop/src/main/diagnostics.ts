@@ -135,7 +135,9 @@ const URL_QUERY =
 /** Any user's home folder, not only this one ("/Users/<name>/…" names the account). */
 const HOME_FOLDER = /\/Users\/[^/\s"'`:]+/g;
 // Includes slash-normalized and JSON-escaped paths, and accounts other than this user's.
-const WINDOWS_HOME_FOLDER = /[a-z]:[\\/]+Users[\\/]+[^\\/\s"'`:]+/gi;
+const WINDOWS_HOME_FOLDER = /(?:[a-z]:)?[\\/]+Users[\\/]+[^\\/"'`\r\n]+/gi;
+const ENCODED_WINDOWS_HOME_FOLDER =
+	/(?:[a-z]%3a)?(?:%5c|%2f)+Users(?:%5c|%2f)+(?:(?!%5c|%2f|%22|%27|%0a|%0d)[^"'`\r\n])+/gi;
 const SECRET_KEY = /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}/g;
 const BEARER = /\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 const JWT = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}(?:\.[A-Za-z0-9_-]*)?/g;
@@ -212,7 +214,10 @@ function redactAll(text: string, known: KnownPersonal, home: string): string {
 			: escapeRegExp(home);
 		out = out.replace(new RegExp(pattern, windows ? "gi" : "g"), "~");
 	}
-	out = out.replace(WINDOWS_HOME_FOLDER, "~").replace(HOME_FOLDER, "~");
+	out = out
+		.replace(ENCODED_WINDOWS_HOME_FOLDER, "~")
+		.replace(WINDOWS_HOME_FOLDER, "~")
+		.replace(HOME_FOLDER, "~");
 	for (const pattern of linkPatterns(known.links))
 		out = out.replace(pattern, "[link]");
 	out = redactContact(out, [...known.emails, ...known.phones]);

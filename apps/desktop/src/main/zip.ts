@@ -22,7 +22,7 @@ export function isSafeZipEntry(name: string): boolean {
 		!path.posix.isAbsolute(name) &&
 		!path.win32.isAbsolute(name) &&
 		!/^[a-z]:/i.test(name) &&
-		!name.split(/[\\/]/).includes("..")
+		!name.split(/[\\/]/).some((part) => /^\.\.[ .]*$/.test(part))
 	);
 }
 
@@ -45,6 +45,8 @@ export function createZipTools(
 				await run(tar, [
 					"--format",
 					"zip",
+					"--options",
+					"zip:hdrcharset=UTF-8",
 					"-c",
 					"-f",
 					zip,

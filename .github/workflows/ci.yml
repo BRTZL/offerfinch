@@ -113,7 +113,7 @@ jobs:
           pnpm --filter @offerfinch/desktop exec node -e "require('child_process').execFileSync(process.execPath, [require.resolve('electron/install.js')], {stdio: 'inherit'})"
           pnpm rebuild better-sqlite3
       - name: Unit tests
-        run: pnpm --filter @offerfinch/core --filter @offerfinch/db --filter @offerfinch/runner test
+        run: pnpm --filter @offerfinch/core --filter @offerfinch/db --filter @offerfinch/runner --filter @offerfinch/local-llm --filter @offerfinch/desktop test
       - name: Production build
         run: pnpm --filter @offerfinch/desktop build --production
       # NSIS also produces win-unpacked, which is launched below.

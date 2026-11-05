@@ -17,6 +17,10 @@ const PASSED = [
 	"LC_ALL",
 	"LC_CTYPE",
 	"TZ",
+] as const;
+
+/** Windows startup and login locations must not enter POSIX CLI environments. */
+const WINDOWS_PASSED = [
 	"USERPROFILE",
 	"APPDATA",
 	"LOCALAPPDATA",
@@ -61,7 +65,11 @@ export function subscriptionEnv(
 	platform: NodeJS.Platform = process.platform,
 ): SubscriptionEnv {
 	const env: Record<string, string> = {};
-	for (const key of [...PASSED, CLAUDE_CONFIG_DIR]) {
+	for (const key of [
+		...PASSED,
+		...(platform === "win32" ? WINDOWS_PASSED : []),
+		CLAUDE_CONFIG_DIR,
+	]) {
 		const value = envValue(parent, key, platform);
 		if (value) env[key] = value;
 	}

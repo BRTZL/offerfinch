@@ -18,6 +18,44 @@ import { execFile } from "node:child_process";
 afterEach(() => vi.restoreAllMocks());
 
 describe("Windows subscriptions", () => {
+	it.each(["darwin", "linux"] as const)(
+		"omits Windows-only variables on %s",
+		(platform) => {
+			const parent = Object.fromEntries(
+				"USERPROFILE APPDATA LOCALAPPDATA SystemRoot SystemDrive WINDIR ComSpec PATHEXT TEMP TMP USERNAME HOMEDRIVE HOMEPATH ProgramData ProgramFiles ProgramFiles(x86) CLAUDE_CODE_GIT_BASH_PATH"
+					.split(" ")
+					.map((key) => [key, "synthetic"]),
+			);
+			expect(subscriptionEnv(parent, {}, platform).env).toEqual({});
+		},
+	);
+	it.each([
+		[
+			'@ECHO off\r\n"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe" %*',
+			String.raw`node_modules\@anthropic-ai\claude-code\bin\claude.exe`,
+		],
+		[
+			'@ECHO off\r\n"%~dp0\\node_modules\\.pnpm\\@anthropic-ai+claude-code@1.0.0\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*',
+			String.raw`node_modules\.pnpm\@anthropic-ai+claude-code@1.0.0\node_modules\@anthropic-ai\claude-code\bin\claude.exe`,
+		],
+	])("resolves a quoted npm or pnpm target: %s", (shim, target) => {
+		const exe = `C:\\global\\${target}`;
+		const checks = {
+			readFile: () => `IF EXIST "%dp0%\\node.exe" (\r\n${shim}`,
+			resolve: (file: string) => file,
+			isFile: (file: string) =>
+				file === exe || file === "C:\\global\\claude.cmd",
+		};
+		expect(findCliOnPath("claude", "C:\\global", "win32", ".CMD", checks)).toBe(
+			exe,
+		);
+		expect(
+			findCliOnPath("claude", "C:\\global", "win32", ".CMD", {
+				...checks,
+				isFile: (file) => file.endsWith(".cmd"),
+			}),
+		).toBeNull();
+	});
 	it("keeps mixed-case allowlisted keys and one PATH, without credentials", () => {
 		const names =
 			"USERPROFILE APPDATA LOCALAPPDATA SystemRoot SystemDrive WINDIR ComSpec PATHEXT TEMP TMP USERNAME HOMEDRIVE HOMEPATH ProgramData ProgramFiles ProgramFiles(x86) CLAUDE_CODE_GIT_BASH_PATH".split(
@@ -65,6 +103,8 @@ describe("Windows subscriptions", () => {
 		const find = (files: string[]) =>
 			findCliOnPath("claude", root, "win32", ".CMD;.EXE", {
 				isFile: (file) => files.includes(file),
+				readFile: () =>
+					'"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*',
 				resolve: (file) => file,
 			});
 		expect(find([shim, exe, packageExe])).toBe(exe);

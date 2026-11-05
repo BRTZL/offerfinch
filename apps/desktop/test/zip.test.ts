@@ -19,6 +19,10 @@ function fixture() {
 	const source = path.join(temp, "backup source");
 	fs.mkdirSync(path.join(source, "files", "documents"), { recursive: true });
 	fs.writeFileSync(path.join(source, "manifest.json"), "{}");
+	fs.writeFileSync(
+		path.join(source, "files", "documents", "Lebenslauf Müller.pdf"),
+		"unicode fixture",
+	);
 	fs.writeFileSync(path.join(source, "offerfinch.sqlite"), "fixture database");
 	fs.writeFileSync(path.join(source, "files", "documents", "cv.txt"), "sample");
 	const out = path.join(temp, "out");
@@ -26,6 +30,12 @@ function fixture() {
 	return { source, out, zip: path.join(temp, "backup.zip.partial") };
 }
 function expectLayout(out: string) {
+	expect(
+		fs.readFileSync(
+			path.join(out, "files", "documents", "Lebenslauf Müller.pdf"),
+			"utf8",
+		),
+	).toBe("unicode fixture");
 	expect(fs.readdirSync(out).sort()).toEqual([
 		"files",
 		"manifest.json",
@@ -62,6 +72,9 @@ describe("zip paths", () => {
 		"/x",
 		"a/../../x",
 		"a\\..\\x",
+		"a/.. /x",
+		"a/.../x",
+		"a/.. ./x",
 	])("rejects %j on every host", (name) => {
 		expect(isSafeZipEntry(name)).toBe(false);
 	});

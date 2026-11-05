@@ -53,7 +53,10 @@ function provider(
 	});
 }
 
-describe("CodexSubscriptionProvider on a capture server", () => {
+// These suites use Seatbelt, a real Codex CLI, or macOS-only Codex status.
+const macDescribe = describe.skipIf(process.platform !== "darwin");
+
+macDescribe("CodexSubscriptionProvider on a capture server", () => {
 	it("returns the validated object and reports one model call and its tokens", async () => {
 		const model = await fakeResponses(() => [
 			assistantMessage(
@@ -192,7 +195,7 @@ describe("CodexSubscriptionProvider on a capture server", () => {
 	});
 });
 
-describe("reading the user's Codex login (read only)", () => {
+macDescribe("reading the user's Codex login (read only)", () => {
 	let dir: string;
 	const token = (claims: Record<string, unknown>) =>
 		[
@@ -703,7 +706,7 @@ describe("payment after a sent call (ChatGPT login, fake turn runner)", () => {
 	});
 });
 
-describe("the second credit read after an aborted turn", () => {
+macDescribe("the second credit read after an aborted turn", () => {
 	let dir: string;
 	let authFile: string;
 	beforeAll(async () => {
@@ -809,7 +812,7 @@ describe("the second credit read after an aborted turn", () => {
 	});
 });
 
-describe("login-shell PATH for a GUI app", () => {
+macDescribe("login-shell PATH for a GUI app", () => {
 	it("returns the PATH the user's login shell sets", async () => {
 		const path = await loginShellPath();
 		expect(path).toMatch(/\/usr\/bin/);
@@ -837,7 +840,7 @@ describe("sandbox profile", () => {
 	});
 });
 
-describe("plan usage reads (ChatGPT login, fake turn runner)", () => {
+macDescribe("plan usage reads (ChatGPT login, fake turn runner)", () => {
 	let dir: string;
 	let authFile: string;
 	beforeAll(async () => {

@@ -479,6 +479,30 @@ describe.skipIf(process.platform !== "darwin")("saving the zip", () => {
 });
 
 describe("Windows home redaction on every host", () => {
+	it.each([
+		[
+			String.raw`C:\Users\Sample Account\Documents\cv.pdf`,
+			String.raw`~\Documents\cv.pdf`,
+		],
+		[
+			String.raw`\Users\Sample Account\Documents\cv.pdf`,
+			String.raw`~\Documents\cv.pdf`,
+		],
+		[
+			"C%3A%5CUsers%5CSample%20Account%5CDocuments%5Ccv.pdf",
+			"~%5CDocuments%5Ccv.pdf",
+		],
+		['"C:\\Users\\Sample Account"', '"~"'],
+		["C:/Users/Sample Account\nnext line", "~\nnext line"],
+	])("redacts the entire account segment in %s", (input, expected) => {
+		expect(
+			redactDiagnostics(
+				input,
+				{ names: [], emails: [], phones: [], links: [] },
+				String.raw`C:\Users\Alex`,
+			),
+		).toBe(expected);
+	});
 	const empty = { names: [], emails: [], phones: [], links: [] };
 	it.each([
 		[

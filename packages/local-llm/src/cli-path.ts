@@ -9,11 +9,11 @@ export function findCliOnPath(
 	pathExt = process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
 	checks: {
 		isFile?: (file: string) => boolean;
+		readFile?: (file: string) => string;
 		resolve?: (file: string) => string;
 	} = {},
 ): string | null {
-	const isFile =
-		checks.isFile ?? ((file: string) => isExecutableFile(file, platform));
+	const isFile = checks.isFile ?? executableCheck(platform);
 	const resolve = checks.resolve ?? fs.realpathSync;
 	const paths = platform === "win32" ? path.win32 : path;
 	const extensions = cliExtensions(platform, pathExt);
@@ -21,21 +21,14 @@ export function findCliOnPath(
 		for (const ext of extensions) {
 			const candidate = paths.join(dir, `${name}${ext}`);
 			if (!isFile(candidate)) continue;
-			if (
-				platform === "win32" &&
-				name === "claude" &&
-				[".cmd", ".bat", ".ps1"].includes(ext)
-			) {
-				const executable = paths.join(
-					dir,
-					"node_modules",
-					"@anthropic-ai",
-					"claude-code",
-					"bin",
-					"claude.exe",
-				);
+			if (isClaudeShim(platform, name, ext)) {
 				try {
-					if (isFile(executable)) return resolve(executable);
+					const executable = shimExecutable(
+						candidate,
+						checks.readFile ?? ((file) => fs.readFileSync(file, "utf8")),
+						isFile,
+					);
+					if (executable) return resolve(executable);
 				} catch {}
 				continue;
 			}
@@ -74,4 +67,53 @@ function cliExtensions(platform: NodeJS.Platform, pathExt: string): string[] {
 				]),
 			]
 		: [""];
+}
+
+/** Read npm/pnpm launch targets, never execute batch code or select its Node runtime. */
+function shimExecutable(
+	shim: string,
+	readFile: (file: string) => string,
+	isFile: (file: string) => boolean,
+): string | null {
+	for (const match of readFile(shim).matchAll(
+		/"(?:%dp0%|%~dp0)[\\/]?([^"\r\n]+\.(?:exe|js))"/gi,
+	)) {
+		const target = match[1];
+		if (
+			!target ||
+			/%/.test(target) ||
+			path.win32.basename(target).toLowerCase() === "node.exe"
+		)
+			continue;
+		const native = nativeTarget(target);
+		if (!native) continue;
+		const executable = path.win32.resolve(path.win32.dirname(shim), native);
+		if (isFile(executable)) return executable;
+	}
+	return null;
+}
+
+function nativeTarget(target: string): string | null {
+	if (/\.exe$/i.test(target)) return target;
+	if (/(?:^|[\\/])claude-code[\\/]cli\.js$/i.test(target))
+		return target.replace(/cli\.js$/i, "bin\\claude.exe");
+	if (/(?:^|[\\/])claude-code[\\/]bin[\\/]cli\.js$/i.test(target))
+		return target.replace(/cli\.js$/i, "claude.exe");
+	return null;
+}
+
+function executableCheck(platform: NodeJS.Platform): (file: string) => boolean {
+	return (file) => isExecutableFile(file, platform);
+}
+
+function isClaudeShim(
+	platform: NodeJS.Platform,
+	name: string,
+	ext: string,
+): boolean {
+	return (
+		platform === "win32" &&
+		name === "claude" &&
+		[".cmd", ".bat", ".ps1"].includes(ext)
+	);
 }

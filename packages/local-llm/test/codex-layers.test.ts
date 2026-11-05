@@ -73,7 +73,10 @@ async function attack(name: string, layers: CodexLayers) {
 	}
 }
 
-describe("codex-subscription boundary, each layer alone", () => {
+// These suites use Seatbelt, a real Codex CLI, or macOS-only Codex status.
+const macDescribe = describe.skipIf(process.platform !== "darwin");
+
+macDescribe("codex-subscription boundary, each layer alone", () => {
 	it("control: with no layer the forged command reads the canary (the attack is real)", async () => {
 		const { leaked, result } = await attack("exec_command", NONE);
 		expect(leaked).toBe(true);
@@ -98,7 +101,7 @@ describe("codex-subscription boundary, each layer alone", () => {
 			}, 90_000);
 });
 
-describe("codex-subscription boundary, production layers", () => {
+macDescribe("codex-subscription boundary, production layers", () => {
 	for (const name of ["exec_command", "shell", "code_mode", "spawn_agent"])
 		it(`declines, aborts and fails the call on a forged ${name}`, async () => {
 			const { leaked, result, posts } = await attack(name, ALL_LAYERS);
@@ -182,7 +185,7 @@ describe("codex-subscription boundary, production layers", () => {
 	}, 90_000);
 });
 
-describe("codex-subscription keeps nothing on disk", () => {
+macDescribe("codex-subscription keeps nothing on disk", () => {
 	async function run(ephemeral: boolean) {
 		const since = Date.now() - 1000;
 		const prompt = `PROMPT-${Math.random().toString(36).slice(2)}`;
