@@ -25,24 +25,35 @@ const STEP_LABEL: Record<string, string> = {
 	"answer-choices": "Help me remember on Questions",
 };
 
-/** A model's or step's share: its cost, and its subscription calls. */
+/**
+ * A model's or step's share: its calls, how they were paid (a model's row), and its cost. Calls
+ * on a plan cost nothing extra, so a row of plan calls only says "Plan", never "$0".
+ */
 function SpendMeta({
 	calls,
 	micros,
 	subscription,
+	via,
 }: {
 	calls: number;
 	micros: number;
 	subscription: number;
+	via?: string[];
 }) {
+	const onPlan = subscription === calls;
+	const how = via?.length
+		? ` · ${via.join(" and ")}`
+		: subscription > 0 && !onPlan
+			? `, ${subscription} on a plan`
+			: "";
 	return (
 		<>
 			<span>
 				{calls} call{calls === 1 ? "" : "s"}
-				{subscription > 0 ? `, ${subscription} on a subscription` : ""}
+				{how}
 			</span>
 			<span className="text-foreground w-16 text-right font-mono">
-				{usd(micros)}
+				{onPlan ? "Plan" : usd(micros)}
 			</span>
 		</>
 	);
@@ -152,7 +163,7 @@ export function SpendingSettings() {
 									{breakdown.data.byModel.map((m) => (
 										<Row
 											key={m.name}
-											title={<span className="font-mono">{m.name}</span>}
+											title={m.label}
 											meta={<SpendMeta {...m} />}
 										/>
 									))}

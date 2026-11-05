@@ -229,7 +229,9 @@ export function ScanButton({ labeled = false }: { labeled?: boolean }) {
 			aria-label={label}
 			title={next ? `${label}. ${next}` : label}
 		>
-			<RefreshCw className={scanning ? "animate-spin" : undefined} />
+			{/* Still while a scan runs: the scan state beside it shows the progress, and the only
+			    moving thing at the sidebar's foot is an update downloading. */}
+			<RefreshCw />
 			{labeled ? label : null}
 		</Button>
 	);
