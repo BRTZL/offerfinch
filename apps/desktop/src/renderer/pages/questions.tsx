@@ -55,11 +55,7 @@ export default function QuestionsPage() {
 			<PageHeader
 				title="Questions"
 				subtitle={open.data ? `${count} waiting for you` : undefined}
-			>
-				<Link href="/profile" className="text-primary text-sm hover:underline">
-					Saved answers are in Profile
-				</Link>
-			</PageHeader>
+			/>
 			<MasterDetail
 				list={
 					open.isError ? (

@@ -1,4 +1,5 @@
 import { type ReactNode, useContext } from "react";
+import { SearchButton } from "@/components/shell/search-button";
 import { cn } from "@/lib/utils";
 import { SidebarState, SidebarToggle } from "./shell";
 
@@ -8,7 +9,10 @@ import { SidebarState, SidebarToggle } from "./shell";
  * inset, 32 px between sections, 12 px from a section's title to its content.
  */
 
-/** The window toolbar: the page title on the left, actions on the right. Moves the window. */
+/**
+ * The window toolbar: the page title and its count on the left, the search flush right, at the
+ * same place on every screen. Page actions live in the page (the Inbox's action bar), not here.
+ */
 export function PageHeader({
 	title,
 	subtitle,
@@ -18,7 +22,7 @@ export function PageHeader({
 }: {
 	title: ReactNode;
 	subtitle?: ReactNode;
-	/** Actions, right aligned (usually a `Toolbar`). */
+	/** Before the search, right aligned: kept small (the Inbox's add button). */
 	children?: ReactNode;
 	/** Before the title (a back button). */
 	leading?: ReactNode;
@@ -54,18 +58,12 @@ export function PageHeader({
 					</span>
 				) : null}
 			</div>
-			{children ? (
-				<div className="ml-auto flex shrink-0 items-center gap-2">
-					{children}
-				</div>
-			) : null}
+			<div className="ml-auto flex shrink-0 items-center gap-2">
+				{children}
+				<SearchButton />
+			</div>
 		</header>
 	);
-}
-
-/** A thin rule between toolbar groups. */
-export function ToolbarSeparator() {
-	return <span aria-hidden className="bg-border mx-1 h-5 w-px" />;
 }
 
 /**
