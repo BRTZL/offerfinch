@@ -316,8 +316,8 @@ export const desktopStatusRouter = {
 		}),
 	/**
 	 * The jobs one scan run found, for setup's live first search: each with its state (found, fits
-	 * the rules, set aside with the rule's reason, scored with its fit and whether it is a match),
-	 * in the order they arrived, and totals. Reads only.
+	 * the rules, set aside with the rule's reason, scored with its fit and whether it is a match,
+	 * or waiting on a paused model), in the order they arrived, and totals. Reads only.
 	 */
 	scanJobs: protectedProcedure
 		.input(z.object({ id: z.string().max(200) }))
@@ -325,11 +325,7 @@ export const desktopStatusRouter = {
 			const w = worker();
 			const userId = context.session.user.id;
 			const [run] = await w.db
-				.select({
-					userId: flowRuns.userId,
-					createdAt: flowRuns.createdAt,
-					endedAt: flowRuns.endedAt,
-				})
+				.select({ id: flowRuns.id })
 				.from(flowRuns)
 				.where(and(eq(flowRuns.id, input.id), eq(flowRuns.userId, userId)));
 			if (!run) throw new ORPCError("NOT_FOUND");
@@ -337,11 +333,7 @@ export const desktopStatusRouter = {
 				w.db,
 			).getFilterSettings(userId);
 			return firstSearchView(
-				await jobsFoundBy(w.db, {
-					userId,
-					createdAt: run.createdAt,
-					endedAt: run.endedAt ?? null,
-				}),
+				await jobsFoundBy(w.db, { id: run.id, userId }),
 				minScore,
 			);
 		}),

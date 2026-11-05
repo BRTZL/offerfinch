@@ -19,6 +19,7 @@ import {
 	listProviders,
 	listScanRuns,
 	recordIdleSources,
+	recordScanRunJobs,
 	recordScanSource,
 	type ScanRunRow,
 	scanJobs,
@@ -125,6 +126,13 @@ export function scanLogFor(
 			await setScanProgress(db, run.id, progress);
 		},
 		async source(result, label) {
+			// The source's new jobs were recorded as each was inserted; again here, so a step
+			// retried after its insert (which then reads the job as not new) loses none.
+			await recordScanRunJobs(db, {
+				flowRunId: run.id,
+				userId: run.userId,
+				jobIds: result.newJobIds,
+			});
 			const states = await listProviders(db, run.userId);
 			const stop =
 				(states.find((s) => s.provider === result.provider)?.config.stop as
@@ -150,6 +158,40 @@ export function scanLogFor(
 			void setScanProgress(db, run.id, progress).catch(() => {});
 		},
 	};
+}
+
+/**
+ * The repository one scan run uses: as the original, except that each job it inserts is recorded
+ * as this run's (`scan_run_jobs`), so setup's live first search lists exactly the jobs the scan
+ * found while it runs. A job added by link or paste goes through another repository and is not
+ * recorded.
+ */
+export function scanRunRepo(
+	repo: PipelineDeps["repo"],
+	db: Database,
+	run: { id: string; userId: string },
+): PipelineDeps["repo"] {
+	const upsertJob: PipelineDeps["repo"]["upsertJob"] = async (
+		userId,
+		companyId,
+		job,
+	) => {
+		const result = await repo.upsertJob(userId, companyId, job);
+		if (result.inserted && userId === run.userId)
+			await recordScanRunJobs(db, {
+				flowRunId: run.id,
+				userId,
+				jobIds: [result.jobId],
+			});
+		return result;
+	};
+	return new Proxy(repo, {
+		get(target, key) {
+			if (key === "upsertJob") return upsertJob;
+			const value = Reflect.get(target, key, target);
+			return typeof value === "function" ? value.bind(target) : value;
+		},
+	});
 }
 
 /**

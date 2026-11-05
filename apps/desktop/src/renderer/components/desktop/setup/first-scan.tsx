@@ -8,26 +8,29 @@ import { Group, GroupBody } from "@/components/system/layout";
 import { SparkleBurst } from "@/components/system/sparkle";
 import { client, orpc } from "@/lib/orpc";
 import { useCelebrate } from "./celebrate";
-import { firstSearchLine } from "./first-search-line";
+import type { ShownRow } from "./first-search-beats";
+import {
+	firstSearchLine,
+	firstSearchSettle,
+	POLL_MS,
+} from "./first-search-line";
 import { FirstSearchList, useShownRows } from "./first-search-list";
 
 /**
- * One search run, live: its progress, the jobs it found and where each stands, polled every
- * second until it is settled. A scan ends before its jobs are scored, so the scan alone never
- * settles it: settled is the scan done, no scoring it started still pending, and a read of the
- * jobs taken after scoring was seen done (the polls tick apart, and the last scores land just
- * before `pending` reaches 0). An errored scan is settled at once.
+ * One search run, live: its progress, the jobs it found and where each stands, read every second
+ * until it is settled (`firstSearchSettle`), every few seconds while scoring waits on a paused
+ * model.
  */
 function useFirstSearch(runId: string | null) {
-	const settledRef = useRef(false);
-	const poll = () => (settledRef.current ? false : 1_000);
+	const pollRef = useRef<number | false>(POLL_MS);
+	const poll = () => pollRef.current;
 	const progress = useQuery({
 		...orpc.desktop.scan.queryOptions({ input: { id: runId ?? "" } }),
 		enabled: Boolean(runId),
 		refetchInterval: (q) =>
 			q.state.data && ["complete", "errored"].includes(q.state.data.status)
 				? false
-				: 1_000,
+				: POLL_MS,
 	});
 	const p = progress.data;
 	const complete = p?.status === "complete";
@@ -42,17 +45,43 @@ function useFirstSearch(runId: string | null) {
 		enabled: complete,
 		refetchInterval: poll,
 	});
-	const settled =
-		p?.status === "errored" ||
-		Boolean(
-			complete &&
-				jobs.data &&
-				scoring.data &&
-				scoring.data.pending === 0 &&
-				jobs.dataUpdatedAt > scoring.dataUpdatedAt,
-		);
-	settledRef.current = settled;
-	return { p, finished, view: jobs.data, settled };
+	const state = firstSearchSettle({
+		status: p?.status,
+		pending: scoring.data?.pending,
+		paused: jobs.data?.counts.paused,
+		jobsAt: jobs.dataUpdatedAt,
+		scoringAt: scoring.dataUpdatedAt,
+	});
+	pollRef.current = state.pollMs;
+	return {
+		p,
+		finished,
+		view: jobs.data,
+		settled: state.settled,
+		paused: state.paused,
+	};
+}
+
+/**
+ * The chirp and burst, once, on the first match. From the totals, so a match past the rows still
+ * cheers; a match among the rows waits until it shows its fit (not during its "Found" beat).
+ */
+function useFirstMatchCheer(
+	matches: number,
+	rows: ShownRow[],
+	celebrate: () => void,
+) {
+	const firstMatch =
+		matches > 0 &&
+		(rows.some((r) => r.shown === "scored" && r.match) ||
+			!rows.some((r) => r.match));
+	const cheered = useRef(false);
+	useEffect(() => {
+		if (firstMatch && !cheered.current) {
+			cheered.current = true;
+			celebrate();
+		}
+	}, [firstMatch, celebrate]);
 }
 
 /**
@@ -69,19 +98,12 @@ export function FirstScan({ onDone }: { onDone: () => void }) {
 		onSuccess: (r) => setRunId(r.id),
 		onError: (e) => toast.error(e.message),
 	});
-	const { p, finished, view, settled: polled } = useFirstSearch(runId);
+	const { p, finished, view, settled: polled, paused } = useFirstSearch(runId);
 	useEffect(() => {
 		if (finished) void queryClient.invalidateQueries();
 	}, [finished, queryClient]);
 	const rows = useShownRows(view?.rows ?? []);
-	const firstMatch = rows.some((r) => r.shown === "scored" && r.match);
-	const cheered = useRef(false);
-	useEffect(() => {
-		if (firstMatch && !cheered.current) {
-			cheered.current = true;
-			celebrate();
-		}
-	}, [firstMatch, celebrate]);
+	useFirstMatchCheer(view?.counts.matches ?? 0, rows, celebrate);
 	useStepAction(
 		finished
 			? {
@@ -103,13 +125,18 @@ export function FirstScan({ onDone }: { onDone: () => void }) {
 						testId: "first-scan-start",
 					},
 	);
-	if (!runId)
+	if (!runId && !start.isPending)
 		return (
 			<p className="text-muted-foreground text-sm" data-testid="first-scan">
 				It takes a minute or two. You can leave this page; it carries on.
 			</p>
 		);
-	const counts = view?.counts ?? { read: 0, setAside: 0, matches: 0 };
+	const counts = view?.counts ?? {
+		read: 0,
+		setAside: 0,
+		matches: 0,
+		paused: 0,
+	};
 	const checking = rows.some((r) => r.shown === "found");
 	// The done line waits for the list's own beats: a new row still held as found, or a set-aside
 	// row that has not shown its reason and left. A job the server still has as found (its run
@@ -125,6 +152,9 @@ export function FirstScan({ onDone }: { onDone: () => void }) {
 		settled,
 		fitRules: rows.filter((r) => r.shown === "fits" || r.shown === "scored")
 			.length,
+		paused: paused
+			? { count: counts.paused, reason: view?.pausedFor ?? null }
+			: null,
 	});
 	const done = settled && p?.status === "complete";
 	return (
@@ -156,13 +186,15 @@ export function FirstScan({ onDone }: { onDone: () => void }) {
 						data-settled={settled || undefined}
 						className="text-foreground min-w-0 text-sm"
 					>
-						<span key={line} className="first-search-line">
+						{/* "Starting…" is there on the first paint, as the button is pressed; the lines
+						    after it fade in where the last one was. */}
+						<span key={line} className={p ? "first-search-line" : undefined}>
 							{line}
 						</span>
 					</p>
 				</GroupBody>
 			</Group>
-			<FirstSearchList rows={rows} total={counts.read} />
+			<FirstSearchList rows={rows} hidden={view?.hidden ?? 0} />
 		</div>
 	);
 }

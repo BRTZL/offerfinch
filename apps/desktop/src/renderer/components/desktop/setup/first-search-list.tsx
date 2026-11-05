@@ -2,60 +2,22 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Badge, Fit, type Tone } from "@/components/system/bits";
 import { useReducedMotion } from "@/lib/reduced-motion";
 import { Check, Collapse } from "@/vendor/stageshow";
+import {
+	type FoundRow,
+	newRowBeats,
+	type RowBeats,
+	type ShownRow,
+	shownRowsAt,
+} from "./first-search-beats";
 
-/** One job the first search found, as `desktop.scanJobs` returns it. */
-export interface FoundRow {
-	jobId: string;
-	company: string;
-	title: string;
-	state: "found" | "fits" | "rejected_by_filter" | "scored";
-	reason: string | null;
-	score: number | null;
-	match: boolean;
-}
-
-export type ShownRow = FoundRow & {
-	/** What the row shows now: a new row reads as found for a beat before its real state. */
-	shown: FoundRow["state"];
-	/** A set-aside row that has shown its reason and left the list. */
-	gone: boolean;
-};
-
-/** A new row reads "Found" this long, so the rules pass is seen even when it beat the poll. */
-const FOUND_MS = 700;
-/** A set-aside row shows its reason at least this long, then leaves with the others… */
-const ASIDE_MIN_MS = 1_200;
-/** …or on its own after this, if the rules pass is still going. */
-const ASIDE_MAX_MS = 3_000;
 /** Rows shown at once; the rest are counted under the list. */
-export const VISIBLE_ROWS = 12;
+const VISIBLE_ROWS = 12;
 
-/**
- * The rows with the beats of the prototype: each arrives as found, a set-aside row holds its
- * reason and the set-aside rows leave together once no row is still being checked (or each on
- * its own after a few seconds). Times are kept per job, so a poll never restarts a beat.
- */
+/** `shownRowsAt` across renders: the beats are kept per job, so a poll never restarts one. */
 export function useShownRows(rows: FoundRow[]): ShownRow[] {
-	const seen = useRef(new Map<string, number>());
-	const asideAt = useRef(new Map<string, number>());
+	const beats = useRef<RowBeats>(newRowBeats());
 	const [, tick] = useState(0);
-	const now = Date.now();
-	for (const r of rows)
-		if (!seen.current.has(r.jobId)) seen.current.set(r.jobId, now);
-	const first = rows.map((r) => {
-		const fresh = now - (seen.current.get(r.jobId) ?? now) < FOUND_MS;
-		return { ...r, shown: fresh ? ("found" as const) : r.state };
-	});
-	const checking = first.some((r) => r.shown === "found");
-	let waiting = first.some((r) => r.shown === "found");
-	const shown = first.map((r) => {
-		if (r.shown !== "rejected_by_filter") return { ...r, gone: false };
-		if (!asideAt.current.has(r.jobId)) asideAt.current.set(r.jobId, now);
-		const held = now - (asideAt.current.get(r.jobId) ?? now);
-		const gone = held >= ASIDE_MAX_MS || (held >= ASIDE_MIN_MS && !checking);
-		if (!gone) waiting = true;
-		return { ...r, gone };
-	});
+	const { shown, waiting } = shownRowsAt(rows, beats.current);
 	// A beat is still running: look again shortly. Polls re-render on their own as well.
 	useEffect(() => {
 		if (!waiting) return;
@@ -97,6 +59,9 @@ function badgeOf(
 		return row.match
 			? { tone: "brand", label: "Match" }
 			: { tone: "neutral", label: LABEL.scored };
+	// Past the rules and waiting on a paused model: not being scored now.
+	if (row.shown === "fits" && row.paused)
+		return { tone: "warning", label: "Paused" };
 	// Past the rules and no row still being checked: these are being scored now.
 	if (row.shown === "fits" && rulesOver)
 		return { tone: "neutral", label: "Scoring" };
@@ -106,6 +71,7 @@ function badgeOf(
 function JobRow({ row, rulesOver }: { row: ShownRow; rulesOver: boolean }) {
 	const scored = row.shown === "scored";
 	const aside = row.shown === "rejected_by_filter";
+	const scoring = row.shown === "fits" && !row.paused;
 	const badge = badgeOf(row, rulesOver);
 	return (
 		<div
@@ -116,10 +82,10 @@ function JobRow({ row, rulesOver }: { row: ShownRow; rulesOver: boolean }) {
 			<span className="first-search-slot w-8 shrink-0">
 				<Check
 					on={false}
-					pending={row.shown === "fits"}
+					pending={scoring}
 					size={14}
 					className="first-search-arc"
-					data-show={row.shown === "fits" || undefined}
+					data-show={scoring || undefined}
 				/>
 				<span className="first-search-fit" data-on={scored || undefined}>
 					{scored ? (
@@ -152,15 +118,15 @@ function JobRow({ row, rulesOver }: { row: ShownRow; rulesOver: boolean }) {
 
 /**
  * The jobs the first search found, as they arrive: the first `VISIBLE_ROWS` still in the list,
- * in the order they were found, and how many more under them. Reduce Motion: rows appear and
- * leave without moving.
+ * in the order they were found, and how many more under them (`hidden`: jobs still in play past
+ * the procedure's row cap). Reduce Motion: rows appear and leave without moving.
  */
 export function FirstSearchList({
 	rows,
-	total,
+	hidden,
 }: {
 	rows: ShownRow[];
-	total: number;
+	hidden: number;
 }) {
 	const reduced = useReducedMotion();
 	const rulesOver = !rows.some((r) => r.shown === "found");
@@ -170,9 +136,9 @@ export function FirstSearchList({
 		if (!row.gone) open++;
 		return { row, visible };
 	});
-	// Jobs past the rows this view has (the procedure's cap) count with the hidden ones.
-	const more =
-		Math.max(0, open - VISIBLE_ROWS) + Math.max(0, total - rows.length);
+	// Active jobs past the rows this view has (the procedure's cap) count with the hidden ones;
+	// set-aside jobs it left out would have left the list anyway.
+	const more = Math.max(0, open - VISIBLE_ROWS) + hidden;
 	if (rows.length === 0) return null;
 	return (
 		<div

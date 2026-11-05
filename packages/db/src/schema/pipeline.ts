@@ -30,6 +30,7 @@ import { sql } from "drizzle-orm";
 import {
 	index,
 	integer,
+	primaryKey,
 	sqliteTable,
 	text,
 	uniqueIndex,
@@ -728,6 +729,24 @@ export const scanRuns = sqliteTable(
 		uniqueIndex("scan_runs_flow_run_unique").on(t.flowRunId),
 		index("scan_runs_user_started_idx").on(t.userId, t.startedAt),
 	],
+);
+
+/**
+ * The jobs one scan run inserted, recorded as each is inserted (setup's live first search reads
+ * them while the scan runs; `scan_runs.sources[].newJobIds` is written only when a source ends).
+ * Keyed by the runner's run id, like `scan_runs.flow_run_id`; pruned with the scan history.
+ */
+export const scanRunJobs = sqliteTable(
+	"scan_run_jobs",
+	{
+		flowRunId: text("flow_run_id").notNull(),
+		userId: userId(),
+		jobId: text("job_id")
+			.notNull()
+			.references(() => jobs.id, { onDelete: "cascade" }),
+		createdAt: createdAt(),
+	},
+	(t) => [primaryKey({ columns: [t.flowRunId, t.jobId] })],
 );
 
 /**

@@ -5,11 +5,25 @@ import {
 	type SourceReport,
 	scanTotals,
 } from "@offerfinch/core/pipeline/scan-report";
-import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
+import {
+	and,
+	desc,
+	eq,
+	inArray,
+	isNotNull,
+	notInArray,
+	sql,
+} from "drizzle-orm";
 
 import type { Database } from "./client";
 import { flowRuns } from "./schema/jobs";
-import { applications, companies, jobs, scanRuns } from "./schema/pipeline";
+import {
+	applications,
+	companies,
+	jobs,
+	scanRunJobs,
+	scanRuns,
+} from "./schema/pipeline";
 
 /**
  * Scan history (`core/pipeline/scan-report.ts`): a row per scan run, written as the scan goes.
@@ -47,7 +61,7 @@ export async function beginScanRun(
 		.where(eq(scanRuns.userId, input.userId))
 		.orderBy(desc(scanRuns.startedAt), desc(sql`${scanRuns}.rowid`))
 		.limit(SCAN_HISTORY_KEEP);
-	if (keep.length === SCAN_HISTORY_KEEP)
+	if (keep.length === SCAN_HISTORY_KEEP) {
 		await db.delete(scanRuns).where(
 			and(
 				eq(scanRuns.userId, input.userId),
@@ -57,6 +71,47 @@ export async function beginScanRun(
 				),
 			),
 		);
+		// Their job lists go with them (this run's row was just written, so it stays).
+		await db.delete(scanRunJobs).where(
+			and(
+				eq(scanRunJobs.userId, input.userId),
+				notInArray(
+					scanRunJobs.flowRunId,
+					db
+						.select({ id: scanRuns.flowRunId })
+						.from(scanRuns)
+						.where(
+							and(
+								eq(scanRuns.userId, input.userId),
+								isNotNull(scanRuns.flowRunId),
+							),
+						),
+				),
+			),
+		);
+	}
+}
+
+/**
+ * Jobs a scan run inserted, recorded as each is inserted (and again from each source's report as
+ * it ends, so a step retried after its insert loses none). Safe to repeat.
+ */
+export async function recordScanRunJobs(
+	db: Database,
+	input: { flowRunId: string; userId: string; jobIds: string[] },
+): Promise<void> {
+	// SQLite's variable limit: a few hundred rows per insert.
+	for (let i = 0; i < input.jobIds.length; i += 200)
+		await db
+			.insert(scanRunJobs)
+			.values(
+				input.jobIds.slice(i, i + 200).map((jobId) => ({
+					flowRunId: input.flowRunId,
+					userId: input.userId,
+					jobId,
+				})),
+			)
+			.onConflictDoNothing();
 }
 
 /** Replaces (or adds) sources by id, keeping their order of first arrival; totals follow. */
