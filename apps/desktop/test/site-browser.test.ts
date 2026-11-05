@@ -564,3 +564,49 @@ describe("main-frame requests while a run reads a tab", () => {
 		});
 	});
 });
+
+describe("try-it mode closes every site tab and opens none", () => {
+	const fakeWindow = () =>
+		({
+			isDestroyed: () => false,
+			getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
+			contentView: {
+				children: [] as unknown[],
+				addChildView() {},
+				removeChildView() {},
+			},
+			webContents: { send() {} },
+		}) as never;
+	const bounds = { x: 0, y: 0, width: 400, height: 300 };
+
+	it("closes a sign-in tab kept after its sheet closed, and refuses sheets and claims while blocked", async () => {
+		const sites = browser();
+		expect(sites.show("linkedin", "sign-in", fakeWindow(), bounds).ok).toBe(
+			true,
+		);
+		// The sheet closes; the signed-in tab stays a minute (the real session in it).
+		sites.hide("linkedin");
+		expect(sites.describe()).toMatchObject([
+			{ site: "linkedin", sheet: null, run: false },
+		]);
+		const contents = sites.contents("linkedin");
+		sites.block("switching");
+		sites.closeAll();
+		expect(sites.describe()).toEqual([]);
+		expect(contents?.isDestroyed()).toBe(true);
+		expect(sites.show("linkedin", "sign-in", fakeWindow(), bounds)).toEqual({
+			ok: false,
+			reason: "switching",
+		});
+		await expect(
+			sites.handle({ op: "claim", site: "indeed" }, 3),
+		).rejects.toThrow("switching");
+		expect(sites.describe()).toEqual([]);
+		// Back on the real data: tabs open again.
+		sites.block(null);
+		expect(sites.show("linkedin", "sign-in", fakeWindow(), bounds).ok).toBe(
+			true,
+		);
+		sites.closeAll();
+	});
+});

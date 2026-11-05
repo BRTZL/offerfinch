@@ -63,7 +63,8 @@ function trayMenu() {
 				void mainState.worker.request("setPaused", !s?.paused).catch(() => {}),
 		},
 		{ type: "separator" },
-		...(mainState.updates?.get().status === "ready"
+		// Not while try-it mode runs: installing is refused then (updates are suspended).
+		...(mainState.updates?.canInstall()
 			? [
 					{
 						label: `Restart to Update to ${(mainState.updates.get() as { version: string }).version}`,

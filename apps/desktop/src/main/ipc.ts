@@ -39,7 +39,7 @@ import { lifecycle } from "./lifecycle";
 import { contextMenu } from "./menu";
 import { NOTIFICATION_SETTINGS_URL } from "./notifications";
 import { APP_ORIGIN } from "./protocol";
-import { secretUpdater } from "./secret-updates";
+import { keysToWorker, secretUpdater } from "./secret-updates";
 import { mainState, TEST_MODE } from "./state";
 import { testHooks } from "./test-hooks";
 import { connectRenderer } from "./window";
@@ -114,14 +114,14 @@ async function withKeyLock(write: () => Promise<void>) {
 
 /**
  * The API keys, in main only. Try-it mode never reads or changes the real keys (and never sends
- * them to its worker): a save's keys go only to the worker that ran when it began.
+ * them to its worker): a save's keys go to the worker running once they are written, unless it
+ * is the demo's.
  */
 function registerSecretsIpc() {
-	const secretUpdates = secretUpdater(mainState.secrets, () => {
-		const generation = mainState.worker.currentGeneration;
-		return (all) =>
-			mainState.worker.postTo(generation, { type: "secrets", secrets: all });
-	});
+	const secretUpdates = secretUpdater(
+		mainState.secrets,
+		(all) => void keysToWorker(mainState.worker, () => mainState.demo, all),
+	);
 	handle(IPC.secretSet, async (name: unknown, value: unknown) => {
 		if (!isSecretName(name) || typeof value !== "string")
 			throw new Error("Bad request");

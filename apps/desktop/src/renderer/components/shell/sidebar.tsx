@@ -9,6 +9,7 @@ import {
 	UserRound,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { useDemoMode } from "@/components/desktop/demo";
 import { Cells, Mark } from "@/components/system/bits";
 import { SidebarToggle } from "@/components/system/shell";
 import { SubNavGroup, SubNavLink } from "@/components/system/subnav";
@@ -80,6 +81,8 @@ export function Sidebar() {
 	const status = useDesktopStatus();
 	const s = status.data;
 	const update = useUpdateState();
+	// Try-it mode installs nothing (main refuses it too).
+	const demo = useDemoMode();
 	const progress = useScanProgress(s?.state === "scanning" ? s.scanId : null);
 	const main: Item[] = [
 		{ href: "/", label: "Home", icon: <House /> },
@@ -188,7 +191,7 @@ export function Sidebar() {
 					)}
 				</div>
 			</Link>
-			{update?.status === "ready" ? (
+			{update?.status === "ready" && !demo ? (
 				<div className="px-3 pb-3">
 					<Button
 						size="sm"

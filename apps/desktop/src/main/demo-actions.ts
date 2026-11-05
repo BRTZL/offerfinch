@@ -1,5 +1,5 @@
 import { app, BrowserWindow } from "electron";
-import type { DemoResult, DemoStatus } from "../shared/bridge";
+import { type DemoResult, type DemoStatus, IPC } from "../shared/bridge";
 import { enterDemo, leaveDemo } from "./demo";
 import { DEMO_SWITCHING, lifecycle } from "./lifecycle";
 import { APP_ORIGIN } from "./protocol";
@@ -34,8 +34,9 @@ function reloadWindows() {
 
 /**
  * Enters or leaves try-it mode (main/demo.ts): the worker restarts on the other database, update
- * checks are suspended while the demo runs (no network; a running check or download is cancelled
- * first), and every window reloads at Home, so no screen keeps data from the other side.
+ * checks are suspended while the demo runs (no network; a running check or download must end
+ * first, or entering is refused), every site tab closes and none opens until the real worker
+ * runs again, and every window reloads at Home, so no screen keeps data from the other side.
  *
  * Holds the app's one lock (main/lifecycle.ts): refused while a backup, a restore, a key save or
  * another switch runs, and none of those starts while it runs. A leave that did not finish is
@@ -45,13 +46,22 @@ export async function switchDemo(on: boolean): Promise<DemoResult> {
 	const hold = lifecycle.take(DEMO_SWITCHING);
 	if ("busy" in hold) return { ok: false, error: hold.busy };
 	const shown = showsDemo();
+	/** Whether the worker was stopped (and so restarted, or tried to be). */
+	let stopped = false;
 	try {
 		if (on === mainState.demo && mainState.leaveFailed === null)
 			return { ok: true };
+		// No site tab opens while the worker switches, nor while the demo runs (no real source
+		// runs there). The ones open close once the worker has stopped: a run's, a sheet's, and a
+		// sign-in tab kept after its sheet closed, which still holds the real session.
+		mainState.sites.block(DEMO_SWITCHING);
 		const sw = {
 			userData: app.getPath("userData"),
-			// Its exit lets go of the site tabs its runs held (site-wiring.ts).
-			stopWorker: () => mainState.worker.stop(),
+			stopWorker: async () => {
+				stopped = true;
+				await mainState.worker.stop();
+				mainState.sites.closeAll();
+			},
 			startWorker: () => mainState.worker.restart(),
 			log,
 		};
@@ -73,11 +83,17 @@ export async function switchDemo(on: boolean): Promise<DemoResult> {
 		// and its retry. Otherwise they stay (and show the error themselves).
 		if (mainState.leaveFailed !== null || showsDemo() !== shown)
 			reloadWindows();
+		// Back on the same side with a new worker (an entry rolled back): the windows keep their
+		// page and its error, and take a port to the new worker, as after a crash's restart.
+		else if (stopped)
+			for (const win of BrowserWindow.getAllWindows())
+				win.webContents.send(IPC.workerRestart);
 		return {
 			ok: false,
 			error: error instanceof Error ? error.message : String(error),
 		};
 	} finally {
+		mainState.sites.block(showsDemo() ? DEMO_REFUSAL : null);
 		hold.release();
 	}
 }

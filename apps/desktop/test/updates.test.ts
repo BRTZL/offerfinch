@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { shortError, type Updater, Updates } from "../src/main/updates";
+import {
+	shortError,
+	UPDATE_STILL_RUNNING,
+	type Updater,
+	Updates,
+} from "../src/main/updates";
 import type { UpdateState } from "../src/shared/bridge";
 
 class StubUpdater implements Updater {
@@ -171,13 +176,83 @@ describe("Updates while try-it mode runs", () => {
 		updates.stop();
 	});
 
-	it("does not hold the switch for a check that hangs", async () => {
+	it("refuses to suspend while a check hangs, and updates go on as before", async () => {
 		const { updater, updates } = make();
-		updater.check.mockImplementationOnce(() => new Promise(() => {}) as never);
+		let answer = (_: unknown) => {};
+		updater.check.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					answer = resolve;
+				}) as never,
+		);
 		void updates.check();
 		const started = Date.now();
-		await updates.suspend(30);
+		await expect(updates.suspend(30)).rejects.toThrow(UPDATE_STILL_RUNNING);
 		expect(Date.now() - started).toBeLessThan(1_000);
+		// Not suspended: the hung check's result still counts, and nothing new started meanwhile.
+		expect(updates.isSuspended()).toBe(false);
+		expect(updater.check).toHaveBeenCalledTimes(1);
+		updater.emit("update-downloaded", { version: "0.2.0" });
+		answer(null);
+		expect(updates.canInstall()).toBe(true);
+		updates.stop();
+	});
+
+	it("refuses to suspend while a cancelled download goes on", async () => {
+		const { updater, updates, ready } = make();
+		let cancels = 0;
+		updater.check.mockImplementationOnce((async () => ({
+			cancellationToken: {
+				cancel: () => {
+					cancels++;
+				},
+			},
+			// The cancel is ignored: the download never ends.
+			downloadPromise: new Promise<void>(() => {}),
+		})) as never);
+		await updates.check();
+		await expect(updates.suspend(30)).rejects.toThrow(UPDATE_STILL_RUNNING);
+		expect(cancels).toBe(1);
+		expect(updates.isSuspended()).toBe(false);
+		// A download that ends later is announced as usual.
+		updater.emit("update-downloaded", { version: "0.2.0" });
+		expect(ready).toEqual(["0.2.0"]);
+		updates.stop();
+	});
+
+	it("goes back to idle when a download cancelled by a refused suspend ends later", async () => {
+		const { updater, updates } = make();
+		let endDownload = () => {};
+		updater.check.mockImplementationOnce((async () => ({
+			cancellationToken: { cancel: () => {} },
+			downloadPromise: new Promise<void>((_, reject) => {
+				endDownload = () => reject(new Error("cancelled"));
+			}),
+		})) as never);
+		await updates.check();
+		updater.emit("update-available", { version: "0.2.0" });
+		expect(updates.get().status).toBe("downloading");
+		await expect(updates.suspend(20)).rejects.toThrow(UPDATE_STILL_RUNNING);
+		// The cancel takes effect after the deadline: no event says so.
+		endDownload();
+		await vi.waitFor(() => expect(updates.get().status).toBe("idle"));
+		await updates.check();
+		expect(updater.check).toHaveBeenCalledTimes(2);
+		updates.stop();
+	});
+
+	it("refuses to install a downloaded update while suspended", async () => {
+		const { updater, updates } = make();
+		updater.emit("update-downloaded", { version: "0.2.0" });
+		expect(updates.canInstall()).toBe(true);
+		await updates.suspend();
+		expect(updates.canInstall()).toBe(false);
+		expect(updates.install()).toBe(false);
+		expect(updater.installs).toBe(0);
+		updates.resume();
+		expect(updates.install()).toBe(true);
+		expect(updater.installs).toBe(1);
+		updates.stop();
 	});
 
 	it("announces a download that finished while suspended only on resume", async () => {

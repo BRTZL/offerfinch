@@ -59,8 +59,9 @@ const messageOf = (error: unknown) =>
 /**
  * Into try-it mode: the worker stops (closing the real database), a fresh demo folder is made,
  * and the worker starts again on the demo database, which it fills with the sample data. If
- * the demo worker does not start, the app leaves the demo again (the real worker starts) and
- * the error is passed on; if that fails too, `leaveFailed` says so and Leave tries again.
+ * anything after the stop fails (the folder cannot be made, the demo worker does not start),
+ * the app leaves the demo again (the real worker starts on the real database) and the error is
+ * passed on; if that fails too, `leaveFailed` says so and Leave tries again.
  */
 export async function enterDemo(
 	state: DemoState,
@@ -70,17 +71,18 @@ export async function enterDemo(
 	if (state.leaveFailed !== null)
 		throw new Error("Leaving the demo did not finish: leave it first.");
 	await sw.stopWorker();
-	eraseDemo(sw.userData);
-	const folder = demoFolder(sw.userData);
-	fs.mkdirSync(folder, { recursive: true });
+	// From here the real worker is stopped: every failure goes back to it.
 	state.realDatabaseFile = state.databaseFile;
-	state.databaseFile = path.join(folder, DB_FILE);
 	state.demo = true;
 	try {
+		eraseDemo(sw.userData);
+		const folder = demoFolder(sw.userData);
+		fs.mkdirSync(folder, { recursive: true });
+		state.databaseFile = path.join(folder, DB_FILE);
 		await sw.startWorker();
 		sw.log?.("demo mode started");
 	} catch (error) {
-		sw.log?.("demo mode did not start", String(error));
+		sw.log?.("demo mode did not start", messageOf(error));
 		await leaveDemo(state, sw).catch(() => {});
 		throw error;
 	}
@@ -88,8 +90,8 @@ export async function enterDemo(
 
 /**
  * Out of try-it mode: the worker stops (its process has exited, so the demo database is
- * closed), the demo folder is deleted, and the worker starts again on the real database, the
- * same file as before. Until that worker has started, `leaveFailed` is set: a failed leave is
+ * closed), the demo folder is deleted (one that cannot be is logged and deleted at the next
+ * start), and the worker starts again on the real database, the same file as before. Until that worker has started, `leaveFailed` is set: a failed leave is
  * tried again by calling this again, which starts the real worker anew.
  */
 export async function leaveDemo(
@@ -104,7 +106,13 @@ export async function leaveDemo(
 	state.databaseFile = state.realDatabaseFile ?? state.databaseFile;
 	state.realDatabaseFile = null;
 	try {
-		eraseDemo(sw.userData);
+		// The real worker comes first: a folder that cannot be deleted now is deleted at the next
+		// start (main/index.ts), and holds only sample data.
+		try {
+			eraseDemo(sw.userData);
+		} catch (error) {
+			sw.log?.("the demo folder was not deleted", messageOf(error));
+		}
 		await sw.startWorker();
 	} catch (error) {
 		state.leaveFailed = messageOf(error);

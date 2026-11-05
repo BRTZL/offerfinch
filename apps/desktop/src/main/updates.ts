@@ -43,8 +43,25 @@ export interface Updater {
 }
 
 const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
-/** How long suspend() waits for a running check or a cancelled download to end. */
+/** How long suspend() waits for a running check and a cancelled download to end. */
 const DRAIN_MS = 5_000;
+
+/** Why entering try-it mode was refused: an update request did not end in time. */
+export const UPDATE_STILL_RUNNING =
+	"An update check is still running. Try again in a moment.";
+
+/** Whether the promise settles within `ms`. */
+async function settlesWithin(promise: Promise<void>, ms: number) {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<false>((resolve) => {
+		timer = setTimeout(() => resolve(false), ms);
+	});
+	try {
+		return await Promise.race([promise.then(() => true as const), timeout]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
 
 /** The first line of an updater error, without stack or response dumps. */
 export function shortError(error: unknown): string {
@@ -184,30 +201,53 @@ export class Updates {
 
 	/**
 	 * Try-it mode: no network from here on. Every entry point (the timer, Settings, the app
-	 * menu) is refused while suspended; a running check is waited for and the download it
-	 * started cancelled (each for at most DRAIN_MS: a hung request cannot hold the switch up,
-	 * and still shows nothing). A download that ends anyway is announced only on resume().
+	 * menu) is refused while suspended, and so is installing a downloaded update. A running check
+	 * is waited for and the download it started cancelled; both must have ended within `drainMs`,
+	 * or the suspension is undone and this rejects (UPDATE_STILL_RUNNING), so the demo is not
+	 * entered while an update request is still on the network. A download that finished before
+	 * is announced only on resume().
 	 */
 	async suspend(drainMs = DRAIN_MS): Promise<void> {
+		if (this.suspended) return;
 		this.suspended = true;
 		this.stop();
+		this.options.onChange(this.state);
 		const deadline = Date.now() + drainMs;
-		const within = (promise: Promise<void>) =>
-			Promise.race([
-				promise,
-				new Promise<void>((resolve) =>
-					setTimeout(resolve, Math.max(0, deadline - Date.now())).unref?.(),
-				),
-			]);
-		if (this.checking !== null) await within(this.checking);
+		const ended = (promise: Promise<void>) =>
+			settlesWithin(promise, Math.max(0, deadline - Date.now()));
+		if (this.checking !== null && !(await ended(this.checking))) {
+			this.refuseSuspend("a check");
+		}
+		// The check has ended, so a download it started is tracked (and was cancelled there).
 		this.download?.cancel();
-		if (this.download !== null) await within(this.download.done);
+		if (this.download !== null && !(await ended(this.download.done))) {
+			this.refuseSuspend("a download");
+		}
+	}
+
+	private refuseSuspend(what: string): never {
+		this.options.log("update suspension refused", { running: what });
+		this.resume();
+		throw new Error(UPDATE_STILL_RUNNING);
+	}
+
+	/** Try-it mode runs: no check, download or install. */
+	isSuspended(): boolean {
+		return this.suspended;
+	}
+
+	/** Whether a downloaded update can be installed now (not while try-it mode runs). */
+	canInstall(): boolean {
+		return (
+			Boolean(this.updater) && !this.suspended && this.state.status === "ready"
+		);
 	}
 
 	/** Out of try-it mode: checks again (now and every 6 hours), and announces a ready update. */
 	resume() {
 		if (!this.suspended) return;
 		this.suspended = false;
+		this.options.onChange(this.state);
 		// A cancelled download reports no event of its own: back to idle, so a check can run.
 		const status = this.state.status;
 		if (
@@ -227,6 +267,7 @@ export class Updates {
 		if (!this.updater || this.state.status === "disabled") return this.state;
 		if (
 			this.suspended ||
+			this.checking !== null ||
 			this.state.status === "checking" ||
 			this.state.status === "downloading" ||
 			this.state.status === "ready"
@@ -270,14 +311,27 @@ export class Updates {
 		};
 		this.download = download;
 		void download.done.then(() => {
-			if (this.download === download) this.download = null;
+			if (this.download !== download) return;
+			this.download = null;
+			// A cancelled download reports no event: one that ended after a refused suspend() (it
+			// was cancelled, then the deadline passed) must not leave "downloading" behind, or no
+			// check would run again. While suspended, resume() resets it.
+			if (!this.suspended && this.state.status === "downloading")
+				this.set({ status: "idle", currentVersion: this.current });
 		});
 		if (this.suspended) download.cancel();
 	}
 
-	/** Quits, installs the downloaded update and opens the new version. */
+	/**
+	 * Quits, installs the downloaded update and opens the new version. Refused (false) while
+	 * try-it mode runs: the app menu, the menu bar and Settings hide the button then too.
+	 */
 	install(): boolean {
 		if (!this.updater || this.state.status !== "ready") return false;
+		if (this.suspended) {
+			this.options.log("update install refused: try-it mode runs");
+			return false;
+		}
 		this.updater.quitAndInstall(false, true);
 		return true;
 	}
