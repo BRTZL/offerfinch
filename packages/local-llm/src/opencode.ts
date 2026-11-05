@@ -36,7 +36,7 @@ import { type RelayLog, startRelay } from "./opencode-relay";
  * database afterwards. Every step is tied to the tested version, so the version gate comes first.
  */
 
-export const OPENCODE = "opencode";
+const OPENCODE = "opencode";
 
 /** The OpenCode version every proof (research notes, boundary test) was made on. */
 export const OPENCODE_TESTED_VERSION = "2.2.5";
@@ -54,7 +54,7 @@ const OPENCODE_TESTED_BINARIES: Record<string, Record<string, string>> = {
 };
 
 /** Sources whose models are on a flat-rate plan; `opencode`'s `*-free` models are too. */
-export const OPENCODE_PLAN_SOURCES: readonly string[] = [
+const OPENCODE_PLAN_SOURCES: readonly string[] = [
 	"opencode-go",
 	"zai-coding-plan",
 ];
@@ -70,6 +70,9 @@ const TESTED_PACKAGES: readonly string[] = [
 ];
 
 export const OPENCODE_WINDOWS_OFF = "OpenCode is not available on Windows yet.";
+
+/** Installs the tested OpenCode 2 build into `~/.opencode/bin`. */
+export const OPENCODE_INSTALL = `curl -fsSL https://opencode.ai/v2/install | bash -s -- --version ${OPENCODE_TESTED_VERSION}`;
 
 /** The environment switches every OpenCode process gets. */
 const SWITCHES: Record<string, string> = {
@@ -255,7 +258,7 @@ export async function checkOpenCodeBinary(input: {
 		? {
 				ok: false,
 				version,
-				detail: `OpenCode at ${binary} cannot be used: ${problem}. OfferFinch runs only the tested OpenCode ${OPENCODE_TESTED_VERSION} build. Install it with \`curl -fsSL https://opencode.ai/install | bash -s -- --version ${OPENCODE_TESTED_VERSION}\`, and set "update": "disable" in OpenCode's config so it stays on it.`,
+				detail: `OpenCode at ${binary} cannot be used: ${problem}. OfferFinch runs only the tested OpenCode ${OPENCODE_TESTED_VERSION} build. Install it with \`${OPENCODE_INSTALL}\`, and set "update": "disable" in OpenCode's config so it stays on it.`,
 			}
 		: { ok: true, version: version as string, sha256 };
 	gateCache.set(key, result);
@@ -434,7 +437,7 @@ interface Serve {
 	stderrTail(): string;
 }
 
-export interface OpenCodeEvent {
+interface OpenCodeEvent {
 	type?: string;
 	data?: Record<string, unknown>;
 }
@@ -881,7 +884,7 @@ function emptyResult(removedEnv: string[]): OpenCodeCallResult {
 const swept = new Map<string, Promise<ScrubResult | null>>();
 
 /** Sessions an earlier process left in the user's database (it stopped before its scrub). */
-export function sweepOnce(
+function sweepOnce(
 	dbFile: string,
 	cwd: string,
 	log?: (message: string, data?: Record<string, unknown>) => void,
@@ -900,6 +903,32 @@ export function sweepOnce(
 		swept.set(key, run);
 	}
 	return run;
+}
+
+/**
+ * The start-up sweep: sessions a crash left in the user's database (the app stopped between a
+ * prompt and its scrub). Only on the tested build, only OfferFinch's own project.
+ */
+export async function sweepOpenCodeCrashes(input: {
+	binary: string;
+	root: string;
+	parentEnv?: Record<string, string | undefined>;
+	log?: (message: string, data?: Record<string, unknown>) => void;
+}): Promise<ScrubResult | null> {
+	const parentEnv = input.parentEnv ?? process.env;
+	const gate = await checkOpenCodeBinary({ ...input, parentEnv });
+	if (!gate.ok) return null;
+	const dirs = await prepareRoot(input.root);
+	const result = await sweepOnce(
+		openCodeDbFile(openCodeDataHome(parentEnv)),
+		dirs.cwd,
+		input.log,
+	);
+	if (result?.rows)
+		input.log?.("opencode crash sweep removed a stale session", {
+			rows: result.rows,
+		});
+	return result;
 }
 
 /** Event types that mean the model tried something other than answering. */
@@ -1379,7 +1408,7 @@ export class OpenCodeProvider implements LlmProvider {
 		if (!binary)
 			throw this.pause(
 				"logged_out",
-				"OpenCode (`opencode`) was not found. Install it (`curl -fsSL https://opencode.ai/install | bash`), run `opencode auth login`, then check Settings › Models.",
+				`OpenCode (\`opencode\`) was not found. Install it (\`${OPENCODE_INSTALL}\`), run \`opencode auth login\`, then check Settings › Models.`,
 				{ notBilled: true },
 			);
 		let entry = this.options.entry();

@@ -27,7 +27,7 @@ const DROPPED = new Set([
 ]);
 
 /** The completion endpoint, the only one forwarded (every tested source package posts here). */
-export const RELAY_PATH = "/chat/completions";
+const RELAY_PATH = "/chat/completions";
 
 export interface RelayLog {
 	/** Requests forwarded upstream: 0 or 1. */
@@ -106,7 +106,7 @@ export function startRelay(
 			const answer = await fetchImpl(`${base}${RELAY_PATH}`, {
 				method: "POST",
 				headers: forwardedHeaders(req.headers),
-				body,
+				body: new Uint8Array(body),
 			});
 			log.upstreamStatus = answer.status;
 			log.retryAfter = answer.headers.get("retry-after");

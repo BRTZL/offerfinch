@@ -32,7 +32,26 @@ import type {
 	ClaudeSession,
 } from "@offerfinch/local-llm/isolated";
 import {
+	checkOpenCodeBinary,
+	findOpenCodeBinary,
+	listOpenCodeCatalog,
+	OPENCODE_INSTALL,
+	OPENCODE_TESTED_VERSION,
+	OPENCODE_WINDOWS_OFF,
+	type OpenCodeModelEntry,
+	OpenCodeProvider,
+	openCodeDataHome,
+	openCodeDbFile,
+	openCodeEntries,
+	sweepOpenCodeCrashes,
+} from "@offerfinch/local-llm/opencode";
+import {
+	type OpenCodeCredential,
+	readOpenCodeCredentials,
+} from "@offerfinch/local-llm/opencode-db";
+import {
 	EFFORTS,
+	type Effort,
 	formatModelRef,
 	type ModelInfo,
 	PROVIDER_NAMES,
@@ -311,6 +330,21 @@ export const CODEX_FIX: Record<CliFix["kind"], CliFix> = {
 	},
 };
 
+export const OPENCODE_FIX: Record<CliFix["kind"], CliFix> = {
+	install: {
+		kind: "install",
+		command: OPENCODE_INSTALL,
+		after:
+			"Then run opencode auth login and sign in (OpenCode, OpenCode Go or a coding plan).",
+	},
+	login: {
+		kind: "login",
+		command: "opencode auth login",
+		after:
+			"Sign in to OpenCode, OpenCode Go or a coding plan with an API key; OpenCode's free models need no sign-in.",
+	},
+};
+
 export interface CliState {
 	/** The binary found on the login shell's PATH, or null. */
 	path: string | null;
@@ -339,6 +373,10 @@ export interface CliChecks {
 	 */
 	claude(options?: { fresh?: boolean }): Promise<CliState>;
 	codex(options?: { fresh?: boolean }): Promise<CliState>;
+	/** OpenCode's state, when this run can check it. */
+	opencode?(options?: { fresh?: boolean }): Promise<CliState>;
+	/** OpenCode's models on this computer, listed by OpenCode itself (cached). */
+	opencodeModels?(): Promise<ModelInfo[]>;
 }
 
 export interface Subscriptions extends CliChecks {
@@ -402,13 +440,88 @@ export function withProviders(checks: CliChecks): Subscriptions {
 				? checks.claude(options)
 				: provider === "codex"
 					? checks.codex(options)
-					: Promise.resolve(notInstalled(provider)),
+					: provider === "opencode" && checks.opencode
+						? checks.opencode(options)
+						: Promise.resolve(notInstalled(provider)),
 		models: async (provider) =>
 			provider === "claude"
 				? CLAUDE_MODELS
 				: provider === "codex"
 					? CODEX_MODELS
-					: [],
+					: provider === "opencode" && checks.opencodeModels
+						? checks.opencodeModels()
+						: [],
+	};
+}
+
+/** An OpenCode model as the pickers show it. */
+export function openCodeModelInfo(entry: OpenCodeModelEntry): ModelInfo {
+	return {
+		ref: formatModelRef("opencode", `${entry.source}/${entry.model}`),
+		name: entry.name,
+		provider: "opencode",
+		source: entry.source,
+		billing: entry.billing === "api" ? "api" : "subscription",
+		efforts: EFFORTS.filter((e: Effort) => entry.variants.includes(e)),
+		...(entry.billing === "api" && entry.price
+			? { price: { input: entry.price.input, output: entry.price.output } }
+			: {}),
+	};
+}
+
+/** OpenCode's sign-ins in words: which sources it offers, and which it does not use, and why. */
+export function openCodeLogin(
+	credentials: OpenCodeCredential[],
+	entries: OpenCodeModelEntry[] | null,
+	now: Date = new Date(),
+): LlmLoginState {
+	const active = credentials.filter((c) => c.active);
+	const expired = active.find(
+		(c) =>
+			c.integration === "opencode" &&
+			c.type === "oauth" &&
+			c.expiresAt &&
+			c.expiresAt.getTime() < now.getTime() + 5 * 60_000,
+	);
+	if (expired)
+		return {
+			state: "logged_out",
+			detail:
+				"OpenCode's login has expired. Open OpenCode once so it refreshes it, or run opencode auth login.",
+		};
+	const offered = [
+		...new Set(
+			(entries ?? []).filter((e) => !e.unavailable).map((e) => e.source),
+		),
+	];
+	const unused = [
+		...new Set(
+			(entries ?? [])
+				.filter(
+					(e) =>
+						e.unavailable && active.some((c) => c.integration === e.source),
+				)
+				.map((e) => e.source),
+		),
+	].filter((source) => !offered.includes(source));
+	const signedIn = active.length
+		? `Signed in: ${[...new Set(active.map((c) => c.integration))].join(", ")}.`
+		: "Not signed in: only OpenCode's free models are offered.";
+	return {
+		state: "logged_in",
+		detail: [
+			signedIn,
+			entries
+				? offered.length
+					? `Models from ${offered.join(", ")}.`
+					: "No model OfferFinch can use was listed."
+				: "Models are still being listed.",
+			unused.length
+				? `Not used yet: ${unused.join(", ")} (an untested API or another company's plan login).`
+				: "",
+		]
+			.filter(Boolean)
+			.join(" "),
 	};
 }
 
@@ -429,6 +542,11 @@ class MissingCli implements LlmProvider {
 /** The subscription providers and their login checks, for the worker. */
 export function subscriptions(input: {
 	hostScript: string;
+	/**
+	 * OpenCode's stable private root. Its path goes into OpenCode's environment block, which the
+	 * model sees, so it must not name the user: default a folder in the per-user temp directory.
+	 */
+	opencodeRoot?: string;
 	log?: (message: string, data?: Record<string, unknown>) => void;
 	/** Where every read of a plan's usage goes (Settings › Models). */
 	planUsage?: (vendor: "anthropic" | "openai") => PlanUsageSink;
@@ -439,12 +557,18 @@ export function subscriptions(input: {
 	let claudeCache: { at: number; state: CliState } | null = null;
 	let codexCache: { at: number; state: CliState } | null = null;
 	const fresh = (c: { at: number } | null) => c && Date.now() - c.at < 60_000;
+	const opencode = openCodeSide({
+		root: input.opencodeRoot ?? path.join(os.tmpdir(), "offerfinch-opencode"),
+		env: () => env,
+		log: input.log,
+	});
 	const usePath = (pathEnv: string) => {
 		env = { ...process.env, PATH: pathEnv };
 		claudeBinary = findCliOnPath("claude", pathEnv);
 		codexBinary = findCliOnPath("codex", pathEnv);
 		claudeCache = null;
 		codexCache = null;
+		opencode.usePath(pathEnv);
 	};
 	usePath(mergePath(null));
 	return withProviders({
@@ -494,6 +618,8 @@ export function subscriptions(input: {
 							"openai",
 							"The Codex CLI (`codex`) was not found. Install it (npm install -g @openai/codex), then run `codex login` in Terminal.",
 						);
+			if (provider === "opencode")
+				return opencode.provider({ model, effort, ownerUserId });
 			return new MissingCli(
 				`${provider}:${model}`,
 				provider,
@@ -501,6 +627,8 @@ export function subscriptions(input: {
 				"boundary",
 			);
 		},
+		opencode: (options) => opencode.state(options),
+		opencodeModels: () => opencode.models(),
 		async claude(options = {}) {
 			if (!options.fresh && fresh(claudeCache))
 				return (claudeCache as { state: CliState }).state;
@@ -585,4 +713,227 @@ export function subscriptions(input: {
 			return state;
 		},
 	});
+}
+
+/** How long OpenCode's model list is kept, and how long listing it may take. */
+const OPENCODE_CATALOG_TTL_MS = 10 * 60_000;
+const OPENCODE_CATALOG_TIMEOUT_MS = 30_000;
+
+/**
+ * OpenCode's model list on this computer, read from OpenCode itself (a locked-down server that
+ * creates no session) and joined with the user's credentials (types only). Kept ten minutes; a
+ * read in progress is shared; `entry` answers from what is kept, without waiting.
+ */
+function openCodeCatalog(input: {
+	binary: () => string | null;
+	root: string;
+	env: () => Record<string, string | undefined>;
+	log?: (message: string, data?: Record<string, unknown>) => void;
+}) {
+	let kept: { at: number; entries: OpenCodeModelEntry[] } | null = null;
+	let running: Promise<OpenCodeModelEntry[] | null> | null = null;
+	const read = async (): Promise<OpenCodeModelEntry[] | null> => {
+		const binary = input.binary();
+		if (!binary) return null;
+		const parentEnv = input.env();
+		const listed = await Promise.race([
+			listOpenCodeCatalog({ binary, root: input.root, parentEnv }),
+			new Promise<never>((_, reject) =>
+				setTimeout(
+					() => reject(new Error("listing OpenCode's models timed out")),
+					OPENCODE_CATALOG_TIMEOUT_MS,
+				),
+			),
+		]);
+		const entries = openCodeEntries(
+			listed,
+			readCredentials(openCodeDbFile(openCodeDataHome(parentEnv))),
+		);
+		kept = { at: Date.now(), entries };
+		return entries;
+	};
+	return {
+		entry(source: string, model: string): OpenCodeModelEntry | null {
+			return (
+				kept?.entries.find((e) => e.source === source && e.model === model) ??
+				null
+			);
+		},
+		load(options: { fresh?: boolean } = {}) {
+			if (
+				!options.fresh &&
+				kept &&
+				Date.now() - kept.at < OPENCODE_CATALOG_TTL_MS
+			)
+				return Promise.resolve(kept.entries);
+			running ??= read()
+				.catch((error) => {
+					input.log?.("opencode models not listed", { error: String(error) });
+					return kept?.entries ?? null;
+				})
+				.finally(() => {
+					running = null;
+				});
+			return running;
+		},
+		clear() {
+			kept = null;
+		},
+	};
+}
+
+/** The user's OpenCode credentials (types only); none when the database cannot be read. */
+function readCredentials(dbFile: string): OpenCodeCredential[] {
+	try {
+		return readOpenCodeCredentials(dbFile);
+	} catch {
+		return [];
+	}
+}
+
+/** OpenCode's state: installed, the tested build, and which sources it is signed in to. */
+async function openCodeState(input: {
+	binary: string | null;
+	root: string;
+	env: Record<string, string | undefined>;
+	entries: OpenCodeModelEntry[] | null;
+}): Promise<CliState> {
+	if (!input.binary)
+		return {
+			path: null,
+			version: null,
+			tested: OPENCODE_TESTED_VERSION,
+			login: { state: "logged_out", detail: "OpenCode is not installed." },
+			command: OPENCODE_FIX.install.command,
+			fix: OPENCODE_FIX.install,
+		};
+	const gate = await checkOpenCodeBinary({
+		binary: input.binary,
+		root: input.root,
+		parentEnv: input.env,
+	}).catch((error) => ({
+		ok: false as const,
+		version: null,
+		detail: String(error),
+	}));
+	if (!gate.ok)
+		return {
+			path: input.binary,
+			version: gate.version,
+			tested: OPENCODE_TESTED_VERSION,
+			login: { state: "refused", detail: gate.detail },
+			command: OPENCODE_FIX.install.command,
+			fix: OPENCODE_FIX.install,
+		};
+	const login = openCodeLogin(
+		readCredentials(openCodeDbFile(openCodeDataHome(input.env))),
+		input.entries,
+	);
+	return {
+		path: input.binary,
+		version: gate.version,
+		tested: OPENCODE_TESTED_VERSION,
+		login,
+		command: login.state === "logged_in" ? null : OPENCODE_FIX.login.command,
+		fix: login.state === "logged_in" ? null : OPENCODE_FIX.login,
+	};
+}
+
+/**
+ * OpenCode for the worker: its binary on the login shell's PATH, its model list, its state and
+ * its provider, with the crash sweep whenever a binary is found.
+ */
+function openCodeSide(input: {
+	root: string;
+	env: () => Record<string, string | undefined>;
+	log?: (message: string, data?: Record<string, unknown>) => void;
+}) {
+	let binary: string | null = null;
+	let cache: { at: number; state: CliState } | null = null;
+	const catalog = openCodeCatalog({
+		binary: () => binary,
+		root: input.root,
+		env: input.env,
+		log: input.log,
+	});
+	return {
+		usePath(pathEnv: string) {
+			const before = binary;
+			binary =
+				process.platform === "win32" ? null : findOpenCodeBinary(pathEnv);
+			cache = null;
+			if (binary === before) return;
+			catalog.clear();
+			if (binary)
+				void sweepOpenCodeCrashes({
+					binary,
+					root: input.root,
+					parentEnv: input.env(),
+					log: input.log,
+				}).catch(() => {});
+		},
+		provider(choice: {
+			model: string;
+			effort?: Effort;
+			ownerUserId: string;
+		}): LlmProvider {
+			const at = choice.model.indexOf("/");
+			const source = choice.model.slice(0, at);
+			const model = choice.model.slice(at + 1);
+			const name = `opencode:${choice.model}`;
+			if (process.platform === "win32")
+				return new MissingCli(
+					name,
+					`opencode:${source}`,
+					OPENCODE_WINDOWS_OFF,
+					"boundary",
+				);
+			if (!binary)
+				return new MissingCli(
+					name,
+					`opencode:${source}`,
+					`OpenCode (opencode) was not found. Install it (${OPENCODE_INSTALL}), then run opencode auth login in Terminal.`,
+				);
+			void catalog.load();
+			return new OpenCodeProvider({
+				source,
+				model,
+				effort: choice.effort,
+				ownerUserId: choice.ownerUserId,
+				root: input.root,
+				binary,
+				parentEnv: input.env(),
+				log: input.log,
+				entry: () => catalog.entry(source, model),
+				refresh: () => catalog.load(),
+			});
+		},
+		async state(options: { fresh?: boolean } = {}): Promise<CliState> {
+			if (process.platform === "win32")
+				return {
+					path: null,
+					version: null,
+					tested: OPENCODE_TESTED_VERSION,
+					login: { state: "unknown", detail: OPENCODE_WINDOWS_OFF },
+					command: null,
+					fix: null,
+				};
+			if (!options.fresh && cache && Date.now() - cache.at < 60_000)
+				return cache.state;
+			const state = await openCodeState({
+				binary,
+				root: input.root,
+				env: input.env(),
+				entries: await catalog.load(options),
+			});
+			cache = { at: Date.now(), state };
+			return state;
+		},
+		async models(): Promise<ModelInfo[]> {
+			if (process.platform === "win32" || !binary) return [];
+			return ((await catalog.load()) ?? [])
+				.filter((e) => !e.unavailable)
+				.map(openCodeModelInfo);
+		},
+	};
 }

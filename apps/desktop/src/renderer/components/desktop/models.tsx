@@ -271,8 +271,7 @@ function PaidStops() {
 		refetchInterval: 15_000,
 	});
 	const resume = useMutation({
-		mutationFn: (vendor: "anthropic" | "openai") =>
-			client.paidStops.resume({ vendor }),
+		mutationFn: (vendor: string) => client.paidStops.resume({ vendor }),
 		onSuccess: (_r, vendor) => {
 			toast.success(
 				`${vendor === "anthropic" ? "Claude" : "Codex"} calls run again.`,
