@@ -1,18 +1,21 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Archive,
 	House,
 	Inbox,
 	MessageCircleQuestion,
+	RefreshCw,
 	Send,
 	Settings,
 	UserRound,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { toast } from "sonner";
 import { Cells, Mark } from "@/components/system/bits";
 import { SidebarToggle } from "@/components/system/shell";
 import { SubNavGroup, SubNavLink } from "@/components/system/subnav";
-import { orpc } from "@/lib/orpc";
+import { Button } from "@/components/ui/button";
+import { client, orpc } from "@/lib/orpc";
 import { prefetchScreen } from "@/lib/prefetch";
 import { Link, usePathname } from "@/lib/router";
 import { UpdateIndicator } from "./update-indicator";
@@ -35,7 +38,7 @@ function since(iso: string | null | undefined): string {
 	return hours < 24 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
 }
 
-export function useDesktopStatus() {
+function useDesktopStatus() {
 	return useQuery({
 		...orpc.desktop.status.queryOptions(),
 		refetchInterval: (q) =>
@@ -71,7 +74,7 @@ function SidebarLink({ item, active }: { item: Item; active: boolean }) {
 
 /**
  * The window's sidebar: the traffic lights at its top, the pages with plain counts (as in
- * Mail), and the scan state with the mark at its foot, beside the update indicator.
+ * Mail), and the scan state with the mark at its foot, beside Scan now and the update indicator.
  */
 export function Sidebar() {
 	const pathname = usePathname();
@@ -186,8 +189,48 @@ export function Sidebar() {
 						)}
 					</div>
 				</Link>
+				<ScanButton />
 				<UpdateIndicator />
 			</div>
 		</nav>
+	);
+}
+
+/**
+ * Scan now, beside the sidebar's scan state (an icon), or labelled where a page offers the first
+ * scan: reads every watched board once, now.
+ */
+export function ScanButton({ labeled = false }: { labeled?: boolean }) {
+	const queryClient = useQueryClient();
+	const status = useDesktopStatus();
+	const scan = useMutation({
+		mutationFn: () => client.desktop.scanNow({}),
+		onSuccess: (r) => {
+			toast.success(r.started ? "Scan started." : "A scan is already running.");
+			void queryClient.invalidateQueries({ queryKey: orpc.desktop.key() });
+			// The Scans page lists the new run at once, and follows it while it runs.
+			void queryClient.invalidateQueries({ queryKey: orpc.scanHistory.key() });
+		},
+		onError: (e) => toast.error(e.message),
+	});
+	const s = status.data;
+	const scanning = s?.state === "scanning";
+	const label = scanning ? "Scanning" : "Scan now";
+	const next = s?.next.at
+		? `Next scan at ${new Date(s.next.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+		: s?.next.note;
+	return (
+		<Button
+			size={labeled ? "sm" : "icon-sm"}
+			variant={labeled ? "outline" : "ghost"}
+			disabled={!s || scanning || scan.isPending}
+			onClick={() => scan.mutate()}
+			data-testid="scan-now"
+			aria-label={label}
+			title={next ? `${label}. ${next}` : label}
+		>
+			<RefreshCw className={scanning ? "animate-spin" : undefined} />
+			{labeled ? label : null}
+		</Button>
 	);
 }

@@ -260,12 +260,16 @@ function pathnameOf(page: Page): string {
 	return new URL(page.url()).pathname;
 }
 
-/** The window shows this route, or an item inside it (a list opens on its first row). */
+/**
+ * The window shows this route, or an item inside it (a list opens on its first row; the Inbox's
+ * rows are at /applications/:id).
+ */
 function onRoute(page: Page, want: string): boolean {
 	const now = pathnameOf(page);
 	return (
 		now === want ||
-		(want !== "/" && now.startsWith(`${want.replace(/\/$/, "")}/`))
+		(want !== "/" && now.startsWith(`${want.replace(/\/$/, "")}/`)) ||
+		(want === "/inbox" && now.startsWith("/applications/"))
 	);
 }
 

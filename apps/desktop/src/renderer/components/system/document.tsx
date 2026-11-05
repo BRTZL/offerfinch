@@ -79,7 +79,8 @@ export function ReadingColumn({
 				className="min-h-0 flex-1 overflow-auto"
 				onContextMenu={onContextMenu}
 			>
-				<div className="mx-auto flex w-full max-w-192 flex-col gap-4 px-6 pb-8">
+				{/* Room at the foot for the detail's floating action bar. */}
+				<div className="mx-auto flex w-full max-w-192 flex-col gap-4 px-6 pb-28">
 					{children}
 				</div>
 			</div>

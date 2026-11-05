@@ -1,4 +1,3 @@
-import { ENDED_COMPANY_HIDDEN } from "@offerfinch/core/domain/dismissal";
 import {
 	keepPreviousData,
 	useInfiniteQuery,
@@ -6,11 +5,16 @@ import {
 	useQueryClient,
 } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronRight, Inbox as InboxIcon, Plus } from "lucide-react";
+import {
+	ChevronRight,
+	Inbox as InboxIcon,
+	ListFilter,
+	Plus,
+} from "lucide-react";
 import {
 	type ReactNode,
-	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -23,13 +27,14 @@ import {
 	linkHost,
 	STEP_LABEL,
 } from "@/components/pipeline/added";
-import {
-	ApplicationDetail,
-	ToolbarSlot,
-} from "@/components/pipeline/application/detail";
+import { ApplicationDetail } from "@/components/pipeline/application/detail";
 import { prepareRefused } from "@/components/pipeline/application/use-application-actions";
-import { STATE_LABEL } from "@/components/pipeline/bits";
 import { FilterSelect } from "@/components/pipeline/filter-select";
+import {
+	inboxStatus,
+	lineAfter,
+	rowToOpen,
+} from "@/components/pipeline/inbox-status";
 import {
 	CompanySummary,
 	SelectionSummary,
@@ -39,24 +44,29 @@ import {
 	NotInterested,
 	useDismiss,
 } from "@/components/pipeline/not-interested";
-import { ScanButton } from "@/components/shell/scan-button";
-import { SearchButton } from "@/components/shell/search-button";
 import {
 	EmptyState,
 	ErrorLine,
 	Fit,
 	Kbd,
 	Notice,
-	SearchField,
+	StatusChip,
 } from "@/components/system/bits";
 import { PageHeader } from "@/components/system/layout";
 import { ListRow, ListRowsSkeleton } from "@/components/system/list";
 import { MasterDetail } from "@/components/system/master-detail";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { sendCommand } from "@/lib/commands";
 import { desktop } from "@/lib/desktop";
 import { client, orpc } from "@/lib/orpc";
+import { createReadState, readAfterDelay } from "@/lib/read-state";
 import { Link, useParams, useRouter, useSearchParams } from "@/lib/router";
 import { useStoredState } from "@/lib/use-stored-state";
 import { cn } from "@/lib/utils";
@@ -78,58 +88,57 @@ type ViewKey =
 	| "all";
 
 /**
- * The Inbox's views, in the order the work flows: decide on matches, drafts are written,
- * review and approve, then applied or closed. Each says what to do there.
+ * The status menu's filters, in the order the work flows: decide on matches, drafts are written,
+ * review and approve, then applied or closed. All (the default) is one list of everything.
  */
 const VIEWS: Record<
 	ViewKey,
-	{ label: string; hint: string; emptyTitle: string; empty: string }
+	{ label: string; emptyTitle: string; empty: string }
 > = {
+	all: {
+		label: "All",
+		emptyTitle: "No jobs yet",
+		empty:
+			"Every hour OfferFinch searches your sources; jobs that pass your Job search rules and minimum fit land here.",
+	},
 	matches: {
 		label: "Matches",
-		hint: "Decide on each match: Prepare to draft an application, or Not interested.",
 		emptyTitle: "No matches to decide on",
 		empty:
-			"Jobs that fit your search land here after each scan. Prepare one to draft its CV, letter and answers, or set it aside with Not interested.",
+			"Jobs that fit your search land here after each scan. Press Interested to draft its CV, letter and answers, or set it aside with Not interested.",
 	},
 	drafting: {
 		label: "Drafting",
-		hint: "Drafts being written and checked. Answer any questions so they can finish.",
 		emptyTitle: "Nothing being drafted",
 		empty:
-			"Press Prepare on a match to draft its CV, letter and answers. A draft that needs your answers waits here.",
+			"Press Interested on a match to draft its CV, letter and answers. A draft that needs your answers waits here.",
 	},
 	review: {
 		label: "To review",
-		hint: "Read each draft, then Approve or Reject it. Nothing is sent without your approval.",
 		emptyTitle: "Nothing to review",
 		empty:
 			"A job lands here once its CV, letter and answers are drafted and checked.",
 	},
 	approved: {
 		label: "Approved",
-		hint: "Approved applications, waiting to be submitted or handed to you.",
 		emptyTitle: "Nothing approved is waiting",
 		empty: "Applications you approve wait here until they are submitted.",
 	},
 	closed: {
 		label: "Closed",
-		hint: "Applied, rejected, not interested, expired, below your minimum fit, or the posting closed.",
 		emptyTitle: "Nothing closed yet",
 		empty:
 			"Applied jobs, the ones you rejected or were not interested in, those that expired and postings that closed end up here.",
 	},
-	all: {
-		label: "All",
-		hint: "Every job the Inbox holds, in every state.",
-		emptyTitle: "No jobs yet",
-		empty:
-			"Every hour OfferFinch searches your sources; jobs that pass your Job search rules and minimum fit land here.",
-	},
 };
-/** The steps that need the user, as segments; the later ones in a pop-up beside them. */
-const STEPS: ViewKey[] = ["matches", "drafting", "review"];
-const LATER: ViewKey[] = ["approved", "closed", "all"];
+const STATUS_ORDER: ViewKey[] = [
+	"all",
+	"matches",
+	"drafting",
+	"review",
+	"approved",
+	"closed",
+];
 /** Views of earlier versions, still in links and saved state. */
 const OLD_VIEWS: Record<string, ViewKey> = {
 	answers: "drafting",
@@ -158,34 +167,6 @@ const isOpenMatch = (row: InboxRow) =>
 	!row.prepareRequestedAt &&
 	!row.closedAt;
 
-/** Found closed before it was submitted (a closed posting after that is expected). */
-const postingClosed = (row: InboxRow) =>
-	Boolean(row.closedAt) &&
-	!["applying", "applied", "needs_human"].includes(row.state);
-
-/** Rows the user has opened, so new ones carry a dot (as unread mail does). */
-const SEEN_KEY = "offerfinch.inbox.seen";
-function useSeen() {
-	const [seen, setSeen] = useState<Set<string>>(() => {
-		try {
-			return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) ?? "[]"));
-		} catch {
-			return new Set();
-		}
-	});
-	const mark = useCallback((id: string) => {
-		setSeen((prev) => {
-			if (prev.has(id)) return prev;
-			const next = new Set(prev).add(id);
-			try {
-				localStorage.setItem(SEEN_KEY, JSON.stringify([...next].slice(-2000)));
-			} catch {}
-			return next;
-		});
-	}, []);
-	return { seen, mark };
-}
-
 function when(date: string | Date): string {
 	const d = new Date(date);
 	const days = (Date.now() - d.getTime()) / 86_400_000;
@@ -198,46 +179,44 @@ function when(date: string | Date): string {
 	return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+/**
+ * The row's chip, and a note beside it when something needs saying (questions to answer, a link
+ * still being read, added by you); otherwise where the job is.
+ */
 function rowStatus(row: InboxRow): {
-	text: string;
+	chip: ReturnType<typeof inboxStatus>;
+	note: string;
 	tone?: "warning" | "muted";
 } {
-	if (row.openQuestions > 0)
-		return {
-			text: `${row.openQuestions} question${row.openQuestions === 1 ? "" : "s"} to answer`,
-			tone: "warning",
-		};
-	if (postingClosed(row)) return { text: "Posting closed", tone: "muted" };
+	const chip = inboxStatus(row);
 	const step = addedStep(row);
 	if (step === "failed")
 		return {
-			text: `Couldn't read: ${row.readError ?? "the page could not be read"}`,
+			chip,
+			note: `Couldn't read: ${row.readError ?? "the page could not be read"}`,
 			tone: "warning",
 		};
-	if (step) return { text: STEP_LABEL[step], tone: "muted" };
+	if (step) return { chip, note: STEP_LABEL[step], tone: "muted" };
+	if (row.openQuestions > 0)
+		return {
+			chip,
+			note: `${row.openQuestions} question${row.openQuestions === 1 ? "" : "s"} to answer`,
+			tone: "warning",
+		};
 	if (row.source === "manual" && ["found", "scored"].includes(row.state))
 		return {
-			text:
+			chip,
+			note:
 				row.filterDecision === "reject"
 					? "Added by you · outside your search"
 					: "Added by you",
 			tone: "muted",
 		};
-	if (row.state === "dismissed")
-		return {
-			text:
-				row.endedReason === ENDED_COMPANY_HIDDEN
-					? "Company hidden"
-					: "Not interested",
-			tone: "muted",
-		};
-	if (row.state === "scored" && row.endedReason)
-		return { text: "Below your minimum fit", tone: "muted" };
-	if (row.state === "scored" && row.prepareRequestedAt)
-		return { text: "Drafting soon", tone: "muted" };
-	if (row.state === "scored") return { text: "Match", tone: "muted" };
-	if (row.state === "preparing") return { text: "Drafting CV", tone: "muted" };
-	return { text: STATE_LABEL[row.state] ?? row.state };
+	return {
+		chip,
+		note: row.locations.slice(0, 2).join(" · "),
+		tone: "muted",
+	};
 }
 
 /* --------------------------------------------------------------- grouping */
@@ -314,6 +293,24 @@ const rowsOf = (item: Item) => (item.kind === "group" ? item.rows : [item.row]);
 
 /* ------------------------------------------------------------------- page */
 
+/** Rows leave with a short fade before the list closes the gap (and slides the rest up). */
+const LEAVE_MS = 180;
+
+/**
+ * Read state (the unread dot): kept in localStorage, a row read once open for five seconds.
+ * One store for the window; `version` re-renders the list when a row turns read.
+ */
+function useReadState(selectedId: string | undefined, several: boolean) {
+	const [state] = useState(() => createReadState(localStorage));
+	const [, setVersion] = useState(0);
+	useEffect(() => {
+		// Several rows chosen: none is being read.
+		if (!selectedId || several) return;
+		return readAfterDelay(selectedId, state, () => setVersion((v) => v + 1));
+	}, [selectedId, several, state]);
+	return state;
+}
+
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keep Inbox selection, navigation, and action ordering explicit; splitting state across closures hides dependencies.
 export default function InboxPage() {
 	const router = useRouter();
@@ -325,45 +322,24 @@ export default function InboxPage() {
 		refetchInterval: 5_000,
 		refetchOnMount: "always",
 	});
-	// The view in the link; otherwise the one that needs the user, picked once when the counts
-	// arrive and kept (dismissing the last match shows its empty state, not another view).
-	const asked = params.get("all") === "1" ? "all" : viewOf(params.get("view"));
-	const [picked, setPicked] = useState<ViewKey | null>(null);
-	useEffect(() => {
-		// Counts read now, not the ones prefetched before the last scan.
-		if (picked || asked || !counts.data || !counts.isFetchedAfterMount) return;
-		setPicked(
-			counts.data.matches > 0
-				? "matches"
-				: counts.data.review > 0
-					? "review"
-					: "all",
-		);
-	}, [picked, asked, counts.data, counts.isFetchedAfterMount]);
-	// A deep link to one application (the tray, a notification) opens it in All.
-	const view: ViewKey | null = asked ?? (selectedId ? "all" : picked);
+	// One list of everything unless the status menu (or a link) asks for one status.
+	const view: ViewKey =
+		params.get("all") === "1" ? "all" : (viewOf(params.get("view")) ?? "all");
 	const groupKey = params.get("company");
-	const open = (id: string | null, key: ViewKey | null = view) =>
+	const open = (id: string | null, key: ViewKey = view) =>
 		router.replace(
-			id
-				? `/applications/${id}?view=${key ?? "all"}`
-				: `/inbox?view=${key ?? "all"}`,
+			id ? `/applications/${id}?view=${key}` : `/inbox?view=${key}`,
 		);
 	const openGroup = (key: string) =>
-		router.replace(
-			`/inbox?view=${view ?? "matches"}&company=${encodeURIComponent(key)}`,
-		);
+		router.replace(`/inbox?view=${view}&company=${encodeURIComponent(key)}`);
 
-	const [search, setSearch] = useState("");
-	// Per view: matches sort by fit, the rest newest first, unless the user picks otherwise.
+	// Best fit first, as the user decides by fit; kept per status when the user picks another.
 	const [orders, setOrders] = useStoredState<Record<string, string>>(
 		"offerfinch.inbox.orders",
 		{},
 	);
-	const order =
-		orders[view ?? "all"] ?? (view === "matches" ? "fit" : "recent");
-	const setOrder = (value: string) =>
-		setOrders({ ...orders, [view ?? "all"]: value });
+	const order = orders[view] ?? "fit";
+	const setOrder = (value: string) => setOrders({ ...orders, [view]: value });
 	const minScore = order === "fit85" ? 85 : order === "fit75" ? 75 : undefined;
 	const sort: "recent" | "fit" = order === "recent" ? "recent" : "fit";
 	const profile = useQuery({
@@ -373,8 +349,7 @@ export default function InboxPage() {
 	});
 	const pageSize = view === "matches" ? MATCHES_PAGE : PAGE;
 	const input = {
-		view: view ?? "all",
-		search: search || undefined,
+		view,
 		minScore,
 		sort,
 		// Jobs added by link show at once, while they are read, checked and scored.
@@ -385,7 +360,6 @@ export default function InboxPage() {
 		queryFn: ({ pageParam }) =>
 			client.inbox.page({ ...input, offset: pageParam, limit: pageSize }),
 		initialPageParam: 0,
-		enabled: view !== null,
 		getNextPageParam: (last, all) =>
 			last.length < pageSize ? undefined : all.length * pageSize,
 		placeholderData: keepPreviousData,
@@ -400,8 +374,10 @@ export default function InboxPage() {
 				? 1_000
 				: 5_000,
 	});
-	// Set aside or prepared from here: gone at once, before the list reloads.
+	// Set aside from here: gone at once, before the list reloads.
 	const [gone, setGone] = useState<Set<string>>(new Set());
+	// Leaving now: faded out for a moment, then gone.
+	const [leaving, setLeaving] = useState<Set<string>>(new Set());
 	const rows = useMemo(
 		() => (list.data?.pages.flat() ?? []).filter((r) => !gone.has(r.id)),
 		[list.data, gone],
@@ -442,6 +418,7 @@ export default function InboxPage() {
 		setViewFor(view);
 		setMulti([]);
 		setGone(new Set());
+		setLeaving(new Set());
 	}
 	const multiRows = rows.filter((r) => multi.includes(r.id));
 	const group =
@@ -459,6 +436,23 @@ export default function InboxPage() {
 				: selectedId
 					? `row-${selectedId}`
 					: null;
+
+	// Nothing open: the first row opens, so the detail is never empty. Also after a status is
+	// picked, once its rows are in (not the last status' rows, shown while they load).
+	const firstLine = rowToOpen({
+		items,
+		selected: Boolean(selectedId || groupKey || multi.length > 0),
+		settled: list.isSuccess && !list.isPlaceholderData,
+		// A row fading out is gone already: the last one leaving leaves the detail empty.
+		leaving: (item) => rowsOf(item).every((r) => leaving.has(r.id)),
+	});
+	const firstId = firstLine ? itemId(firstLine) : null;
+	// biome-ignore lint/correctness/useExhaustiveDependencies: Opens the first line when it changes; `firstLine` is the same line by id.
+	useEffect(() => {
+		if (!firstLine) return;
+		if (firstLine.kind === "group") openGroup(firstLine.key);
+		else open(firstLine.row.id);
+	}, [firstId]);
 
 	/** What Not interested acts on now: the selection, the company, or the one match. */
 	const target: DismissTarget | null = (() => {
@@ -496,17 +490,8 @@ export default function InboxPage() {
 	}
 
 	/** The line to select after `ids` leave the list: the next one, else the one before. */
-	const nextAfter = (ids: string[]): Item | null => {
-		const leaving = new Set(ids);
-		const stays = (item: Item) => rowsOf(item).some((r) => !leaving.has(r.id));
-		const at = items.findIndex((item) =>
-			rowsOf(item).some((r) => leaving.has(r.id)),
-		);
-		if (at < 0) return null;
-		const after = items.slice(at + 1).find(stays);
-		if (after) return after;
-		return [...items.slice(0, at)].reverse().find(stays) ?? null;
-	};
+	const nextAfter = (ids: string[]): Item | null =>
+		lineAfter(items, ids, (item) => rowsOf(item).map((r) => r.id), leaving);
 	const select = (item: Item | null) => {
 		setMulti([]);
 		if (!item) open(null);
@@ -515,7 +500,13 @@ export default function InboxPage() {
 	};
 	const leave = (ids: string[]) => {
 		const next = nextAfter(ids);
-		setGone((prev) => new Set([...prev, ...ids]));
+		setLeaving((prev) => new Set([...prev, ...ids]));
+		window.setTimeout(() => {
+			setGone((prev) => new Set([...prev, ...ids]));
+			setLeaving(
+				(prev) => new Set([...prev].filter((id) => !ids.includes(id))),
+			);
+		}, LEAVE_MS);
 		select(next);
 	};
 
@@ -526,13 +517,22 @@ export default function InboxPage() {
 			setGone((prev) => new Set([...prev].filter((id) => !ids.includes(id)))),
 	});
 
-	const prepare = async (row: InboxRow) => {
+	/**
+	 * Interested (the bar's button, P, the context menu): drafts it, then the next row opens. In
+	 * Matches the row leaves (it is drafting now); in the other lists it stays, as Drafting.
+	 */
+	const interested = async (row: InboxRow) => {
 		try {
 			await client.application.prepare({ id: row.id });
-			toast.success(`Drafting ${row.title}. It moves to Drafting.`);
-			leave([row.id]);
+			toast.success(`Drafting ${row.title}.`);
+			if (view === "matches") leave([row.id]);
+			else {
+				const next = nextAfter([row.id]);
+				if (next) select(next);
+			}
 			void queryClient.invalidateQueries({ queryKey: ["inbox"] });
 			void queryClient.invalidateQueries({ queryKey: orpc.dismissals.key() });
+			void queryClient.invalidateQueries({ queryKey: orpc.application.key() });
 		} catch (error) {
 			prepareRefused(queryClient, error);
 		}
@@ -556,31 +556,28 @@ export default function InboxPage() {
 		}
 	};
 
-	const { seen, mark } = useSeen();
-	useEffect(() => {
-		if (selectedId) mark(selectedId);
-	}, [selectedId, mark]);
+	const reads = useReadState(selectedId, multi.length > 1);
 
-	const [slot, setSlot] = useState<HTMLElement | null>(null);
 	const [rejectRequest, setRejectRequest] = useState(0);
-	const filtered = Boolean(search || minScore !== undefined);
+	const filtered = minScore !== undefined;
 	const count = (key: ViewKey) => counts.data?.[key] ?? 0;
-	const meta = view ? VIEWS[view] : null;
+	const meta = VIEWS[view];
 
-	const notInterested = (label?: string) => (
+	const notInterested = (label?: string, bar = false) => (
 		<NotInterested
 			target={target}
 			open={dismissOpen}
 			onOpenChange={setDismissOpen}
 			dismiss={dismiss}
 			label={label}
+			bar={bar}
 			returnFocus={() =>
 				document.querySelector<HTMLElement>("[data-testid=inbox-scroll]")
 			}
 		/>
 	);
 	return (
-		<ToolbarSlot.Provider value={slot}>
+		<>
 			<PageHeader
 				title="Inbox"
 				subtitle={
@@ -589,7 +586,6 @@ export default function InboxPage() {
 						: undefined
 				}
 			>
-				<SearchButton />
 				<Button
 					size="icon-sm"
 					variant="ghost"
@@ -600,8 +596,6 @@ export default function InboxPage() {
 				>
 					<Plus />
 				</Button>
-				<ScanButton compact />
-				<div ref={setSlot} className="flex items-center gap-1" />
 			</PageHeader>
 			{profile.isSuccess && profile.data === null && (
 				<div className="border-border border-b px-5 py-3">
@@ -624,50 +618,33 @@ export default function InboxPage() {
 			<MasterDetail
 				list={
 					<>
-						<div className="flex shrink-0 flex-col gap-2 px-3 pt-3 pb-2">
-							<ViewSwitch
+						<div className="flex shrink-0 items-center justify-between gap-2 px-3 pt-3 pb-2">
+							<StatusMenu
 								view={view}
 								count={count}
-								onChange={(key) => {
-									setPicked(key);
-									open(null, key);
-								}}
+								onChange={(key) => open(null, key)}
 							/>
-							{meta ? (
-								<p
-									className="text-muted-foreground px-1 text-xs"
-									data-testid="inbox-hint"
-								>
-									{meta.hint}
-								</p>
-							) : null}
-							<div className="flex items-center gap-2">
-								<SearchField
-									label="Search title or company"
-									placeholder="Filter"
-									value={search}
-									onChange={setSearch}
-									className="w-auto min-w-0 flex-1"
-								/>
-								<FilterSelect
-									label="Order and fit"
-									testId="inbox-order"
-									value={order}
-									onChange={(v) => setOrder(v || "recent")}
-									options={[
-										{ value: "recent", label: "Newest" },
-										{ value: "fit", label: "Best fit" },
-										{ value: "fit75", label: "Fit 75+" },
-										{ value: "fit85", label: "Fit 85+" },
-									]}
-								/>
-							</div>
+							<FilterSelect
+								label="Sort"
+								testId="inbox-order"
+								value={order}
+								onChange={(v) => setOrder(v || "recent")}
+								className="min-w-0"
+								options={[
+									{ value: "recent", label: "Newest" },
+									{ value: "fit", label: "Best fit" },
+									{ value: "fit75", label: "Fit 75+" },
+									{ value: "fit85", label: "Fit 85+" },
+								]}
+							/>
 						</div>
 						<InboxList
 							items={items}
+							motionKey={`${view}|${order}`}
+							leaving={leaving}
 							current={current}
 							multi={multi}
-							seen={seen}
+							isUnread={(row) => reads.isUnread(row)}
 							onToggle={toggleGroup}
 							onSelect={
 								// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keep Inbox selection, navigation, and action ordering explicit; splitting state across closures hides dependencies.
@@ -714,7 +691,7 @@ export default function InboxPage() {
 									select(item);
 								}
 							}
-							onPrepare={(row) => void prepare(row)}
+							onInterested={(row) => void interested(row)}
 							onShowInMatches={(row) => void showInMatches(row)}
 							onDismiss={() => {
 								if (target) setDismissOpen(true);
@@ -727,7 +704,7 @@ export default function InboxPage() {
 								if (list.hasNextPage && !list.isFetchingNextPage)
 									void list.fetchNextPage();
 							}}
-							loading={view === null || list.isLoading}
+							loading={list.isLoading}
 							error={list.isError ? list.error.message : null}
 							empty={
 								filtered ? (
@@ -736,21 +713,15 @@ export default function InboxPage() {
 											<Button
 												size="sm"
 												variant="outline"
-												onClick={() => {
-													setSearch("");
-													setOrder(view === "matches" ? "fit" : "recent");
-												}}
+												onClick={() => setOrder("fit")}
 											>
 												Clear filters
 											</Button>
 										</div>
 									</EmptyState>
 								) : (
-									<EmptyState
-										title={meta?.emptyTitle ?? "Nothing here"}
-										data-testid="inbox-empty"
-									>
-										{meta?.empty}
+									<EmptyState title={meta.emptyTitle} data-testid="inbox-empty">
+										{meta.empty}
 										{view === "review" && count("drafting") > 0 ? (
 											<span className="mt-2 block">
 												{count("drafting")} still drafting:{" "}
@@ -802,14 +773,20 @@ export default function InboxPage() {
 							rejectRequest={rejectRequest}
 							matchActions={
 								selectedRow && isOpenMatch(selectedRow)
-									? notInterested()
+									? notInterested(undefined, true)
+									: undefined
+							}
+							onInterested={
+								selectedRow && isOpenMatch(selectedRow)
+									? () => void interested(selectedRow)
 									: undefined
 							}
 							setAsideActions={
 								selectedRow?.state === "rejected_by_filter" ? (
 									<Button
-										size="sm"
+										size="lg"
 										variant="outline"
+										className="rounded-xl"
 										onClick={() => void showInMatches(selectedRow)}
 										data-testid="show-in-matches"
 										title="Your job search set this aside. Show it in Matches, and never set it aside again."
@@ -823,87 +800,124 @@ export default function InboxPage() {
 						<div className="flex flex-1 items-center justify-center">
 							<EmptyState icon={<InboxIcon />} title="Nothing selected">
 								{items.length > 0 ? (
-									view === "matches" ? (
-										<span>
-											Choose a match in the list, or press <Kbd>↓</Kbd> there.
-											Then <Kbd>P</Kbd> prepares it and <Kbd>X</Kbd> sets it
-											aside.
-										</span>
-									) : (
-										"Choose one in the list, or press ↓ there."
-									)
+									<span>
+										Choose one in the list, or press <Kbd>↓</Kbd> there. On a
+										match, <Kbd>P</Kbd> is Interested and <Kbd>X</Kbd> Not
+										interested.
+									</span>
 								) : (
-									meta?.hint
+									meta.empty
 								)}
 							</EmptyState>
 						</div>
 					)}
 				</div>
 			</MasterDetail>
-		</ToolbarSlot.Provider>
+		</>
 	);
 }
 
-/**
- * The pipeline in its order: the steps that need the user as segments with their counts
- * (Matches, Drafting, To review), then the later ones in a quieter row (Approved, Closed, All).
- */
-function ViewSwitch({
+/** The status filter: All, or one step of the work, each with its count. */
+function StatusMenu({
 	view,
 	count,
 	onChange,
 }: {
-	view: ViewKey | null;
+	view: ViewKey;
 	count: (key: ViewKey) => number;
 	onChange: (key: ViewKey) => void;
 }) {
-	const row = (keys: ViewKey[], label: string, quiet: boolean) => (
-		<Tabs
-			value={view !== null && keys.includes(view) ? view : null}
-			onValueChange={(v) => onChange(v as ViewKey)}
+	return (
+		<Select
+			items={STATUS_ORDER.map((key) => ({
+				value: key,
+				label: VIEWS[key].label,
+			}))}
+			value={view}
+			onValueChange={(next) => {
+				if (next) onChange(next as ViewKey);
+			}}
 		>
-			<TabsList
+			<SelectTrigger
 				size="sm"
-				aria-label={label}
-				className={cn("w-full", quiet && "bg-transparent shadow-none")}
+				aria-label="Status"
+				data-testid="inbox-status"
+				className="min-w-0"
 			>
-				{keys.map((key) => (
-					<TabsTrigger
-						key={key}
-						value={key}
-						className="min-w-0 flex-1"
-						data-testid={`inbox-view-${key}`}
-					>
-						<span className="truncate">{VIEWS[key].label}</span>
-						<span className="text-muted-foreground tabular-nums">
+				<ListFilter className="text-muted-foreground size-3.5" />
+				<SelectValue>
+					{(value: ViewKey) => (
+						<>
+							{VIEWS[value]?.label}
+							<span className="text-muted-foreground tabular-nums">
+								{count(value)}
+							</span>
+						</>
+					)}
+				</SelectValue>
+			</SelectTrigger>
+			<SelectContent align="start" alignItemWithTrigger={false}>
+				{STATUS_ORDER.map((key) => (
+					<SelectItem key={key} value={key} data-testid={`inbox-status-${key}`}>
+						{VIEWS[key].label}
+						<span className="text-muted-foreground ml-auto tabular-nums">
 							{count(key)}
 						</span>
-					</TabsTrigger>
+					</SelectItem>
 				))}
-			</TabsList>
-		</Tabs>
-	);
-	return (
-		<div className="flex flex-col gap-1">
-			{row(STEPS, "Inbox view", false)}
-			{row(LATER, "Later steps", true)}
-		</div>
+			</SelectContent>
+		</Select>
 	);
 }
 
 /**
+ * How the list moves when rows come and go: rows new since the last change fade and slide in,
+ * and for a moment every row glides to its new place (a virtualized FLIP: the rows sit at
+ * `translateY`, so a transition on it is enough). Nothing moves while the list scrolls or a
+ * row is selected, and nothing on the first load or a new filter.
+ */
+function useListMotion(ids: string[], key: string) {
+	const known = useRef<{ key: string; ids: Set<string> } | null>(null);
+	const timer = useRef<number | undefined>(undefined);
+	const [entering, setEntering] = useState<Set<string>>(new Set());
+	const [moving, setMoving] = useState(false);
+	const joined = ids.join(",");
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `joined` stands for `ids`.
+	useLayoutEffect(() => {
+		const before = known.current;
+		const now = new Set(ids);
+		known.current = { key, ids: now };
+		if (!before || before.key !== key || before.ids.size === 0) return;
+		const added = ids.filter((id) => !before.ids.has(id));
+		const removed = [...before.ids].some((id) => !now.has(id));
+		if (added.length === 0 && !removed) return;
+		setEntering(new Set(added));
+		setMoving(true);
+		window.clearTimeout(timer.current);
+		timer.current = window.setTimeout(() => {
+			setEntering(new Set());
+			setMoving(false);
+		}, 320);
+	}, [joined, key]);
+	useEffect(() => () => window.clearTimeout(timer.current), []);
+	return { entering, moving };
+}
+
+/**
  * The list: virtualized, Mail-style selection. ↑ ↓ (or J K) move, Home and End jump, → and ←
- * open and close a company, ↩ moves focus into the application. P prepares the selected match
- * and X (or Delete) sets it aside; no key approves anything.
+ * open and close a company, ↩ moves focus into the application. P is Interested on the selected
+ * match and X (or Delete) Not interested; no key approves anything.
  */
 function InboxList({
 	items,
+	motionKey,
+	leaving,
 	current,
 	multi,
-	seen,
+	isUnread,
 	onSelect,
 	onToggle,
-	onPrepare,
+	onInterested,
 	onShowInMatches,
 	onDismiss,
 	onReject,
@@ -913,12 +927,16 @@ function InboxList({
 	empty,
 }: {
 	items: Item[];
+	/** The filter and order: a new one swaps the rows without motion. */
+	motionKey: string;
+	/** Rows fading out before they leave. */
+	leaving: Set<string>;
 	current: string | null;
 	multi: string[];
-	seen: Set<string>;
+	isUnread: (row: InboxRow) => boolean;
 	onSelect: (item: Item, event?: React.MouseEvent) => void;
 	onToggle: (key: string, open?: boolean) => void;
-	onPrepare: (row: InboxRow) => void;
+	onInterested: (row: InboxRow) => void;
 	onShowInMatches: (row: InboxRow) => void;
 	onDismiss: () => void;
 	onReject: (id: string) => void;
@@ -945,6 +963,7 @@ function InboxList({
 		overscan: 8,
 	});
 	const visible = virtualizer.getVirtualItems();
+	const { entering, moving } = useListMotion(items.map(itemId), motionKey);
 	const lastIndex = visible.at(-1)?.index ?? 0;
 	const rowCount = items.length;
 	useEffect(() => {
@@ -983,7 +1002,7 @@ function InboxList({
 		else if (is("inbox-prepare")) {
 			// One match at a time, never a selection of several, and never on a held key.
 			if (event.repeat || multi.length > 1) return;
-			if (at?.kind === "row" && isOpenMatch(at.row)) onPrepare(at.row);
+			if (at?.kind === "row" && isOpenMatch(at.row)) onInterested(at.row);
 		} else if (is("inbox-dismiss")) {
 			if (event.repeat) return;
 			onDismiss();
@@ -1003,8 +1022,8 @@ function InboxList({
 					id: "dismiss",
 					label:
 						item.kind === "group"
-							? `Not Interested in All at ${item.name}…`
-							: `Not Interested in ${multi.length}…`,
+							? `Not Interested in All at ${item.name}`
+							: `Not Interested in ${multi.length}`,
 					enabled: open || inSelection,
 				},
 			]);
@@ -1018,8 +1037,8 @@ function InboxList({
 			...(isOpenMatch(row)
 				? [
 						{ id: "separator" as const },
-						{ id: "prepare" as const, label: "Prepare" },
-						{ id: "dismiss" as const, label: "Not Interested…" },
+						{ id: "prepare" as const, label: "Interested" },
+						{ id: "dismiss" as const, label: "Not Interested" },
 					]
 				: []),
 			...(row.state === "rejected_by_filter"
@@ -1037,7 +1056,7 @@ function InboxList({
 			...(row.state === "ready_for_review"
 				? [
 						{ id: "separator" as const },
-						{ id: "reject" as const, label: "Reject…" },
+						{ id: "reject" as const, label: "Reject" },
 					]
 				: []),
 		]);
@@ -1048,9 +1067,9 @@ function InboxList({
 			toast.success("Posting link copied.");
 		} else if (choice === "answer") router.push("/questions");
 		else if (choice === "reject") onReject(row.id);
-		else if (choice === "prepare") onPrepare(row);
+		else if (choice === "prepare") onInterested(row);
 		else if (choice === "show-in-matches") onShowInMatches(row);
-		// After the menu closes, so the popover opens on the toolbar's button.
+		// After the menu closes, so the popover opens on the action bar's button.
 		else if (choice === "dismiss") requestAnimationFrame(onDismiss);
 	};
 
@@ -1087,6 +1106,7 @@ function InboxList({
 					const item = items[v.index];
 					if (!item) return null;
 					const id = itemId(item);
+					const out = rowsOf(item).every((r) => leaving.has(r.id));
 					const selected =
 						id === current ||
 						(multi.length > 1 &&
@@ -1096,7 +1116,15 @@ function InboxList({
 							key={id}
 							ref={virtualizer.measureElement}
 							data-index={v.index}
-							className="absolute top-0 left-0 w-full"
+							data-leaving={out ? "" : undefined}
+							className={cn(
+								"absolute top-0 left-0 w-full",
+								moving && "ease-standard transition-transform duration-200",
+								entering.has(id) &&
+									"animate-in fade-in-0 slide-in-from-top-2 duration-200",
+								out &&
+									"animate-out fade-out-0 slide-out-to-left-4 fill-mode-forwards pointer-events-none duration-200",
+							)}
 							style={{ transform: `translateY(${v.start}px)` }}
 						>
 							{item.kind === "group" ? (
@@ -1114,10 +1142,7 @@ function InboxList({
 									child={item.group !== null}
 									selected={selected}
 									focused={focused}
-									unread={
-										item.row.state === "ready_for_review" &&
-										!seen.has(item.row.id)
-									}
+									unread={isUnread(item.row)}
 									onSelect={(e) => onSelect(item, e)}
 									onContextMenu={(e) => void onContextMenu(e, item)}
 								/>
@@ -1243,7 +1268,7 @@ function RowLine({
 					step === "failed" ? (
 						<div className="flex w-full min-w-0 flex-col items-start gap-1.5">
 							<span className="text-warning w-full truncate">
-								{status.text}
+								{status.note}
 							</span>
 							<AddedActions
 								job={{
@@ -1254,32 +1279,66 @@ function RowLine({
 							/>
 						</div>
 					) : (
-						<>
-							{step ? null : <Fit value={row.score} />}
-							{setAside ? (
-								<span
-									className="text-muted-foreground truncate"
-									data-testid="set-aside-title"
-								>
-									{row.title}
-								</span>
-							) : (
-								<span
-									className={
-										status.tone === "warning"
-											? "text-warning truncate"
-											: status.tone === "muted"
-												? "text-muted-foreground truncate"
-												: "text-foreground truncate"
-									}
-								>
-									{status.text}
-								</span>
-							)}
-						</>
+						<RowMeta
+							row={row}
+							status={status}
+							step={step}
+							setAside={setAside}
+						/>
 					)
 				}
 			/>
 		</div>
+	);
+}
+
+/** The meta line: the fit, the status chip, and the note (or the place). */
+function RowMeta({
+	row,
+	status,
+	step,
+	setAside,
+}: {
+	row: InboxRow;
+	status: ReturnType<typeof rowStatus>;
+	step: ReturnType<typeof addedStep>;
+	setAside: boolean;
+}) {
+	return (
+		<>
+			{step ? null : <Fit value={row.score} />}
+			{setAside ? (
+				<span
+					className="text-muted-foreground truncate"
+					data-testid="set-aside-title"
+				>
+					{row.title}
+				</span>
+			) : (
+				<>
+					{step ? null : (
+						<StatusChip
+							tone={status.chip.tone}
+							data-testid="status-chip"
+							data-status={status.chip.bucket ?? undefined}
+						>
+							{status.chip.label}
+						</StatusChip>
+					)}
+					<span
+						className={cn(
+							"min-w-0 truncate",
+							step ? null : "ml-auto",
+							status.tone === "warning"
+								? "text-warning"
+								: "text-muted-foreground",
+						)}
+						data-testid="row-note"
+					>
+						{status.note}
+					</span>
+				</>
+			)}
+		</>
 	);
 }

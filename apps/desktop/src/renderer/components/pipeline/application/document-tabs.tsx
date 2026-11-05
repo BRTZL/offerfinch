@@ -18,7 +18,8 @@ import { VersionPicker } from "./version-picker";
 
 const TABS: Kind[] = ["cv", "cover_letter", "form_answers"];
 
-const TAB_LABEL: Record<Kind, string> = {
+/** The document tabs' names, also the More menu's document section ("CV"). */
+export const DOCUMENT_LABEL: Record<Kind, string> = {
 	cv: "CV",
 	cover_letter: "Letter",
 	form_answers: "Answers",
@@ -95,7 +96,7 @@ export function applicationDocuments({
 		event.preventDefault();
 		const choice = await desktop.contextMenu([
 			{ id: "open-pdf", label: "Open PDF in Preview", enabled: Boolean(pdf) },
-			{ id: "save-pdf", label: "Save PDF…", enabled: Boolean(pdf) },
+			{ id: "save-pdf", label: "Save PDF", enabled: Boolean(pdf) },
 			{ id: "open-docx", label: "Open Word Document", enabled: Boolean(docx) },
 			{ id: "separator" },
 			{ id: "copy-text", label: "Copy Text" },
@@ -105,10 +106,7 @@ export function applicationDocuments({
 				enabled: rendered !== null,
 			},
 			...(canEdit
-				? [
-						{ id: "separator" as const },
-						{ id: "edit" as const, label: "Edit…" },
-					]
+				? [{ id: "separator" as const }, { id: "edit" as const, label: "Edit" }]
 				: []),
 		]);
 		if (choice === "open-pdf" && pdf)
@@ -134,6 +132,8 @@ export function applicationDocuments({
 		hasDocuments,
 		unread,
 		step,
+		pdf,
+		docx,
 	};
 }
 export type DocumentContext = ApplicationActions &
@@ -172,7 +172,7 @@ export function DocumentTabs({
 						).length;
 						return (
 							<TabsTrigger key={kind} value={kind}>
-								{TAB_LABEL[kind]}
+								{DOCUMENT_LABEL[kind]}
 								{open > 0 ? (
 									<span className="text-warning tabular-nums">
 										{open}
@@ -252,9 +252,9 @@ export function ApplicationReading({
 								(loaded.state === "scored" && loaded.prepareRequestedAt)
 							? "Drafting now. This updates by itself."
 							: loaded.state === "scored" && loaded.job.closedAt
-								? "Nothing drafted: this posting looks closed, so Prepare is off."
+								? "Nothing drafted: this posting looks closed, so Interested is off."
 								: loaded.state === "scored"
-									? "Nothing drafted yet. Press Prepare to draft a CV, letter and answers."
+									? "Nothing drafted yet. Press Interested to draft a CV, letter and answers."
 									: `No ${DOC_LABEL[tab]?.toLowerCase()} for this application.`}
 				</p>
 			) : editing === tab ? (

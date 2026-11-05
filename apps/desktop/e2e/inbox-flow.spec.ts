@@ -14,10 +14,11 @@ import {
 	tempUserData,
 	toastsGone,
 } from "./launch";
+import { showStatus } from "./matches-setup";
 
 /**
- * The Inbox as a decision list, in the background against the fixture boards: it opens on
- * Matches, a company with several matches is one line that opens to its roles, Not interested
+ * The Inbox as a decision list, in the background against the fixture boards: its status menu
+ * narrows it to Matches, where a company with several matches is one line that opens to its roles, Not interested
  * takes reasons and can hide the company (with Undo), and a hidden company's new posting is set
  * aside on the next scan without being scored. Screenshots go to test-results/inbox-shots (or
  * E2E_SHOTS).
@@ -81,7 +82,7 @@ async function scanAndSettle(page: Page, scans: number) {
 		.toBe(0);
 }
 
-test("Inbox: matches first, grouped by company, Not interested with reasons, hide and undo", async () => {
+test("Inbox: Matches grouped by company, Not interested with reasons, hide and undo", async () => {
 	const boards = await startFixtureBoards();
 	const { app, page, errors } = await launchApp({
 		userData,
@@ -103,15 +104,10 @@ test("Inbox: matches first, grouped by company, Not interested with reasons, hid
 		await scanAndSettle(page, 1);
 		expect(acmeMatches().length).toBeGreaterThanOrEqual(2);
 
-		// The Inbox opens on Matches, which says what to do there.
+		// The Inbox is one list of everything; the status menu narrows it to Matches.
 		await sidebar(page, "Inbox").click();
-		await expect(page.getByTestId("inbox-view-matches")).toHaveAttribute(
-			"aria-selected",
-			"true",
-		);
-		await expect(page.getByTestId("inbox-hint")).toHaveText(
-			"Decide on each match: Prepare to draft an application, or Not interested.",
-		);
+		await expect(page.getByTestId("inbox-status")).toContainText("All");
+		await showStatus(page, /^Matches/);
 
 		// Acme's matches are one line, closed; selecting it opens it and shows the company.
 		const group = page
@@ -297,10 +293,7 @@ test("Inbox: matches first, grouped by company, Not interested with reasons, hid
 
 		// Closed holds the dismissed matches.
 		await sidebar(page, "Inbox").click();
-		await page.getByTestId("inbox-view-closed").click();
-		await expect(page.getByTestId("inbox-hint")).toContainText(
-			"not interested",
-		);
+		await showStatus(page, /^Closed/);
 		await expect(
 			page
 				.locator("[data-testid=inbox-row][data-state=dismissed]")
@@ -327,9 +320,9 @@ test("Inbox: matches first, grouped by company, Not interested with reasons, hid
 			.toBe("scored");
 		await expect.poll(() => acmeMatches().length).toBeGreaterThanOrEqual(2);
 
-		// P prepares the one selected match, and the selection moves on.
+		// P (Interested) drafts the one selected match, and the selection moves on.
 		await sidebar(page, "Inbox").click();
-		await page.getByTestId("inbox-view-matches").click();
+		await showStatus(page, /^Matches/);
 		const back = page
 			.getByTestId("inbox-group")
 			.filter({ hasText: "Acme Robotics" });
@@ -367,8 +360,8 @@ test("Inbox: matches first, grouped by company, Not interested with reasons, hid
 		// What the job filter rejected is hidden everywhere: not in Closed, not in All.
 		const europe = () => acme().find((r) => r.external_id === "4003");
 		expect(europe()?.state).toBe("rejected_by_filter");
-		for (const view of ["closed", "all"]) {
-			await page.getByTestId(`inbox-view-${view}`).click();
+		for (const view of [/^Closed/, /^All/]) {
+			await showStatus(page, view);
 			await expect(page.getByTestId("inbox-row").first()).toBeVisible();
 			await expect(
 				page.locator("[data-testid=inbox-row][data-state=rejected_by_filter]"),

@@ -10,8 +10,6 @@ import { Redirect } from "wouter";
 import { AnimatedMark } from "@/components/animated-mark";
 import { useNotificationState } from "@/components/desktop/notifications";
 import { ago } from "@/components/pipeline/bits";
-import { ScanButton } from "@/components/shell/scan-button";
-import { SearchButton } from "@/components/shell/search-button";
 import { useScanProgress } from "@/components/shell/sidebar";
 import { Fit, IconTile, Notice } from "@/components/system/bits";
 import {
@@ -21,7 +19,6 @@ import {
 	PageHeader,
 	PageIntro,
 	Section,
-	ToolbarSeparator,
 } from "@/components/system/layout";
 import { LoadingShape } from "@/components/system/loading";
 import { Row } from "@/components/system/rows";
@@ -194,13 +191,7 @@ export default function HomePage() {
 		queryFn: () => desktop.secrets.unreadable(),
 	});
 
-	const header = (
-		<PageHeader title="Home">
-			<SearchButton />
-			<ToolbarSeparator />
-			<ScanButton />
-		</PageHeader>
-	);
+	const header = <PageHeader title="Home" />;
 	if (!onboarding.data || !status.data || !home.data)
 		return (
 			<>

@@ -86,9 +86,13 @@ test("chat beside an application and the profile: proposals accepted through the
 		await page.getByTestId("add-job-location").fill("Remote - Worldwide");
 		await page.getByTestId("add-job-text").fill(POSTING);
 		await page.getByTestId("add-job-submit").click();
-		await expect(page.getByTestId("prepare")).toBeVisible({ timeout: 60_000 });
-		await page.getByTestId("prepare").click();
-		await expect(page.getByText(/Ready for review/).first()).toBeVisible({
+		await expect(page.getByTestId("interested")).toBeVisible({
+			timeout: 60_000,
+		});
+		await page.getByTestId("interested").click();
+		await expect(
+			page.locator("[data-testid=action-bar][data-kind=review]"),
+		).toBeVisible({
 			timeout: 120_000,
 		});
 		const appId = new URL(page.url()).pathname.split("/").pop() ?? "";
@@ -100,7 +104,7 @@ test("chat beside an application and the profile: proposals accepted through the
 		const before = letterVersion();
 		expect(before).toBeGreaterThan(0);
 
-		// 1. Chat from the toolbar: the empty state offers examples.
+		// 1. Chat from the action bar: the empty state offers examples.
 		await page.getByTestId("chat-toggle").click();
 		const chat = page.getByTestId("chat-panel");
 		await expect(chat).toBeVisible();

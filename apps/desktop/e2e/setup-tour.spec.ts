@@ -164,9 +164,10 @@ test("setup's happy path: found both CLIs, five steps, first matches with a chir
 		await beat(page, 1500);
 		await frames(app, page, "8-first-matches");
 		await page.getByTestId("onboarding-finish").click();
+		// The Inbox, its first row open.
 		await expect
 			.poll(() => new URL(page.url()).pathname, { timeout: 30_000 })
-			.toBe("/inbox");
+			.toMatch(/^\/(inbox|applications\/)/);
 		await beat(page, 1500);
 		expect(errors).toEqual([]);
 	} finally {

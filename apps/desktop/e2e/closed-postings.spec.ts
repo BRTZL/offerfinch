@@ -19,6 +19,7 @@ import {
 	tempUserData,
 	toastsGone,
 } from "./launch";
+import { showStatus } from "./matches-setup";
 
 /**
  * Closed postings (docs/decisions.md, 2026-11-03), in the background against the fixture boards:
@@ -132,7 +133,7 @@ test("a posting taken down from its board shows as closed, Prepare is refused wi
 		// The employer takes 4001 down. Prepare checks the board first and refuses.
 		boards.removeJob(4001);
 		await page.goto(`app://local/applications/${first?.id}?view=all`);
-		await page.getByTestId("prepare").click();
+		await page.getByTestId("interested").click();
 		const toast = page.locator("[data-sonner-toast]").filter({
 			hasText: "This posting looks closed",
 		});
@@ -142,7 +143,7 @@ test("a posting taken down from its board shows as closed, Prepare is refused wi
 		await expect(page.getByTestId("posting-closed")).toContainText(
 			"This posting looks closed: Greenhouse no longer lists it (checked before Prepare)",
 		);
-		await expect(page.getByTestId("prepare")).toHaveCount(0);
+		await expect(page.getByTestId("interested")).toHaveCount(0);
 		expect(posting("4001")).toMatchObject({
 			state: "scored",
 			prepare_requested_at: null,
@@ -153,14 +154,11 @@ test("a posting taken down from its board shows as closed, Prepare is refused wi
 
 		// It left Matches and waits in Closed with its badge.
 		await page.goto("app://local/inbox?view=matches");
-		await expect(page.getByTestId("inbox-view-matches")).toHaveAttribute(
-			"aria-selected",
-			"true",
-		);
+		await expect(page.getByTestId("inbox-status")).toContainText("Matches");
 		await expect(
 			page.getByTestId("inbox-row").filter({ hasText: "Posting closed" }),
 		).toHaveCount(0);
-		await page.getByTestId("inbox-view-closed").click();
+		await showStatus(page, /^Closed/);
 		const closedRow = page
 			.getByTestId("inbox-row")
 			.filter({ hasText: "Posting closed" });
@@ -171,19 +169,18 @@ test("a posting taken down from its board shows as closed, Prepare is refused wi
 		await toastsGone(page, 15_000);
 		await shots(app, page, "closed-in-inbox");
 
-		// The check was wrong: It's still open puts it back, and Prepare is offered again.
+		// The check was wrong: It's still open puts it back, and Interested is offered again.
 		await page.getByTestId("reopen-posting").click();
 		await expect(page.getByTestId("posting-closed")).toHaveCount(0);
 		expect(posting("4001")).toMatchObject({ closed_at: null });
 		expect(posting("4001")?.open_confirmed_at).not.toBeNull();
 		await page.goto(`app://local/applications/${first?.id}?view=all`);
-		await expect(page.getByTestId("prepare")).toBeVisible();
+		await expect(page.getByTestId("interested")).toBeVisible();
 
 		// A board in trouble (500) says nothing about the posting: it stays open, Prepare goes on.
 		boards.failPostings(500);
 		await page.goto(`app://local/applications/${second?.id}?view=all`);
-		await page.getByTestId("prepare").click();
-		await expect(page.getByTestId("prepare")).toHaveCount(0);
+		await page.getByTestId("interested").click();
 		await expect
 			.poll(() => posting("4002")?.prepare_requested_at ?? null)
 			.not.toBeNull();

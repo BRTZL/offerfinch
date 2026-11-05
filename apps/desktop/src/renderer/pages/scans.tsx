@@ -2,15 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Radar, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
-import { ScanButton } from "@/components/shell/scan-button";
+import { ScanButton } from "@/components/shell/sidebar";
 import { Badge, EmptyState, ErrorLine, Notice } from "@/components/system/bits";
-import {
-	Group,
-	Page,
-	PageHeader,
-	Section,
-	ToolbarSeparator,
-} from "@/components/system/layout";
+import { Group, Page, PageHeader, Section } from "@/components/system/layout";
 import { ListRowsSkeleton, SelectableList } from "@/components/system/list";
 import { MasterDetail } from "@/components/system/master-detail";
 import { Row } from "@/components/system/rows";
@@ -117,8 +111,6 @@ export default function ScansPage() {
 				>
 					Sources
 				</Link>
-				<ToolbarSeparator />
-				<ScanButton />
 			</PageHeader>
 			<MasterDetail
 				list={
@@ -187,7 +179,7 @@ function NoScans() {
 			title="No scans yet"
 			actions={
 				<>
-					<ScanButton />
+					<ScanButton labeled />
 					<Link
 						href="/settings/sources"
 						className="text-primary text-sm hover:underline"

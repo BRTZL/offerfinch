@@ -233,8 +233,8 @@ test("job search pickers: filled from the profile, changed with the keyboard, ke
 			titles.findIndex((t) => t.includes("Distributed")),
 		);
 		await rows.filter({ hasText: "Distributed" }).click();
-		// The Fit section is in the Details inspector.
-		await page.getByRole("button", { name: "Details" }).click();
+		// The Fit section is in the details, opened from the fit card.
+		await page.getByTestId("fit-card").click();
 		await expect(page.getByTestId("rank-reason")).toHaveText(
 			"Ranked lower: location unclear (rank 70)",
 		);

@@ -13,8 +13,8 @@ import {
 } from "./matches-setup";
 
 /**
- * Prepare, in the background against the fixture boards and fake models: its hover says what it
- * does and never shows a cost (the owner mostly uses subscriptions; 2026-11-03), and a selection
+ * Interested (what Prepare was), in the background against the fixture boards and fake models:
+ * the caption under the action bar says what it does and never shows a cost (the owner mostly uses subscriptions; 2026-11-03), and a selection
  * of matches prepares them all with Prepare N. Home and an application's details show no costs
  * either. Screenshots go to test-results/prepare-shots (or
  * E2E_SHOTS).
@@ -26,7 +26,7 @@ const userData = tempUserData();
 
 const count = (query: string) => countIn(userData, query);
 
-test("Prepare says what it does, with no cost, and Prepare N prepares a selection", async () => {
+test("Interested says what it does, with no cost, and Prepare N prepares a selection", async () => {
 	const boards = await startFixtureBoards();
 	const { app, page, errors } = await launchApp({
 		userData,
@@ -41,18 +41,20 @@ test("Prepare says what it does, with no cost, and Prepare N prepares a selectio
 
 		const rows = await openMatches(page);
 		await rows.first().click();
-		const prepare = page.getByTestId("prepare");
-		await expect(prepare).toBeVisible();
+		// Interested says what it does in the caption under the bar, with no cost.
+		const interested = page.getByTestId("interested");
+		await expect(interested).toBeVisible();
 		await toastsGone(page, 15_000);
-
-		await prepare.hover();
-		const tip = page.getByTestId("prepare-tip");
-		await expect(tip).toBeVisible();
-		await expect(tip).toContainText("Drafts a CV, letter and answers");
-		await expect(tip).not.toContainText("$");
-		await expect(tip).not.toContainText(/estimate|cost/i);
+		const caption = page.getByTestId("action-bar-caption");
+		await expect(caption).toHaveText("Interested drafts your CV and letter");
+		await expect(interested).toHaveAttribute(
+			"title",
+			/drafts a CV, letter and answers/,
+		);
+		await expect(caption).not.toContainText("$");
+		await expect(caption).not.toContainText(/estimate|cost/i);
 		await shootBothThemes(app, page, (t) =>
-			path.join(SHOTS, `prepare-tooltip-${t}.png`),
+			path.join(SHOTS, `interested-caption-${t}.png`),
 		);
 		await page.mouse.move(10, 400);
 

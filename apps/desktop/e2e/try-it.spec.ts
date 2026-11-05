@@ -3,10 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import Database from "better-sqlite3";
-
 import { DB_FILE } from "../src/main/database-file";
 import type { DesktopBridge } from "../src/shared/bridge";
 import { APP_DIR, launchApp, tempUserData } from "./launch";
+import { showStatus } from "./matches-setup";
 
 /**
  * Try-it mode (issue #47) from a fresh install: Try it with sample data on the welcome, the
@@ -133,12 +133,12 @@ test("try it with sample data: matches, prepare, review, applied, then leave wit
 		});
 		await page.screenshot({ path: path.join(SHOTS, "2-demo-inbox.png") });
 
-		// Prepare a match: drafted by the test model, checked, then review.
+		// Interested in a match: drafted by the test model, checked, then review.
 		const kestrel = page
 			.getByTestId("inbox-row")
 			.filter({ hasText: "Kestrel Freight" });
 		await kestrel.click();
-		await expect(page.getByTestId("match")).toBeVisible();
+		await expect(page.getByTestId("interested")).toBeVisible();
 		// No link leaves the app in the demo: one the page asks to open is refused, with a toast
 		// (an .invalid name, so even a slip would reach nothing).
 		await page.evaluate(() =>
@@ -148,8 +148,8 @@ test("try it with sample data: matches, prepare, review, applied, then leave wit
 		);
 		await expect(page.getByText("Links are off in the demo")).toBeVisible();
 		const appId = new URL(page.url()).pathname.split("/").pop();
-		await page.getByTestId("prepare").click();
-		await expect(page.getByTestId("prepare")).toHaveCount(0);
+		await page.getByTestId("interested").click();
+		await expect(page.getByTestId("interested")).toHaveCount(0);
 		const stateOf = () =>
 			demoDb<{ state: string }>(
 				"select state from applications where id = ?",
@@ -173,7 +173,7 @@ test("try it with sample data: matches, prepare, review, applied, then leave wit
 				.toMatch(/^(ready_for_review|needs_human)$/);
 		}
 		await sidebar(page, "Inbox").click();
-		await page.getByRole("tab", { name: /^To review/ }).click();
+		await showStatus(page, /^To review/);
 		await page
 			.getByTestId("inbox-row")
 			.filter({ hasText: "Kestrel Freight" })

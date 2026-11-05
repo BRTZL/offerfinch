@@ -64,12 +64,25 @@ export async function scanOnce(page: Page, userData: string) {
 		.toBe(0);
 }
 
+/** Picks a status in the Inbox's status menu ("All", "Matches", "To review"…). */
+export async function showStatus(page: Page, name: RegExp) {
+	await page.getByTestId("inbox-status").click();
+	await page
+		.locator("[data-slot=select-content]")
+		.getByRole("option", { name })
+		.click();
+	await expect(page.getByTestId("inbox-status")).toContainText(
+		name.source.replace(/^\^/, ""),
+	);
+}
+
 /** The Inbox's Matches, with the fixture boards' one company opened: its two roles. */
 export async function openMatches(page: Page) {
 	await page
 		.getByRole("navigation", { name: "Main" })
 		.getByRole("link", { name: /^Inbox/ })
 		.click();
+	await showStatus(page, /^Matches/);
 	await page.getByTestId("inbox-group").first().click();
 	const rows = page.locator("[data-testid=inbox-row][data-child]");
 	await expect(rows).toHaveCount(2);
