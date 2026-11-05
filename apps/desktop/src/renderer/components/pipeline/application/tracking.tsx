@@ -6,7 +6,7 @@ import {
 	type TrackingStage,
 } from "@offerfinch/core/domain/tracking";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarPlus } from "lucide-react";
+import { CalendarPlus, ChevronDown } from "lucide-react";
 import { useId, useState } from "react";
 import { toast } from "sonner";
 import { FilterSelect } from "@/components/pipeline/filter-select";
@@ -14,6 +14,7 @@ import { Badge, ErrorLine, type Tone } from "@/components/system/bits";
 import { InspectorSection } from "@/components/system/pane";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { Textarea } from "@/components/ui/textarea";
 import { desktop } from "@/lib/desktop";
 import { client, orpc } from "@/lib/orpc";
@@ -40,7 +41,7 @@ function stageText(stage: TrackingStage, round?: number | null) {
 }
 
 /** An application's stage after Applied, as a small label. */
-export function StageChip({
+function StageChip({
 	stage,
 	round,
 }: {
@@ -51,6 +52,69 @@ export function StageChip({
 		<Badge tone={STAGE_TONE[stage]} data-testid="stage-chip" data-stage={stage}>
 			{stageText(stage, round)}
 		</Badge>
+	);
+}
+
+/**
+ * The stage as a chip that is also a menu: pick another stage to move the application there
+ * (dated today; the details' Progress section takes a date, a time and a note).
+ */
+export function StageMenu({
+	applicationId,
+	stage,
+	round,
+}: {
+	applicationId: string;
+	stage: TrackingStage;
+	round?: number | null;
+}) {
+	const refresh = useTrackingRefresh(applicationId);
+	const move = useMutation({
+		mutationFn: (to: TrackingStage) =>
+			client.tracking.move({
+				id: applicationId,
+				stage: to,
+				occurredOn: today(),
+			}),
+		onSuccess: (_, to) => {
+			toast.success(`Moved to ${STAGE_LABEL[to]}`);
+			refresh();
+		},
+		onError: (error) => toast.error(error.message),
+	});
+	return (
+		<Menu>
+			<MenuTrigger
+				// The row selects on mouse down; the chip only opens its menu.
+				onMouseDown={(e) => e.stopPropagation()}
+				aria-label={`Stage: ${stageText(stage, round)}. Move to another stage`}
+				data-testid="stage-menu"
+				data-stage={stage}
+				className="focus-visible:ring-ring shrink-0 rounded-sm outline-none focus-visible:ring-2"
+			>
+				<Badge
+					tone={STAGE_TONE[stage]}
+					data-testid="stage-chip"
+					data-stage={stage}
+				>
+					{stageText(stage, round)}
+					<ChevronDown className="size-3" />
+				</Badge>
+			</MenuTrigger>
+			<MenuContent align="start" data-testid="stage-options">
+				{TRACKING_STAGES.filter((s) => s !== stage || s === "interviewing").map(
+					(s) => (
+						<MenuItem
+							key={s}
+							onClick={() => move.mutate(s)}
+							data-testid={`stage-option-${s}`}
+						>
+							{s === stage ? `${STAGE_LABEL[s]}, next round` : STAGE_LABEL[s]}
+						</MenuItem>
+					),
+				)}
+			</MenuContent>
+		</Menu>
 	);
 }
 
@@ -153,7 +217,7 @@ function MoveStage({
 				label="Move to"
 				value={stage}
 				onChange={setStage}
-				options={[{ value: "", label: "Move to…" }, ...options]}
+				options={[{ value: "", label: "Move to" }, ...options]}
 				size="default"
 				testId="move-stage-select"
 			/>

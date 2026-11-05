@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, MessageSquareText, X } from "lucide-react";
+import { ArrowDown, ArrowUp, MessageCircle, X } from "lucide-react";
 import {
 	type CSSProperties,
 	type ReactNode,
@@ -145,7 +145,7 @@ export function ChatPanel({
 						</ErrorLine>
 					) : messages.length === 0 && thread.isSuccess ? (
 						<EmptyState
-							icon={<MessageSquareText />}
+							icon={<MessageCircle />}
 							title="Ask for a change"
 							className="px-0"
 						>

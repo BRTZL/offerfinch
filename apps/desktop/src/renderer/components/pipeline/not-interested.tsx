@@ -7,6 +7,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ThumbsDown } from "lucide-react";
 import { useId, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ActionBarButton } from "@/components/system/action-bar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -99,9 +100,9 @@ export function useDismiss(options: {
 }
 
 /**
- * The toolbar's Not interested button and its popover: optional reasons (several), an optional
- * note, and "Hide every job from <Company>". Open it from the list too (X, the context menu)
- * through `open`. Nothing here approves or sends anything.
+ * Not interested and its popover: optional reasons (several), an optional note, and "Hide every
+ * job from <Company>". In the detail's action bar (`bar`) it opens above its button. Open it from
+ * the list too (X, the context menu) through `open`. Nothing here approves or sends anything.
  */
 export function NotInterested({
 	target,
@@ -110,6 +111,7 @@ export function NotInterested({
 	dismiss,
 	label = "Not interested",
 	returnFocus,
+	bar = false,
 }: {
 	target: DismissTarget | null;
 	open: boolean;
@@ -118,6 +120,8 @@ export function NotInterested({
 	label?: string;
 	/** Where focus goes when it closes (the list, so X ↩ X ↩ works); the trigger otherwise. */
 	returnFocus?: () => HTMLElement | null;
+	/** The action bar's button: as wide as Interested beside it, the popover above it. */
+	bar?: boolean;
 }) {
 	const [reasons, setReasons] = useState<DismissReason[]>([]);
 	const [note, setNote] = useState("");
@@ -167,13 +171,23 @@ export function NotInterested({
 		>
 			<PopoverTrigger
 				render={
-					<Button
-						size="sm"
-						variant="outline"
-						disabled={!target}
-						data-testid="not-interested"
-						title="Not interested (X). Optional reasons help find better matches."
-					/>
+					bar ? (
+						<ActionBarButton
+							tone="neutral"
+							decision
+							disabled={!target}
+							data-testid="not-interested"
+							title="Not interested (X). Optional reasons help find better matches."
+						/>
+					) : (
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={!target}
+							data-testid="not-interested"
+							title="Not interested (X). Optional reasons help find better matches."
+						/>
+					)
 				}
 			>
 				<ThumbsDown />
@@ -181,6 +195,9 @@ export function NotInterested({
 			</PopoverTrigger>
 			<PopoverContent
 				data-testid="not-interested-popover"
+				side={bar ? "top" : "bottom"}
+				align={bar ? "center" : "end"}
+				sideOffset={bar ? 10 : 6}
 				// X then ↩ dismisses with no reasons; Tab reaches the reasons first.
 				initialFocus={confirmRef}
 				finalFocus={() => (confirmed.current && returnFocus?.()) || true}
@@ -199,7 +216,7 @@ export function NotInterested({
 						<PopoverTitle>
 							{several
 								? `Not interested in ${target?.label}?`
-								: "Not interested?"}
+								: "Not interested in this job?"}
 						</PopoverTitle>
 						<PopoverDescription>
 							Why, if you like. It helps find better matches.
@@ -256,6 +273,7 @@ export function NotInterested({
 						<Button
 							ref={confirmRef}
 							size="sm"
+							variant="outline"
 							onClick={confirm}
 							disabled={!target}
 							pending={dismiss.isPending}

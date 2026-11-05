@@ -90,7 +90,7 @@ export function YourDataSettings() {
 						hint="What OfferFinch keeps here, what it sends to the model vendors you chose and the job sites it reads, and nothing else."
 						title="Privacy"
 						text={privacyDoc}
-						button="Read…"
+						button="Read"
 						testId="privacy-doc"
 					/>
 					<DocRow
@@ -98,7 +98,7 @@ export function YourDataSettings() {
 						hint="How to remove the app and every place it keeps data, keys and sign-ins."
 						title="Uninstall OfferFinch"
 						text={uninstallDoc}
-						button="Read…"
+						button="Read"
 						testId="uninstall-doc"
 					/>
 				</Group>

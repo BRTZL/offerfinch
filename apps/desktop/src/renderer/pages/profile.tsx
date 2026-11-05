@@ -5,7 +5,7 @@ import {
 	ChevronUp,
 	FolderGit2,
 	GraduationCap,
-	MessageSquare,
+	MessageCircle,
 	MessageSquareText,
 	Plus,
 	StickyNote,
@@ -484,7 +484,7 @@ export default function ProfilePage() {
 					aria-label="Chat"
 					title="Tell OfferFinch about your work; it drafts records for you to accept"
 				>
-					<MessageSquare />
+					<MessageCircle />
 					Chat
 				</Button>
 				<Button

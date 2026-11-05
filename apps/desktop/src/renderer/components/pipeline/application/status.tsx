@@ -46,7 +46,7 @@ export function StatusStrip({ app }: { app: AppDetail }) {
 	if (app.state === "applying")
 		items.push({
 			tone: "info",
-			text: "Submitting: filling the form from the approved documents…",
+			text: "Submitting: filling the form from the approved documents.",
 			testId: "applying",
 		});
 	if (app.state === "applied")
@@ -153,18 +153,6 @@ export function StatusStrip({ app }: { app: AppDetail }) {
 				</>
 			),
 			testId: "needs-answers",
-		});
-	const addedByYou = app.job.source === "manual";
-	if (
-		app.state === "scored" &&
-		!app.prepareRequestedAt &&
-		!addedByYou &&
-		!app.job.closedAt
-	)
-		items.push({
-			tone: "info",
-			text: "A match for your search. Prepare drafts a tailored CV, letter and answers from your profile, using your models.",
-			testId: "match",
 		});
 	if (
 		app.state === "preparing" ||
@@ -273,7 +261,7 @@ function PostingClosed({ app }: { app: AppDetail }) {
 		<span className="flex flex-wrap items-center gap-x-2 gap-y-1">
 			<span>
 				This posting looks closed: {app.job.closedReason ?? "found closed"},
-				found {ago(app.job.closedAt)}. Prepare is off for it.
+				found {ago(app.job.closedAt)}. Interested is off for it.
 			</span>
 			<Button
 				size="sm"
@@ -391,15 +379,15 @@ function AddedByYou({ app }: { app: AppDetail }) {
 	if (filter?.decision !== "reject" || misses.length === 0)
 		return (
 			<span>
-				Added by you. It matches your job search. Prepare drafts a tailored CV,
-				letter and answers from your profile, using your models.
+				Added by you. It matches your job search. Interested drafts a tailored
+				CV, letter and answers from your profile, using your models.
 			</span>
 		);
 	return (
 		<span className="flex flex-col gap-1">
 			<span>
 				Added by you. It doesn't match your job search; it stays here because
-				you picked it, and Prepare still drafts it:
+				you picked it, and Interested still drafts it:
 			</span>
 			<ul className="text-muted-foreground flex list-disc flex-col gap-0.5 pl-4">
 				{misses.map((r) => (

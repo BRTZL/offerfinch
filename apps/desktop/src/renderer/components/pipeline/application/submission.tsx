@@ -259,11 +259,11 @@ export function SubmissionPanel({
 							size="sm"
 							variant="outline"
 							onClick={onDryRun}
-							disabled={dryRunning}
+							pending={dryRunning}
 							data-testid="dry-run"
 							title="Fill the form with the network closed and screenshot it; never clicks submit"
 						>
-							{dryRunning ? "Dry run…" : "Dry run"}
+							Dry run
 						</Button>
 						{app.state === "needs_human" && (
 							<Button

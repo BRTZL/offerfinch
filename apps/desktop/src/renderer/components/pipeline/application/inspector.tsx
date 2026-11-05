@@ -34,6 +34,7 @@ export function ApplicationInspector({
 }: DocumentContext) {
 	return (
 		<Inspector
+			id="application-inspector"
 			aria-label="Details"
 			data-testid="inspector"
 			className="relative"

@@ -4,7 +4,7 @@ import {
 	useQuery,
 	useQueryClient,
 } from "@tanstack/react-query";
-import { type ReactNode, useContext, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { addedStep } from "@/components/pipeline/added";
 import type { Kind } from "@/components/pipeline/application/types";
@@ -14,16 +14,17 @@ import { useCommand } from "@/lib/commands";
 import { client, orpc } from "@/lib/orpc";
 import { useStoredState } from "@/lib/use-stored-state";
 import { matches } from "../../../../shared/shortcuts";
-import { ToolbarSlot } from "./toolbar";
 import type { OlderVersion } from "./version-picker";
 export type ApplicationDetailProps = {
 	id: string;
 	/** The state the list shows for this row, before the detail has loaded. */
 	listState?: string;
-	/** Bumped by the list's right-click Reject… to open the reason form. */
+	/** Bumped by the list's right-click Reject to open the reason form. */
 	rejectRequest: number;
-	/** Shown beside Prepare while this is a match nobody acted on (the Inbox's Not interested). */
+	/** In the action bar before Interested while this is a match nobody acted on (the Inbox's Not interested). */
 	matchActions?: ReactNode;
+	/** Interested, as the list does it (P): drafts it and moves on. Otherwise drafts it here. */
+	onInterested?: () => void;
 	/** Shown while the job filter has set this job aside (the Inbox's Show in Matches). */
 	setAsideActions?: ReactNode;
 };
@@ -43,8 +44,6 @@ export function useApplicationActions({
 	rejectRequest,
 }: ApplicationDetailProps) {
 	const queryClient = useQueryClient();
-
-	const slot = useContext(ToolbarSlot);
 
 	const query = useQuery({
 		...orpc.application.get.queryOptions({ input: { id } }),
@@ -335,7 +334,6 @@ export function useApplicationActions({
 	return {
 		older,
 		setOlder,
-		slot,
 		loaded,
 		postingOpen,
 		setPostingOpen,

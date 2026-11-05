@@ -1,9 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import { toast } from "sonner";
 import type { AppDetail, Kind } from "@/components/pipeline/application/types";
-import { ToolbarSeparator } from "@/components/system/layout";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -50,18 +48,6 @@ const NOUN: Record<Scope, string> = {
 	all: "CV, letter and answers",
 };
 
-const REDRAFT_STATES = ["ready_for_review", "approved"];
-
-/** Why Redraft is off right now, in words; null when it can start. */
-function blockedReason(app: AppDetail): string | null {
-	if (app.job.closedAt) return "This posting looks closed, so Redraft is off";
-	if (app.redraft && !app.redraft.problem)
-		return "A redraft is already running";
-	if (app.state === "ready_for_review" && !app.reviewCurrent && !app.checkError)
-		return "The current version is still being checked";
-	return null;
-}
-
 function useRefresh() {
 	const queryClient = useQueryClient();
 	return () => {
@@ -71,66 +57,22 @@ function useRefresh() {
 }
 
 /**
- * Redraft… in the detail's toolbar, on a prepared application in review or approved: a new
- * version of the chosen documents, written again from the current profile and the posting.
+ * Redraft, from the action bar's More menu on a prepared application in review or approved: a
+ * new version of the chosen documents, written again from the current profile and the posting.
  */
-export function RedraftControl({
-	app,
-	tab,
-	hidden,
-}: {
-	app: AppDetail | undefined;
-	tab: Kind;
-	hidden: boolean;
-}) {
-	const [open, setOpen] = useState(false);
-	if (
-		!app ||
-		hidden ||
-		!REDRAFT_STATES.includes(app.state) ||
-		!app.documents.some((d) => d.kind === "cv" || d.kind === "cover_letter")
-	)
-		return null;
-	const blocked = blockedReason(app);
-	return (
-		<>
-			<ToolbarSeparator />
-			<Button
-				size="sm"
-				variant="ghost"
-				onClick={() => setOpen(true)}
-				disabled={blocked !== null}
-				title={
-					blocked ??
-					"Write a new version of the CV, letter or answers, with an optional instruction"
-				}
-				data-testid="redraft"
-			>
-				<RefreshCw />
-				<span className="hidden lg:inline">Redraft…</span>
-			</Button>
-			{open ? (
-				<RedraftDialog
-					app={app}
-					initial={tab === "notes" ? "cv" : tab}
-					onClose={() => setOpen(false)}
-				/>
-			) : null}
-		</>
-	);
-}
-
-function RedraftDialog({
+export function RedraftDialog({
 	app,
 	initial,
 	onClose,
 }: {
 	app: AppDetail;
-	initial: Scope;
+	initial: Kind;
 	onClose: () => void;
 }) {
 	const refresh = useRefresh();
-	const [scope, setScope] = useState<Scope>(initial);
+	const [scope, setScope] = useState<Scope>(
+		initial === "notes" ? "cv" : initial,
+	);
 	const [instruction, setInstruction] = useState("");
 	const [rewriteOwn, setRewriteOwn] = useState(false);
 	const ids = useId();
