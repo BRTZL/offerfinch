@@ -21,16 +21,13 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { desktop } from "@/lib/desktop";
 import { client, orpc } from "@/lib/orpc";
 import {
-	type AiChoice,
-	draftingVendor,
-	type Mode,
+	FAKE_MODEL_REF,
+	type ModelRef,
+	parseModelRef,
 	type Role,
-	unavailable,
-	vendorOf,
-} from "../../../shared/auto-connect";
+} from "../../../shared/providers";
 
 const ROLES: { role: Role; label: string; hint: string }[] = [
 	{
@@ -46,141 +43,9 @@ const ROLES: { role: Role; label: string; hint: string }[] = [
 	{
 		role: "claims",
 		label: "Checking drafts",
-		hint: "The other company's AI checks each line against your profile.",
+		hint: "Checks each line of a draft against your profile.",
 	},
 ];
-
-const MODE_LABEL: Record<Mode, string> = {
-	api: "API key",
-	"claude-subscription": "Claude subscription",
-	"codex-subscription": "Codex subscription",
-	fake: "Test models",
-};
-
-/** "Anthropic API key" or "OpenAI API key": checking drafts takes the other company's key. */
-function modeLabel(role: Role, mode: Mode, settings: AiChoice): string {
-	if (mode !== "api") return MODE_LABEL[mode];
-	return vendorOf(role, mode, draftingVendor(settings)) === "openai"
-		? "OpenAI API key"
-		: "Anthropic API key";
-}
-
-function useKeys() {
-	return useQuery({
-		queryKey: ["desktop", "secrets"],
-		queryFn: () => desktop.secrets.status(),
-	});
-}
-
-/** One API key: stored encrypted in the computer’s encrypted storage; never shown again. */
-export function KeyField({
-	name,
-	label,
-	placeholder,
-}: {
-	name: "anthropic" | "openai";
-	label: string;
-	placeholder: string;
-}) {
-	const queryClient = useQueryClient();
-	const keys = useKeys();
-	const [value, setValue] = useState("");
-	const refresh = () =>
-		Promise.all([
-			queryClient.invalidateQueries({ queryKey: ["desktop", "secrets"] }),
-			queryClient.invalidateQueries({ queryKey: orpc.ai.key() }),
-			queryClient.invalidateQueries({ queryKey: orpc.desktop.key() }),
-			queryClient.invalidateQueries({ queryKey: orpc.sources.key() }),
-		]);
-	const save = useMutation({
-		mutationFn: () => desktop.secrets.set(name, value),
-		onSuccess: async () => {
-			setValue("");
-			toast.success(`${label} saved in encrypted storage.`);
-			await refresh();
-		},
-		onError: (e) => toast.error(e.message),
-	});
-	const remove = useMutation({
-		mutationFn: () => desktop.secrets.remove(name),
-		onSuccess: refresh,
-		onError: (e) => toast.error(e.message),
-	});
-	const stored = keys.data?.[name];
-	// Saved, but encrypted under another Keychain item (a differently signed build's).
-	const unreadable = useQuery({
-		queryKey: ["desktop", "secrets", "unreadable"],
-		queryFn: () => desktop.secrets.unreadable(),
-	});
-	const locked = !stored && Boolean(unreadable.data?.includes(name));
-	const [editing, setEditing] = useState(false);
-	const showField = !stored || editing;
-	return (
-		<FormRow
-			label={label}
-			htmlFor={`key-${name}`}
-			hint={
-				locked ? (
-					<span className="text-warning" data-testid={`key-${name}-locked`}>
-						Enter it again: this copy of the app can't read the stored key
-					</span>
-				) : stored ? (
-					"Stored in your computer’s encrypted storage"
-				) : (
-					"Not set"
-				)
-			}
-		>
-			{showField ? (
-				<form
-					className="flex items-center gap-2"
-					onSubmit={(e) => {
-						e.preventDefault();
-						if (value.trim())
-							save.mutate(undefined, { onSuccess: () => setEditing(false) });
-					}}
-				>
-					<Input
-						id={`key-${name}`}
-						type="password"
-						autoComplete="off"
-						spellCheck={false}
-						className="w-56 font-mono"
-						placeholder={stored ? "New key" : placeholder}
-						value={value}
-						onChange={(e) => setValue(e.target.value)}
-						data-testid={`key-${name}`}
-					/>
-					<Button type="submit" disabled={!value.trim() || save.isPending}>
-						Save
-					</Button>
-					{editing ? (
-						<Button
-							type="button"
-							variant="ghost"
-							onClick={() => setEditing(false)}
-						>
-							Cancel
-						</Button>
-					) : null}
-				</form>
-			) : (
-				<>
-					<Button variant="outline" onClick={() => setEditing(true)}>
-						Change…
-					</Button>
-					<Button
-						variant="ghost"
-						onClick={() => remove.mutate()}
-						disabled={remove.isPending}
-					>
-						Remove
-					</Button>
-				</>
-			)}
-		</FormRow>
-	);
-}
 
 const LOGIN_TONE: Record<string, Tone> = {
 	logged_in: "brand",
@@ -459,8 +324,8 @@ function PaidStops() {
 }
 
 /**
- * Which model each role uses and how it is paid for. API keys live in the computer’s encrypted storage; the
- * pipeline gets them in memory only. Each role can be tested live with one small call.
+ * Which model each step uses, from the providers signed in on this computer (any model may do
+ * any step). Each step can be tested live with one small call.
  */
 export function ModelSettings({
 	compact = false,
@@ -488,128 +353,78 @@ export function ModelSettings({
 			setTests((t) => ({ ...t, [role]: { ok: false, message: e.message } })),
 	});
 	const settings = ai.data?.settings;
-	const modes: Mode[] = [
-		"api",
-		"claude-subscription",
-		"codex-subscription",
-		...(ai.data?.fakeAllowed ? (["fake"] as const) : []),
-	];
+	const options = useModelOptions();
 	const body = (
 		<>
 			<QueryState isLoading={ai.isLoading} error={ai.error} what="the models" />
 			<PaidStops />
-			<Section
-				title="API keys"
-				description="Kept in your computer’s encrypted storage. Never shown, logged or sent anywhere but to the vendor."
-			>
-				<Group>
-					<KeyField
-						name="anthropic"
-						label="Anthropic API key"
-						placeholder="sk-ant-…"
-					/>
-					<KeyField name="openai" label="OpenAI API key" placeholder="sk-…" />
-				</Group>
-			</Section>
 			{settings ? (
-				<Section
-					title="Who does each step"
-					description={
-						ai.data ? (
-							<span data-testid="vendor-rule">{ai.data.vendorRule}</span>
-						) : undefined
-					}
-				>
+				<Section title="Who does each step">
 					<Group>
-						{ROLES.map(
-							// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keep each model role’s controls and connection states together so their settings dependencies stay visible.
-							({ role, label, hint }) => {
-								const current = settings[role];
-								const state = ai.data?.roles.find((r) => r.role === role);
-								const result = tests[role];
-								return (
-									<FormRow
-										key={role}
-										data-testid={`role-${role}`}
-										label={label}
-										hint={
-											<span className="flex flex-col gap-1">
-												<span>{hint}</span>
-												<span>
-													<Badge
-														tone={state?.ready ? "brand" : "warning"}
-														data-testid={`role-${role}-state`}
-														className="font-mono"
-													>
-														{state?.ready ? state.provider : "not connected"}
-													</Badge>
-												</span>
-												{state?.problem ? <span>{state.problem}</span> : null}
-												{result ? (
-													<span
-														className={
-															result.ok ? "text-brand" : "text-destructive"
-														}
-														data-testid={`role-${role}-test-result`}
-													>
-														{result.ok
-															? `Works: ${result.message}`
-															: result.message}
-													</span>
-												) : null}
-												{role === "claims" &&
-												vendorOf(
-													"claims",
-													current.mode as Mode,
-													draftingVendor(settings as AiChoice),
-												) === "openai" ? (
-													<ModelInput
-														value={current.model ?? ""}
-														placeholder={
-															current.mode === "api"
-																? "OpenAI model, e.g. gpt-6.1-terra"
-																: "Codex model (empty: your account's default)"
-														}
-														onSave={(model) =>
-															save.mutate({
-																...settings,
-																claims: { ...current, model },
-															})
-														}
-													/>
-												) : null}
+						{ROLES.map(({ role, label, hint }) => {
+							const current = settings[role];
+							const state = ai.data?.roles.find((r) => r.role === role);
+							const result = tests[role];
+							return (
+								<FormRow
+									key={role}
+									data-testid={`role-${role}`}
+									label={label}
+									hint={
+										<span className="flex flex-col gap-1">
+											<span>{hint}</span>
+											<span>
+												<Badge
+													tone={state?.ready ? "brand" : "warning"}
+													data-testid={`role-${role}-state`}
+													className="font-mono"
+												>
+													{state?.ready ? state.provider : "not connected"}
+												</Badge>
 											</span>
+											{state?.problem ? <span>{state.problem}</span> : null}
+											{result ? (
+												<span
+													className={
+														result.ok ? "text-brand" : "text-destructive"
+													}
+													data-testid={`role-${role}-test-result`}
+												>
+													{result.ok
+														? `Works: ${result.message}`
+														: result.message}
+												</span>
+											) : null}
+										</span>
+									}
+								>
+									<ModelSelect
+										// A choice made elsewhere (setup's Check again) shows at once.
+										key={current.model ?? "none"}
+										role={role}
+										label={label}
+										value={current.model}
+										options={options}
+										disabled={save.isPending}
+										onChange={(model) =>
+											save.mutate({
+												...settings,
+												[role]: { ...current, model },
+											})
 										}
+									/>
+									<Button
+										variant="ghost"
+										disabled={!state?.ready || test.isPending}
+										pending={test.isPending && test.variables === role}
+										onClick={() => test.mutate(role)}
+										data-testid={`role-${role}-test`}
 									>
-										<ModeSelect
-											// A choice made elsewhere (setup's Check again) shows at once.
-											key={current.mode}
-											role={role}
-											label={label}
-											value={current.mode as Mode}
-											modes={modes}
-											settings={settings as AiChoice}
-											disabled={save.isPending}
-											onChange={(mode) =>
-												save.mutate({
-													...settings,
-													[role]: { ...current, mode },
-												})
-											}
-										/>
-										<Button
-											variant="ghost"
-											disabled={!state?.ready || test.isPending}
-											pending={test.isPending && test.variables === role}
-											onClick={() => test.mutate(role)}
-											data-testid={`role-${role}-test`}
-										>
-											Test
-										</Button>
-									</FormRow>
-								);
-							},
-						)}
+										Test
+									</Button>
+								</FormRow>
+							);
+						})}
 					</Group>
 				</Section>
 			) : null}
@@ -640,105 +455,84 @@ export function ModelSettings({
 	);
 }
 
-function ModelInput({
-	value,
-	placeholder,
-	onSave,
-}: {
-	value: string;
-	placeholder: string;
-	onSave: (model: string) => void;
-}) {
-	const [draft, setDraft] = useState<string | null>(null);
-	return (
-		<form
-			className="mt-1 flex items-center gap-2"
-			onSubmit={(e) => {
-				e.preventDefault();
-				if (draft !== null) onSave(draft.trim());
-				setDraft(null);
-			}}
-		>
-			<Input
-				size="sm"
-				className="w-64 font-mono"
-				placeholder={placeholder}
-				value={draft ?? value}
-				onChange={(e) => setDraft(e.target.value)}
-				data-testid="claims-model"
-			/>
-			<Button
-				type="submit"
-				size="sm"
-				variant="outline"
-				disabled={draft === null}
-			>
-				Save model
-			</Button>
-		</form>
-	);
+interface ModelOption {
+	ref: ModelRef;
+	name: string;
 }
 
-/** Who does a step: a pop-up button of the ways it can be paid for. */
-function ModeSelect({
+/**
+ * The models a step can take now: those of the providers on this platform and signed in, and the
+ * test models in test runs.
+ */
+export function useModelOptions(): ModelOption[] {
+	const models = useQuery({
+		...orpc.ai.models.queryOptions(),
+		staleTime: 30_000,
+		meta: { quiet: true },
+	});
+	const d = models.data;
+	if (!d) return [];
+	return [
+		...d.providers
+			.filter((p) => p.signedIn)
+			.flatMap((p) => p.models.map((m) => ({ ref: m.ref, name: m.name }))),
+		...(d.fakeAllowed ? [{ ref: FAKE_MODEL_REF, name: "Test models" }] : []),
+	];
+}
+
+/** A model's option test id: `role-<role>-fake` for the test models, else its reference. */
+const optionId = (role: Role, ref: string) =>
+	`role-${role}-${parseModelRef(ref)?.provider === "fake" ? "fake" : ref}`;
+
+/** Who does a step: a pop-up button of the models available now. */
+function ModelSelect({
 	role,
 	label,
 	value,
-	modes,
-	settings,
+	options,
 	disabled,
 	onChange,
 }: {
 	role: Role;
 	label: string;
-	value: Mode;
-	modes: Mode[];
-	/** Every role's choice: checking drafts must stay on the other company than drafting. */
-	settings: AiChoice;
+	value: ModelRef | null;
+	options: ModelOption[];
 	disabled?: boolean;
-	onChange: (mode: Mode) => void;
+	onChange: (model: ModelRef) => void;
 }) {
+	// The stored choice stays listed while its provider is signed out or gone.
+	const items = [
+		...(value && !options.some((o) => o.ref === value)
+			? [{ ref: value, name: `${value} (not available now)` }]
+			: []),
+		...options,
+	];
 	return (
 		<Select
-			value={value}
+			value={value ?? ""}
 			disabled={disabled}
 			onValueChange={(next) => {
-				if (next && next !== value) onChange(next as Mode);
+				if (next && next !== value) onChange(next as ModelRef);
 			}}
-			items={modes.map((mode) => ({
-				value: mode,
-				label: modeLabel(role, mode, settings),
-			}))}
+			items={items.map((o) => ({ value: o.ref, label: o.name }))}
 		>
 			<SelectTrigger
-				aria-label={`${label}: paid with`}
+				aria-label={`${label}: model`}
 				className="w-52"
 				data-testid={`role-${role}-mode`}
 			>
-				<SelectValue />
+				<SelectValue placeholder="Choose a model" />
 			</SelectTrigger>
 			<SelectContent>
-				{modes.map((mode) => {
-					const why = unavailable(role, mode, settings);
-					return (
-						<SelectItem
-							key={mode}
-							value={mode}
-							disabled={Boolean(why)}
-							title={why ?? undefined}
-							data-testid={`role-${role}-${mode}`}
-						>
-							<span className="flex flex-col">
-								<span>{modeLabel(role, mode, settings)}</span>
-								{why ? (
-									<span className="text-muted-foreground max-w-56 text-xs whitespace-normal">
-										{why}
-									</span>
-								) : null}
-							</span>
-						</SelectItem>
-					);
-				})}
+				{items.map((o) => (
+					<SelectItem
+						key={o.ref}
+						value={o.ref}
+						data-testid={optionId(role, o.ref)}
+					>
+						{o.name}
+					</SelectItem>
+				))}
 			</SelectContent>
 		</Select>
 	);

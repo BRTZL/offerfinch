@@ -24,7 +24,6 @@ import { LoadingShape } from "@/components/system/loading";
 import { Row } from "@/components/system/rows";
 import { RowsSkeleton } from "@/components/system/skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
-import { desktop } from "@/lib/desktop";
 import { type client, orpc } from "@/lib/orpc";
 import { Link } from "@/lib/router";
 import { openSteps, openStepsLine } from "../../shared/setup-steps";
@@ -186,10 +185,6 @@ export default function HomePage() {
 		status.data?.state === "scanning" ? status.data.scanId : null,
 	);
 	const notify = useNotificationState();
-	const unreadable = useQuery({
-		queryKey: ["desktop", "secrets", "unreadable"],
-		queryFn: () => desktop.secrets.unreadable(),
-	});
 
 	const header = <PageHeader title="Home" />;
 	if (!onboarding.data || !status.data || !home.data)
@@ -205,7 +200,6 @@ export default function HomePage() {
 		return <Redirect to="/onboarding" replace />;
 	const s = status.data;
 	const h = home.data;
-	const lockedKeys = unreadable.data ?? [];
 	const unready = s.roles.filter((r) => !r.ready);
 	const name = firstName(profile.data?.files);
 
@@ -231,14 +225,6 @@ export default function HomePage() {
 				subtitle={sub}
 			/>,
 		);
-	if (lockedKeys.length > 0)
-		fix(
-			"keys",
-			"/settings/models",
-			`Enter your ${lockedKeys.map((k) => (k === "anthropic" ? "Anthropic" : "OpenAI")).join(" and ")} API key${lockedKeys.length > 1 ? "s" : ""} again`,
-			"A stored key can't be read by this copy of the app",
-			"home-needs-keys",
-		);
 	if (unready.length > 0)
 		fix(
 			"models",
@@ -248,7 +234,7 @@ export default function HomePage() {
 				: `Connect your AI: ${unready.map((r) => r.role).join(", ")} cannot run`,
 			unready.length === 1
 				? unready[0]?.problem
-				: "Scoring, tailoring and the claims check each need an API key or a subscription",
+				: "Finding matches, drafting and checking drafts each need a model in Settings › Models",
 			"home-needs-model",
 		);
 	if (h.spend.reached)

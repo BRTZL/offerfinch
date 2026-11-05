@@ -289,8 +289,8 @@ function RestoreBackup() {
 						</AlertDialogTitle>
 						<AlertDialogDescription>
 							Everything here now is replaced by the backup. A copy of it is
-							saved in the backups folder first. Your API keys and site sign-ins
-							on this computer stay as they are.
+							saved in the backups folder first. Your site sign-ins on this
+							computer stay as they are.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					{checked ? <BackupContents summary={checked.summary} /> : null}
@@ -332,7 +332,7 @@ function EraseData() {
 	return (
 		<FormRow
 			label="Erase everything"
-			hint="Removes your profile, answers, jobs, applications, documents, files and settings from this computer. API keys stay in encrypted storage until you remove them in Models. It cannot be undone."
+			hint="Removes your profile, answers, jobs, applications, documents, files and settings from this computer. It cannot be undone."
 		>
 			<Button
 				variant="destructive"

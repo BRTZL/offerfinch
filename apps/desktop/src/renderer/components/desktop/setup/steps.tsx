@@ -14,7 +14,7 @@ import { Group, Section } from "@/components/system/layout";
 import { Button } from "@/components/ui/button";
 import { client, orpc } from "@/lib/orpc";
 import { preloadable } from "@/lib/preloadable";
-import { readyNow } from "../../../../shared/auto-connect";
+import { providerOfRef, readyNow } from "../../../../shared/auto-connect";
 import type { SetupStep } from "../../../../shared/setup-steps";
 import { ConnectAi } from "./connect-ai";
 import { FirstScan } from "./first-scan";
@@ -36,7 +36,7 @@ void JobFilterSettings.preload();
 export const STEP_META: Record<SetupStep, { title: string; lead: string }> = {
 	ai: {
 		title: "Connect your AI",
-		lead: "OfferFinch uses AI to read jobs and draft applications. It looks for Claude Code and Codex on this computer first; API keys work too.",
+		lead: "OfferFinch uses AI to read jobs and draft applications. It looks for Claude Code and Codex on this computer and uses your own plan.",
 	},
 	profile: {
 		title: "Your resume",
@@ -64,9 +64,7 @@ export const STEP_META: Record<SetupStep, { title: string; lead: string }> = {
 function useCanDraft(): boolean | null {
 	const ai = useQuery(orpc.ai.get.queryOptions());
 	const scoring = ai.data?.roles.find((r) => r.role === "scoring");
-	const onPlan =
-		scoring?.mode === "claude-subscription" ||
-		scoring?.mode === "codex-subscription";
+	const onPlan = providerOfRef(scoring?.model ?? null) !== null;
 	const clis = useQuery({
 		...orpc.ai.subscriptions.queryOptions(),
 		staleTime: 30_000,
@@ -248,7 +246,7 @@ export function StepBody({
 }) {
 	switch (step) {
 		case "ai":
-			return <ConnectAi />;
+			return <ConnectAi onDone={onDone} />;
 		case "profile":
 			return <ProfileStep hasProfile={hasProfile} onDone={onDone} go={go} />;
 		case "wants":

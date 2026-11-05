@@ -127,7 +127,7 @@ test.describe
 					.toBe(0);
 				jobsA = count(A, "jobs");
 				expect(jobsA).toBeGreaterThan(0);
-				// An API key on A must not travel; a stored file must.
+				// Earlier versions' API keys file on A must not travel; a stored file must.
 				fs.writeFileSync(
 					path.join(A, "secrets.json"),
 					'{"anthropic":"sealed"}',

@@ -6,7 +6,9 @@ import {
 	ModelSettings,
 	PlanLimits,
 	SubscriptionTerms,
+	useModelOptions,
 } from "@/components/desktop/models";
+import { useStepAction } from "@/components/desktop/step-action";
 import { IconTile, Notice } from "@/components/system/bits";
 import { Group } from "@/components/system/layout";
 import { Disclosure } from "@/components/system/pane";
@@ -16,7 +18,8 @@ import { SparkleBurst } from "@/components/system/sparkle";
 import { Button } from "@/components/ui/button";
 import { desktop } from "@/lib/desktop";
 import { client, orpc } from "@/lib/orpc";
-import { type Role, readyNow } from "../../../../shared/auto-connect";
+import { providerOfRef, readyNow } from "../../../../shared/auto-connect";
+import type { ProviderId, Role } from "../../../../shared/providers";
 import { useCelebrate } from "./celebrate";
 
 type Detected = Awaited<ReturnType<typeof client.ai.autoConnect>>;
@@ -29,14 +32,15 @@ const DOES: Record<Role, string> = {
 	claims: "checks drafts",
 };
 
-/** "drafts and scores", from the roles set to a CLI (signed in or not). */
-function doesText(roles: RoleState[], mode: string): string | null {
-	const mine = roles.filter((r) => r.mode === mode);
+/** "drafts, scores and checks drafts", from the roles set to a provider (signed in or not). */
+function doesText(roles: RoleState[], provider: ProviderId): string | null {
+	const mine = roles.filter((r) => providerOfRef(r.model) === provider);
 	if (!mine.length) return null;
 	const words = (["tailoring", "scoring", "claims"] as const)
 		.filter((role) => mine.some((r) => r.role === role))
 		.map((role) => DOES[role]);
-	return words.join(" and ");
+	const last = words.pop();
+	return words.length ? `${words.join(", ")} and ${last}` : (last ?? null);
 }
 
 /** A command to paste in Terminal, with Copy. */
@@ -151,52 +155,54 @@ function CliLine({
 	);
 }
 
+const STEP_NAME: Record<Role, string> = {
+	scoring: "Finding matches",
+	tailoring: "Drafting",
+	claims: "Checking drafts",
+};
+
 /** What the step says on top: all set, or what is still missing. */
-function summaryOf(roles: RoleState[]): {
+function summaryOf(
+	roles: RoleState[],
+	available: boolean,
+): {
 	tone: "success" | "warning" | "info";
 	title: string;
 	body: string;
 	allSet: boolean;
 } {
-	const ready = (role: Role) => roles.some((r) => r.role === role && r.ready);
-	const drafting = ready("scoring") && ready("tailoring");
-	const checking = ready("claims");
-	if (drafting && checking)
+	const missing = (["scoring", "tailoring", "claims"] as const).filter(
+		(role) => !roles.some((r) => r.role === role && r.ready),
+	);
+	if (missing.length === 0)
 		return {
 			tone: "success",
 			title: "You're all set",
-			body: "Your AI is connected. A second AI from another company checks every draft.",
+			body: "Your AI is connected and does every step.",
 			allSet: true,
 		};
-	if (drafting)
+	if (available)
 		return {
 			tone: "warning",
-			title: "One more: a checker",
-			body: "Drafting and scoring are set. Every draft is also checked by an AI from another company: set up Codex, or add an OpenAI API key.",
-			allSet: false,
-		};
-	if (checking)
-		return {
-			tone: "warning",
-			title: "Drafting still needs Claude",
-			body: "Codex checks drafts. To find matches and draft, set up Claude Code, or add an Anthropic API key.",
+			title: "Choose a model for every step",
+			body: `Still without a model that can run: ${missing.map((r) => STEP_NAME[r]).join(", ")}. Choose one below.`,
 			allSet: false,
 		};
 	return {
 		tone: "info",
 		title: "Connect an AI",
-		body: "Claude Code and Codex aren't signed in on this computer yet. Set them up below to use your plans, or use API keys.",
+		body: "Claude Code and Codex aren't signed in on this computer yet. Set one up below to use your plan.",
 		allSet: false,
 	};
 }
 
 /**
  * Setup's first step. Claude Code and Codex are looked for at once (prefetched on the welcome);
- * signed in to a plan, they take the roles still open: Claude drafts and scores, Codex checks.
- * What is missing shows with the command that fixes it, Check again, and API keys as the other
- * way, folded away.
+ * signed in to a plan, they take the steps still without a model: Claude all three when it is
+ * signed in, else Codex. What is missing shows with the command that fixes it, Check again, and
+ * the models to choose by hand, folded away. Continue needs at least one model available.
  */
-export function ConnectAi() {
+export function ConnectAi({ onDone }: { onDone: () => void }) {
 	const queryClient = useQueryClient();
 	const { burst, celebrate } = useCelebrate();
 	// The last answer stays on screen while Check again runs (a new run clears `data`).
@@ -221,7 +227,22 @@ export function ConnectAi() {
 		claude: d?.claude.login.state === "logged_in",
 		codex: d?.codex.login.state === "logged_in",
 	});
-	const summary = summaryOf(roles);
+	const options = useModelOptions();
+	// Continue needs a model to choose: a signed-in provider's, or the test models in test runs.
+	const available = options.length > 0;
+	const summary = summaryOf(
+		roles,
+		options.some((o) => providerOfRef(o.ref) !== null),
+	);
+	useStepAction({
+		label: "Continue",
+		onClick: onDone,
+		disabled: !available,
+		testId: "step-continue",
+		title: available
+			? undefined
+			: "Connect Claude Code or Codex first: setup needs at least one model",
+	});
 	// The moment the AI is connected: once, when this visit connected it (found it, or set by
 	// hand below), not on reopening a finished step.
 	const before = useRef<boolean | null>(null);
@@ -292,15 +313,15 @@ export function ConnectAi() {
 					id="claude"
 					name="Claude Code"
 					cli={d.claude}
-					does={doesText(roles, "claude-subscription")}
-					needFor="draft and score"
+					does={doesText(roles, "claude")}
+					needFor="find matches, draft and check drafts"
 				/>
 				<CliLine
 					id="codex"
 					name="Codex"
 					cli={d.codex}
-					does={doesText(roles, "codex-subscription")}
-					needFor="check drafts"
+					does={doesText(roles, "codex")}
+					needFor="find matches, draft and check drafts"
 				/>
 			</Group>
 			<div className="flex flex-wrap items-center gap-2">
@@ -344,12 +365,7 @@ export function ConnectAi() {
 				<Disclosure title="Plan limits" data-testid="setup-plan-limits">
 					<PlanLimits />
 				</Disclosure>
-				<Disclosure
-					title={
-						summary.allSet ? "Choose models yourself" : "Use an API key instead"
-					}
-					data-testid="models-manual"
-				>
+				<Disclosure title="Choose models yourself" data-testid="models-manual">
 					<div className="flex flex-col gap-8 pt-2">
 						<ModelSettings compact subscriptions={false} />
 					</div>
