@@ -112,13 +112,21 @@ describe("open steps: skipped is not done", () => {
 	});
 
 	it("says what is still open, in order", () => {
-		expect(openStepsLine(["ai", "profile"])).toBe(
+		const none = { aiReady: false, hasProfile: false };
+		expect(openStepsLine(["ai", "profile"], none)).toBe(
 			"Setup: AI not connected, no resume yet.",
 		);
-		expect(openStepsLine(["profile", "loop"])).toBe(
+		expect(openStepsLine(["profile", "loop"], none)).toBe(
 			"Setup: No resume yet, notifications not set up.",
 		);
-		expect(openStepsLine([])).toBeNull();
+		expect(openStepsLine([], none)).toBeNull();
+	});
+
+	it("a skipped step whose work was done elsewhere only says it was skipped", () => {
+		const both = { aiReady: true, hasProfile: true };
+		expect(openStepsLine(["ai", "profile"], both)).toBe(
+			"Setup: AI step skipped, resume step skipped.",
+		);
 	});
 
 	it("reads ?step= only for a real step", () => {

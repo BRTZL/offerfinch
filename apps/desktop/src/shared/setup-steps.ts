@@ -85,19 +85,36 @@ export function setupComplete(progress: {
 	return openSteps(progress).length === 0;
 }
 
-/** What an open step leaves undone, for Home's "Setup: AI not connected, no resume yet." */
-const OPEN_STEP_TEXT: Record<SetupStep, string> = {
-	ai: "AI not connected",
-	profile: "no resume yet",
-	wants: "no rules or sources chosen",
-	loop: "notifications not set up",
-	scan: "no first search yet",
-};
+/**
+ * What an open step leaves undone, for Home's "Setup: AI not connected, no resume yet." The AI
+ * and the resume can be set up outside setup (Settings › Models, Profile), so those two read
+ * from the live state: a skipped step whose work is there anyway only says it was skipped.
+ */
+function openStepText(
+	step: SetupStep,
+	live: { aiReady: boolean; hasProfile: boolean },
+): string {
+	switch (step) {
+		case "ai":
+			return live.aiReady ? "AI step skipped" : "AI not connected";
+		case "profile":
+			return live.hasProfile ? "resume step skipped" : "no resume yet";
+		case "wants":
+			return "no rules or sources chosen";
+		case "loop":
+			return "notifications not set up";
+		case "scan":
+			return "no first search yet";
+	}
+}
 
 /** "Setup: AI not connected, no resume yet." for the open steps, or null when none is. */
-export function openStepsLine(open: readonly SetupStep[]): string | null {
+export function openStepsLine(
+	open: readonly SetupStep[],
+	live: { aiReady: boolean; hasProfile: boolean },
+): string | null {
 	if (!open.length) return null;
-	const text = open.map((s) => OPEN_STEP_TEXT[s]).join(", ");
+	const text = open.map((s) => openStepText(s, live)).join(", ");
 	return `Setup: ${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
 }
 

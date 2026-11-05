@@ -342,7 +342,10 @@ export default function HomePage() {
 							</Link>
 						}
 					>
-						{openStepsLine(openSetup)}
+						{openStepsLine(openSetup, {
+							aiReady: unready.length === 0,
+							hasProfile: o.hasProfile,
+						})}
 					</Notice>
 				)}
 
