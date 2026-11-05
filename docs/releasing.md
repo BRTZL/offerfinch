@@ -76,8 +76,9 @@ by side; the longest is the build at about six minutes, each e2e shard about fou
 long GitHub takes to hand out macOS runners, which has been anything from seconds to twenty
 minutes. Only one release runs at a time and a running release is never cancelled. A second run waits; GitHub keeps only one waiting run, so a third replaces the
 waiting one. Installed apps find a new
-release within 6 hours (or at once with Settings › General › Updates › Check Now), download it in
-the background and offer **Restart to Update**.
+release within 30 minutes, or soon after the Mac wakes or the window comes forward (or at once with
+Settings › General › Updates › Check Now). They download it in the background, and the sidebar's
+update indicator turns into a restart button with the release's notes and **Restart now**.
 
 ## What a run does
 

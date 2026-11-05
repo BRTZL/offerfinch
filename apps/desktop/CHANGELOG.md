@@ -8,6 +8,13 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
+## Unreleased
+
+- OfferFinch checks for a new version every 30 minutes, and again when your Mac wakes or you
+  come back to the window, instead of every 6 hours.
+- A new version shows at the bottom of the sidebar: a ring while it downloads in the background,
+  then a restart button with a green check. Click it to see what's new and restart.
+
 ## 0.1.5 (2026-11-04)
 
 - The job filter now keeps or rejects, nothing in between, and what it rejects is hidden
