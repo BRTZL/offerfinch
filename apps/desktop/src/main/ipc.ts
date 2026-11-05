@@ -13,13 +13,10 @@ import {
 import {
 	type AppInfo,
 	IPC,
-	isSecretName,
 	isSiteTabId,
 	type LoginItemState,
 	NOTIFICATION_SOUNDS,
 	type NotificationSound,
-	SECRET_NAMES,
-	type SecretName,
 } from "../shared/bridge";
 import {
 	checkBackup,
@@ -36,11 +33,9 @@ import {
 } from "./diagnostics-export";
 import { openExternalLink } from "./external-links";
 import { saveInterviewEvent } from "./interview-event";
-import { lifecycle } from "./lifecycle";
 import { contextMenu } from "./menu";
 import { NOTIFICATION_SETTINGS_URL } from "./notifications";
 import { APP_ORIGIN } from "./protocol";
-import { keysToWorker, secretUpdater } from "./secret-updates";
 import { mainState, TEST_MODE } from "./state";
 import { testHooks } from "./test-hooks";
 import { connectRenderer } from "./window";
@@ -97,55 +92,6 @@ function registerDiagnosticsIpc() {
 		discardDiagnostics(id);
 	});
 	handle(IPC.releaseNotes, () => releaseNotes());
-}
-
-/**
- * Saves or removes a key while holding the app's lock (main/lifecycle.ts), shared: try-it mode
- * cannot be entered (nor a restore start) until the key is saved and sent, and a key save is
- * refused while one runs. The demo check is made under the lock, so it holds until the end.
- */
-async function withKeyLock(write: () => Promise<void>) {
-	const hold = lifecycle.share();
-	if ("busy" in hold) throw new Error(hold.busy);
-	try {
-		if (mainState.demo) throw new Error(DEMO_REFUSAL);
-		await write();
-	} finally {
-		hold.release();
-	}
-}
-
-/**
- * The API keys, in main only. Try-it mode never reads or changes the real keys (and never sends
- * them to its worker): a save's keys go to the worker running once they are written, unless it
- * is the demo's.
- */
-function registerSecretsIpc() {
-	const secretUpdates = secretUpdater(
-		mainState.secrets,
-		(all) => void keysToWorker(mainState.worker, () => mainState.demo, all),
-	);
-	handle(IPC.secretSet, async (name: unknown, value: unknown) => {
-		if (!isSecretName(name) || typeof value !== "string")
-			throw new Error("Bad request");
-		await withKeyLock(() => secretUpdates.set(name, value));
-	});
-	handle(IPC.secretRemove, async (name: unknown) => {
-		if (!isSecretName(name)) throw new Error("Bad request");
-		await withKeyLock(() => secretUpdates.remove(name));
-	});
-	handle(IPC.secretStatus, () =>
-		mainState.demo
-			? (Object.fromEntries(SECRET_NAMES.map((n) => [n, false])) as Record<
-					SecretName,
-					boolean
-				>)
-			: mainState.secrets.status(),
-	);
-	handle(IPC.secretAvailable, () => mainState.secrets.available());
-	handle(IPC.secretUnreadable, () =>
-		mainState.demo ? [] : mainState.secrets.unreadable(),
-	);
 }
 
 /**
@@ -262,7 +208,6 @@ export function registerIpc() {
 	registerBackupIpc();
 	handle(IPC.saveInterviewEvent, saveInterviewEvent);
 	registerDiagnosticsIpc();
-	registerSecretsIpc();
 	handle(IPC.openLoginItems, async () => {
 		if (TEST_MODE) return;
 		await shell.openExternal(

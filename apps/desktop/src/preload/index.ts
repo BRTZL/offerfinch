@@ -6,7 +6,6 @@ import {
 	type DesktopBridge,
 	IPC,
 	RPC_PORT_MESSAGE,
-	type SecretName,
 	type SitePageInfo,
 	type UpdateState,
 } from "../shared/bridge";
@@ -61,14 +60,6 @@ const bridge: DesktopBridge = {
 		discard: (id) => ipcRenderer.invoke(IPC.diagnosticsDiscard, String(id)),
 	},
 	releaseNotes: () => ipcRenderer.invoke(IPC.releaseNotes),
-	secrets: {
-		set: (name: SecretName, value: string) =>
-			ipcRenderer.invoke(IPC.secretSet, name, String(value)),
-		remove: (name: SecretName) => ipcRenderer.invoke(IPC.secretRemove, name),
-		status: () => ipcRenderer.invoke(IPC.secretStatus),
-		available: () => ipcRenderer.invoke(IPC.secretAvailable),
-		unreadable: () => ipcRenderer.invoke(IPC.secretUnreadable),
-	},
 	openLoginItems: () => ipcRenderer.invoke(IPC.openLoginItems),
 	loginItem: {
 		get: () => ipcRenderer.invoke(IPC.loginGet),

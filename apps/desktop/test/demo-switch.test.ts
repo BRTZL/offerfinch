@@ -194,31 +194,6 @@ describe("one switch at a time: demo, backup and restore", () => {
 		expect(await switchDemo(true)).toEqual({ ok: true });
 	});
 
-	it("refuses to switch while a key is being saved", async () => {
-		stubs();
-		const keySave = lifecycle.share();
-		if ("busy" in keySave) throw new Error(keySave.busy);
-		const refused = await switchDemo(true);
-		expect(refused.ok).toBe(false);
-		expect(mainState.demo).toBe(false);
-		keySave.release();
-		expect(await switchDemo(true)).toEqual({ ok: true });
-		// And a key save waits for nothing while a switch runs: it is refused.
-		const { worker } = stubs();
-		let started = () => {};
-		worker.restart.mockImplementationOnce(
-			() =>
-				new Promise<void>((resolve) => {
-					started = resolve;
-				}),
-		);
-		const leaving = switchDemo(false);
-		await vi.waitFor(() => expect(worker.restart).toHaveBeenCalled());
-		expect(lifecycle.share()).toEqual({ busy: DEMO_SWITCHING });
-		started();
-		await leaving;
-	});
-
 	it("keeps a failed leave in the strip, and Leave again starts the real worker", async () => {
 		const { calls, worker, updates } = stubs();
 		expect(await switchDemo(true)).toEqual({ ok: true });

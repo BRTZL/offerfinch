@@ -3,7 +3,6 @@ import path from "node:path";
 import { app, type BrowserWindow, type Tray } from "electron";
 import type { TrayStatus } from "../shared/worker-protocol";
 import type { Notifier } from "./notifications";
-import type { SecretStore } from "./secrets";
 import type { SiteBrowser } from "./site-browser";
 import type { Updates } from "./updates";
 import type { WorkerHost } from "./worker-host";
@@ -13,7 +12,6 @@ export const mainState = {
 	tray: null as Tray | null,
 	quitting: false,
 	lastStatus: null as TrayStatus | null,
-	secrets: undefined as unknown as SecretStore,
 	worker: undefined as unknown as WorkerHost,
 	sites: undefined as unknown as SiteBrowser,
 	notifier: undefined as unknown as Notifier,

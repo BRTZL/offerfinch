@@ -1,5 +1,5 @@
 /** Messages between the main process and the pipeline worker (a utility process). */
-import type { SecretName, SiteTabId } from "./bridge";
+import type { SiteTabId } from "./bridge";
 
 /**
  * The worker's exit code when it ends itself because a step stalled (src/worker/stalls.ts).
@@ -14,7 +14,6 @@ export interface WorkerInit {
 	version: string;
 	/** The bundled Claude Agent SDK host script, forked as Node for each Claude call. */
 	claudeHost: string;
-	secrets: Partial<Record<SecretName, string>>;
 	/**
 	 * Try-it mode (worker/demo.ts): `userData` is the demo folder, the test models run every
 	 * role, the sample source is the only one, and no CLI, login shell or network is used. Its
@@ -88,7 +87,6 @@ export interface SiteSnapshot {
 
 export type MainToWorker =
 	| WorkerInit
-	| { type: "secrets"; secrets: Partial<Record<SecretName, string>> }
 	| { type: "wake"; reason: string }
 	/** Carries a MessagePort for one window's oRPC connection. */
 	| { type: "connect" }

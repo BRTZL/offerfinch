@@ -232,9 +232,6 @@ parent.on("message", async (event) => {
 				if (port) connect(port);
 				break;
 			}
-			case "secrets":
-				await app?.setSecrets(message.secrets);
-				break;
 			case "wake":
 				await app?.scheduleTick(message.reason);
 				app?.runner.poke();
