@@ -5,6 +5,11 @@ import { DEMO_SWITCHING, lifecycle } from "./lifecycle";
 import { APP_ORIGIN } from "./protocol";
 import { log, mainState } from "./state";
 
+/** How long a site operation in flight may take to end before the switch is refused. */
+const SITE_DRAIN_MS = 5_000;
+const SITE_BUSY =
+	"A site is still being signed out or read. Try again in a moment.";
+
 /**
  * Whether the app shows itself as the demo: while it runs, and while a leave is unfinished (so
  * the strip, the title and the menu bar keep offering Leave).
@@ -65,6 +70,10 @@ export async function switchDemo(on: boolean): Promise<DemoResult> {
 		// runs there). The ones open close once the worker has stopped: a run's, a sheet's, and a
 		// sign-in tab kept after its sheet closed, which still holds the real session.
 		mainState.sites.block(DEMO_SWITCHING);
+		// A sign out or read already running keeps going in this process after the worker stops:
+		// it must end before the switch, or the real session would still be cleared in the demo.
+		if (!(await mainState.sites.drain(SITE_DRAIN_MS)))
+			throw new Error(SITE_BUSY);
 		const sw = {
 			userData: app.getPath("userData"),
 			stopWorker: async () => {

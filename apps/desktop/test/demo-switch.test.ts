@@ -105,6 +105,8 @@ function stubs() {
 		closeAll: vi.fn(() => {
 			calls.push("close sites");
 		}),
+		drain: vi.fn(async () => !sites.busy),
+		busy: false,
 	};
 	Object.assign(mainState, { worker, updates, sites });
 	return { calls, worker, updates, sites };
@@ -172,6 +174,24 @@ describe("one switch at a time: demo, backup and restore", () => {
 		started();
 		expect(await entering).toEqual({ ok: true });
 		expect(await switchDemo(false)).toEqual({ ok: true });
+	});
+
+	it("refuses to enter while a site is still being signed out or read: the worker stays, sites unblock", async () => {
+		const { calls, worker, sites } = stubs();
+		sites.busy = true;
+		const refused = await switchDemo(true);
+		expect(refused.ok).toBe(false);
+		expect(refused).toMatchObject({
+			error: expect.stringContaining("still being signed out or read"),
+		});
+		expect(sites.drain).toHaveBeenCalled();
+		expect(worker.stop).not.toHaveBeenCalled();
+		expect(calls).not.toContain("close sites");
+		expect(mainState.demo).toBe(false);
+		expect(sites.blocked).toBeNull();
+		// Once the site operation ended, entering works.
+		sites.busy = false;
+		expect(await switchDemo(true)).toEqual({ ok: true });
 	});
 
 	it("refuses to switch while a key is being saved", async () => {

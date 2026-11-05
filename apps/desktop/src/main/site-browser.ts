@@ -112,6 +112,27 @@ export class SiteBrowser {
 		this.blocked = reason;
 	}
 
+	/**
+	 * Waits for every operation already running on a site's session (a sign out clearing its
+	 * storage, a read) to end: block() refuses what has not started, but one in flight carries on
+	 * in this process whatever the worker does. True once every queue is idle, false when one is
+	 * still busy after `timeoutMs`; the switch to try-it mode is refused then.
+	 */
+	async drain(timeoutMs: number): Promise<boolean> {
+		const idle = Promise.all(
+			[...this.queues.values()].map((q) => q.catch(() => {})),
+		).then(() => true);
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const late = new Promise<boolean>((resolve) => {
+			timer = setTimeout(() => resolve(false), timeoutMs);
+		});
+		try {
+			return await Promise.race([idle, late]);
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
 	static partition(site: SiteTabId): string {
 		return `persist:site-${site}`;
 	}

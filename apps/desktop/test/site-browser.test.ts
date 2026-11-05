@@ -76,6 +76,10 @@ vi.mock("electron", () => {
 		},
 		resolveHost: async () => ({ endpoints: [{ address: "93.184.216.34" }] }),
 		clearStorageData: async (options?: { storages?: string[] }) => {
+			// A test may hold the clearing, as a slow session does.
+			await ((hooks() as Record<string, unknown>).holdClear as
+				| Promise<void>
+				| undefined);
 			(hooks() as Record<string, unknown>).cleared = options?.storages ?? "all";
 		},
 		clearCache: async () => {
@@ -657,6 +661,34 @@ describe("try-it mode closes every site tab and opens none", () => {
 		sites.block(null);
 		await sites.handle({ op: "signOut", site: "linkedin" }, 3);
 		expect(cleared()).toEqual({ storage: "all", cache: true, auth: true });
+		sites.closeAll();
+	});
+
+	it("a sign out already running is drained before a switch: the switch waits, or gives up", async () => {
+		const g = globalThis as { __webRequest?: Record<string, unknown> };
+		g.__webRequest ??= {};
+		let release = () => {};
+		g.__webRequest.holdClear = new Promise<void>((r) => {
+			release = r;
+		});
+		delete g.__webRequest.cacheCleared;
+		const sites = browser();
+		// The sign out started on the real data and is still clearing storage.
+		const running = sites.handle({ op: "signOut", site: "linkedin" }, 3);
+		// It has started (past the block check) and is waiting on the session.
+		await new Promise((r) => setTimeout(r, 0));
+		sites.block("switching");
+		// Not done in time: the switch must not go on.
+		expect(await sites.drain(20)).toBe(false);
+		expect(g.__webRequest.cacheCleared).toBeUndefined();
+		// Once it ends, the switch may go on; what it cleared was the real session, before the
+		// demo, which is the user's own sign out.
+		release();
+		await running;
+		expect(await sites.drain(1_000)).toBe(true);
+		expect(g.__webRequest.cacheCleared).toBe(true);
+		delete g.__webRequest.holdClear;
+		sites.block(null);
 		sites.closeAll();
 	});
 });
