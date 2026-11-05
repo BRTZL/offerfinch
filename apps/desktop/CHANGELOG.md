@@ -19,9 +19,10 @@ at the top, above the newest version. Only what is merged into main belongs here
   or avoid. Saving Job search applies to new jobs; jobs already in your Inbox keep their score.
 - Claude and Codex plans now allow 500 model calls a day by default (was 40). Jobs found past
   the limit wait and are scored when there is room.
-- Backups and diagnostics zip exports support Windows. Diagnostics hide Windows home paths.
-- Use computer-neutral wording for local data and encrypted API key storage.
-
+- OfferFinch builds and runs on Windows (x64 and arm64 installers, not yet signed or
+  published). Backups, diagnostics, Chrome, Claude Code and notifications work there; the
+  ChatGPT plan through Codex stays macOS only, because it needs macOS's sandbox.
+- Wording about stored data and API keys says "this computer" instead of naming the Mac.
 - Settings › Spending lists each model once, by its name (Claude Sonnet 5.5, GPT-6.1 Sol), with
   how its calls were paid: your Claude plan, your ChatGPT plan or an API key. Calls on a plan
   say "Plan" instead of "$0".
