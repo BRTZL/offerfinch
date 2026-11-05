@@ -1,6 +1,6 @@
 import { app, BrowserWindow } from "electron";
 import { type DemoResult, type DemoStatus, IPC } from "../shared/bridge";
-import { enterDemo, leaveDemo } from "./demo";
+import { clearDemoLeftover, enterDemo, leaveDemo } from "./demo";
 import { DEMO_SWITCHING, lifecycle } from "./lifecycle";
 import { APP_ORIGIN } from "./protocol";
 import { log, mainState } from "./state";
@@ -51,6 +51,16 @@ export async function switchDemo(on: boolean): Promise<DemoResult> {
 	try {
 		if (on === mainState.demo && mainState.leaveFailed === null)
 			return { ok: true };
+		// Sample data an earlier demo left that cannot be deleted: refused before updates are
+		// suspended or the worker stops, so nothing changes.
+		if (on) {
+			try {
+				clearDemoLeftover(app.getPath("userData"));
+			} catch (error) {
+				log("demo refused: leftover sample data", String(error));
+				return { ok: false, error: (error as Error).message };
+			}
+		}
 		// No site tab opens while the worker switches, nor while the demo runs (no real source
 		// runs there). The ones open close once the worker has stopped: a run's, a sheet's, and a
 		// sign-in tab kept after its sheet closed, which still holds the real session.

@@ -57,7 +57,7 @@ import {
 import { cleanStoredPostings, readPostingForJob } from "./add-job";
 import { localChromeProvider } from "./browser";
 import type { CheckStop, SiteTabHost } from "./checks";
-import { demoSubscriptions, seedDemo } from "./demo";
+import { DEMO_SITE_REFUSAL, demoSubscriptions, seedDemo } from "./demo";
 import { fakeSubscriptions } from "./fake-clis";
 import { FakeCodexSubscription } from "./fake-codex";
 import {
@@ -417,7 +417,12 @@ export class WorkerApp {
 	 */
 	siteHost(): SiteTabHost {
 		return {
-			site: this.hooks.site,
+			// Try-it mode reaches no site tab: they hold the real sessions (main refuses too).
+			site: this.init.demo
+				? async () => {
+						throw new Error(DEMO_SITE_REFUSAL);
+					}
+				: this.hooks.site,
 			checkTimeoutMs: this.init.test?.checkTimeoutMs,
 			checkPollMs: this.init.test ? 250 : undefined,
 			onCheck: async (site, stop) => {

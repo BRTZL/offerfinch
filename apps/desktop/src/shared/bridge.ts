@@ -217,7 +217,10 @@ export interface DemoStatus {
 
 export interface DesktopBridge {
 	info(): Promise<AppInfo>;
-	/** Opens an http(s) link in the default browser. Anything else is refused. */
+	/**
+	 * Opens an http(s) link in the default browser. Anything else is refused. In try-it mode no
+	 * link opens (`onLinkRefused` is called instead).
+	 */
 	openExternal(url: string): Promise<void>;
 	/** Writes an exported file (PDF, DOCX) to a temp file and opens it in its default app. */
 	openDocument(documentId: string): Promise<void>;
@@ -343,6 +346,8 @@ export interface DesktopBridge {
 	reconnect(): void;
 	/** Called when the worker restarted; the renderer reconnects. */
 	onWorkerRestart(callback: () => void): () => void;
+	/** A link was not opened (try-it mode): why, for a toast. */
+	onLinkRefused(callback: (message: string) => void): () => void;
 	/** Whether the window is focused, shown and not minimised: motion runs only then. */
 	onWindowActive(callback: (active: boolean) => void): () => void;
 }
@@ -393,6 +398,7 @@ export const IPC = {
 	copyText: "app:copy-text",
 	clipboardLink: "app:clipboard-link",
 	workerRestart: "app:worker-restart",
+	linkRefused: "app:link-refused",
 	updateState: "update:state",
 	updateCheck: "update:check",
 	updateInstall: "update:install",

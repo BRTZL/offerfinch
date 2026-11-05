@@ -29,6 +29,13 @@ import type { CliState, Subscriptions } from "./subscriptions";
  * in-process source that hands out the eight sample jobs. No real source, CLI or network.
  */
 
+/**
+ * Said when try-it mode is asked to use a site tab (sign out, check a sign-in, a run): the tabs
+ * hold the real sessions, so none is touched with sample data.
+ */
+export const DEMO_SITE_REFUSAL =
+	"Not with sample data: site sign-ins are your real ones. Leave demo first.";
+
 /** The sample source's id and name in the scan history. */
 export const SAMPLE_PROVIDER_ID = "sample";
 

@@ -34,6 +34,7 @@ import {
 	releaseNotes,
 	saveDiagnostics,
 } from "./diagnostics-export";
+import { openExternalLink } from "./external-links";
 import { saveInterviewEvent } from "./interview-event";
 import { lifecycle } from "./lifecycle";
 import { contextMenu } from "./menu";
@@ -197,10 +198,12 @@ export function registerIpc() {
 	// Try-it mode makes no network call: Updates itself refuses while suspended.
 	handle(IPC.updateCheck, () => mainState.updates.check());
 	handle(IPC.updateInstall, () => mainState.updates.install());
-	handle(IPC.openExternal, async (url: unknown) => {
+	// The page that asked is told when a link is refused (try-it mode): main/external-links.ts.
+	ipcMain.handle(IPC.openExternal, async (event, url: unknown) => {
+		if (!isAppSender(event)) throw new Error("Refused: not the app's window");
 		if (typeof url !== "string" || !/^https?:\/\//.test(url))
 			throw new Error("Only web links open outside the app");
-		await shell.openExternal(url);
+		await openExternalLink(url, event.sender);
 	});
 	const tempFile = async (name: string, bytes: Uint8Array) => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "offerfinch-"));

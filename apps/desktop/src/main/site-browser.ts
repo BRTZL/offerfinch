@@ -104,7 +104,10 @@ export class SiteBrowser {
 
 	constructor(private readonly options: SiteBrowserOptions) {}
 
-	/** Refuses every new tab (sheets and runs) with `reason` until called with null. */
+	/**
+	 * Refuses every new tab (sheets and runs) and every operation on a site's session (sign out,
+	 * reads, clearing) with `reason` until called with null.
+	 */
 	block(reason: string | null) {
 		this.blocked = reason;
 	}
@@ -358,7 +361,8 @@ export class SiteBrowser {
 	/** A run takes the site's tab (opened if needed); refused while one is blocked or in use. */
 	private async claim(site: SiteTabId, generation: number): Promise<true> {
 		// Web search starts each run clean: no cookies, storage, caches or service worker a
-		// page of an earlier run left behind.
+		// page of an earlier run left behind. Never while blocked (handle() refused it already).
+		if (this.blocked) throw new Error(this.blocked);
 		if (site === "web" && !this.alive(site)?.run) {
 			const ses = this.session(site);
 			// The HTTP cache too: a page cached by an earlier run would be served without
@@ -405,6 +409,12 @@ export class SiteBrowser {
 		return this.enqueue(site, async () => {
 			if (this.gone.has(generation))
 				throw new Error("The worker that asked has stopped");
+			// Try-it mode and its switch (block()): no call reaches a site's session, which is the
+			// real one with its sign-in (no sign out, read, clearing or claim). Checked when the call
+			// runs, so one queued before the block is refused too. Letting a run's tab go and
+			// closing an idle tab touch no session.
+			if (this.blocked && call.op !== "release" && call.op !== "closeIdle")
+				throw new Error(this.blocked);
 			switch (call.op) {
 				case "claim":
 					return this.claim(site, generation);

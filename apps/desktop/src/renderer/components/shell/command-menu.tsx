@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useDemoMode } from "@/components/desktop/demo";
 import { Fit, IconSlot, Kbd } from "@/components/system/bits";
 import { sendCommand } from "@/lib/commands";
 import { desktop } from "@/lib/desktop";
@@ -107,12 +108,45 @@ const matches = (c: Command, q: string) =>
 		.includes(q.toLowerCase());
 
 /**
+ * The open application's posting: open it (not in try-it mode: the default browser holds the
+ * real sessions) or copy its link.
+ */
+function postingCommands(
+	job: { company: { name: string }; job: { title: string; url: string } },
+	demo: boolean,
+): Command[] {
+	const group = `${job.company.name} · ${job.job.title}`;
+	const copy: Command = {
+		id: "copy-link",
+		group,
+		label: "Copy the posting link",
+		icon: <Copy />,
+		run: async () => {
+			await desktop.copyText(job.job.url);
+			toast.success("Posting link copied.");
+		},
+	};
+	if (demo) return [copy];
+	return [
+		{
+			id: "open-posting",
+			group,
+			label: "Open the posting",
+			icon: <ExternalLink />,
+			run: () => desktop.openExternal(job.job.url),
+		},
+		copy,
+	];
+}
+
+/**
  * ⌘K: go to a page or a settings section, find an application by company or role, scan now,
  * pause scans, open or copy the open application's posting. It has no Approve command, and no
  * key in it approves (docs/ux-pass.md: an accidental key press must not approve).
  */
 export default function CommandMenu({ onClose }: { onClose: () => void }) {
 	const router = useRouter();
+	const demo = useDemoMode();
 	const pathname = usePathname();
 	const queryClient = useQueryClient();
 	const [query, setQuery] = useState("");
@@ -164,28 +198,7 @@ export default function CommandMenu({ onClose }: { onClose: () => void }) {
 	const commands = useMemo<Command[]>(() => {
 		const go = (href: string) => () => router.push(href);
 		const list: Command[] = [];
-		const job = open.data;
-		if (job) {
-			list.push(
-				{
-					id: "open-posting",
-					group: `${job.company.name} · ${job.job.title}`,
-					label: "Open the posting",
-					icon: <ExternalLink />,
-					run: () => desktop.openExternal(job.job.url),
-				},
-				{
-					id: "copy-link",
-					group: `${job.company.name} · ${job.job.title}`,
-					label: "Copy the posting link",
-					icon: <Copy />,
-					run: async () => {
-						await desktop.copyText(job.job.url);
-						toast.success("Posting link copied.");
-					},
-				},
-			);
-		}
+		if (open.data) list.push(...postingCommands(open.data, demo));
 		for (const a of found.data ?? [])
 			list.push({
 				id: `app-${a.id}`,
@@ -242,7 +255,7 @@ export default function CommandMenu({ onClose }: { onClose: () => void }) {
 			},
 		);
 		return list;
-	}, [found.data, open.data, status.data, router, scan, pause]);
+	}, [found.data, open.data, status.data, router, scan, pause, demo]);
 
 	const shown = commands.filter(
 		(c) => c.id.startsWith("app-") || matches(c, query),

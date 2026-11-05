@@ -5,6 +5,7 @@ import { expect, type Page, test } from "@playwright/test";
 import Database from "better-sqlite3";
 
 import { DB_FILE } from "../src/main/database-file";
+import type { DesktopBridge } from "../src/shared/bridge";
 import { APP_DIR, launchApp, tempUserData } from "./launch";
 
 /**
@@ -138,6 +139,14 @@ test("try it with sample data: matches, prepare, review, applied, then leave wit
 			.filter({ hasText: "Kestrel Freight" });
 		await kestrel.click();
 		await expect(page.getByTestId("match")).toBeVisible();
+		// No link leaves the app in the demo: one the page asks to open is refused, with a toast
+		// (an .invalid name, so even a slip would reach nothing).
+		await page.evaluate(() =>
+			(window as unknown as { desktop: DesktopBridge }).desktop.openExternal(
+				"https://posting.example.invalid/jobs/1",
+			),
+		);
+		await expect(page.getByText("Links are off in the demo")).toBeVisible();
 		const appId = new URL(page.url()).pathname.split("/").pop();
 		await page.getByTestId("prepare").click();
 		await expect(page.getByTestId("prepare")).toHaveCount(0);
@@ -186,6 +195,13 @@ test("try it with sample data: matches, prepare, review, applied, then leave wit
 		// A sample job is handed off: Mark applied, then it is in Applied.
 		await expect(page.getByTestId("handoff")).toBeVisible({ timeout: 60_000 });
 		await expect(page.getByTestId("handoff")).toContainText(/sample job/i);
+		// The hand-off step names the form without a link, and the posting has none.
+		expect(
+			await page.getByTestId("handoff-link").evaluate((e) => e.tagName),
+		).toBe("SPAN");
+		await expect(
+			page.locator('a[href^="https://jobs.sample.invalid"]'),
+		).toHaveCount(0);
 		await page.getByTestId("mark-submitted").click();
 		await expect.poll(stateOf, { timeout: 60_000 }).toBe("applied");
 		await sidebar(page, "Applied").click();

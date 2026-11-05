@@ -1,14 +1,8 @@
 import path from "node:path";
-import {
-	app,
-	BrowserWindow,
-	nativeTheme,
-	screen,
-	session,
-	shell,
-} from "electron";
+import { app, BrowserWindow, nativeTheme, screen, session } from "electron";
 import { type AppCommand, IPC } from "../shared/bridge";
 import { windowTitle } from "./demo-actions";
+import { guardLinks } from "./external-links";
 import { APP_ORIGIN, serveRenderer } from "./protocol";
 import {
 	BACKGROUND,
@@ -118,16 +112,8 @@ export function createWindow(initialPath = "/"): BrowserWindow {
 				SIDEBAR_VIBRANCY && !MEASURE_LAYOUT ? ["--offerfinch-vibrant"] : [],
 		},
 	});
-	win.webContents.setWindowOpenHandler(({ url }) => {
-		if (/^https?:\/\//.test(url)) void shell.openExternal(url);
-		return { action: "deny" };
-	});
-	win.webContents.on("will-navigate", (event, url) => {
-		if (!url.startsWith(`${APP_ORIGIN}/`)) {
-			event.preventDefault();
-			if (/^https?:\/\//.test(url)) void shell.openExternal(url);
-		}
-	});
+	// Web links open in the default browser, never in the demo (main/external-links.ts).
+	guardLinks(win.webContents);
 	if (MEASURE_LAYOUT)
 		win.webContents.on("dom-ready", () => {
 			void win.webContents.insertCSS(

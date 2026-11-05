@@ -25,6 +25,11 @@ class LifecycleLock {
 		};
 	}
 
+	/** The refusal of the exclusive operation running now (which one it is), or null. */
+	holder(): string | null {
+		return this.running;
+	}
+
 	/** Takes a shared hold (key saves): refused only while an exclusive operation runs. */
 	share(): { release: () => void } | { busy: string } {
 		if (this.running) return { busy: this.running };

@@ -111,6 +111,8 @@ const bridge: DesktopBridge = {
 				callback(command as AppCommand);
 		}),
 	onWorkerRestart: (callback) => subscribe(IPC.workerRestart, () => callback()),
+	onLinkRefused: (callback) =>
+		subscribe(IPC.linkRefused, (message: unknown) => callback(String(message))),
 	onWindowActive: (callback) =>
 		subscribe(IPC.windowActive, (active: unknown) => callback(Boolean(active))),
 };

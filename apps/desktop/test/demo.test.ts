@@ -18,6 +18,7 @@ import {
 import { migrate } from "@offerfinch/db/migrate";
 import { appSettings } from "@offerfinch/db/schema/jobs";
 import { jobs } from "@offerfinch/db/schema/pipeline";
+import { call } from "@orpc/server";
 import { describe, expect, it, vi } from "vitest";
 import { DB_FILE } from "../src/main/database-file";
 import {
@@ -26,17 +27,21 @@ import {
 	demoFolder,
 	enterDemo,
 	eraseDemo,
+	eraseLeftoverDemo,
 	leaveDemo,
 } from "../src/main/demo";
 import type { WorkerInit } from "../src/shared/worker-protocol";
 import { WorkerApp } from "../src/worker/app";
 import {
+	DEMO_SITE_REFUSAL,
 	demoSubscriptions,
 	SAMPLE_PROVIDER_ID,
 	SampleJobsProvider,
 	seedDemo,
 } from "../src/worker/demo";
 import { SAMPLE_JOBS, SAMPLE_RULES } from "../src/worker/demo-data";
+import { bindApp } from "../src/worker/routers/shared";
+import { sourcesRouter } from "../src/worker/routers/sources";
 import { LOCAL_USER_ID, SettingsStore } from "../src/worker/settings";
 import * as subscriptionsModule from "../src/worker/subscriptions";
 
@@ -209,6 +214,45 @@ describe("try-it mode's sample data", () => {
 		await real.stop();
 	});
 
+	it("a demo worker touches no site session: sign out and the sign-in check are refused", async () => {
+		const userData = tempDir("worker-sites");
+		const site = vi.fn(async () => true);
+		const demoWorker = await WorkerApp.open(
+			{
+				type: "init",
+				userData,
+				dbFile: path.join(userData, DB_FILE),
+				version: "1.0.0",
+				claudeHost: path.join(userData, "no-claude-host.js"),
+				secrets: {},
+				demo: true,
+			},
+			{
+				exit: () => {},
+				status: () => {},
+				notify: () => {},
+				site,
+				log: () => {},
+			},
+		);
+		bindApp(demoWorker);
+		const context = {
+			session: { user: { id: LOCAL_USER_ID } },
+		} as never;
+		await expect(
+			call(sourcesRouter.signOut, { site: "linkedin" }, { context }),
+		).rejects.toThrow(DEMO_SITE_REFUSAL);
+		await expect(
+			call(sourcesRouter.checkSignIn, { site: "linkedin" }, { context }),
+		).rejects.toThrow(DEMO_SITE_REFUSAL);
+		// Nor does any reader reach main's tabs.
+		await expect(
+			demoWorker.siteHost().site({ op: "signOut", site: "indeed" }),
+		).rejects.toThrow(DEMO_SITE_REFUSAL);
+		expect(site).not.toHaveBeenCalled();
+		await demoWorker.stop();
+	});
+
 	it("looks for no CLI and runs none", async () => {
 		const subs = demoSubscriptions();
 		expect(await subs.refresh()).toBe("");
@@ -363,6 +407,69 @@ describe("entering and leaving try-it mode", () => {
 			leaveFailed: null,
 		});
 		expect(fs.existsSync(demoFolder(userData))).toBe(false);
+	});
+
+	it("a demo folder that cannot be deleted: the app starts on the real data, and entering is refused until it is gone", async () => {
+		const { userData, realDb } = await realInstall();
+		const state: DemoState = {
+			demo: false,
+			databaseFile: realDb,
+			realDatabaseFile: null,
+			leaveFailed: null,
+		};
+		const worker = workerOn(state);
+		const stopWorker = vi.fn(worker.stopWorker);
+		const sw = { userData, ...worker, stopWorker };
+		await enterDemo(state, sw);
+		const folder = demoFolder(userData);
+		// The folder's permissions changed under the app: nothing in it can be deleted.
+		const rm = vi.spyOn(fs, "rmSync").mockImplementation(() => {
+			throw Object.assign(
+				new Error(`ENOTEMPTY: directory not empty, rmdir '${folder}'`),
+				{ code: "ENOTEMPTY" },
+			);
+		});
+		const logged: unknown[][] = [];
+		try {
+			// Leaving goes back to the real worker all the same.
+			await leaveDemo(state, sw);
+			expect(state.demo).toBe(false);
+			expect(state.databaseFile).toBe(realDb);
+			expect(worker.opened.at(-1)).toBe(realDb);
+			expect(fs.existsSync(folder)).toBe(true);
+			// The next start: logged, never thrown (the real worker starts after it).
+			expect(() =>
+				eraseLeftoverDemo(userData, (...args) => logged.push(args)),
+			).not.toThrow();
+			expect(logged).toEqual([
+				[
+					"demo data from the last run not deleted",
+					{ folder, error: expect.stringContaining("ENOTEMPTY") },
+				],
+			]);
+			// Entering is refused with the folder named, before the real worker is stopped.
+			stopWorker.mockClear();
+			await expect(enterDemo(state, sw)).rejects.toThrow(
+				`Delete the folder ${folder}, then try again.`,
+			);
+			expect(stopWorker).not.toHaveBeenCalled();
+			expect(state).toEqual({
+				demo: false,
+				databaseFile: realDb,
+				realDatabaseFile: null,
+				leaveFailed: null,
+			});
+			expect(worker.current()).not.toBe(null);
+		} finally {
+			rm.mockRestore();
+		}
+		// Once the folder can go, the next start deletes it and the demo starts again.
+		eraseLeftoverDemo(userData, (...args) => logged.push(args));
+		expect(logged.at(-1)).toEqual(["demo data from the last run deleted"]);
+		await enterDemo(state, sw);
+		expect(state.demo).toBe(true);
+		await leaveDemo(state, sw);
+		expect(fs.existsSync(folder)).toBe(false);
 	});
 
 	it("keeps a failed leave unfinished, and leaving again starts the real worker", async () => {

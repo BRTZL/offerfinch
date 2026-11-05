@@ -81,7 +81,9 @@ vi.mock("electron", () => {
 		clearCache: async () => {
 			(hooks() as Record<string, unknown>).cacheCleared = true;
 		},
-		clearAuthCache: async () => {},
+		clearAuthCache: async () => {
+			(hooks() as Record<string, unknown>).authCleared = true;
+		},
 	};
 	return {
 		app: { isPackaged: false },
@@ -607,6 +609,54 @@ describe("try-it mode closes every site tab and opens none", () => {
 		expect(sites.show("linkedin", "sign-in", fakeWindow(), bounds).ok).toBe(
 			true,
 		);
+		sites.closeAll();
+	});
+
+	it("refuses to sign out, read or clear a site's session while blocked, even a call queued before", async () => {
+		const g = globalThis as { __webRequest?: Record<string, unknown> };
+		const cleared = () => {
+			const hooks = g.__webRequest ?? {};
+			return {
+				storage: hooks.cleared,
+				cache: hooks.cacheCleared,
+				auth: hooks.authCleared,
+			};
+		};
+		const reset = () => {
+			g.__webRequest ??= {};
+			delete g.__webRequest.cleared;
+			delete g.__webRequest.cacheCleared;
+			delete g.__webRequest.authCleared;
+		};
+		const nothing = { storage: undefined, cache: undefined, auth: undefined };
+		const sites = browser();
+		// A signed-in tab kept after its sheet closed: the real session is in it.
+		sites.show("linkedin", "sign-in", fakeWindow(), bounds);
+		sites.hide("linkedin");
+		reset();
+		sites.block("switching");
+		await expect(
+			sites.handle({ op: "signOut", site: "linkedin" }, 3),
+		).rejects.toThrow("switching");
+		await expect(
+			sites.handle({ op: "snapshot", site: "linkedin" }, 3),
+		).rejects.toThrow("switching");
+		// The web tab's claim clears its session first: not while blocked.
+		await expect(sites.handle({ op: "claim", site: "web" }, 3)).rejects.toThrow(
+			"switching",
+		);
+		expect(cleared()).toEqual(nothing);
+		// A sign out asked for just before the switch, still queued when it starts, is refused when
+		// its turn comes.
+		sites.block(null);
+		const late = sites.handle({ op: "signOut", site: "indeed" }, 3);
+		sites.block("switching");
+		await expect(late).rejects.toThrow("switching");
+		expect(cleared()).toEqual(nothing);
+		// Back on the real data: signing out clears the whole session.
+		sites.block(null);
+		await sites.handle({ op: "signOut", site: "linkedin" }, 3);
+		expect(cleared()).toEqual({ storage: "all", cache: true, auth: true });
 		sites.closeAll();
 	});
 });

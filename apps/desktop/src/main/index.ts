@@ -15,7 +15,7 @@ import { createUpdates } from "./app-updates";
 import { isAutomated } from "./automation";
 import { recoverInterruptedRestore } from "./backup";
 import { moveDatabaseOnce } from "./database-file";
-import { demoFolder, eraseDemo } from "./demo";
+import { demoFolder, eraseLeftoverDemo } from "./demo";
 import { registerIpc } from "./ipc";
 import { buildMenu } from "./menu";
 import { noticeActionDeps } from "./notice-action-deps";
@@ -130,9 +130,9 @@ async function main() {
 	fs.mkdirSync(app.getPath("logs"), { recursive: true });
 	// A restore the app quit in the middle of is undone first, so the earlier data is in place.
 	recoverInterruptedRestore(app.getPath("userData"), log);
-	// Sample data a quit in try-it mode left behind: the demo ends with the app.
-	if (eraseDemo(app.getPath("userData")))
-		log("demo data from the last run deleted");
+	// Sample data a quit in try-it mode left behind: the demo ends with the app. A folder that
+	// cannot be deleted is logged; the app starts on the real data all the same.
+	eraseLeftoverDemo(app.getPath("userData"), log);
 	// Before the worker opens it: the database's file is settled first.
 	mainState.databaseFile = await moveDatabaseOnce(app.getPath("userData"), {
 		open: (file, readonly) => new Database(file, { readonly }),

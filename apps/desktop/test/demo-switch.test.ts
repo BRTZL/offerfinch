@@ -11,6 +11,8 @@ const h = vi.hoisted(() => ({
 	sent: [] as string[],
 	/** Holds the restore in its safety backup until the test lets it go on. */
 	safety: null as Promise<void> | null,
+	/** The default browser: what was handed to it. */
+	opened: [] as string[],
 }));
 
 vi.mock("electron", () => ({
@@ -37,6 +39,11 @@ vi.mock("electron", () => ({
 		}),
 	},
 	protocol: { registerSchemesAsPrivileged: () => {}, handle: () => {} },
+	shell: {
+		openExternal: async (url: string) => {
+			h.opened.push(url);
+		},
+	},
 }));
 
 vi.mock("../src/main/backup", async (original) => ({
@@ -67,6 +74,9 @@ const { BACKUP_RUNNING, DEMO_SWITCHING, lifecycle } = await import(
 const { mainState } = await import("../src/main/state");
 const { DEMO_REFUSAL } = await import("../src/main/demo-actions");
 const { IPC } = await import("../src/shared/bridge");
+const { guardLinks, LINKS_OFF, openExternalLink } = await import(
+	"../src/main/external-links"
+);
 
 /** The worker and updates as main drives them, recording what ran. */
 function stubs() {
@@ -105,6 +115,7 @@ beforeEach(() => {
 	h.loads = [];
 	h.sent = [];
 	h.safety = null;
+	h.opened = [];
 	Object.assign(mainState, {
 		demo: false,
 		databaseFile: path.join(h.userData, "offerfinch.sqlite"),
@@ -353,5 +364,151 @@ describe("a demo folder that cannot be made", () => {
 			"resume updates",
 		]);
 		expect(demoStatus()).toEqual({ demo: false, leaveFailed: null });
+	});
+});
+
+describe("sample data an earlier demo left", () => {
+	it("refuses to enter while it cannot be deleted, before updates or the worker are touched", async () => {
+		const { calls, sites } = stubs();
+		const folder = path.join(h.userData, "demo");
+		fs.mkdirSync(folder);
+		fs.writeFileSync(path.join(folder, "offerfinch.sqlite"), "sample");
+		const rm = vi.spyOn(fs, "rmSync").mockImplementation(() => {
+			throw Object.assign(new Error("ENOTEMPTY: directory not empty"), {
+				code: "ENOTEMPTY",
+			});
+		});
+		let result: Awaited<ReturnType<typeof switchDemo>>;
+		try {
+			result = await switchDemo(true);
+		} finally {
+			rm.mockRestore();
+		}
+		expect(result).toEqual({
+			ok: false,
+			error: expect.stringContaining(`Delete the folder ${folder}`),
+		});
+		expect(calls).toEqual([]);
+		expect(h.loads).toEqual([]);
+		expect(h.sent).toEqual([]);
+		expect(sites.block).not.toHaveBeenCalledWith(DEMO_SWITCHING);
+		expect(sites.blocked).toBe(null);
+		expect(demoStatus()).toEqual({ demo: false, leaveFailed: null });
+		// Once it can go, entering deletes it and starts a fresh demo.
+		expect(await switchDemo(true)).toEqual({ ok: true });
+		expect(calls).toEqual([
+			"suspend updates",
+			"stop",
+			"close sites",
+			"start demo",
+		]);
+		expect(fs.existsSync(path.join(folder, "offerfinch.sqlite"))).toBe(false);
+	});
+});
+
+describe("links and the demo", () => {
+	/** A window's web contents: what it was sent, and the link handlers it was given. */
+	function fakeContents() {
+		const sent: unknown[][] = [];
+		const handlers: {
+			open?: (details: { url: string }) => { action: string };
+			navigate?: (event: { preventDefault: () => void }, url: string) => void;
+		} = {};
+		const wc = {
+			isDestroyed: () => false,
+			send: (...args: unknown[]) => sent.push(args),
+			setWindowOpenHandler: (fn: typeof handlers.open) => {
+				handlers.open = fn;
+			},
+			on: (event: string, fn: typeof handlers.navigate) => {
+				if (event === "will-navigate") handlers.navigate = fn;
+			},
+		};
+		guardLinks(wc as never);
+		/** A link clicked in the page (target=_blank), then one it navigates to. */
+		const click = (url: string) => {
+			expect(handlers.open?.({ url })).toEqual({ action: "deny" });
+			let prevented = false;
+			handlers.navigate?.({ preventDefault: () => (prevented = true) }, url);
+			return prevented;
+		};
+		return { wc: wc as never, sent, click };
+	}
+	const settle = () => new Promise((r) => setTimeout(r, 0));
+	const POSTING = "https://www.linkedin.com/jobs/view/4001";
+
+	it("opens no link in the default browser while the demo runs, and says so", async () => {
+		mainState.demo = true;
+		const { wc, sent, click } = fakeContents();
+		// Open Posting (IPC), a link in the page, and a navigation away.
+		expect(await openExternalLink(POSTING, wc)).toBe(false);
+		expect(click("https://example.com/careers")).toBe(true);
+		await settle();
+		// Only exactly the sample host passes; look-alikes do not.
+		for (const url of [
+			"https://jobs.sample.invalid.example.com/1",
+			"https://example.com/?jobs.sample.invalid",
+			"https://jobs.sample.invalid@example.com/1",
+		])
+			expect(await openExternalLink(url, wc)).toBe(false);
+		expect(h.opened).toEqual([]);
+		expect(sent).toHaveLength(6);
+		expect(
+			sent.every(
+				([channel, message]) =>
+					channel === IPC.linkRefused && message === LINKS_OFF,
+			),
+		).toBe(true);
+		// A sample job's own link never resolves (.invalid): it may go.
+		expect(
+			await openExternalLink("https://jobs.sample.invalid/jobs/1", wc),
+		).toBe(true);
+		expect(h.opened).toEqual(["https://jobs.sample.invalid/jobs/1"]);
+		// The app's own pages stay in the window.
+		expect(click("app://local/inbox")).toBe(false);
+	});
+
+	it("opens none while the app switches to the demo, nor after a failed leave", async () => {
+		const { worker } = stubs();
+		let stopped: () => void = () => {};
+		worker.stop.mockImplementationOnce(
+			() => new Promise<void>((r) => (stopped = r)),
+		);
+		const switching = switchDemo(true);
+		await settle();
+		expect(mainState.demo).toBe(false);
+		const { wc, sent, click } = fakeContents();
+		expect(await openExternalLink(POSTING, wc)).toBe(false);
+		expect(click(POSTING)).toBe(true);
+		await settle();
+		stopped();
+		expect((await switching).ok).toBe(true);
+		mainState.demo = false;
+		mainState.leaveFailed = "The worker did not start in time";
+		expect(await openExternalLink(POSTING, wc)).toBe(false);
+		expect(h.opened).toEqual([]);
+		expect(sent).toHaveLength(4);
+	});
+
+	it("opens links on the real data, a backup running or not", async () => {
+		const { wc, sent, click } = fakeContents();
+		expect(await openExternalLink(POSTING, wc)).toBe(true);
+		const hold = lifecycle.take(BACKUP_RUNNING);
+		try {
+			expect(click("https://example.com/careers")).toBe(true);
+			await settle();
+		} finally {
+			if ("release" in hold) hold.release();
+		}
+		// Opened as a new window and as a navigation: each goes to the browser.
+		expect(h.opened).toEqual([
+			POSTING,
+			"https://example.com/careers",
+			"https://example.com/careers",
+		]);
+		expect(sent).toEqual([]);
+		await expect(openExternalLink("file:///etc/passwd", wc)).rejects.toThrow(
+			"Only web links",
+		);
 	});
 });

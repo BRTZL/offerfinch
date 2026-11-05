@@ -2,6 +2,7 @@ import { PROVIDER_IDS, updateProvider } from "@offerfinch/db";
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 import { SITE_TABS } from "../../shared/bridge";
+import { DEMO_SITE_REFUSAL } from "../demo";
 import { protectedProcedure } from "./procedure";
 import {
 	clearStops,
@@ -10,6 +11,12 @@ import {
 	siteTabsStatus,
 	worker,
 } from "./shared";
+
+/** Try-it mode touches no site session: they are the real ones (worker/demo.ts). */
+function refuseInDemo() {
+	if (worker().init.demo)
+		throw new ORPCError("BAD_REQUEST", { message: DEMO_SITE_REFUSAL });
+}
 
 export const sourcesRouter = {
 	/**
@@ -30,6 +37,7 @@ export const sourcesRouter = {
 	checkSignIn: protectedProcedure
 		.input(z.object({ site: z.enum(SITE_TABS) }))
 		.handler(async ({ input }) => {
+			refuseInDemo();
 			const w = worker();
 			const call = w.siteHost().site;
 			try {
@@ -55,6 +63,7 @@ export const sourcesRouter = {
 	signOut: protectedProcedure
 		.input(z.object({ site: z.enum(SITE_TABS) }))
 		.handler(async ({ input }) => {
+			refuseInDemo();
 			const w = worker();
 			try {
 				await w.siteHost().site({ op: "signOut", site: input.site });

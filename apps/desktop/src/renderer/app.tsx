@@ -1,6 +1,6 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
-import { Toaster } from "sonner";
+import { Toaster, toast } from "sonner";
 import { Redirect, Route, Router, Switch, useLocation } from "wouter";
 
 import { Sidebar } from "@/components/shell/sidebar";
@@ -119,6 +119,8 @@ function NavigationBridge() {
 		[],
 	);
 	useEffect(() => desktop.onCommand(sendCommand), []);
+	// Try-it mode opens no link (main/external-links.ts): say so.
+	useEffect(() => desktop.onLinkRefused((message) => toast(message)), []);
 	useEffect(() => {
 		const idle = window.requestIdleCallback(() => {
 			for (const screen of screens) void screen.preload();
