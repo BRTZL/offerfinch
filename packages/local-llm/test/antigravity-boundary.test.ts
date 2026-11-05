@@ -1,6 +1,14 @@
 import { execFile } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+	copyFile,
+	mkdir,
+	mkdtemp,
+	readdir,
+	readFile,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -192,8 +200,9 @@ afterAll(async () => {
 	await rm(root, { recursive: true, force: true });
 });
 
-function provider() {
+function provider(inspectRoot?: (callRoot: string) => Promise<void>) {
 	return new AntigravityProvider({
+		inspectRoot,
 		model: "gemini-3.8-flash",
 		effort: "low",
 		ownerUserId: "u1",
@@ -204,6 +213,19 @@ function provider() {
 		timeoutMs: 120_000,
 		parentEnv: { ...process.env, HOME: fakeHome },
 	});
+}
+
+async function filesContaining(dir: string, needle: string): Promise<string[]> {
+	const found: string[] = [];
+	for (const entry of await readdir(dir, {
+		withFileTypes: true,
+		recursive: true,
+	})) {
+		if (!entry.isFile()) continue;
+		const file = join(entry.parentPath, entry.name);
+		if ((await readFile(file)).includes(needle)) found.push(file);
+	}
+	return found;
 }
 
 const callRoots = () =>
@@ -218,7 +240,12 @@ describe.skipIf(!runtime)(
 			generates = [];
 			reply = () => sse([{ text: '{"ok":true}' }]);
 			const before = callRoots();
-			const result = await provider().generateObject({
+			// Positive control: the server keeps the prompt in its own folder during the call, so
+			// deleting the call's root is what removes it.
+			let keptDuringCall: string[] = [];
+			const result = await provider(async (callRoot) => {
+				keptDuringCall = await filesContaining(callRoot, PROMPT_MARK);
+			}).generateObject({
 				system: `You answer checks. ${PROMPT_MARK}`,
 				prompt: "Is the sky blue? Answer ok true.",
 				schema: z.object({ ok: z.boolean() }),
@@ -234,7 +261,15 @@ describe.skipIf(!runtime)(
 			expect(wire).toContain(PROMPT_MARK);
 			expect(wire).not.toContain(CANARY);
 			expect(readdirSync(markers)).toEqual([]);
+			expect(keptDuringCall.length).toBeGreaterThan(0);
 			expect(callRoots()).toEqual(before);
+			// Nothing of the prompt is left next to the sign-in or in the home the server was not given.
+			expect(await filesContaining(root, PROMPT_MARK)).toEqual([]);
+			// OfferFinch's sign-in folder still holds only what it put there (and the planted files).
+			expect(readdirSync(join(geminiHome, "antigravity-acp")).sort()).toEqual([
+				"acp_token.json",
+				"mcp_config.json",
+			]);
 		}, 180_000);
 
 		it("an injected tool call runs nothing and sends no second request", async () => {
