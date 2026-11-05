@@ -105,7 +105,7 @@ const request = (extra: Record<string, unknown> = {}) => ({
 });
 
 beforeAll(async () => {
-	dir = await mkdtemp(join(tmpdir(), "offerfinch-agy-provider-test-"));
+	dir = await mkdtemp(join(tmpdir(), "offerfinch-test-agy-provider-"));
 	tokenFile = antigravityTokenFile(join(dir, "gemini-home"));
 	await mkdir(join(dir, "gemini-home", "antigravity-acp"), { recursive: true });
 	await writeFile(tokenFile, '{"refresh_token":"test-token"}');

@@ -45,7 +45,9 @@ const ANTIGRAVITY_VENDOR = "google";
 const ANTIGRAVITY_WINDOWS =
 	"Gemini (Antigravity) is not available on Windows yet.";
 
-const ROOT_PREFIX = "offerfinch-agy-";
+const ROOT_PREFIX = "offerfinch-agy-call-";
+/** Exactly what `mkdtemp` makes from the prefix: nothing else in the temp folder matches. */
+const ROOT_NAME = /^offerfinch-agy-call-[A-Za-z0-9]{6}$/;
 /** The only PATH the lockdown proof ran with. */
 const SERVER_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
 const AUTH_SETTINGS = JSON.stringify({ auth: { type: "oauth-personal" } });
@@ -264,7 +266,7 @@ export async function sweepAntigravityRoots(
 	const base = await realpath(tmpdir());
 	let removed = 0;
 	for (const name of await readdir(base).catch(() => [] as string[])) {
-		if (!name.startsWith(ROOT_PREFIX)) continue;
+		if (!ROOT_NAME.test(name)) continue;
 		const path = join(base, name);
 		try {
 			const info = await stat(path);
@@ -711,6 +713,16 @@ export interface AntigravityOptions {
 
 /** One process-wide breaker for Google: a limit or a logout stops every caller. */
 const ANTIGRAVITY_BREAKER = new Breaker();
+
+/**
+ * Antigravity was just installed or signed in to: lifts this process's "not signed in" pause so
+ * the waiting calls go now. Any other pause (a usage limit, a boundary failure) stays.
+ */
+export function resumeAntigravityCalls(
+	breaker: Breaker = ANTIGRAVITY_BREAKER,
+): void {
+	breaker.clear("logged_out");
+}
 
 /** The model asked for a tool: the posting's doing, not the setup's. The call fails. */
 export class AntigravityToolAttemptError extends Error {

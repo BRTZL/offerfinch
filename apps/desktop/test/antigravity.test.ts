@@ -93,6 +93,7 @@ describe("Gemini (Antigravity) state and models", () => {
 			userData: path.join(os.tmpdir(), "offerfinch-never-created"),
 			openSignIn: () => {},
 			platform: "win32",
+			sweep: false,
 		});
 		expect(await service.models()).toEqual([]);
 		await expect(service.install()).rejects.toThrow(/not available on Windows/);
@@ -136,12 +137,15 @@ describe("Gemini (Antigravity) state and models", () => {
 	});
 
 	it("reads not installed and not signed in from an empty data folder, without starting a server", async () => {
-		const userData = fs.mkdtempSync(path.join(os.tmpdir(), "offerfinch-agy-"));
+		const userData = fs.mkdtempSync(
+			path.join(os.tmpdir(), "offerfinch-test-agy-"),
+		);
 		try {
 			const service = antigravityService({
 				userData,
 				openSignIn: () => {},
 				platform: "darwin",
+				sweep: false,
 			});
 			const state = await service.state();
 			expect(state.path).toBeNull();

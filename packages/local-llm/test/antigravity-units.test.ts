@@ -1,16 +1,20 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SubscriptionUnavailableError } from "@offerfinch/core/scoring/llm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
+	AntigravityProvider,
 	antigravityPrompt,
 	errorPause,
 	familiesOf,
 	isSignInUrl,
 	parseJsonAnswer,
+	resumeAntigravityCalls,
+	sweepAntigravityRoots,
 	thinkingLevel,
 	wireModel,
 } from "../src/antigravity";
@@ -53,6 +57,8 @@ describe("the pinned release", () => {
 });
 
 describe("installAntigravity", () => {
+	/** Windows reports no exec bit, so the found-again check follows the host. */
+	const host = process.platform === "win32" ? "win32" : "darwin";
 	let root: string;
 	const server = Buffer.from("server-bytes");
 	const harness = Buffer.from("harness-bytes!");
@@ -81,7 +87,7 @@ describe("installAntigravity", () => {
 		};
 
 	beforeEach(async () => {
-		root = await mkdtemp(join(tmpdir(), "offerfinch-agy-install-test-"));
+		root = await mkdtemp(join(tmpdir(), "offerfinch-test-agy-install-"));
 	});
 	afterEach(async () => {
 		await rm(root, { recursive: true, force: true });
@@ -90,7 +96,7 @@ describe("installAntigravity", () => {
 	it("installs a matching archive, marks both files executable and finds it again", async () => {
 		const got = await installAntigravity({
 			root,
-			platform: "darwin",
+			platform: host,
 			arch: "arm64",
 			asset: asset(),
 			fetch: fetchOf(archive),
@@ -101,13 +107,11 @@ describe("installAntigravity", () => {
 			expect(statSync(got.server).mode & 0o777).toBe(0o755);
 			expect(statSync(got.harness).mode & 0o777).toBe(0o755);
 		}
-		expect(await findAntigravity(root, "darwin", "arm64", asset())).toEqual(
-			got,
-		);
+		expect(await findAntigravity(root, host, "arm64", asset())).toEqual(got);
 		// Only the install folder is left: no download, no staging.
 		expect(readdirSync(root)).toEqual(["1.4.1-darwin-arm64"]);
 		// Not the pinned release's hash: never taken for the real one.
-		expect(await findAntigravity(root, "darwin", "arm64")).toBeNull();
+		expect(await findAntigravity(root, host, "arm64")).toBeNull();
 	});
 
 	for (const [label, bytes, over] of [
@@ -520,5 +524,51 @@ describe("the call's parts", () => {
 			),
 		).toBe(false);
 		expect(isSignInUrl("not a url")).toBe(false);
+	});
+});
+
+describe("process-wide state", () => {
+	it("sweeps only call folders a crash left, never other folders or fresh calls", async () => {
+		const old = await mkdtemp(join(tmpdir(), "offerfinch-agy-call-"));
+		const fresh = await mkdtemp(join(tmpdir(), "offerfinch-agy-call-"));
+		const other = await mkdtemp(join(tmpdir(), "offerfinch-agy-callx-"));
+		const past = new Date(Date.now() - 3_600_000);
+		await utimes(old, past, past);
+		await utimes(other, past, past);
+		try {
+			await sweepAntigravityRoots();
+			expect(existsSync(old)).toBe(false);
+			expect(existsSync(fresh)).toBe(true);
+			expect(existsSync(other)).toBe(true);
+		} finally {
+			for (const dir of [old, fresh, other])
+				await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("lifts the not-signed-in pause after an install or sign-in, and no other", async () => {
+		const provider = new AntigravityProvider({
+			model: "gemini-3.8-flash",
+			ownerUserId: "u1",
+			runtime: async () => null,
+			tokenFile: "/nonexistent",
+			platform: "darwin",
+		});
+		const request = {
+			system: "s",
+			prompt: "p",
+			schema: z.object({}),
+			task: "t",
+		};
+		const first = await provider.generateObject(request).catch((e) => e);
+		expect(first).toBeInstanceOf(SubscriptionUnavailableError);
+		expect(first.kind).toBe("logged_out");
+		// Held: the same pause, nothing looked at again.
+		expect(await provider.generateObject(request).catch((e) => e)).toBe(first);
+		resumeAntigravityCalls();
+		const next = await provider.generateObject(request).catch((e) => e);
+		expect(next).not.toBe(first);
+		expect(next.kind).toBe("logged_out");
+		resumeAntigravityCalls();
 	});
 });

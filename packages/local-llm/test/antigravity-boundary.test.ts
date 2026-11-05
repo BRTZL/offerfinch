@@ -48,7 +48,7 @@ const exec = promisify(execFile);
 const TOKEN = process.env.OFFERFINCH_AGY_TOKEN;
 const RUNTIME_ROOT =
 	process.env.OFFERFINCH_AGY_RUNTIME ??
-	join(tmpdir(), "offerfinch-agy-test-cache");
+	join(tmpdir(), "offerfinch-test-agy-cache");
 const CANARY = "CANARY_AGY_5c1e";
 const PROMPT_MARK = "PROMPT_MARK_83b2";
 
@@ -148,7 +148,7 @@ const sse = (parts: unknown[]) =>
 
 beforeAll(async () => {
 	if (!runtime || !TOKEN) return;
-	root = await mkdtemp(join(tmpdir(), "offerfinch-agy-boundary-"));
+	root = await mkdtemp(join(tmpdir(), "offerfinch-test-agy-boundary-"));
 	markers = join(root, "markers");
 	geminiHome = join(root, "gemini-home");
 	fakeHome = join(root, "home");
@@ -230,7 +230,7 @@ async function filesContaining(dir: string, needle: string): Promise<string[]> {
 
 const callRoots = () =>
 	readdirSync(tmpdir()).filter((n) =>
-		/^offerfinch-agy-[A-Za-z0-9]{6}$/.test(n),
+		/^offerfinch-agy-call-[A-Za-z0-9]{6}$/.test(n),
 	);
 
 describe.skipIf(!runtime)(

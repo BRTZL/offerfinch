@@ -5,6 +5,7 @@ import {
 	AntigravityProvider,
 	antigravityTokenFile,
 	probeAntigravity,
+	resumeAntigravityCalls,
 	signInAntigravity,
 	sweepAntigravityRoots,
 } from "@offerfinch/local-llm/antigravity";
@@ -129,6 +130,8 @@ export function antigravityService(input: {
 	openSignIn: (url: string) => void;
 	log?: (message: string, data?: Record<string, unknown>) => void;
 	platform?: NodeJS.Platform;
+	/** Deletes call folders a crash left (default on; tests turn it off). */
+	sweep?: boolean;
 }): ManagedProvider {
 	const platform = input.platform ?? process.platform;
 	const paths = antigravityPaths(input.userData);
@@ -142,7 +145,7 @@ export function antigravityService(input: {
 	let installing: Promise<unknown> | null = null;
 	let signingIn: { url: string | null; done: Promise<void> } | null = null;
 
-	if (!providerOff("antigravity", platform))
+	if (input.sweep !== false && !providerOff("antigravity", platform))
 		void sweepAntigravityRoots().catch(() => {});
 
 	const check = (fresh: boolean): Promise<AntigravityProbe> | null => {
@@ -225,6 +228,7 @@ export function antigravityService(input: {
 			});
 			await installing;
 			input.log?.("antigravity installed", { version: ANTIGRAVITY_VERSION });
+			resumeAntigravityCalls();
 			probe = null;
 			return state(true);
 		},
@@ -258,6 +262,7 @@ export function antigravityService(input: {
 			}
 			await signingIn?.done;
 			input.log?.("antigravity signed in");
+			resumeAntigravityCalls();
 			probe = null;
 			return state(true);
 		},

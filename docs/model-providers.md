@@ -122,7 +122,7 @@ the runtime and the sign-in live in `<app data>/antigravity/` (`runtime/1.4.1-<p
 `session/new` (efforts: the family's `-low|-medium|-high` slugs in the legacy model list; none for a
 family without them). Proof: `local-llm/test/antigravity-boundary.test.ts` runs the real server,
 opt-in with `OFFERFINCH_AGY_TOKEN=<a signed-in acp_token.json>` and the runtime installed in
-`OFFERFINCH_AGY_RUNTIME` (default a temp cache; `OFFERFINCH_AGY_DOWNLOAD=1` downloads it).
+`OFFERFINCH_AGY_RUNTIME` (default `$TMPDIR/offerfinch-test-agy-cache`; `OFFERFINCH_AGY_DOWNLOAD=1` downloads it).
 
 ## Contract (code)
 
