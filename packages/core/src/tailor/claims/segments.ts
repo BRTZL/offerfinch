@@ -1,3 +1,4 @@
+import { normalizeLineEndings } from "../../domain/line-endings";
 import { evidenceProfile, normalizeForMatch } from "../profile-rules";
 import { type Contact, parseContact } from "../tailor";
 import { factTokens } from "./tokens";
@@ -68,7 +69,7 @@ export function lineContexts(
 	body: string,
 	question = "",
 ): LineContext[] {
-	const lines = body.split("\n");
+	const lines = normalizeLineEndings(body).split("\n");
 	if (kind === "cv") {
 		let section = "";
 		/** The headings below the section, outermost first. */
@@ -256,18 +257,21 @@ export function segmentDocuments(input: ClaimsInput): Segment[] {
 	};
 	const lines = (kind: CheckedDocument, body: string, question = "") => {
 		const contexts = lineContexts(kind, body, question);
-		body.split("\n").forEach((raw, index) => {
-			if (!raw.trim()) return;
-			const where = contexts[index] ?? { context: "" };
-			const bullet = /^\s*[-*+]\s+/.test(raw);
-			const text = plain(
-				raw.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").replace(/^#{1,6}\s+/, ""),
-			);
-			if (!text || structural(kind, raw, text, contact)) return;
-			if (kind === "cv" && (bullet || /^#{1,6}\s/.test(raw)))
-				push(kind, text, where);
-			else for (const sentence of sentences(text)) push(kind, sentence, where);
-		});
+		normalizeLineEndings(body)
+			.split("\n")
+			.forEach((raw, index) => {
+				if (!raw.trim()) return;
+				const where = contexts[index] ?? { context: "" };
+				const bullet = /^\s*[-*+]\s+/.test(raw);
+				const text = plain(
+					raw.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").replace(/^#{1,6}\s+/, ""),
+				);
+				if (!text || structural(kind, raw, text, contact)) return;
+				if (kind === "cv" && (bullet || /^#{1,6}\s/.test(raw)))
+					push(kind, text, where);
+				else
+					for (const sentence of sentences(text)) push(kind, sentence, where);
+			});
 	};
 	lines("cv", input.documents.cv);
 	lines("cover_letter", input.documents.cover_letter);

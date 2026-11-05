@@ -1,3 +1,4 @@
+import { normalizeLineEndings } from "@offerfinch/core/domain/line-endings";
 import type { ApplicationState } from "@offerfinch/core/domain/states";
 import type { JobSourceKind } from "@offerfinch/core/domain/types";
 import { companyNameKey } from "@offerfinch/core/domain/url";
@@ -187,12 +188,16 @@ export async function importProfile(
 	snapshot: ProfileSnapshot,
 	sourcePath: string,
 ): Promise<void> {
+	const files = snapshot.files.map((file) => ({
+		...file,
+		content: normalizeLineEndings(file.content),
+	}));
 	await db
 		.insert(profiles)
-		.values({ userId, files: snapshot.files, sourcePath })
+		.values({ userId, files, sourcePath })
 		.onConflictDoUpdate({
 			target: profiles.userId,
-			set: { files: snapshot.files, sourcePath, importedAt: new Date() },
+			set: { files, sourcePath, importedAt: new Date() },
 		});
 }
 

@@ -4,6 +4,7 @@ import {
 	submissionModeForSource,
 } from "@offerfinch/core/apply/modes";
 import { compareApproval } from "@offerfinch/core/domain/approval";
+import { normalizeLineEndings } from "@offerfinch/core/domain/line-endings";
 import { sourceMismatch } from "@offerfinch/core/domain/source";
 import { APPLICATION_STATES } from "@offerfinch/core/domain/states";
 import { markdownToPreviewHtml } from "@offerfinch/core/export/render";
@@ -754,7 +755,7 @@ export const pipelineRouter = {
 				try {
 					const structured = await context.structureProfile(
 						context.session.user.id,
-						input.text,
+						normalizeLineEndings(input.text),
 					);
 					return { records: recordsFromStructured(structured, "your resume") };
 				} catch (error) {

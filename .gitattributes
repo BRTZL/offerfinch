@@ -1,0 +1,10 @@
+* text=auto eol=lf
+
+*.png binary
+*.icns binary
+*.car binary
+*.tiff binary
+*.aiff binary
+
+# This fixture deliberately tests pasted text with CRLF endings.
+packages/core/test/fixtures/posting/messy-paste.txt -text

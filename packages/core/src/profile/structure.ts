@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizeLineEndings } from "../domain/line-endings";
 
 import { promptText } from "../domain/prompt";
 import type { GenerateObjectRequest, LlmProvider } from "../scoring/llm";
@@ -110,7 +111,7 @@ export async function structureProfile(
 	llm: LlmProvider,
 	text: string,
 ): Promise<StructuredProfile> {
-	const redacted = redactContactText(text);
+	const redacted = redactContactText(normalizeLineEndings(text));
 	const result = await llm.generateObject({
 		task: "structure-profile",
 		system: SYSTEM,
@@ -251,7 +252,9 @@ export const PROFILE_PATH =
 export function fakeStructureResponder(
 	request: GenerateObjectRequest<unknown>,
 ): StructuredProfile {
-	const text = String((request.context as { text?: string })?.text ?? "");
+	const text = normalizeLineEndings(
+		String((request.context as { text?: string })?.text ?? ""),
+	);
 	const lines = text
 		.split("\n")
 		.map((l) => l.trim())

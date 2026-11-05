@@ -6,9 +6,8 @@ import {
 	confirmationQuestion,
 } from "@offerfinch/core/tailor/profile-rules";
 import { citedUnits } from "@offerfinch/core/tailor/stale";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-
 import {
 	addRecord,
 	convertProfileFiles,
@@ -23,6 +22,7 @@ import {
 	seedCompanies,
 	updateRecord,
 } from "../src/index";
+import { profiles } from "../src/schema/pipeline";
 import { execute, testDb } from "./setup";
 
 let db: Database;
@@ -114,6 +114,41 @@ describe("profile records", () => {
 		expect(other).toBeNull();
 		expect(await removeRecord(db, "u2", exp?.id ?? "")).toBe(false);
 	});
+
+	it.each(["\r\n", "\r"])(
+		"normalizes imported and legacy profile files (%j)",
+		async (ending) => {
+			await ensureUser(db, {
+				id: "lines",
+				name: "Test",
+				email: "lines@example.test",
+			});
+			const content = "# Personal\n\n- **Name:** Test Candidate\n";
+			const files = [
+				{ path: "personal.md", content: content.replace(/\n/g, ending) },
+			];
+			await importProfile(db, "lines", { files }, "test");
+			expect((await repo.profileFiles("lines"))?.files).toEqual([
+				{ path: "personal.md", content },
+			]);
+			const [stored] = await db
+				.select()
+				.from(profiles)
+				.where(eq(profiles.userId, "lines"));
+			expect(stored?.files).toEqual([{ path: "personal.md", content }]);
+			// Existing databases can still contain files saved by older versions.
+			await db
+				.update(profiles)
+				.set({ files })
+				.where(eq(profiles.userId, "lines"));
+			expect((await repo.getProfile("lines"))?.files).toEqual([
+				{ path: "personal.md", content },
+			]);
+			expect((await repo.profileFiles("lines"))?.files).toEqual([
+				{ path: "personal.md", content },
+			]);
+		},
+	);
 
 	it("converts a profile kept as files once, and only when asked", async () => {
 		await ensureUser(db, { id: "u3", name: "Robin", email: "u3@example.test" });
