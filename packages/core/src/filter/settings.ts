@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { canonicalCountries, canonicalCountry } from "./home";
+import { canonicalLanguages } from "./languages";
 
 /** Country names, stored as the gazetteer's names: "Turkey" and "turkiye" both become "Türkiye". */
 const countryList = z
@@ -48,7 +49,10 @@ export const filterSettingsSchema = z.object({
 	 */
 	locationPrefilled: z.boolean().default(false),
 	/** Languages the user can work in. The fit score caps a job that requires another one. */
-	languages: z.array(z.string()).default(["English"]),
+	languages: z
+		.array(z.string())
+		.default(["English"])
+		.transform(canonicalLanguages),
 	/** Words for the roles the user targets; the fit score reads them. Empty: no preference. */
 	roleKeywords: z
 		.array(z.string())
@@ -74,7 +78,8 @@ export const filterSettingsSchema = z.object({
 		]),
 	/**
 	 * Job titles to search the internet for ("Senior Frontend Engineer"). Empty: the titles of
-	 * the roles in the profile.
+	 * the roles in the profile. No longer on the Job search page (2026-11-05): saving the page
+	 * clears it, so searches follow the profile and the user's own searches.
 	 */
 	searchTitles: z.array(z.string()).default([]),
 	/**

@@ -290,6 +290,20 @@ test("job search pickers: filled from the profile, changed with the keyboard, ke
 		await sizes.press("Enter");
 		await sizes.press("Escape");
 		await page.locator("#f-avoidIndustries").fill("Gambling, Defense");
+		// Typed words: Enter adds one, and a word still being typed is added when the field is left.
+		const avoid = page.locator("#f-excludeTitleKeywords");
+		await avoid.fill("Contractor");
+		await avoid.press("Enter");
+		await avoid.fill("Lead");
+		// Languages by their own names: typing the English name finds Türkçe.
+		const languages = page.locator("#f-languages");
+		await languages.click();
+		await languages.fill("Türk");
+		await expect(page.getByRole("option", { name: "Türkçe" })).toBeVisible();
+		await languages.press("ArrowDown");
+		await languages.press("Enter");
+		await languages.press("Escape");
+		await expect(chips(page, "languages")).toHaveText(["English", "Türkçe"]);
 
 		await page.getByTestId("save-settings").click();
 		await expect(
@@ -309,12 +323,21 @@ test("job search pickers: filled from the profile, changed with the keyboard, ke
 			salaryCurrency: "EUR",
 			companySizes: ["Scale-up"],
 			avoidIndustries: ["Gambling", "Defense"],
+			languages: ["English", "Türkçe"],
+			searchTitles: [],
 		});
+		expect(readSettings().excludeTitleKeywords).toEqual(
+			expect.arrayContaining(["intern", "Contractor", "Lead"]),
+		);
 		// Saving applies to new jobs only: the matches are as they were.
 		expect(readApps()).toMatchObject(seeded);
 		fs.mkdirSync(SHOTS, { recursive: true });
 		await page.getByText("Where you can work").scrollIntoViewIfNeeded();
 		await page.screenshot({ path: path.join(SHOTS, "job-search.png") });
+		await page
+			.getByText("Role and language", { exact: true })
+			.evaluate((el) => el.scrollIntoView({ block: "start" }));
+		await page.screenshot({ path: path.join(SHOTS, "job-search-roles.png") });
 		await page.getByText("Level and kind of role").scrollIntoViewIfNeeded();
 		await page.screenshot({
 			path: path.join(SHOTS, "job-search-preferences.png"),
@@ -338,9 +361,15 @@ test("job search pickers: filled from the profile, changed with the keyboard, ke
 		]);
 		await expect(chips(run.page, "seniority")).toHaveText(["Senior"]);
 		await expect(run.page.getByTestId("min-salary")).toHaveValue("60000");
-		await expect(run.page.locator("#f-avoidIndustries")).toHaveValue(
-			"Gambling, Defense",
-		);
+		await expect(
+			run.page
+				.getByTestId("tags-avoidIndustries")
+				.locator("[data-slot=tag-chip]"),
+		).toHaveText(["Gambling", "Defense"]);
+		await expect(chips(run.page, "languages")).toHaveText([
+			"English",
+			"Türkçe",
+		]);
 	} finally {
 		await run.app.close();
 	}

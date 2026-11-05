@@ -446,7 +446,7 @@ describe("the fit prompt", () => {
 		const prefix = request?.promptPrefix ?? "";
 		for (const line of [
 			"<work_rights>\nLives in: Türkiye\nCitizenship: Türkiye\nRight to work in: Türkiye\n</work_rights>",
-			"Languages the candidate works in: English, Turkish",
+			"Languages the candidate works in: English, Türkçe",
 			"Target roles: Frontend Engineer, engineer",
 			"Title words to avoid: intern",
 			"Target levels: Senior, Staff",

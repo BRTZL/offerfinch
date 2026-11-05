@@ -1,6 +1,7 @@
 import { COUNTRIES } from "@offerfinch/core/filter/countries";
+import { LANGUAGES } from "@offerfinch/core/filter/languages";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useContext, useEffect, useRef, useState } from "react";
+import { type ReactNode, useContext, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { SearchPlanSection } from "@/components/pipeline/settings/search-plan";
 import {
@@ -14,20 +15,10 @@ import { Group, Section } from "@/components/system/layout";
 import { Button } from "@/components/ui/button";
 import { ComboboxField, MultiComboboxField } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
+import { TagInputField } from "@/components/ui/tag-input";
 import { client, orpc } from "@/lib/orpc";
 
 type Settings = Awaited<ReturnType<typeof client.settings.get>>;
-
-const LIST_FIELDS = [
-	"languages",
-	"searchTitles",
-	"roleKeywords",
-	"excludeTitleKeywords",
-	"wantedRoleTypes",
-	"unwantedRoleTypes",
-	"preferredIndustries",
-	"avoidIndustries",
-] as const;
 
 const LEVELS = [
 	"Intern",
@@ -67,12 +58,6 @@ const CURRENCIES = [
 	"JPY",
 ];
 
-const list = (value: string) =>
-	value
-		.split(",")
-		.map((v) => v.trim())
-		.filter(Boolean);
-
 /**
  * What the user is looking for: where to search, and what the fit score weighs every new job
  * against (work rights, place, languages, roles, level, pay, company). Nothing here sets a job
@@ -96,16 +81,9 @@ export function JobFilterSettings() {
 		},
 		onError: (error) => toast.error(error.message),
 	});
-	const formRef = useRef<HTMLFormElement>(null);
-	/** What is on screen, the comma-separated fields read from the form even before they blur. */
-	const current = (): Settings | null => {
-		if (!form || !formRef.current) return form;
-		const data = new FormData(formRef.current);
-		const next = { ...form };
-		for (const key of LIST_FIELDS)
-			next[key] = list(String(data.get(key) ?? ""));
-		return next;
-	};
+	/** What is saved: the form, without the old "Search for" titles (searches follow the profile). */
+	const current = (): Settings | null =>
+		form ? { ...form, searchTitles: [] } : form;
 	// In onboarding, Continue saves the settings on screen (defaults included), so they are stored.
 	const embeddedSave = useContext(EmbeddedSave);
 	useEffect(() => {
@@ -134,14 +112,18 @@ export function JobFilterSettings() {
 					}
 				: f,
 		);
-	const text = (key: (typeof LIST_FIELDS)[number]) => ({
-		id: `f-${key}`,
-		name: key,
-		className: "w-72",
-		defaultValue: form?.[key].join(", "),
-		onBlur: (e: { target: { value: string } }) =>
-			set(key, list(e.target.value)),
-	});
+	/** A field of words the user types, as chips (`TagInputField`). */
+	const tags = (key: TagKey, label: string, placeholder?: string) => (
+		<TagInputField
+			id={`f-${key}`}
+			aria-label={label}
+			data-testid={`tags-${key}`}
+			className="w-96"
+			value={form?.[key] ?? []}
+			onValueChange={(v) => set(key, v)}
+			placeholder={placeholder}
+		/>
+	);
 
 	return (
 		<SettingsPage
@@ -156,7 +138,6 @@ export function JobFilterSettings() {
 			/>
 			{form && (
 				<form
-					ref={formRef}
 					className="flex flex-col gap-8"
 					onSubmit={(e) => {
 						e.preventDefault();
@@ -266,147 +247,7 @@ export function JobFilterSettings() {
 							) : null}
 						</Group>
 					</Section>
-					<Section title="Role and language">
-						<Group>
-							<Field
-								id="f-searchTitles"
-								label="Search for"
-								hint="Job titles for the searches below, separated by commas. Empty: the titles of the roles in your profile. The fit score uses them too."
-							>
-								<Input
-									{...text("searchTitles")}
-									placeholder="From your profile"
-								/>
-							</Field>
-							<Field
-								id="f-roleKeywords"
-								label="Target roles"
-								hint="Words for the roles you want, such as frontend or engineer. The fit score uses this."
-							>
-								<Input {...text("roleKeywords")} />
-							</Field>
-							<Field
-								id="f-excludeTitleKeywords"
-								label="Titles to avoid"
-								hint="Words for roles you don't want, such as intern. Searches skip them; the fit score counts them as a poor fit."
-							>
-								<Input {...text("excludeTitleKeywords")} />
-							</Field>
-							<Field
-								id="f-languages"
-								label="Languages you work in"
-								hint="The fit score rates jobs that require another language below your minimum."
-							>
-								<Input {...text("languages")} />
-							</Field>
-						</Group>
-					</Section>
-					<Section title="Level and kind of role">
-						<Group>
-							<Field
-								id="f-seniority"
-								label="Level"
-								hint="The levels you want. Empty: any. The fit score uses this."
-							>
-								<MultiComboboxField
-									id="f-seniority"
-									aria-label="Level"
-									data-testid="seniority"
-									items={LEVELS}
-									value={form.seniority}
-									onValueChange={(v) => set("seniority", v)}
-									placeholder="Any level"
-								/>
-							</Field>
-							<Field
-								id="f-wantedRoleTypes"
-								label="Kinds of role you want"
-								hint="Separated by commas, such as individual contributor or full-time. The fit score uses this."
-							>
-								<Input {...text("wantedRoleTypes")} placeholder="Any" />
-							</Field>
-							<Field
-								id="f-unwantedRoleTypes"
-								label="Kinds of role you don't want"
-								hint="Separated by commas, such as people management or contract. The fit score counts them as a poor fit."
-							>
-								<Input {...text("unwantedRoleTypes")} placeholder="None" />
-							</Field>
-						</Group>
-					</Section>
-					<Section title="Pay">
-						<Group>
-							<Field
-								id="f-minSalary"
-								label="Minimum yearly salary"
-								hint="A job whose stated pay is below it is rated below your minimum fit. Jobs that state no pay are not marked down. Empty: no minimum."
-							>
-								<div className="flex items-center gap-2">
-									<Input
-										id="f-minSalary"
-										type="number"
-										min={0}
-										step={1000}
-										className="w-32 tabular-nums"
-										data-testid="min-salary"
-										value={form.minSalary ?? ""}
-										onChange={(e) =>
-											set(
-												"minSalary",
-												e.target.value === ""
-													? null
-													: Math.max(0, Math.round(Number(e.target.value))),
-											)
-										}
-										placeholder="None"
-									/>
-									<ComboboxField
-										id="f-salaryCurrency"
-										aria-label="Currency"
-										data-testid="salary-currency"
-										items={CURRENCIES}
-										value={form.salaryCurrency || null}
-										onValueChange={(v) => set("salaryCurrency", v ?? "")}
-										placeholder="Currency"
-										className="w-28"
-									/>
-								</div>
-							</Field>
-						</Group>
-					</Section>
-					<Section title="Company and industry">
-						<Group>
-							<Field
-								id="f-companySizes"
-								label="Company size or stage"
-								hint="The kinds of company you prefer. Empty: any. The fit score uses this."
-							>
-								<MultiComboboxField
-									id="f-companySizes"
-									aria-label="Company size or stage"
-									data-testid="company-sizes"
-									items={COMPANY_SIZES}
-									value={form.companySizes}
-									onValueChange={(v) => set("companySizes", v)}
-									placeholder="Any"
-								/>
-							</Field>
-							<Field
-								id="f-preferredIndustries"
-								label="Industries you prefer"
-								hint="Separated by commas, such as fintech or developer tools. The fit score uses this."
-							>
-								<Input {...text("preferredIndustries")} placeholder="Any" />
-							</Field>
-							<Field
-								id="f-avoidIndustries"
-								label="Industries to avoid"
-								hint="Separated by commas, such as gambling. The fit score counts them as a poor fit."
-							>
-								<Input {...text("avoidIndustries")} placeholder="None" />
-							</Field>
-						</Group>
-					</Section>
+					<PreferenceSections form={form} set={set} tags={tags} />
 					<Section title="How good a fit">
 						<Group>
 							<Field
@@ -439,5 +280,174 @@ export function JobFilterSettings() {
 			)}
 			{form && <SearchPlanSection embedded={Boolean(embeddedSave)} />}
 		</SettingsPage>
+	);
+}
+
+/** The settings typed as free words, shown as chips. */
+type TagKey =
+	| "roleKeywords"
+	| "excludeTitleKeywords"
+	| "wantedRoleTypes"
+	| "unwantedRoleTypes"
+	| "preferredIndustries"
+	| "avoidIndustries";
+type SetField = <K extends keyof Settings>(key: K, value: Settings[K]) => void;
+type TagField = (key: TagKey, label: string, placeholder?: string) => ReactNode;
+
+/** Roles, languages, level, pay and company: what the fit score weighs, never a reason on their own. */
+function PreferenceSections({
+	form,
+	set,
+	tags,
+}: {
+	form: Settings;
+	set: SetField;
+	tags: TagField;
+}) {
+	return (
+		<>
+			<Section title="Role and language">
+				<Group>
+					<Field
+						id="f-roleKeywords"
+						label="Target roles"
+						hint="Words for the roles you want, such as frontend or engineer. Press Enter or a comma after each. The fit score uses this."
+					>
+						{tags("roleKeywords", "Target roles", "Any role")}
+					</Field>
+					<Field
+						id="f-excludeTitleKeywords"
+						label="Titles to avoid"
+						hint="Words for roles you don't want, such as intern. Searches skip them; the fit score counts them as a poor fit."
+					>
+						{tags("excludeTitleKeywords", "Titles to avoid", "None")}
+					</Field>
+					<Field
+						id="f-languages"
+						label="Languages you work in"
+						hint="The fit score rates jobs that require another language below your minimum."
+					>
+						<MultiComboboxField
+							id="f-languages"
+							aria-label="Languages you work in"
+							data-testid="languages"
+							items={[
+								...LANGUAGES,
+								...form.languages.filter((l) => !LANGUAGES.includes(l)),
+							]}
+							value={form.languages}
+							onValueChange={(v) => set("languages", v)}
+							placeholder="Choose languages"
+						/>
+					</Field>
+				</Group>
+			</Section>
+			<Section title="Level and kind of role">
+				<Group>
+					<Field
+						id="f-seniority"
+						label="Level"
+						hint="The levels you want. Empty: any. The fit score uses this."
+					>
+						<MultiComboboxField
+							id="f-seniority"
+							aria-label="Level"
+							data-testid="seniority"
+							items={LEVELS}
+							value={form.seniority}
+							onValueChange={(v) => set("seniority", v)}
+							placeholder="Any level"
+						/>
+					</Field>
+					<Field
+						id="f-wantedRoleTypes"
+						label="Kinds of role you want"
+						hint="Such as individual contributor or full-time. The fit score uses this."
+					>
+						{tags("wantedRoleTypes", "Kinds of role you want", "Any")}
+					</Field>
+					<Field
+						id="f-unwantedRoleTypes"
+						label="Kinds of role you don't want"
+						hint="Such as people management or contract. The fit score counts them as a poor fit."
+					>
+						{tags("unwantedRoleTypes", "Kinds of role you don't want", "None")}
+					</Field>
+				</Group>
+			</Section>
+			<Section title="Pay">
+				<Group>
+					<Field
+						id="f-minSalary"
+						label="Minimum yearly salary"
+						hint="A job whose stated pay is below it is rated below your minimum fit. Jobs that state no pay are not marked down. Empty: no minimum."
+					>
+						<div className="flex items-center gap-2">
+							<Input
+								id="f-minSalary"
+								type="number"
+								min={0}
+								step={1000}
+								className="w-32 tabular-nums"
+								data-testid="min-salary"
+								value={form.minSalary ?? ""}
+								onChange={(e) =>
+									set(
+										"minSalary",
+										e.target.value === ""
+											? null
+											: Math.max(0, Math.round(Number(e.target.value))),
+									)
+								}
+								placeholder="None"
+							/>
+							<ComboboxField
+								id="f-salaryCurrency"
+								aria-label="Currency"
+								data-testid="salary-currency"
+								items={CURRENCIES}
+								value={form.salaryCurrency || null}
+								onValueChange={(v) => set("salaryCurrency", v ?? "")}
+								placeholder="Currency"
+								className="w-28"
+							/>
+						</div>
+					</Field>
+				</Group>
+			</Section>
+			<Section title="Company and industry">
+				<Group>
+					<Field
+						id="f-companySizes"
+						label="Company size or stage"
+						hint="The kinds of company you prefer. Empty: any. The fit score uses this."
+					>
+						<MultiComboboxField
+							id="f-companySizes"
+							aria-label="Company size or stage"
+							data-testid="company-sizes"
+							items={COMPANY_SIZES}
+							value={form.companySizes}
+							onValueChange={(v) => set("companySizes", v)}
+							placeholder="Any"
+						/>
+					</Field>
+					<Field
+						id="f-preferredIndustries"
+						label="Industries you prefer"
+						hint="Such as fintech or developer tools. The fit score uses this."
+					>
+						{tags("preferredIndustries", "Industries you prefer", "Any")}
+					</Field>
+					<Field
+						id="f-avoidIndustries"
+						label="Industries to avoid"
+						hint="Such as gambling. The fit score counts them as a poor fit."
+					>
+						{tags("avoidIndustries", "Industries to avoid", "None")}
+					</Field>
+				</Group>
+			</Section>
+		</>
 	);
 }

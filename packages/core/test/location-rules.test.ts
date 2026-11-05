@@ -63,7 +63,7 @@ describe("settings: countries and the profile's location", () => {
 		expect(settings.rightToWork).toEqual(["Türkiye", "Atlantis"]);
 		expect(settings.keepOnsiteIn).toEqual(["Türkiye"]);
 		expect(settings.minScore).toBe(61);
-		expect(settings.languages).toEqual(["English", "Turkish"]);
+		expect(settings.languages).toEqual(["English", "Türkçe"]);
 		expect(settings.livesIn).toBe("");
 		expect(settings.relocationCountries).toEqual([]);
 		expect(canonicalCountries(["usa", "U.S.", "United States"])).toEqual([

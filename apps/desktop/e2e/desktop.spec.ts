@@ -130,7 +130,8 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 		await expect(page.getByTestId("backend-brave")).toHaveCount(0);
 		await shot(page, "onboarding-sources");
 		// Continue saves what is on screen, a field still being typed in included.
-		await page.locator("#f-searchTitles").fill("Senior Frontend Engineer");
+		await expect(page.locator("#f-searchTitles")).toHaveCount(0);
+		await page.locator("#f-roleKeywords").fill("design systems");
 		await page.getByTestId("step-continue").click();
 		await expect(page.getByTestId("step-count")).toContainText("Step 4 of 5");
 		const rules = readDb<{ settings: string }>(
@@ -138,7 +139,8 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 		);
 		expect(rules).toHaveLength(1);
 		expect(JSON.parse(rules[0]?.settings ?? "{}")).toMatchObject({
-			searchTitles: ["Senior Frontend Engineer"],
+			roleKeywords: expect.arrayContaining(["design systems"]),
+			searchTitles: [],
 			rightToWork: [],
 			languages: ["English"],
 		});
@@ -781,12 +783,14 @@ test("Indeed and Glassdoor read local stand-ins only: jobs handed off, a check s
 			{ timeout: 90_000 },
 		);
 		await expect(page.getByTestId("source-indeed-status")).toHaveText(
-			/1 search, 2 new postings, 2 new jobs/,
+			// One search per role title in the profile (Job search no longer sets titles).
+			/2 searches, 2 new postings, 2 new jobs/,
 			{ timeout: 30_000 },
 		);
 		await shot(page, "settings-sources-sites");
-		// Only the stand-ins were read: the search page, then each job page once.
-		expect(served.filter((s) => s.startsWith("127.0.0.1"))).toEqual([
+		// Only the stand-ins were read: the search page for each search, each job page once.
+		expect(served.filter((s) => s.startsWith("127.0.0.1")).sort()).toEqual([
+			`127.0.0.1:${indeedPort}/jobs`,
 			`127.0.0.1:${indeedPort}/jobs`,
 			`127.0.0.1:${indeedPort}/viewjob`,
 			`127.0.0.1:${indeedPort}/viewjob`,
@@ -1021,13 +1025,14 @@ test("site tabs inside the app: the sign-in sheet, a check that pauses and notif
 		await expect(sheet).toBeVisible();
 		await page.getByTestId("site-sheet-close").click();
 		await expect(page.getByTestId("source-indeed-status")).toHaveText(
-			/1 search, 2 new postings/,
+			/2 searches, 2 new postings/,
 			{ timeout: 60_000 },
 		);
 		// Closed with the run; read only (GETs of the stand-in's pages, no other origin).
 		await expect.poll(indeedTab).toBeUndefined();
-		// The check page once before the kill, once after, then the cleared search.
-		expect(served.filter((p) => p === "/jobs")).toHaveLength(3);
+		// The check page once before the kill, once after, then the cleared search, then the
+		// second search (one per role title in the profile).
+		expect(served.filter((p) => p === "/jobs")).toHaveLength(4);
 		expect(chrome.launches()).toEqual([]);
 
 		// Signed in, with nothing to fix: the row offers no action but its switch.
@@ -1218,10 +1223,10 @@ test("a scan reads every source from the shared plan, LinkedIn's Top picks first
 		expect(fixture.requests.every((r) => r.method === "GET")).toBe(true);
 		expect(paths.some((p) => /apply/i.test(p))).toBe(false);
 		// Job-board search made its DuckDuckGo queries from the same plan, one board each.
+		// At most 6 a scan, rotating through the plan across scans, so the user's own search may
+		// come in a later scan.
 		const queries = boards.searches.slice(searchesBefore);
-		expect(queries).toContain(
-			'site:job-boards.greenhouse.io "Platform Engineer" remote',
-		);
+		expect(queries.length).toBeGreaterThan(0);
 		for (const q of queries.filter((x) => x.includes("site:")))
 			expect(q.match(/site:/g)).toHaveLength(1);
 		// Read in LinkedIn's hidden tab inside the app: no Chrome started, no profile made, and
