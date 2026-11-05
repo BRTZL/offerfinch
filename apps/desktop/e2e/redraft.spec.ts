@@ -100,8 +100,10 @@ test("Redraft the letter with an instruction: version 2 of the letter, the CV un
 		await page.getByTestId("add-job-location").fill("Remote - Worldwide");
 		await page.getByTestId("add-job-text").fill(POSTING);
 		await page.getByTestId("add-job-submit").click();
-		await expect(page.getByTestId("prepare")).toBeVisible({ timeout: 60_000 });
-		await page.getByTestId("prepare").click();
+		await expect(page.getByTestId("interested")).toBeVisible({
+			timeout: 60_000,
+		});
+		await page.getByTestId("interested").click();
 		await expect(page.getByTestId("passed")).toBeVisible({ timeout: 120_000 });
 		const appId = new URL(page.url()).pathname.split("/").pop() ?? "";
 		const latest = (kind: string) =>
@@ -122,7 +124,9 @@ test("Redraft the letter with an instruction: version 2 of the letter, the CV un
 
 		// The dialog: four scopes, an optional instruction, no cost line.
 		await docTab(page, /^Letter/).click();
-		await page.getByTestId("redraft").click();
+		// Redraft is in the action bar's More menu.
+		await page.getByTestId("more-actions").click();
+		await page.getByTestId("more-redraft").click();
 		const dialog = page.getByTestId("redraft-dialog");
 		await expect(dialog).toBeVisible();
 		await expect(page.getByTestId("redraft-scope-cover_letter")).toBeChecked();

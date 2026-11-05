@@ -19,6 +19,7 @@ import {
 	skipRestOfSetup,
 	tempUserData,
 } from "./launch";
+import { showStatus } from "./matches-setup";
 
 /**
  * Add job from link, against local stand-ins only: a Greenhouse link (the fixture board), an
@@ -181,7 +182,9 @@ test("add a job from a link: a board, an unknown site, a wall, a filter miss kep
 			.poll(() => new URL(page.url()).pathname)
 			.toMatch(/^\/applications\//);
 		const firstId = new URL(page.url()).pathname.split("/").pop();
-		await expect(page.getByTestId("prepare")).toBeVisible({ timeout: 60_000 });
+		await expect(page.getByTestId("interested")).toBeVisible({
+			timeout: 60_000,
+		});
 		await expect(
 			page.getByRole("heading", {
 				name: "Senior Full-Stack Engineer",
@@ -207,11 +210,13 @@ test("add a job from a link: a board, an unknown site, a wall, a filter miss kep
 			.fill(`${origin}/careers/frontend-engineer`);
 		await page.getByTestId("add-job-submit").click();
 		await expect(page.getByTestId("add-job")).toBeHidden();
-		// Wait for the new job to open: until then the first job, and its Prepare, is still shown.
+		// Wait for the new job to open: until then the first job, and its Interested, is still shown.
 		await expect
 			.poll(() => new URL(page.url()).pathname)
 			.not.toBe(`/applications/${firstId}`);
-		await expect(page.getByTestId("prepare")).toBeVisible({ timeout: 60_000 });
+		await expect(page.getByTestId("interested")).toBeVisible({
+			timeout: 60_000,
+		});
 		await expect(page.getByText("Harbor Mills").first()).toBeVisible();
 		// The posting, not the page: no doctype, title tag or furniture.
 		await expect(
@@ -249,7 +254,7 @@ test("add a job from a link: a board, an unknown site, a wall, a filter miss kep
 		await expect(page.getByTestId("add-job")).toBeHidden();
 
 		// 4. It fails the job filter (on-site abroad, relocation off), yet the user picked it: it
-		// is in the Inbox, marked as theirs, with the reasons as a note, and Prepare stays.
+		// is in the Inbox, marked as theirs, with the reasons as a note, and Interested stays.
 		await expect(page.getByTestId("added-by-you")).toContainText(
 			"doesn't match your job search",
 			{ timeout: 60_000 },
@@ -257,9 +262,9 @@ test("add a job from a link: a board, an unknown site, a wall, a filter miss kep
 		await expect(page.getByTestId("added-by-you")).toContainText(
 			"The posting says: “On-site in Berlin, Germany”",
 		);
-		await expect(page.getByTestId("prepare")).toBeVisible();
+		await expect(page.getByTestId("interested")).toBeVisible();
 		await inbox(page);
-		await page.getByRole("tab", { name: /^Matches/ }).click();
+		await showStatus(page, /^Matches/);
 		await expect(row(page, "Platform Engineer")).toContainText(
 			"Added by you · outside your search",
 		);
@@ -286,7 +291,7 @@ test("several links at once: read in the background, live in the Inbox, through 
 	let { app, page, errors } = await launch();
 	try {
 		await inbox(page);
-		await page.getByRole("tab", { name: /^All/ }).click();
+		await showStatus(page, /^All/);
 		await page.getByTestId("add-job-button").click();
 		await page.getByTestId("add-job-url").fill(`${slow}\n${gone}`);
 		await page.getByTestId("add-job-submit").click();
@@ -320,7 +325,7 @@ test("several links at once: read in the background, live in the Inbox, through 
 	({ app, page, errors } = await launch({ OFFERFINCH_TEST_UNFOCUSED: "1" }));
 	try {
 		await inbox(page);
-		await page.getByRole("tab", { name: /^All/ }).click();
+		await showStatus(page, /^All/);
 		const slowRow = row(page, /Tidewater|\/careers\/slow/);
 		await expect(slowRow).toContainText("Added by you", { timeout: 60_000 });
 		await expect(slowRow).toContainText("Data Engineer");

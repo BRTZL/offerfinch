@@ -190,8 +190,9 @@ test("the scan history: found, set aside with reasons, and a paused source", asy
 		await page.getByTestId("scan-status").click();
 		await expect(page.getByTestId("scan-outcome")).toBeVisible();
 		await toastsGone(page, 15_000);
-		// The toolbar and sidebar settle on the finished scan.
-		await expect(page.getByTestId("scan-now").first()).toContainText(
+		// The sidebar settles on the finished scan.
+		await expect(page.getByTestId("scan-now").first()).toHaveAttribute(
+			"aria-label",
 			"Scan now",
 			{ timeout: 30_000 },
 		);

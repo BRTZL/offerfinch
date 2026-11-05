@@ -25,8 +25,8 @@ import {
 /**
  * After Applied, in the background against the fixture boards: three jobs are marked sent (1,
  * 8 and 25 days ago) while the app is closed. On the next start the 25-day one is Ghosted and
- * the 8-day one gets a follow-up reminder that opens it in Applied. The list shows stage chips
- * and filters by stage; a sent job moves to Interviewing with a time and a note, and Add to
+ * the 8-day one gets a follow-up reminder that opens it in Applied. The list groups by stage
+ * with stage chips; a sent job moves to Interviewing with a time and a note, and Add to
  * Calendar saves its .ics. Screenshots go to test-results/after-applied-shots (or E2E_SHOTS).
  */
 const SHOTS = path.resolve(
@@ -175,7 +175,7 @@ test("After Applied: Ghosted, a follow-up reminder, stage chips, a move with not
 		await expect(tracking).toBeVisible({ timeout: 30_000 });
 		await expect(tracking.getByTestId("stage-chip")).toHaveText("Applied");
 
-		// Chips on the list, and the stage filter with counts.
+		// Chips on the list, grouped by stage with counts.
 		await expect(
 			rows
 				.filter({ hasText: silent.company })
@@ -185,12 +185,12 @@ test("After Applied: Ghosted, a follow-up reminder, stage chips, a move with not
 		await expect(
 			page.locator('[data-testid=stage-chip][data-stage="ghosted"]'),
 		).toHaveCount(1);
-		await page.getByTestId("stage-filter").click();
-		await page.getByRole("option", { name: "Ghosted · 1" }).click();
+		const groups = page.getByTestId("list-group");
+		await expect(groups.filter({ hasText: "Ghosted" })).toContainText("1");
+		await expect(groups.filter({ hasText: "Applied" })).toContainText("2");
+		await groups.filter({ hasText: "Applied" }).click();
 		await expect(rows).toHaveCount(1);
-		await expect(page.getByText("1 of 3 sent")).toBeVisible();
-		await page.getByTestId("stage-filter").click();
-		await page.getByRole("option", { name: /^All stages/ }).click();
+		await groups.filter({ hasText: "Applied" }).click();
 		await expect(rows).toHaveCount(3);
 
 		// The recent one moves to Interviewing, with a day, a time and a note. The form is filled

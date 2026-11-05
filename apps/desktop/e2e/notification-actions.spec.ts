@@ -55,9 +55,10 @@ test("notification actions: Open, and Not interested on one match", async () => 
 		expect(grouped?.applicationId).toBeUndefined();
 		await openRoute(app, page, "/");
 		expect(await pressNoticeAction(app, grouped?.i ?? -1, 0)).toBe(true);
+		// Matches, with its first line open.
 		await expect
 			.poll(() => new URL(page.url()).pathname + new URL(page.url()).search)
-			.toBe("/inbox?view=matches");
+			.toMatch(/^\/(inbox|applications\/[^?]+)\?view=matches/);
 		// A button it never had does nothing.
 		expect(await pressNoticeAction(app, grouped?.i ?? -1, 1)).toBe(true);
 

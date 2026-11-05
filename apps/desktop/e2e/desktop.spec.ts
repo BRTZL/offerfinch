@@ -22,6 +22,7 @@ import {
 	tempUserData,
 	workerPid,
 } from "./launch";
+import { showStatus } from "./matches-setup";
 
 /**
  * The desktop app end to end, with fake models and fixture job boards on 127.0.0.1: onboarding,
@@ -183,9 +184,9 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 		).toBe(true);
 		await page.getByTestId("onboarding-finish").click();
 
-		// Tailoring is on demand: matches are listed, nothing is drafted until Prepare.
+		// Tailoring is on demand: matches are listed, nothing is drafted until Interested.
 		await sidebar(page, "Inbox").click();
-		await page.getByRole("tab", { name: /^Matches/ }).click();
+		await showStatus(page, /^Matches/);
 		// Acme's matches are one line that opens to its roles.
 		const acme = page
 			.getByTestId("inbox-group")
@@ -200,10 +201,11 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 			readDb<{ n: number }>("select count(*) n from documents")[0]?.n,
 		).toBe(0);
 		await match.click();
-		await expect(page.getByTestId("match")).toBeVisible();
+		await expect(page.getByTestId("fit-card")).toBeVisible();
 		await shot(page, "application-match");
-		await page.getByTestId("prepare").click();
-		await expect(page.getByTestId("prepare")).toHaveCount(0);
+		await page.getByTestId("interested").click();
+		// It left Matches (it is drafting now), and the next match opened.
+		await expect(match).toHaveCount(0);
 
 		// The posting asks for a notice period: a question waits.
 		await sidebar(page, "Questions").click();
@@ -218,7 +220,7 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 
 		// The application is drafted again and reaches review.
 		await sidebar(page, "Inbox").click();
-		await page.getByRole("tab", { name: /^To review/ }).click();
+		await showStatus(page, /^To review/);
 		const row = page
 			.getByTestId("inbox-row")
 			.filter({ hasText: "Senior Full-Stack Engineer" });
@@ -291,10 +293,13 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 		await page.getByRole("button", { name: /^Save/ }).first().click();
 		const flag = page.getByTestId("flag").filter({ hasText: PLANTED }).first();
 		await expect(flag).toBeVisible({ timeout: 90_000 });
-		// A flag cannot be missed: Approve is locked, the toolbar counts what is open and jumps
+		// A flag cannot be missed: Approve is locked, the action bar counts what is open and jumps
 		// to it, and the details open by themselves.
 		await expect(page.getByTestId("approve")).toBeDisabled();
-		await expect(page.getByTestId("jump-to-flag")).toContainText("to resolve");
+		await expect(page.getByTestId("jump-to-flag")).toContainText(/^Resolve \d/);
+		await expect(page.getByTestId("action-bar-caption")).toContainText(
+			"Approve opens once",
+		);
 		await expect(page.getByTestId("inspector")).toBeVisible();
 		// Fit notes read as formatted text, not Markdown source.
 		await page.getByRole("button", { name: "Fit notes" }).click();
@@ -395,7 +400,7 @@ test("the Inbox by keyboard and right-click; nothing approves by key, menu or ‚å
 	});
 	try {
 		await sidebar(page, "Inbox").click();
-		await page.getByRole("tab", { name: /^All/ }).click();
+		await showStatus(page, /^All/);
 		const rows = page.getByTestId("inbox-row");
 		await expect(rows.first()).toBeVisible({ timeout: 30_000 });
 		// The list fills in as it loads: wait for the rest, not only the first row.
@@ -418,13 +423,13 @@ test("the Inbox by keyboard and right-click; nothing approves by key, menu or ‚å
 		await page.keyboard.press("Home");
 		await expect.poll(selected).toBe(firstId);
 
-		// A row waiting for review: prepare a second match (Prepare is a button, never a key).
+		// A row waiting for review: prepare a second match (Interested is a button here).
 		const listed = readDb<{ id: string }>(
 			"select id from applications where state = 'scored' limit 1",
 		)[0];
 		expect(listed).toBeDefined();
 		await page.goto(`app://local/applications/${listed?.id}?view=all`);
-		await page.getByTestId("prepare").click();
+		await page.getByTestId("interested").click();
 		await expect
 			.poll(
 				() =>
@@ -518,8 +523,7 @@ test("the Inbox by keyboard and right-click; nothing approves by key, menu or ‚å
 			await page.mouse.up();
 		};
 		const openedDetails = !(await page.getByTestId("inspector").isVisible());
-		if (openedDetails)
-			await page.getByRole("button", { name: "Details" }).click();
+		if (openedDetails) await page.getByTestId("fit-card").click();
 		const listCol = () =>
 			page.evaluate(() => {
 				const handle = document.querySelector("[aria-label='Resize the list']");
@@ -550,8 +554,7 @@ test("the Inbox by keyboard and right-click; nothing approves by key, menu or ‚å
 		expect(await listCol()).toBe(list0);
 		expect(await widthOf("aside[aria-label=Posting]")).toBe(posting0);
 		expect(await widthOf("[data-testid=inspector]")).toBe(details0);
-		if (openedDetails)
-			await page.getByRole("button", { name: "Details" }).click();
+		if (openedDetails) await page.getByTestId("fit-card").click();
 		await page.getByTestId("posting-toggle").click();
 
 		// Right-click a row: the native menu (recorded here) offers no Approve; Copy works.
@@ -1115,7 +1118,7 @@ test("kill -9: the worker mid-step, then the whole app mid-step; work resumes an
 		expect(apps[0]?.n).toBe(1);
 		const { page } = again;
 		await sidebar(page, "Inbox").click();
-		await page.getByRole("tab", { name: /^All/ }).click();
+		await showStatus(page, /^All/);
 		await expect(
 			page.getByTestId("inbox-row").filter({ hasText: NEW_TITLE }),
 		).toHaveCount(1);
