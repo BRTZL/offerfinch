@@ -38,6 +38,7 @@ import {
 import {
 	FIRST_SEARCH_MAX_ROWS,
 	type FoundJob,
+	failureReason,
 	firstSearchRow,
 	firstSearchView,
 	jobsFoundBy,
@@ -431,8 +432,8 @@ describe("the jobs a scan run found", () => {
 			state: "fits",
 			failed: true,
 			paused: false,
-			reason:
-				"Claude answered 529 overloaded_error while scoring the job; try again later",
+			// The raw error stays in the logs; the row names only the kind of failure.
+			reason: "The model was busy. It is tried again later.",
 		});
 		expect(view.counts).toMatchObject({ failed: 1, paused: 0, matches: 0 });
 		// Not pending (`desktop.scoring` counts queued, running and waiting runs) and not paused.
@@ -470,6 +471,32 @@ describe("the jobs a scan run found", () => {
 		db.$close();
 	});
 
+	it("a failure reason never repeats the raw error: no key, no path, a safe line per kind", () => {
+		expect(
+			failureReason("Error: Incorrect API key provided: sk-test-secret-value"),
+		).toBe("The model refused the sign-in or key. Check Settings > Models.");
+		expect(
+			failureReason("Error: ENOENT: open /Users/alice/private/profile.md"),
+		).toBe("A file could not be read.");
+		expect(failureReason("fetch failed: ECONNRESET")).toBe(
+			"The model could not be reached.",
+		);
+		expect(failureReason("Unexpected token < in JSON at position 0")).toBe(
+			"The model's answer could not be read.",
+		);
+		expect(failureReason("something new sk-live-abc123 /tmp/x")).toBe(
+			"The model did not answer.",
+		);
+		expect(failureReason(null)).toBe("The model did not answer.");
+		for (const raw of [
+			"Incorrect API key provided: sk-test-secret-value",
+			"ENOENT: open /Users/alice/private/profile.md",
+		]) {
+			expect(failureReason(raw)).not.toContain("sk-");
+			expect(failureReason(raw)).not.toContain("/Users/");
+		}
+	});
+
 	it("a job whose run errored at the rules is failed too, and holds no rules check open", async () => {
 		const { db, run, add } = await setupDb();
 		const one = await add("1", "Frontend Engineer");
@@ -482,7 +509,7 @@ describe("the jobs a scan run found", () => {
 		expect(row).toMatchObject({
 			state: "found",
 			failed: true,
-			reason: "database is locked",
+			reason: "The model did not answer.",
 		});
 		if (!row) throw new Error("no row");
 		expect(beingChecked({ ...row, shown: "found" })).toBe(false);

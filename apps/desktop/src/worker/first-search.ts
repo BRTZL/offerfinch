@@ -201,14 +201,34 @@ async function jobIdsOf(
 	return [...new Set((history?.sources ?? []).flatMap((s) => s.newJobIds))];
 }
 
-/** A run's error as a row's reason: its first line, without "Error:", in about 100 characters. */
-function shortError(message: string): string {
-	const line = (message.split("\n")[0] ?? "")
-		.replace(/^(\w*Error:\s*)+/, "")
-		.replace(/\s+/g, " ")
-		.trim();
-	if (!line) return "It stopped with an error";
-	return line.length > 100 ? `${line.slice(0, 99).trimEnd()}…` : line;
+/**
+ * A run's error as a row's reason, in safe words. The stored message is the raw error, which can
+ * carry an API key echoed by the vendor or a path on this Mac, so it is never shown: the kind of
+ * failure is named, and the rest is left to the logs.
+ */
+export function failureReason(message: string | null | undefined): string {
+	const text = message ?? "";
+	const kinds: [RegExp, string][] = [
+		[
+			/api key|authentication|unauthori[sz]ed|\b401\b|invalid_api_key|not logged in|sign(ed)? ?in/i,
+			"The model refused the sign-in or key. Check Settings > Models.",
+		],
+		[
+			/rate.?limit|\b429\b|too many requests|overloaded|\b529\b|quota|usage limit/i,
+			"The model was busy. It is tried again later.",
+		],
+		[
+			/timed? ?out|ETIMEDOUT|ECONNRESET|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|fetch failed|network|socket/i,
+			"The model could not be reached.",
+		],
+		[/ENOENT|EACCES|EPERM|EISDIR|ENOTDIR/, "A file could not be read."],
+		[
+			/schema|parse|json|unexpected token|could not be read|invalid (answer|response|output)/i,
+			"The model's answer could not be read.",
+		],
+	];
+	for (const [pattern, reason] of kinds) if (pattern.test(text)) return reason;
+	return "The model did not answer.";
 }
 
 /** The paused run's `waitingFor`, when it ended paused at the fit score; else null. */
@@ -260,7 +280,7 @@ async function scoringStops(
 			const jobId = run.params.jobId;
 			if (typeof jobId !== "string") continue;
 			if (run.status === "errored") {
-				failed.set(jobId, shortError(run.error ?? ""));
+				failed.set(jobId, failureReason(run.error));
 				continue;
 			}
 			const waitingFor =
