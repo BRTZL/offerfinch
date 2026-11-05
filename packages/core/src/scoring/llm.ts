@@ -1,6 +1,7 @@
 import type { z } from "zod";
 
 import { redactContact } from "../profile/types";
+import type { ModelPrice } from "./pricing";
 
 export interface GenerateObjectRequest<T> {
 	system: string;
@@ -91,6 +92,16 @@ export interface LlmProvider {
 	readonly vendor?: string;
 	/** Subscription providers: the one user whose plan this is; calls for anyone else are refused. */
 	readonly ownerUserId?: string;
+	/**
+	 * Pay-per-use providers whose models are not in the price table (OpenCode's sources): the
+	 * model's own price, read from the provider. The cap reserves at least this and settles at it.
+	 */
+	readonly price?: ModelPrice;
+	/**
+	 * Pay-per-use providers that call `onModelCall` when their request goes out: a call that
+	 * failed before it did was not billed, and its reservation is released.
+	 */
+	readonly reportsModelCalls?: boolean;
 	generateObject<T>(request: GenerateObjectRequest<T>): Promise<T>;
 }
 
@@ -142,6 +153,7 @@ export const SUBSCRIPTION_PAUSE_PREFIX = "Subscription paused";
  * instead: the message says what happened and how preparation resumes.
  */
 export class SubscriptionUnavailableError extends LlmPausedError {
+	// biome-ignore lint/complexity/useMaxParams: Positional, so every existing pause keeps its call unchanged; the last two are optional flags.
 	constructor(
 		readonly kind: SubscriptionPauseKind,
 		readonly provider: string,
@@ -154,6 +166,11 @@ export class SubscriptionUnavailableError extends LlmPausedError {
 		 * the cap, and that vendor's calls stop until the user resumes them.
 		 */
 		readonly paid: boolean = false,
+		/**
+		 * `true`: nothing was billed (nothing sent, or the vendor refused the request before
+		 * processing it), so a pay-per-use reservation is released.
+		 */
+		readonly notBilled: boolean = false,
 	) {
 		super(`${SUBSCRIPTION_PAUSE_PREFIX} (${kind}, ${provider}): ${detail}`);
 		this.name = "SubscriptionUnavailableError";
