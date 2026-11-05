@@ -21,6 +21,21 @@ at the top, above the newest version. Only what is merged into main belongs here
   opens the app with a made-up profile and eight sample jobs. Matches, drafts and Applied all
   work, with no AI connection and nothing sent anywhere. Leave demo deletes the sample data and
   takes you back; your own data is never touched.
+- The Inbox is one list of everything. Each job says where it stands (Match, Drafting, To
+  review, Approved and so on), and a status menu beside the sort shows one kind at a time,
+  with counts. Picking a status opens its first job, so the right side is never empty.
+- Every job you haven't opened has a blue dot. It fades once the job has been open for about
+  five seconds. Jobs already in your Inbox before this update count as read.
+- Your choices now sit in a bar at the bottom of the job. On a match: Chat, Not interested and
+  Interested (Interested drafts your CV and letter, as Prepare did). On a draft to review:
+  Resolve, Chat, More, Reject and Approve. When Approve is off, the line under the bar says why.
+- Under the job's title, a fit card shows the score, how many requirements you meet, what
+  matches and what's missing. Click it for the details.
+- The top of every page is the same: the page name, its count and the search. Scan now moved
+  to the sidebar, next to when the last scan ran.
+- Applied groups your applications by stage. Click a job's stage to move it to another one.
+- Rejected filters by reason with a row of chips at the top of the list.
+- Lists move smoothly when jobs come and go, unless Reduce motion is on in System Settings.
 
 ## 0.1.5 (2026-11-04)
 
