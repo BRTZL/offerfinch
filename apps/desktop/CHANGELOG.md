@@ -8,6 +8,14 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
+## Unreleased
+
+- Settings › Spending lists each model once, by its name (Claude Sonnet 5.5, GPT-6.1 Sol), with
+  how its calls were paid: your Claude plan, your ChatGPT plan or an API key. Calls on a plan
+  say "Plan" instead of "$0".
+- The Scan now button in the sidebar no longer spins while a scan runs; the scan's progress
+  beside it shows how far it is.
+
 ## 0.1.6 (2026-11-05)
 
 - OfferFinch checks for a new version every 30 minutes, and again when your Mac wakes or you
