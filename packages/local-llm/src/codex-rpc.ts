@@ -109,7 +109,8 @@ export function startAppServer(input: {
 	const kill = () => {
 		if (child.pid === undefined) return;
 		try {
-			process.kill(-child.pid, "SIGKILL");
+			if (process.platform === "win32") child.kill("SIGKILL");
+			else process.kill(-child.pid, "SIGKILL");
 		} catch {
 			try {
 				child.kill("SIGKILL");

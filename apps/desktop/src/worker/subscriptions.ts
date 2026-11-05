@@ -1,5 +1,4 @@
 import { type ChildProcess, execFile, fork } from "node:child_process";
-import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -25,6 +24,9 @@ import {
 	loginShellPath,
 	subscriptionEnv,
 } from "@offerfinch/local-llm";
+import { findCliOnPath } from "@offerfinch/local-llm/cli-path";
+import { CODEX_MACOS_ONLY } from "@offerfinch/local-llm/codex";
+import { envValue } from "@offerfinch/local-llm/env";
 import type {
 	ClaudeQuery,
 	ClaudeSession,
@@ -36,38 +38,61 @@ import type { LocalLlmFactory } from "./model-factories";
  * lacks `claude` and `codex`; PATH is read from the user's login shell (`loginShellPath`, as T3
  * Code does), with the usual install folders as a fallback, and given to every CLI started.
  */
-const FALLBACK_DIRS = [
-	path.join(os.homedir(), ".local/bin"),
-	path.join(os.homedir(), ".claude/local"),
-	"/opt/homebrew/bin",
-	"/usr/local/bin",
-	path.join(os.homedir(), ".npm-global/bin"),
-	path.join(os.homedir(), ".bun/bin"),
-];
+export function fallbackDirs(
+	platform: NodeJS.Platform = process.platform,
+	env = process.env,
+): string[] {
+	if (platform === "win32") {
+		const home = envValue(env, "USERPROFILE", platform);
+		const app = envValue(env, "APPDATA", platform);
+		const local = envValue(env, "LOCALAPPDATA", platform);
+		return [
+			...(home
+				? [".local\\bin", ".claude\\local", ".bun\\bin", "scoop\\shims"].map(
+						(dir) => path.win32.join(home, dir),
+					)
+				: []),
+			...(app ? [path.win32.join(app, "npm")] : []),
+			...(local
+				? [
+						path.win32.join(local, "pnpm"),
+						path.win32.join(local, "Volta", "bin"),
+					]
+				: []),
+		];
+	}
+	return [
+		path.join(os.homedir(), ".local/bin"),
+		path.join(os.homedir(), ".claude/local"),
+		"/opt/homebrew/bin",
+		"/usr/local/bin",
+		path.join(os.homedir(), ".npm-global/bin"),
+		path.join(os.homedir(), ".bun/bin"),
+	];
+}
 
 /** The login shell's PATH with this process's and the usual install folders after it. */
 async function resolvedPath(): Promise<string> {
 	return mergePath(await loginShellPath());
 }
 
-function mergePath(login: string | null): string {
+export function mergePath(
+	login: string | null,
+	platform: NodeJS.Platform = process.platform,
+	env = process.env,
+): string {
+	const delimiter =
+		platform === "win32" ? path.win32.delimiter : path.delimiter;
 	const dirs = [
-		...(login ?? "").split(path.delimiter),
-		...(process.env.PATH ?? "").split(path.delimiter),
-		...FALLBACK_DIRS,
+		...(login ?? "").split(delimiter),
+		...(envValue(env, "PATH", platform) ?? "").split(delimiter),
+		...fallbackDirs(platform, env),
 	].filter(Boolean);
-	return [...new Set(dirs)].join(path.delimiter);
-}
-
-function findOnPath(name: string, pathEnv: string): string | null {
-	for (const dir of pathEnv.split(path.delimiter)) {
-		const candidate = path.join(dir, name);
-		try {
-			fs.accessSync(candidate, fs.constants.X_OK);
-			return fs.realpathSync(candidate);
-		} catch {}
-	}
-	return null;
+	return [
+		...new Map(
+			dirs.map((dir) => [platform === "win32" ? dir.toLowerCase() : dir, dir]),
+		).values(),
+	].join(delimiter);
 }
 
 function version(
@@ -75,8 +100,12 @@ function version(
 	env: NodeJS.ProcessEnv,
 ): Promise<string | null> {
 	return new Promise((resolve) =>
-		execFile(binary, ["--version"], { env, timeout: 10_000 }, (error, stdout) =>
-			resolve(error ? null : String(stdout).trim().split("\n")[0] || null),
+		execFile(
+			binary,
+			["--version"],
+			{ env: subscriptionEnv(env).env, timeout: 10_000 },
+			(error, stdout) =>
+				resolve(error ? null : String(stdout).trim().split("\n")[0] || null),
 		),
 	);
 }
@@ -250,7 +279,10 @@ export interface CliFix {
 export const CLAUDE_FIX: Record<CliFix["kind"], CliFix> = {
 	install: {
 		kind: "install",
-		command: "curl -fsSL https://claude.ai/install.sh | bash",
+		command:
+			process.platform === "win32"
+				? "irm https://claude.ai/install.ps1 | iex"
+				: "curl -fsSL https://claude.ai/install.sh | bash",
 		after: "Then run claude, type /login and sign in with your Claude plan.",
 	},
 	login: {
@@ -308,13 +340,10 @@ class MissingCli implements LlmProvider {
 		readonly name: string,
 		readonly vendor: string,
 		private readonly detail: string,
+		private readonly kind: "boundary" | "logged_out" = "logged_out",
 	) {}
 	async generateObject<T>(_request: GenerateObjectRequest<T>): Promise<T> {
-		throw new SubscriptionUnavailableError(
-			"logged_out",
-			this.name,
-			this.detail,
-		);
+		throw new SubscriptionUnavailableError(this.kind, this.name, this.detail);
 	}
 }
 
@@ -333,8 +362,8 @@ export function subscriptions(input: {
 	const fresh = (c: { at: number } | null) => c && Date.now() - c.at < 60_000;
 	const usePath = (pathEnv: string) => {
 		env = { ...process.env, PATH: pathEnv };
-		claudeBinary = findOnPath("claude", pathEnv);
-		codexBinary = findOnPath("codex", pathEnv);
+		claudeBinary = findCliOnPath("claude", pathEnv);
+		codexBinary = findCliOnPath("codex", pathEnv);
 		claudeCache = null;
 		codexCache = null;
 	};
@@ -361,8 +390,15 @@ export function subscriptions(input: {
 					: new MissingCli(
 							`${CLAUDE_SUBSCRIPTION}:${model}`,
 							"anthropic",
-							"Claude Code (`claude`) was not found. Install it (curl -fsSL https://claude.ai/install.sh | bash), run `claude` in Terminal and log in with /login.",
+							`Claude Code (claude) was not found. Install it (${CLAUDE_FIX.install.command}), run claude and log in with /login.`,
 						);
+			if (provider === CODEX_SUBSCRIPTION && process.platform === "win32")
+				return new MissingCli(
+					`${CODEX_SUBSCRIPTION}:${model}`,
+					"openai",
+					CODEX_MACOS_ONLY,
+					"boundary",
+				);
 			if (provider === CODEX_SUBSCRIPTION)
 				return codexBinary
 					? new CodexSubscriptionProvider({
@@ -419,6 +455,15 @@ export function subscriptions(input: {
 			return state;
 		},
 		async codex(options = {}) {
+			if (process.platform === "win32")
+				return {
+					path: codexBinary,
+					version: null,
+					tested: CODEX_TESTED,
+					login: { state: "unknown", detail: CODEX_MACOS_ONLY },
+					command: null,
+					fix: null,
+				};
 			if (!options.fresh && fresh(codexCache))
 				return (codexCache as { state: CliState }).state;
 			const binary = codexBinary;

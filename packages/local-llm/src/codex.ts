@@ -8,7 +8,7 @@ import {
 	writeFile,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, dirname, join, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
 import {
 	fullPrompt,
 	type GenerateObjectRequest,
@@ -21,8 +21,8 @@ import {
 import { toStrictJsonSchema } from "@offerfinch/core/scoring/openai";
 import type { PlanUsageSink } from "@offerfinch/core/scoring/plan-usage";
 import type { z } from "zod";
-
 import { Breaker } from "./breaker";
+import { findCliOnPath } from "./cli-path";
 import {
 	type AppServerProcess,
 	type RpcMessage,
@@ -182,18 +182,14 @@ export function sandboxProfile(input: {
 /** The real path of the `codex` binary on PATH, or null. */
 export async function findCodexBinary(
 	pathEnv: string | undefined,
+	platform: NodeJS.Platform = process.platform,
+	pathExt?: string,
 ): Promise<string | null> {
-	for (const dir of (pathEnv ?? "").split(delimiter)) {
-		if (!dir) continue;
-		const candidate = join(dir, "codex");
-		if (existsSync(candidate)) {
-			try {
-				return await realpath(candidate);
-			} catch {}
-		}
-	}
-	return null;
+	return findCliOnPath("codex", pathEnv ?? "", platform, pathExt);
 }
+
+export const CODEX_MACOS_ONLY =
+	"Codex subscription is available on macOS only: it runs inside macOS's sandbox, which Windows does not have.";
 
 // ---------------------------------------------------------------------------------------------
 // Login: the user's own Codex login, read only.
@@ -616,6 +612,17 @@ function emptyTurnResult(removedEnv: string[]): CodexTurnResult {
 export async function runCodexTurn(
 	input: CodexTurnInput,
 ): Promise<CodexTurnResult> {
+	if (process.platform === "win32") {
+		const result = emptyTurnResult(subscriptionEnv(input.parentEnv).removed);
+		result.boundary = CODEX_MACOS_ONLY;
+		return result;
+	}
+	return runSandboxedCodexTurn(input);
+}
+
+async function runSandboxedCodexTurn(
+	input: CodexTurnInput,
+): Promise<CodexTurnResult> {
 	const layers = input.layers ?? ALL_LAYERS;
 	const base = await realpath(tmpdir());
 	const root = await mkdtemp(join(base, "offerfinch-codex-"));
@@ -635,7 +642,7 @@ export async function runCodexTurn(
 		...(allowed.TZ ? { TZ: allowed.TZ } : {}),
 		HOME: dirs.home,
 		CODEX_HOME: dirs.codexHome,
-		TMPDIR: dirs.tmp,
+		...subscriptionEnv({}, { TMPDIR: dirs.tmp }).env,
 	};
 	const result = emptyTurnResult(removed);
 	const extraConfig =
@@ -1060,6 +1067,8 @@ export class CodexSubscriptionProvider implements LlmProvider {
 	}
 
 	private async call<T>(request: GenerateObjectRequest<T>): Promise<T> {
+		if (process.platform === "win32")
+			throw this.pause("boundary", CODEX_MACOS_ONLY);
 		const parentEnv = this.options.parentEnv ?? process.env;
 		const binary =
 			this.options.binary ?? (await findCodexBinary(parentEnv.PATH));

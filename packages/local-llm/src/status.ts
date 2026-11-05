@@ -1,16 +1,18 @@
 import { execFile } from "node:child_process";
+import path from "node:path";
 import type { LlmLoginState } from "@offerfinch/core/scoring/llm-status";
 import type { PlanSnapshot } from "@offerfinch/core/scoring/plan-usage";
 
 import { probeExtraUsage } from "./claude";
 import {
+	CODEX_MACOS_ONLY,
 	type CodexTurnInput,
 	type CodexTurnResult,
 	codexAuthFile,
 	readCodexLogin,
 	runCodexTurn,
 } from "./codex";
-import { subscriptionEnv } from "./env";
+import { envValue, subscriptionEnv } from "./env";
 import { type ClaudeQuery, isolatedQuery } from "./isolated";
 import { claudeUsageSnapshot, codexUsageSnapshot } from "./plan-usage";
 
@@ -84,6 +86,8 @@ export async function codexPlanUsage(input: {
 	/** Tests only: stands in for `runCodexTurn`. */
 	runTurn?: (turn: CodexTurnInput) => Promise<CodexTurnResult>;
 }): Promise<{ snapshot: PlanSnapshot | null; error: string | null }> {
+	if (process.platform === "win32")
+		return { snapshot: null, error: CODEX_MACOS_ONLY };
 	const parentEnv = input.parentEnv ?? process.env;
 	const now = input.now ?? (() => new Date());
 	const read = await readCodexLogin(codexAuthFile(parentEnv), now());
@@ -127,6 +131,8 @@ export async function codexPlanUsage(input: {
 export async function codexSubscriptionLogin(
 	parentEnv: Record<string, string | undefined> = process.env,
 ): Promise<LlmLoginState> {
+	if (process.platform === "win32")
+		return { state: "unknown", detail: CODEX_MACOS_ONLY };
 	const file = codexAuthFile(parentEnv);
 	const read = await readCodexLogin(file);
 	if (!read.ok)
@@ -149,7 +155,45 @@ export async function codexSubscriptionLogin(
 export function loginShellPath(
 	shell: string = process.env.SHELL || "/bin/zsh",
 	timeoutMs = 5000,
+	platform: NodeJS.Platform = process.platform,
 ): Promise<string | null> {
+	if (platform === "win32") {
+		const root = envValue(process.env, "SystemRoot", platform);
+		if (!root || !path.win32.isAbsolute(root)) return Promise.resolve(null);
+		return new Promise((resolve) => {
+			execFile(
+				path.win32.join(
+					root,
+					"System32",
+					"WindowsPowerShell",
+					"v1.0",
+					"powershell.exe",
+				),
+				[
+					"-NoProfile",
+					"-NonInteractive",
+					"-Command",
+					"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); [Environment]::GetEnvironmentVariable('Path','User'); [Environment]::GetEnvironmentVariable('Path','Machine')",
+				],
+				{ timeout: timeoutMs, env: subscriptionEnv().env },
+				(error, stdout) => {
+					if (error) return resolve(null);
+					const dirs = [
+						envValue(process.env, "PATH", platform) ?? "",
+						...String(stdout).trim().split(/\r?\n/),
+					]
+						.join(";")
+						.split(";")
+						.filter(Boolean);
+					resolve(
+						[
+							...new Map(dirs.map((dir) => [dir.toLowerCase(), dir])).values(),
+						].join(";") || null,
+					);
+				},
+			);
+		});
+	}
 	const start = "__OFFERFINCH_PATH_START__";
 	const end = "__OFFERFINCH_PATH_END__";
 	return new Promise((resolve) => {
