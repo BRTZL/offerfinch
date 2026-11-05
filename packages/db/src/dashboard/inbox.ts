@@ -103,6 +103,8 @@ export const inboxMethods = {
 				>`(select json_extract(r.value, '$.message') from json_each(${applications.filterResult}, '$.reasons') r where json_extract(r.value, '$.outcome') = 'reject' limit 1)`,
 				endedReason: applications.endedReason,
 				stateChangedAt: applications.stateChangedAt,
+				/** When the job was first listed: the Inbox's unread dot compares it with when read state began. */
+				createdAt: applications.createdAt,
 				approvedAt: applications.approvedAt,
 				appliedAt: applications.appliedAt,
 				appliedVia: applications.appliedVia,

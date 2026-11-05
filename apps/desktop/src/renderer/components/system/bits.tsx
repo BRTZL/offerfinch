@@ -1,10 +1,4 @@
-import {
-	CircleAlert,
-	CircleCheck,
-	Info,
-	Search,
-	TriangleAlert,
-} from "lucide-react";
+import { CircleAlert, CircleCheck, Info, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { BrandMark } from "@/components/brand-mark";
 import { cn } from "@/lib/utils";
@@ -264,40 +258,6 @@ export function ErrorLine({ children }: { children: ReactNode }) {
 	);
 }
 
-/** The toolbar's search field: 28 high, a magnifier, 224 wide. */
-export function SearchField({
-	value,
-	onChange,
-	placeholder = "Search",
-	label,
-	className,
-}: {
-	value: string;
-	onChange: (value: string) => void;
-	placeholder?: string;
-	label: string;
-	className?: string;
-}) {
-	return (
-		<label
-			className={cn(
-				"border-input bg-card ease-standard focus-within:border-ring dark:bg-input/32 flex h-7 w-56 items-center gap-1.5 rounded-lg border px-2 text-sm shadow-[var(--bevel)] transition-[border-color,box-shadow] duration-150 focus-within:shadow-[inset_0_0_0_3px_color-mix(in_oklab,var(--ring)_24%,transparent)]",
-				className,
-			)}
-		>
-			<Search className="text-muted-foreground size-3.5" />
-			<input
-				type="search"
-				aria-label={label}
-				placeholder={placeholder}
-				value={value}
-				onChange={(e) => onChange(e.target.value)}
-				className="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent text-sm outline-none"
-			/>
-		</label>
-	);
-}
-
 /** One cell of the mark as a status light: green fine, amber needs you, grey busy. */
 export function StatusDot({
 	tone,
@@ -404,6 +364,64 @@ export function Meter({
 					style={{ left: `${Math.min(100, Math.max(0, elapsed))}%` }}
 				/>
 			) : null}
+		</span>
+	);
+}
+
+export type StatusTone =
+	| "match"
+	| "drafting"
+	| "review"
+	| "approved"
+	| "warning"
+	| "closed";
+
+const STATUS_MARK: Record<StatusTone, string> = {
+	match: "border-brand border bg-transparent",
+	drafting: "bg-muted-foreground",
+	review: "bg-primary",
+	approved: "bg-brand",
+	warning: "bg-warning",
+	closed: "bg-muted-foreground/60",
+};
+
+const STATUS_INK: Record<StatusTone, string> = {
+	match: "bg-muted text-foreground",
+	drafting: "bg-muted text-foreground",
+	review: "bg-primary-surface text-primary",
+	approved: "bg-brand-surface text-brand",
+	warning: "bg-warning-surface text-warning",
+	closed: "bg-muted text-muted-foreground",
+};
+
+/**
+ * Where a row stands (Match, Drafting, To review, Approved…): a small pill with a mark. 16 px
+ * high, so it fits the list row's meta line without making the row taller.
+ */
+export function StatusChip({
+	tone,
+	children,
+	className,
+	...rest
+}: {
+	tone: StatusTone;
+	children: ReactNode;
+	className?: string;
+} & React.HTMLAttributes<HTMLSpanElement>) {
+	return (
+		<span
+			className={cn(
+				"text-2xs inline-flex h-4 shrink-0 items-center gap-1 rounded-full px-1.5 font-medium whitespace-nowrap",
+				STATUS_INK[tone],
+				className,
+			)}
+			{...rest}
+		>
+			<i
+				aria-hidden
+				className={cn("size-1.5 rounded-full", STATUS_MARK[tone])}
+			/>
+			{children}
 		</span>
 	);
 }
