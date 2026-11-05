@@ -62,8 +62,11 @@ export function serveRenderer(root: string): void {
 			resolvedRoot,
 			`.${decodeURIComponent(url.pathname)}`,
 		);
+		const relative = path.relative(resolvedRoot, wanted);
 		const inside =
-			wanted === resolvedRoot || wanted.startsWith(resolvedRoot + path.sep);
+			!path.isAbsolute(relative) &&
+			relative !== ".." &&
+			!relative.startsWith(`..${path.sep}`);
 		let file = inside ? wanted : "";
 		if (!file || !fs.existsSync(file) || fs.statSync(file).isDirectory())
 			file = path.extname(url.pathname)

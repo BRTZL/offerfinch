@@ -20,19 +20,21 @@ export function buildMenu() {
 }
 
 /** The menu bar's items, apart from building them (tests read the accelerators). */
-export function menuTemplate(): MenuItemConstructorOptions[] {
+export function menuTemplate(
+	platform: NodeJS.Platform = process.platform,
+): MenuItemConstructorOptions[] {
 	const dev = !app.isPackaged && process.env.NODE_ENV !== "production";
 	const template: MenuItemConstructorOptions[] = [
 		{
 			label: "OfferFinch",
 			submenu: [
 				{ label: "About OfferFinch", click: () => app.showAboutPanel() },
-				updateMenuItem(),
+				updateMenuItem(platform),
 				{ type: "separator" },
 				{
 					id: "settings",
 					label: "Settings…",
-					accelerator: accelerator("settings"),
+					accelerator: accelerator("settings", platform === "darwin"),
 					click: () => showWindow("/settings"),
 				},
 				{ type: "separator" },
@@ -44,7 +46,7 @@ export function menuTemplate(): MenuItemConstructorOptions[] {
 				{ type: "separator" },
 				{
 					label: "Quit OfferFinch",
-					accelerator: accelerator("quit"),
+					accelerator: accelerator("quit", platform === "darwin"),
 					click: () => {
 						mainState.quitting = true;
 						app.quit();
@@ -58,7 +60,7 @@ export function menuTemplate(): MenuItemConstructorOptions[] {
 				{
 					id: "add-job",
 					label: "Add Job from Link…",
-					accelerator: accelerator("add-job"),
+					accelerator: accelerator("add-job", platform === "darwin"),
 					click: () => sendCommand("add-job"),
 				},
 				{
@@ -77,19 +79,19 @@ export function menuTemplate(): MenuItemConstructorOptions[] {
 				{
 					id: "command-menu",
 					label: "Search…",
-					accelerator: accelerator("command-menu"),
+					accelerator: accelerator("command-menu", platform === "darwin"),
 					click: () => sendCommand("command-menu"),
 				},
 				{
 					id: "toggle-sidebar",
 					label: "Show or Hide Sidebar",
-					accelerator: accelerator("toggle-sidebar"),
+					accelerator: accelerator("toggle-sidebar", platform === "darwin"),
 					click: () => sendCommand("toggle-sidebar"),
 				},
 				{
 					id: "toggle-inspector",
 					label: "Show or Hide Inspector",
-					accelerator: accelerator("toggle-inspector"),
+					accelerator: accelerator("toggle-inspector", platform === "darwin"),
 					click: () => sendCommand("toggle-inspector"),
 				},
 				{ type: "separator" },
@@ -98,7 +100,7 @@ export function menuTemplate(): MenuItemConstructorOptions[] {
 					? ([
 							{ type: "separator" },
 							{ role: "reload" },
-							{ role: "toggleDevTools", accelerator: "Command+Alt+J" },
+							{ role: "toggleDevTools", accelerator: "CommandOrControl+Alt+J" },
 						] satisfies MenuItemConstructorOptions[])
 					: []),
 			],
@@ -108,7 +110,7 @@ export function menuTemplate(): MenuItemConstructorOptions[] {
 			submenu: GO_PAGES.map((g) => ({
 				id: g.id,
 				label: g.label,
-				accelerator: accelerator(g.id),
+				accelerator: accelerator(g.id, platform === "darwin"),
 				click: () => showWindow(g.path),
 			})),
 		},
@@ -119,7 +121,7 @@ export function menuTemplate(): MenuItemConstructorOptions[] {
 				{
 					id: "shortcuts",
 					label: "Keyboard Shortcuts",
-					accelerator: accelerator("shortcuts"),
+					accelerator: accelerator("shortcuts", platform === "darwin"),
 					click: () => sendCommand("shortcuts"),
 				},
 				{ type: "separator" },
@@ -129,12 +131,31 @@ export function menuTemplate(): MenuItemConstructorOptions[] {
 					click: () => showWindowWith("export-diagnostics"),
 				},
 				{
-					label: "Show Logs in Finder",
+					label:
+						platform === "win32"
+							? "Show Logs in Explorer"
+							: "Show Logs in Finder",
 					click: () => void shell.openPath(app.getPath("logs")),
 				},
 			],
 		},
 	];
+	if (platform !== "darwin") {
+		const appMenu = template.shift();
+		const file = template.find((item) => item.label === "File");
+		if (
+			file &&
+			Array.isArray(file.submenu) &&
+			Array.isArray(appMenu?.submenu)
+		) {
+			file.submenu.push(
+				{ type: "separator" },
+				...appMenu.submenu.filter(
+					(item) => item.type !== "separator" && !item.role,
+				),
+			);
+		}
+	}
 	return template;
 }
 
@@ -177,7 +198,12 @@ export function contextMenu(items: unknown): Promise<ContextItemId | null> {
  * The app menu's update item: "Check for Updates…", or "Restart to Update" once downloaded.
  * Try-it mode (updates suspended) shows neither working: the check is greyed out.
  */
-function updateMenuItem(): MenuItemConstructorOptions {
+function updateMenuItem(platform: NodeJS.Platform): MenuItemConstructorOptions {
+	if (platform === "win32")
+		return {
+			label: "Updates on Windows: download from GitHub Releases",
+			enabled: false,
+		};
 	const state = mainState.updates?.get();
 	if (state?.status === "ready" && mainState.updates.canInstall())
 		return {

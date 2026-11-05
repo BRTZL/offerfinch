@@ -50,7 +50,7 @@ export class SecretStore {
 			throw new Error("That does not look like an API key");
 		if (!(await this.available()))
 			throw new Error(
-				"macOS Keychain encryption is not available, so the key was not stored",
+				"Encryption on this computer is not available, so the key was not stored",
 			);
 		const data = this.read();
 		data[name] = (await safeStorage.encryptStringAsync(trimmed)).toString(

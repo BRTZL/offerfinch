@@ -72,7 +72,7 @@ function useKeys() {
 	});
 }
 
-/** One API key: stored encrypted in the macOS Keychain; never shown again. */
+/** One API key: stored encrypted in the computer’s encrypted storage; never shown again. */
 export function KeyField({
 	name,
 	label,
@@ -96,7 +96,7 @@ export function KeyField({
 		mutationFn: () => desktop.secrets.set(name, value),
 		onSuccess: async () => {
 			setValue("");
-			toast.success(`${label} saved in the Keychain.`);
+			toast.success(`${label} saved in encrypted storage.`);
 			await refresh();
 		},
 		onError: (e) => toast.error(e.message),
@@ -125,7 +125,7 @@ export function KeyField({
 						Enter it again: this copy of the app can't read the stored key
 					</span>
 				) : stored ? (
-					"Stored in your macOS Keychain"
+					"Stored in your computer’s encrypted storage"
 				) : (
 					"Not set"
 				)
@@ -459,7 +459,7 @@ function PaidStops() {
 }
 
 /**
- * Which model each role uses and how it is paid for. API keys live in the macOS Keychain; the
+ * Which model each role uses and how it is paid for. API keys live in the computer’s encrypted storage; the
  * pipeline gets them in memory only. Each role can be tested live with one small call.
  */
 export function ModelSettings({
@@ -500,7 +500,7 @@ export function ModelSettings({
 			<PaidStops />
 			<Section
 				title="API keys"
-				description="Kept in your macOS Keychain. Never shown, logged or sent anywhere but to the vendor."
+				description="Kept in your computer’s encrypted storage. Never shown, logged or sent anywhere but to the vendor."
 			>
 				<Group>
 					<KeyField

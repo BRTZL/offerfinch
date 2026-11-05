@@ -52,7 +52,7 @@ function ensureSession() {
  * The sidebar's material: macOS vibrancy behind a see-through sidebar, or the opaque sidebar
  * colour. Decided by the idle-memory A/B (docs/design/desktop/README.md, "Vibrancy A/B").
  */
-const SIDEBAR_VIBRANCY = true;
+const SIDEBAR_VIBRANCY = process.platform === "darwin";
 
 /** The window's colour before and under the page: the content surface of each theme. */
 export const windowBackground = () =>
@@ -81,7 +81,8 @@ export function createWindow(initialPath = "/"): BrowserWindow {
 		// Painted before the page loads, so dark mode starts dark (no white flash).
 		backgroundColor: windowBackground(),
 		// No title bar: the traffic lights sit in the sidebar, centred in the 52 pt toolbar.
-		titleBarStyle: "hidden",
+		titleBarStyle: process.platform === "darwin" ? "hidden" : "default",
+		autoHideMenuBar: false,
 		trafficLightPosition: { x: 20, y: 19 },
 		...(SIDEBAR_VIBRANCY && !MEASURE_LAYOUT
 			? {

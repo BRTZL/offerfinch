@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 const shown: Record<string, unknown>[] = [];
 /** macOS shows the last notification (its "show" event). */
 let showLast = () => {};
+let clickLast = () => {};
 vi.mock("electron", () => {
 	class Notification {
 		constructor(options: Record<string, unknown>) {
@@ -14,7 +15,9 @@ vi.mock("electron", () => {
 		static isSupported() {
 			return true;
 		}
-		on() {}
+		on(event: string, handler: () => void) {
+			if (event === "click") clickLast = handler;
+		}
 		once(event: string, handler: () => void) {
 			if (event === "show") showLast = handler;
 		}
@@ -137,4 +140,29 @@ describe("the chirp player", () => {
 		p.advance(CHIRP_COOLDOWN_MS);
 		expect(p.play()).toBe(true);
 	});
+});
+
+it("Windows chirp uses the system sound and never starts afplay", () => {
+	expect(soundOptions("chirp", "win32")).toEqual({});
+	expect(soundOptions("default", "win32")).toEqual({});
+	expect(soundOptions("none", "win32")).toEqual({ silent: true });
+	const play = vi.fn();
+	expect(
+		chirpPlayer("missing.aiff", vi.fn(), { platform: "win32", play })(),
+	).toBe(false);
+	expect(play).not.toHaveBeenCalled();
+});
+
+it("clicking the toast body opens its destination without action buttons", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "offerfinch-toast-"));
+	try {
+		const click = vi.fn();
+		const notifier = new Notifier(dir, click, vi.fn());
+		void notifier.show({ title: "Review", body: "Ready", path: "/inbox" });
+		showLast();
+		clickLast();
+		expect(click).toHaveBeenCalledWith("/inbox");
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
 });

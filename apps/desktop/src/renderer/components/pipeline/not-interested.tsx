@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { client, orpc } from "@/lib/orpc";
+import { primaryModifier } from "../../../shared/platform";
 
 /** What Not interested acts on: one match, a company's matches, or a selection. */
 export interface DismissTarget {
@@ -205,7 +206,10 @@ export function NotInterested({
 					if (event.key !== "Enter" || event.shiftKey) return;
 					const tag = (event.target as HTMLElement).tagName;
 					// ↩ toggles a reason and breaks a line in the note; ⌘↩ confirms from anywhere.
-					if (!event.metaKey && (tag === "TEXTAREA" || tag === "BUTTON"))
+					if (
+						!primaryModifier(event) &&
+						(tag === "TEXTAREA" || tag === "BUTTON")
+					)
 						return;
 					event.preventDefault();
 					confirm();

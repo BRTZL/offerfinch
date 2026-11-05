@@ -81,7 +81,7 @@ describe("keyboard shortcuts", () => {
 		for (const group of SHORTCUT_GROUPS) {
 			const keys = all
 				.filter((s) => s.group === group)
-				.flatMap((s) => s.keys.map(comboLabel));
+				.flatMap((s) => s.keys.map((combo) => comboLabel(combo)));
 			expect(new Set(keys).size).toBe(keys.length);
 		}
 	});
@@ -162,4 +162,34 @@ describe("keyboard shortcuts", () => {
 		walk(root);
 		expect(offenders).toEqual([]);
 	});
+});
+
+it("Windows puts Settings and Quit in File and excludes macOS app roles", async () => {
+	const { menuTemplate } = await import("../src/main/menu");
+	const template = menuTemplate("win32");
+	expect(template.some((item) => item.label === "OfferFinch")).toBe(false);
+	const file = template.find((item) => item.label === "File");
+	expect(Array.isArray(file?.submenu)).toBe(true);
+	const fileItems = file?.submenu as MenuItemConstructorOptions[];
+	expect(fileItems.some((item) => item.id === "settings")).toBe(true);
+	expect(fileItems.some((item) => item.label === "Quit OfferFinch")).toBe(true);
+	const walk = (
+		items: MenuItemConstructorOptions[],
+	): MenuItemConstructorOptions[] =>
+		items.flatMap((item) => [
+			item,
+			...(Array.isArray(item.submenu) ? walk(item.submenu) : []),
+		]);
+	expect(
+		walk(template).some((item) =>
+			["services", "hide", "hideOthers", "unhide", "appMenu"].includes(
+				item.role ?? "",
+			),
+		),
+	).toBe(false);
+	expect(
+		menuAccelerators(template).every(
+			(item) => !item.accelerator.includes("Command+"),
+		),
+	).toBe(true);
 });

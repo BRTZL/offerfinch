@@ -1,3 +1,4 @@
+import { IS_MAC, primaryModifier } from "./platform";
 /**
  * Every keyboard shortcut OfferFinch has, in one place (issue #48): the menu bar's accelerators
  * (main/menu.ts), the page's own keys (Inbox, lists, the command menu), the hints beside buttons,
@@ -260,11 +261,11 @@ export function shortcut(id: ShortcutId): Shortcut {
 }
 
 /** Electron's accelerator for a menu item ("Command+Alt+I"). */
-export function accelerator(id: ShortcutId): string {
+export function accelerator(id: ShortcutId, isMac = IS_MAC): string {
 	const combo = shortcut(id).keys[0];
 	if (!combo) throw new Error(`Shortcut ${id} has no key`);
 	return [
-		combo.cmd ? "Command" : "",
+		combo.cmd ? (isMac ? "Command" : "CommandOrControl") : "",
 		combo.alt ? "Alt" : "",
 		combo.shift ? "Shift" : "",
 		combo.key.length === 1 ? combo.key.toUpperCase() : combo.key,
@@ -288,10 +289,19 @@ const KEY_GLYPH: Record<string, string> = {
 };
 
 /** A key as macOS menus write it: ⌥⌘I, ⌘↩, J, ↓. */
-export function comboLabel(combo: KeyCombo): string {
+export function comboLabel(combo: KeyCombo, isMac = IS_MAC): string {
 	const key =
 		KEY_GLYPH[combo.key] ??
 		(combo.key.length === 1 ? combo.key.toUpperCase() : combo.key);
+	if (!isMac)
+		return [
+			combo.cmd ? "Ctrl" : "",
+			combo.alt ? "Alt" : "",
+			combo.shift ? "Shift" : "",
+			key,
+		]
+			.filter(Boolean)
+			.join("+");
 	return `${combo.alt ? "⌥" : ""}${combo.shift ? "⇧" : ""}${combo.cmd ? "⌘" : ""}${combo.click ? "-" : ""}${key}`.replace(
 		/^-/,
 		"",
@@ -315,11 +325,12 @@ export function matches(
 		"key" | "metaKey" | "altKey" | "ctrlKey" | "shiftKey"
 	>,
 	id: ShortcutId,
+	isMac = IS_MAC,
 ): boolean {
 	return shortcut(id).keys.some((combo) => {
 		if (combo.click) return false;
-		if (event.ctrlKey) return false;
-		if (Boolean(combo.cmd) !== event.metaKey) return false;
+		if (isMac ? event.ctrlKey : event.metaKey) return false;
+		if (Boolean(combo.cmd) !== primaryModifier(event, isMac)) return false;
 		if (Boolean(combo.alt) !== event.altKey) return false;
 		const modified = combo.cmd || combo.alt;
 		if (modified && Boolean(combo.shift) !== event.shiftKey) return false;

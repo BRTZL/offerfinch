@@ -34,7 +34,10 @@ export async function createUpdates(): Promise<Updates> {
 		: undefined;
 	let updater: Updater | null = null;
 	let disabledReason: string | null = null;
-	if (fakeVersion) updater = new FakeUpdater(fakeVersion, log);
+	if (process.platform === "win32")
+		disabledReason =
+			"Updates on Windows: download new versions from GitHub Releases.";
+	else if (fakeVersion) updater = new FakeUpdater(fakeVersion, log);
 	else if (TEST_MODE) disabledReason = "Test builds don't update themselves.";
 	else if (!app.isPackaged)
 		disabledReason = "Development builds don't update themselves.";

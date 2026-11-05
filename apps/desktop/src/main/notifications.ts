@@ -13,8 +13,13 @@ export const CHIRP_SOUND = "chirp.aiff";
  * notification sound and plays its default one instead, so the chirp's notification goes out
  * silent and the app plays the chirp itself once macOS has shown it.
  */
-export function soundOptions(sound: NotificationSound): { silent?: boolean } {
-	return sound === "default" ? {} : { silent: true };
+export function soundOptions(
+	sound: NotificationSound,
+	platform: NodeJS.Platform = process.platform,
+): { silent?: boolean } {
+	return sound === "default" || (platform !== "darwin" && sound === "chirp")
+		? {}
+		: { silent: true };
 }
 
 /** The least time between two chirps: a burst of calls plays one. */
@@ -29,10 +34,12 @@ export function chirpPlayer(
 	file: string,
 	log: (message: string, data?: unknown) => void,
 	deps: {
+		platform?: NodeJS.Platform;
 		now?: () => number;
 		play?: (file: string, done: (error: Error | null) => void) => void;
 	} = {},
 ): () => boolean {
+	if ((deps.platform ?? process.platform) !== "darwin") return () => false;
 	const now = deps.now ?? Date.now;
 	const play =
 		deps.play ??
@@ -169,7 +176,8 @@ export class Notifier {
 			const timer = setTimeout(() => done("unknown"), 6_000);
 			const sound = this.state.sound;
 			n.once("show", () => {
-				if (sound === "chirp") this.playChirp();
+				if (sound === "chirp" && process.platform === "darwin")
+					this.playChirp();
 				this.save({
 					status: "delivered",
 					lastError: null,
@@ -197,4 +205,6 @@ export class Notifier {
 
 /** System Settings › Notifications, at this app's entry when macOS lists it. */
 export const NOTIFICATION_SETTINGS_URL =
-	"x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=app.offerfinch.desktop";
+	process.platform === "win32"
+		? "ms-settings:notifications"
+		: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=app.offerfinch.desktop";

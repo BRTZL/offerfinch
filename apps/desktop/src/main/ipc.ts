@@ -65,7 +65,9 @@ function handle<A extends unknown[], R>(
 /* ------------------------------------------------------------- login item */
 
 function loginItemState(): LoginItemState {
-	const settings = app.getLoginItemSettings();
+	const settings = app.getLoginItemSettings(
+		process.platform === "win32" ? { args: ["--hidden"] } : {},
+	);
 	const status = (settings as { status?: string }).status;
 	return {
 		openAtLogin: settings.openAtLogin,
@@ -264,14 +266,20 @@ export function registerIpc() {
 	handle(IPC.openLoginItems, async () => {
 		if (TEST_MODE) return;
 		await shell.openExternal(
-			"x-apple.systempreferences:com.apple.LoginItems-Settings.extension",
+			process.platform === "win32"
+				? "ms-settings:startupapps"
+				: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension",
 		);
 	});
 	handle(IPC.loginGet, () => loginItemState());
 	handle(IPC.loginSet, (open: unknown) => {
 		if (typeof open !== "boolean") throw new Error("Bad request");
 		if (mainState.demo) throw new Error(DEMO_REFUSAL);
-		if (!TEST_MODE) app.setLoginItemSettings({ openAtLogin: open });
+		if (!TEST_MODE)
+			app.setLoginItemSettings({
+				openAtLogin: open,
+				...(process.platform === "win32" ? { args: ["--hidden"] } : {}),
+			});
 		return loginItemState();
 	});
 	handle(IPC.contextMenu, (items: unknown) => contextMenu(items));

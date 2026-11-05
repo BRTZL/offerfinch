@@ -34,7 +34,7 @@ export function Welcome() {
 			</div>
 			<FlowExplainer />
 			<p className="text-muted-foreground text-xs">
-				Your data stays on this Mac. {SETUP_STEPS.length} short steps,{" "}
+				Your data stays on this computer. {SETUP_STEPS.length} short steps,{" "}
 				{timeLeft("ai", []).replace(" left", "")}. Skip any and finish later
 				from Home.
 			</p>

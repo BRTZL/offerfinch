@@ -20,6 +20,7 @@ at the top, above the newest version. Only what is merged into main belongs here
 - Claude and Codex plans now allow 500 model calls a day by default (was 40). Jobs found past
   the limit wait and are scored when there is room.
 - Backups and diagnostics zip exports support Windows. Diagnostics hide Windows home paths.
+- Use computer-neutral wording for local data and encrypted API key storage.
 
 - Settings › Spending lists each model once, by its name (Claude Sonnet 5.5, GPT-6.1 Sol), with
   how its calls were paid: your Claude plan, your ChatGPT plan or an API key. Calls on a plan

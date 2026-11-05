@@ -11,15 +11,22 @@ import { USER_AGENT } from "@offerfinch/core/sources/types";
 const CANDIDATES = [
 	{
 		name: "Google Chrome",
+		win: "Google/Chrome/Application/chrome.exe",
 		app: "Google Chrome.app/Contents/MacOS/Google Chrome",
 	},
-	{ name: "Chromium", app: "Chromium.app/Contents/MacOS/Chromium" },
+	{
+		name: "Chromium",
+		win: "Chromium/Application/chrome.exe",
+		app: "Chromium.app/Contents/MacOS/Chromium",
+	},
 	{
 		name: "Microsoft Edge",
+		win: "Microsoft/Edge/Application/msedge.exe",
 		app: "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 	},
 	{
 		name: "Brave Browser",
+		win: "BraveSoftware/Brave-Browser/Application/brave.exe",
 		app: "Brave Browser.app/Contents/MacOS/Brave Browser",
 	},
 ];
@@ -30,18 +37,31 @@ export interface FoundBrowser {
 }
 
 export function findChrome(
-	roots = ["/Applications", path.join(os.homedir(), "Applications")],
+	roots?: string[],
+	platform: NodeJS.Platform = process.platform,
+	env: NodeJS.ProcessEnv = process.env,
+	exists: (file: string) => boolean = fs.existsSync,
 ): FoundBrowser | null {
-	const override = process.env.OFFERFINCH_CHROME;
+	const join = platform === "win32" ? path.win32.join : path.join;
+	const searchRoots =
+		roots ??
+		(platform === "win32"
+			? [env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA].filter(
+					(root): root is string => Boolean(root),
+				)
+			: ["/Applications", path.join(os.homedir(), "Applications")]);
+	const override = env.OFFERFINCH_CHROME;
 	// "none": behave as on a Mac without Chrome (tests of the missing-Chrome messages).
 	if (override === "none") return null;
-	if (override && fs.existsSync(override))
+	if (override && exists(override))
 		return { name: "Custom browser", executable: override };
 	for (const candidate of CANDIDATES)
-		for (const root of roots) {
-			const executable = path.join(root, candidate.app);
-			if (fs.existsSync(executable))
-				return { name: candidate.name, executable };
+		for (const root of searchRoots) {
+			const executable = join(
+				root,
+				platform === "win32" ? candidate.win : candidate.app,
+			);
+			if (exists(executable)) return { name: candidate.name, executable };
 		}
 	return null;
 }

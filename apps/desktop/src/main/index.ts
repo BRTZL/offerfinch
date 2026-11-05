@@ -34,6 +34,9 @@ import { WorkerHost } from "./worker-host";
 
 /* ------------------------------------------------------------------ setup */
 
+if (process.platform === "win32")
+	app.setAppUserModelId("app.offerfinch.desktop");
+
 // Tests and screenshots run against their own folder (logs included), never the user's data.
 if (process.env.OFFERFINCH_USER_DATA) {
 	app.setPath("userData", path.resolve(process.env.OFFERFINCH_USER_DATA));
@@ -125,7 +128,7 @@ async function main() {
 		version: `Electron ${process.versions.electron}`,
 		credits:
 			"A small bird that brings back offers: it finds jobs that fit, prepares each application and waits for your approval.",
-		copyright: "Runs on this Mac. Nothing is sent without your approval.",
+		copyright: "Runs on this computer. Nothing is sent without your approval.",
 	});
 	fs.mkdirSync(app.getPath("logs"), { recursive: true });
 	// A restore the app quit in the middle of is undone first, so the earlier data is in place.
@@ -246,7 +249,8 @@ async function main() {
 	app.on("browser-window-focus", () => mainState.updates?.checkIfStale());
 
 	const openedAtLogin =
-		app.getLoginItemSettings().wasOpenedAtLogin ||
+		(process.platform === "darwin" &&
+			app.getLoginItemSettings().wasOpenedAtLogin) ||
 		process.argv.includes("--hidden");
 	if ((openedAtLogin && !TEST_MODE) || process.argv.includes("--hidden")) {
 		if (process.platform === "darwin") app.dock?.hide();
