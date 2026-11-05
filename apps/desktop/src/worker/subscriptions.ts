@@ -547,6 +547,8 @@ export function subscriptions(input: {
 	 * model sees, so it must not name the user: default a folder in the per-user temp directory.
 	 */
 	opencodeRoot?: string;
+	/** Sweep sessions a crash left in the user's OpenCode database; off in test runs. */
+	opencodeSweep?: boolean;
 	log?: (message: string, data?: Record<string, unknown>) => void;
 	/** Where every read of a plan's usage goes (Settings › Models). */
 	planUsage?: (vendor: "anthropic" | "openai") => PlanUsageSink;
@@ -561,6 +563,7 @@ export function subscriptions(input: {
 		root: input.opencodeRoot ?? path.join(os.tmpdir(), "offerfinch-opencode"),
 		env: () => env,
 		log: input.log,
+		sweep: input.opencodeSweep ?? true,
 	});
 	const usePath = (pathEnv: string) => {
 		env = { ...process.env, PATH: pathEnv };
@@ -847,6 +850,7 @@ function openCodeSide(input: {
 	root: string;
 	env: () => Record<string, string | undefined>;
 	log?: (message: string, data?: Record<string, unknown>) => void;
+	sweep: boolean;
 }) {
 	let binary: string | null = null;
 	let cache: { at: number; state: CliState } | null = null;
@@ -864,7 +868,7 @@ function openCodeSide(input: {
 			cache = null;
 			if (binary === before) return;
 			catalog.clear();
-			if (binary)
+			if (binary && input.sweep)
 				void sweepOpenCodeCrashes({
 					binary,
 					root: input.root,
