@@ -30,6 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { desktop } from "@/lib/desktop";
 import { type client, orpc } from "@/lib/orpc";
 import { Link } from "@/lib/router";
+import { openSteps, openStepsLine } from "../../shared/setup-steps";
 
 type HomeData = Awaited<ReturnType<typeof client.desktop.home>>;
 type Waiting = HomeData["waiting"][number];
@@ -271,6 +272,16 @@ export default function HomePage() {
 				: "Allow OfferFinch in System Settings › Notifications",
 			"home-needs-notifications",
 		);
+	// Setup no longer waits for a test notification: one never shown reads here instead, once the
+	// Stay in the loop step was passed (done or skipped).
+	if (notify.data?.status === "unknown" && o.done.includes("loop"))
+		fix(
+			"notifications-untested",
+			"/settings/notifications",
+			"Notifications are not tested yet",
+			"Send a test so you hear about new matches. macOS may ask to allow OfferFinch",
+			"home-needs-notify-test",
+		);
 	if (!s.chrome)
 		fix(
 			"chrome",
@@ -280,6 +291,8 @@ export default function HomePage() {
 			"home-needs-chrome",
 		);
 
+	// Steps skipped or not done yet, by name; Continue setup opens the first of them.
+	const openSetup = openSteps(o);
 	const reviewCount = h.waiting.filter(
 		(a) => a.state === "ready_for_review" || a.state === "needs_human",
 	).length;
@@ -316,12 +329,12 @@ export default function HomePage() {
 					title={name ? `${greeting()}, ${name}` : greeting()}
 					description={summary}
 				/>
-				{!o.completedAt && (
+				{!o.completedAt && openSetup.length > 0 && (
 					<Notice
 						data-testid="home-setup"
 						actions={
 							<Link
-								href="/onboarding"
+								href={`/onboarding?step=${openSetup[0]}`}
 								className="text-primary text-sm hover:underline"
 								data-testid="resume-setup"
 							>
@@ -329,7 +342,7 @@ export default function HomePage() {
 							</Link>
 						}
 					>
-						{o.done.length} of {o.steps.length} setup steps done.
+						{openStepsLine(openSetup)}
 					</Notice>
 				)}
 
