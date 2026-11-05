@@ -16,9 +16,9 @@ async function openSettings(app: ElectronApplication, page: Page) {
 /**
  * Over-the-air updates, with a fake updater standing in for GitHub Releases: the update is found
  * at launch, downloads in the background, is announced once, and installs only on the user's
- * click (Settings, the sidebar, the app menu or the menu bar icon).
+ * click (Settings, the sidebar's update indicator, the app menu or the menu bar icon).
  */
-test("an update downloads in the background and installs on Restart to Update", async () => {
+test("an update downloads in the background and installs from the sidebar's indicator", async () => {
 	const userData = fs.mkdtempSync(path.join(os.tmpdir(), "offerfinch-update-"));
 	const { app, page, errors } = await launchApp({
 		userData,
@@ -52,10 +52,23 @@ test("an update downloads in the background and installs on Restart to Update", 
 		);
 		expect(appMenu).toContain("Restart to Update to 9.9.9");
 
-		// Checking again while one is ready does nothing; the sidebar offers the restart too.
+		// Checking again while one is ready does nothing; Settings and the sidebar offer the restart.
 		await expect(page.getByTestId("update-check")).toHaveCount(0);
-		await expect(page.getByTestId("sidebar-update")).toBeVisible();
-		await page.getByTestId("update-install").click();
+		await expect(page.getByTestId("update-install")).toBeVisible();
+		await expect(page.getByTestId("sidebar-update-progress")).toHaveCount(0);
+		// The indicator opens what's new (the release's notes, as plain text), Later and Restart now.
+		await page.getByTestId("sidebar-update").click();
+		const popover = page.getByTestId("update-popover");
+		await expect(popover).toContainText("OfferFinch 9.9.9 is ready");
+		await expect(page.getByTestId("update-notes").locator("li")).toHaveCount(2);
+		await expect(page.getByTestId("update-notes")).toContainText(
+			"Matches show up while the scan still runs, so the first ones arrive well before it's done.",
+		);
+		await popover.getByRole("button", { name: "Later" }).click();
+		await expect(popover).toHaveCount(0);
+		expect((await hooks()).installs).toBe(0);
+		await page.getByTestId("sidebar-update").click();
+		await page.getByTestId("update-restart").click();
 		await expect.poll(async () => (await hooks()).installs).toBe(1);
 		expect(errors).toEqual([]);
 	} finally {
