@@ -15,6 +15,7 @@ import {
 	stageRestore,
 } from "../src/main/backup";
 import { DB_FILE } from "../src/main/database-file";
+import { createZipTools } from "../src/main/zip";
 
 const folder = (name: string) =>
 	fs.mkdtempSync(path.join(os.tmpdir(), `of-backup-${name}-`));
@@ -219,6 +220,29 @@ describe("checking a backup before restoring", () => {
 		).rejects.toBeInstanceOf(BackupError);
 	});
 });
+
+// Exercise the restore's real layout, manifest and database checks on a tar-written zip.
+describe.skipIf(process.platform !== "darwin")(
+	"Windows zip restore compatibility",
+	() => {
+		it("stages a real backup repacked by bsdtar to a .partial name", async () => {
+			const { zip } = await backupOf(dataFolder("tar", ["Sample role"]));
+			const source = unzip(zip);
+			const partial = path.join(folder("tar-out"), "backup.zip.partial");
+			await createZipTools({ platform: "win32", tar: "/usr/bin/tar" }).create(
+				source,
+				partial,
+			);
+			const staged = await stageRestore({
+				userData: dataFolder("target", []),
+				zipFile: partial,
+				known: KNOWN,
+			});
+			expect(staged.summary).toMatchObject({ jobs: 1, files: 1 });
+			expect(titles(path.join(staged.dir, DB_FILE))).toEqual(["Sample role"]);
+		});
+	},
+);
 
 describe("restoring", () => {
 	const restoreInto = async (

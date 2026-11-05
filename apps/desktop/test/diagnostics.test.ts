@@ -50,6 +50,15 @@ const CANARIES: [string, string][] = [
 	["avery-quinlan-example", "linkedin.com/in/avery-quinlan-example/details"],
 	["canaryhome", `opened ${HOME}/Library/Application Support/OfferFinch`],
 	["otheruser", "read /Users/otheruser/Downloads/cv.pdf"],
+	[
+		"windowscanary",
+		String.raw`opened C:\Users\windowscanary\AppData\Roaming\OfferFinch`,
+	],
+	["slashcanary", "opened C:/Users/slashcanary/AppData/Roaming/OfferFinch"],
+	[
+		"escapedcanary",
+		String.raw`{"path":"C:\\Users\\escapedcanary\\AppData\\Roaming\\OfferFinch"}`,
+	],
 	["sk-ant-FAKE0canary0key0", "key sk-ant-FAKE0canary0key0abcdefgh"],
 	["sk-proj-FAKEcanary", "openai sk-proj-FAKEcanary1234567890"],
 	["FAKEbearerTOKEN", "Authorization: Bearer FAKEbearerTOKEN.abc-123"],
@@ -466,5 +475,39 @@ describe.skipIf(process.platform !== "darwin")("saving the zip", () => {
 		} finally {
 			fs.chmodSync(dir, 0o700);
 		}
+	});
+});
+
+describe("Windows home redaction on every host", () => {
+	const empty = { names: [], emails: [], phones: [], links: [] };
+	it.each([
+		[
+			String.raw`C:\Users\Alex\AppData\Roaming\OfferFinch`,
+			String.raw`~\AppData\Roaming\OfferFinch`,
+		],
+		[
+			"c:/users/ALEX/AppData/Roaming/OfferFinch",
+			"~/AppData/Roaming/OfferFinch",
+		],
+		[
+			String.raw`C:\\USERS\\alex\\AppData\\Roaming\\OfferFinch`,
+			String.raw`~\\AppData\\Roaming\\OfferFinch`,
+		],
+		[String.raw`D:\Custom Homes\Alex\Downloads`, String.raw`~\Downloads`],
+	])("redacts %s", (input, expected) => {
+		const home = input.startsWith("D:")
+			? String.raw`D:\Custom Homes\Alex`
+			: String.raw`C:\Users\Alex`;
+		expect(redactDiagnostics(input, empty, home)).toBe(expected);
+	});
+	it("redacts other Windows accounts and keeps JSON valid", () => {
+		const input = JSON.stringify({
+			path: String.raw`C:\Users\OtherSample\AppData\Roaming\OfferFinch`,
+		});
+		const out = redactDiagnostics(input, empty, String.raw`C:\Users\Alex`);
+		expect(JSON.parse(out)).toEqual({
+			path: String.raw`~\AppData\Roaming\OfferFinch`,
+		});
+		expect(out).not.toMatch(/OtherSample|Alex/i);
 	});
 });

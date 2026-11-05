@@ -1,23 +1,17 @@
-import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
 import { COMPANY_NAME_KEY_VERSION } from "@offerfinch/core/domain/url";
 import { MIGRATIONS } from "@offerfinch/db/migrations/index";
 import Database from "better-sqlite3";
 import type { BackupSummary } from "../shared/bridge";
 import { DB_FILE } from "./database-file";
-
-const exec = promisify(execFile);
-/** zipinfo lists every entry: a large backup's list is far above execFile's 1 MB default. */
-const run = (file: string, args: string[]) =>
-	exec(file, args, { maxBuffer: 64 * 1024 * 1024 });
+import { zipTools } from "./zip";
 
 /**
  * A backup is one zip: `manifest.json`, `offerfinch.sqlite` (a consistent copy made with
  * `VACUUM INTO`, never the live file) and `files/` (profile files, documents, PDFs, proofs).
  * API keys (`secrets.json`), site sign-ins (session partitions), logs, debug snapshots and the
- * migration backups stay out. Zipped and unzipped with macOS's own `ditto`, so no dependency.
+ * migration backups stay out. The platform's built-in zip tools add no dependency.
  */
 const BACKUP_FORMAT = 1;
 export const MANIFEST = "manifest.json";
@@ -178,13 +172,7 @@ export async function createBackup(
 		fs.rmSync(partial, { force: true });
 		try {
 			// --norsrc: no AppleDouble or __MACOSX entries, so the zip holds only these three.
-			await run("/usr/bin/ditto", [
-				"-c",
-				"-k",
-				"--norsrc",
-				path.resolve(staging),
-				path.resolve(partial),
-			]);
+			await zipTools.create(staging, partial);
 			fs.renameSync(partial, options.target);
 		} catch (error) {
 			fs.rmSync(partial, { force: true });
@@ -299,15 +287,7 @@ export async function stageRestore(options: {
 	);
 	try {
 		try {
-			// Names are checked before anything is written: none may leave the staging folder.
-			// (ditto also strips `..` and will not write through a symlink; this is a second lock.)
-			// Absolute paths: a name starting with "-" is never read as an option.
-			const zip = path.resolve(options.zipFile);
-			const { stdout } = await run("/usr/bin/zipinfo", ["-1", zip]);
-			for (const name of stdout.split("\n").filter(Boolean))
-				if (name.startsWith("/") || name.split(/[\\/]/).includes(".."))
-					throw damaged();
-			await run("/usr/bin/ditto", ["-x", "-k", zip, path.resolve(dir)]);
+			await zipTools.extract(options.zipFile, dir);
 		} catch {
 			throw damaged();
 		}
