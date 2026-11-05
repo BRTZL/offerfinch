@@ -40,9 +40,9 @@ import { subscriptionEnv } from "./env";
  * "Antigravity recipe").
  */
 
-export const ANTIGRAVITY_SUBSCRIPTION = "antigravity";
-export const ANTIGRAVITY_VENDOR = "google";
-export const ANTIGRAVITY_WINDOWS =
+const ANTIGRAVITY_SUBSCRIPTION = "antigravity";
+const ANTIGRAVITY_VENDOR = "google";
+const ANTIGRAVITY_WINDOWS =
 	"Gemini (Antigravity) is not available on Windows yet.";
 
 const ROOT_PREFIX = "offerfinch-agy-";
@@ -276,12 +276,12 @@ export async function sweepAntigravityRoots(
 	return removed;
 }
 
-export type SessionMode =
+type SessionMode =
 	| { kind: "call"; family: string; level: ThinkingLevel; prompt: string }
 	| { kind: "models" }
 	| { kind: "signIn"; onUrl: (url: string) => void };
 
-export interface SessionInput {
+interface SessionInput {
 	runtime: AntigravityInstall;
 	/** OfferFinch's sign-in, copied into the call's root; null for the sign-in itself. */
 	tokenFile: string | null;
@@ -298,7 +298,7 @@ export interface SessionInput {
 	inspectRoot?: (root: string) => Promise<void> | void;
 }
 
-export interface SessionResult {
+interface SessionResult {
 	version: string | null;
 	tier: string | null;
 	families: AntigravityFamily[];
@@ -343,7 +343,7 @@ function serverEnv(
  * and every fs or terminal request refused, and any of them, or a tool call, ends the session as
  * a boundary failure. The root is deleted afterwards.
  */
-export async function runAntigravitySession(
+async function runAntigravitySession(
 	input: SessionInput,
 ): Promise<SessionResult> {
 	const r = await makeRoot(input.tokenFile);
@@ -863,9 +863,3 @@ export class AntigravityProvider implements LlmProvider {
 		return request.schema.parse(parsed);
 	}
 }
-
-/** What Gemini (Antigravity) is, for Settings › Models. */
-export const ANTIGRAVITY_STATUS = [
-	`Gemini (Antigravity) runs a step on your Google plan through Google's Antigravity server ${ANTIGRAVITY_VERSION}, which OfferFinch downloads and checks against its pinned hash, on OfferFinch's own Google sign-in.`,
-	"Each call is a pure model call: no tools and no MCP servers, a fresh private folder deleted afterwards, and a local gate that lets exactly one model request through after checking it offers no tools.",
-].join(" ");

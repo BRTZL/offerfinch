@@ -29,7 +29,7 @@ import type { CliFix, CliState, ManagedProvider } from "./subscriptions";
  */
 
 /** Where the runtime and the sign-in live, inside OfferFinch's data folder. */
-export function antigravityPaths(userData: string) {
+function antigravityPaths(userData: string) {
 	const root = path.join(userData, "antigravity");
 	return {
 		runtime: path.join(root, "runtime"),
@@ -37,7 +37,7 @@ export function antigravityPaths(userData: string) {
 	};
 }
 
-export const ANTIGRAVITY_FIX: Record<CliFix["kind"], CliFix> = {
+const ANTIGRAVITY_FIX: Record<CliFix["kind"], CliFix> = {
 	install: {
 		kind: "install",
 		command: "",

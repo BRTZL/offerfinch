@@ -186,7 +186,7 @@ export async function findAntigravity(
 	return { server, harness, version: ANTIGRAVITY_VERSION };
 }
 
-export class AntigravityInstallError extends Error {
+class AntigravityInstallError extends Error {
 	constructor(message: string) {
 		super(message);
 		this.name = "AntigravityInstallError";
