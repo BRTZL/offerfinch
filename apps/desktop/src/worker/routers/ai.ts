@@ -6,17 +6,52 @@ import {
 } from "@offerfinch/local-llm/codex";
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
-import { autoFill } from "../../shared/auto-connect";
 import {
 	PROVIDER_IDS,
+	PROVIDER_IN_APP,
 	PROVIDER_NAMES,
+	type ProviderId,
 	parseModelRef,
-	providerOff,
 } from "../../shared/providers";
+import { fillSteps, providerViews } from "../model-choice";
 import { planUsageViews } from "../plan-usage";
 import { aiSettingsSchema } from "../settings";
+import type { ProviderAction } from "../subscriptions";
 import { protectedProcedure } from "./procedure";
 import { worker } from "./shared";
+
+/** The steps that ran on an API key, while the notice saying keys were removed is up. */
+async function keysNotice() {
+	const notice = await worker().settings.get("keysRemoved");
+	return notice && !notice.dismissed ? { steps: notice.steps } : null;
+}
+
+/**
+ * An install or sign-in from the app: the provider's own when this version has one, else what
+ * to do instead. Afterwards the provider's state is read again.
+ */
+async function providerAction(
+	provider: ProviderId,
+	kind: "install" | "signIn",
+	run: ((provider: ProviderId) => Promise<ProviderAction>) | undefined,
+): Promise<ProviderAction> {
+	const name = PROVIDER_NAMES[provider];
+	const what = kind === "install" ? "Installing" : "Signing in to";
+	if (!PROVIDER_IN_APP[provider][kind])
+		return {
+			ok: false,
+			message: `${what} ${name} happens in Terminal: run the command shown for it.`,
+		};
+	if (!run)
+		return {
+			ok: false,
+			message: `${what} ${name} from OfferFinch is not available in this version yet.`,
+		};
+	const w = worker();
+	const result = await run.call(w.subscriptions, provider);
+	await w.subscriptions.state(provider, { fresh: true });
+	return result;
+}
 
 export const aiRouter = {
 	get: protectedProcedure.handler(async () => {
@@ -26,6 +61,7 @@ export const aiRouter = {
 			roles: w.roles,
 			// Try-it mode runs on the test models too.
 			fakeAllowed: Boolean(w.init.demo || w.init.test?.fakeModels),
+			keysRemoved: await keysNotice(),
 		};
 	}),
 	set: protectedProcedure.input(aiSettingsSchema).handler(async ({ input }) => {
@@ -78,27 +114,33 @@ export const aiRouter = {
 	models: protectedProcedure.handler(async () => {
 		const w = worker();
 		await w.pathRefresh;
-		const providers = await Promise.all(
-			PROVIDER_IDS.map(async (provider) => {
-				const [state, models] = await Promise.all([
-					w.subscriptions.state(provider),
-					w.subscriptions.models(provider),
-				]);
-				const off = providerOff(provider, process.platform);
-				return {
-					provider,
-					name: PROVIDER_NAMES[provider],
-					off,
-					signedIn: !off && state.login.state === "logged_in",
-					state,
-					models,
-				};
-			}),
-		);
 		return {
-			providers,
+			providers: await providerViews(w.subscriptions),
 			fakeAllowed: Boolean(w.init.demo || w.init.test?.fakeModels),
 		};
+	}),
+	/**
+	 * Installs a provider OfferFinch installs itself (Gemini's Antigravity server), then reads its
+	 * state again. A provider installed from Terminal, or a version that cannot, says what to do.
+	 */
+	install: protectedProcedure
+		.input(z.object({ provider: z.enum(PROVIDER_IDS) }))
+		.handler(({ input }) =>
+			providerAction(input.provider, "install", worker().subscriptions.install),
+		),
+	/** Signs in to a provider OfferFinch signs in to itself (Gemini, with Google). */
+	signIn: protectedProcedure
+		.input(z.object({ provider: z.enum(PROVIDER_IDS) }))
+		.handler(({ input }) =>
+			providerAction(input.provider, "signIn", worker().subscriptions.signIn),
+		),
+	/** Settings › Models' notice that API keys were removed: shown until dismissed. */
+	dismissKeysNotice: protectedProcedure.handler(async () => {
+		const w = worker();
+		const notice = await w.settings.get("keysRemoved");
+		if (notice)
+			await w.settings.set("keysRemoved", { ...notice, dismissed: true });
+		return { ok: true };
 	}),
 	/**
 	 * What each plan has used of its windows and OfferFinch's share, as last read: nothing is
@@ -127,10 +169,10 @@ export const aiRouter = {
 		);
 	}),
 	/**
-	 * Setup's Connect AI: finds Claude Code and Codex, and gives each step still without a model
-	 * the signed-in one: Claude for all three when it is signed in, else Codex. A choice the user
-	 * made is never changed. `refresh` reads PATH and the logins again (Check again, after
-	 * installing or signing in).
+	 * Setup's Connect AI: finds every provider, and gives each step still without a model one
+	 * from what is available: Claude for all three when it is signed in, else the first plan
+	 * model found. A choice the user made is never changed. `refresh` reads PATH and the logins
+	 * again (Check again, after installing or signing in).
 	 */
 	autoConnect: protectedProcedure
 		.input(z.object({ refresh: z.boolean().default(false) }))
@@ -138,28 +180,16 @@ export const aiRouter = {
 			const w = worker();
 			await w.pathRefresh;
 			if (input.refresh) await w.refreshClis({ always: true });
-			const [claude, codex] = await Promise.all([
-				w.subscriptions.claude(),
-				w.subscriptions.codex(),
-			]);
-			const settings = await w.settings.get("ai");
-			const { settings: next, filled } = autoFill({
-				settings,
-				signedIn: {
-					claude:
-						!providerOff("claude", process.platform) &&
-						claude.login.state === "logged_in",
-					codex:
-						!providerOff("codex", process.platform) &&
-						codex.login.state === "logged_in",
-				},
+			const providers = await providerViews(w.subscriptions, {
+				fresh: input.refresh,
 			});
-			if (filled.length) {
-				await w.settings.set("ai", next as typeof settings);
-				await w.rebuild();
-				w.runner.poke();
-			}
-			return { claude, codex, filled, roles: w.roles };
+			const filled = await fillSteps(w, providers);
+			return {
+				providers,
+				fakeAllowed: Boolean(w.init.demo || w.init.test?.fakeModels),
+				filled,
+				roles: w.roles,
+			};
 		}),
 	/**
 	 * A live test of one role: one small call through the metered path (counted against the

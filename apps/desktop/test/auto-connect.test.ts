@@ -5,7 +5,26 @@ import {
 	providerOfRef,
 	readyNow,
 } from "../src/shared/auto-connect";
-import { FAKE_MODEL_REF } from "../src/shared/providers";
+import {
+	FAKE_MODEL_REF,
+	formatModelRef,
+	type ModelInfo,
+	type ProviderId,
+} from "../src/shared/providers";
+
+const model = (
+	provider: ProviderId,
+	id: string,
+	billing: ModelInfo["billing"] = "subscription",
+): ModelInfo => ({
+	ref: formatModelRef(provider, id),
+	name: id,
+	provider,
+	billing,
+	efforts: [],
+});
+const CLAUDE = [model("claude", "claude-opus-5-5")];
+const CODEX = [model("codex", ""), model("codex", "gpt-6.1-sol")];
 
 const fresh: AiChoice = {
 	scoring: { model: null },
@@ -29,7 +48,7 @@ describe("Connect AI fills the steps without a model", () => {
 		for (const codex of [true, false]) {
 			const r = autoFill({
 				settings: fresh,
-				signedIn: { claude: true, codex },
+				available: { claude: CLAUDE, ...(codex ? { codex: CODEX } : {}) },
 			});
 			expect(r.filled).toEqual(["scoring", "tailoring", "claims"]);
 			expect(r.settings).toEqual(CLAUDE_ALL);
@@ -39,14 +58,44 @@ describe("Connect AI fills the steps without a model", () => {
 	it("Codex only: Codex does all three, on the account's default model", () => {
 		const r = autoFill({
 			settings: fresh,
-			signedIn: { claude: false, codex: true },
+			available: { codex: CODEX },
 		});
 		expect(r.filled).toEqual(["scoring", "tailoring", "claims"]);
 		expect(r.settings).toEqual(CODEX_ALL);
 	});
 
+	it("no Claude or Codex: the first plan model, never a pay-per-use one", () => {
+		const paid = model("opencode", "openrouter/minimax-m2.7", "api");
+		const plan = model("opencode", "opencode-go/glm-5.1");
+		const gemini = model("antigravity", "gemini-3.8-flash");
+		expect(
+			autoFill({
+				settings: fresh,
+				available: { opencode: [paid, plan], antigravity: [gemini] },
+			}).settings.scoring,
+		).toEqual({ model: plan.ref });
+		const r = autoFill({
+			settings: fresh,
+			available: { opencode: [paid], antigravity: [gemini] },
+		});
+		expect(r.settings.claims).toEqual({ model: gemini.ref });
+		expect(
+			autoFill({ settings: fresh, available: { opencode: [paid] } }).filled,
+		).toEqual([]);
+	});
+
+	it("fills only the steps asked for", () => {
+		const r = autoFill({
+			settings: fresh,
+			available: { codex: CODEX },
+			only: ["claims"],
+		});
+		expect(r.filled).toEqual(["claims"]);
+		expect(r.settings.scoring).toEqual({ model: null });
+	});
+
 	it("neither: nothing changes", () => {
-		const r = autoFill({ settings: fresh, signedIn: {} });
+		const r = autoFill({ settings: fresh, available: {} });
 		expect(r.filled).toEqual([]);
 		expect(r.settings).toEqual(fresh);
 	});
@@ -59,7 +108,7 @@ describe("Connect AI fills the steps without a model", () => {
 		};
 		const r = autoFill({
 			settings: made,
-			signedIn: { claude: true, codex: true },
+			available: { claude: CLAUDE, codex: CODEX },
 		});
 		expect(r.filled).toEqual(["claims"]);
 		expect(r.settings).toEqual({

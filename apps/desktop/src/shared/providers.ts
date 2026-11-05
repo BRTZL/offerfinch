@@ -140,3 +140,18 @@ export interface ModelInfo {
 	/** Pay-per-use only: USD per million tokens. */
 	price?: { input: number; output: number };
 }
+
+/**
+ * What OfferFinch does for a provider itself, from the app (`ai.install`, `ai.signIn`), instead
+ * of a command the user runs in Terminal: Antigravity's ACP server is downloaded by OfferFinch
+ * and signed in to with OfferFinch's own Google sign-in (docs/model-providers.md).
+ */
+export const PROVIDER_IN_APP: Record<
+	ProviderId,
+	{ install: boolean; signIn: boolean }
+> = {
+	claude: { install: false, signIn: false },
+	codex: { install: false, signIn: false },
+	opencode: { install: false, signIn: false },
+	antigravity: { install: true, signIn: true },
+};

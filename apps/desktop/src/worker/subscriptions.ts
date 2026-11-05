@@ -346,6 +346,18 @@ export interface Subscriptions extends CliChecks {
 	state(provider: ProviderId, options?: { fresh?: boolean }): Promise<CliState>;
 	/** The models a provider offers, whether or not it is signed in now. */
 	models(provider: ProviderId): Promise<ModelInfo[]>;
+	/**
+	 * Installs a provider OfferFinch installs itself (`PROVIDER_IN_APP`), or signs in to it.
+	 * Absent: this version cannot; the router says so.
+	 */
+	install?(provider: ProviderId): Promise<ProviderAction>;
+	signIn?(provider: ProviderId): Promise<ProviderAction>;
+}
+
+/** What an install or sign-in from the app did, in words for the user. */
+export interface ProviderAction {
+	ok: boolean;
+	message: string;
 }
 
 /** Claude's models on the plan: the defaults the steps use, and Haiku. */
