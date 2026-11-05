@@ -463,7 +463,7 @@ export default function HomePage() {
 							) : (
 								<GroupBody className="text-muted-foreground">
 									No new matches this week. Matches appear here with their fit
-									score once a scan finds jobs that pass your rules.
+									score once a scan finds jobs that fit you.
 								</GroupBody>
 							)}
 						</Group>

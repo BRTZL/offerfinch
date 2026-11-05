@@ -2,11 +2,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { evaluateHardRequirements } from "@offerfinch/core/filter/rules";
 import { parseFilterSettings } from "@offerfinch/core/filter/settings";
 import type { PipelineDeps } from "@offerfinch/core/pipeline/ports";
 import { FakeLlmProvider } from "@offerfinch/core/scoring/fake";
-import { scoreFit } from "@offerfinch/core/scoring/fit";
+import { fitSettings, scoreFit } from "@offerfinch/core/scoring/fit";
 import {
 	DashboardRepository,
 	type Database,
@@ -116,7 +115,7 @@ describe("try-it mode's sample data", () => {
 		expect(await db.select().from(appSettings)).toEqual(before);
 	});
 
-	it("has eight jobs: three set aside by a rule, the rest kept; one of those scores low", async () => {
+	it("has eight jobs: four that match and four that score low, three of them on a blocker or a title to avoid", async () => {
 		const db = await demoDb();
 		await seedDemo(db, "1.0.0");
 		const repo = new DrizzlePipelineRepository(db);
@@ -127,19 +126,6 @@ describe("try-it mode's sample data", () => {
 		const llm = new FakeLlmProvider();
 		const outcome: Record<string, string> = {};
 		for (const job of SAMPLE_JOBS) {
-			const filtered = evaluateHardRequirements(
-				{
-					title: job.title,
-					locations: job.locations,
-					workplaceType: job.workplaceType,
-					descriptionText: job.description,
-				},
-				rules,
-			);
-			if (filtered.decision === "reject") {
-				outcome[job.id] = "rule";
-				continue;
-			}
 			const fit = await scoreFit(llm, {
 				job: {
 					title: job.title,
@@ -149,6 +135,7 @@ describe("try-it mode's sample data", () => {
 					descriptionText: job.description,
 				} as never,
 				profile,
+				...fitSettings(rules),
 			});
 			outcome[job.id] = fit.score >= rules.minScore ? "match" : "low-score";
 		}

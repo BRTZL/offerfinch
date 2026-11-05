@@ -1,6 +1,6 @@
 import type { NormalizedJob } from "@offerfinch/core/domain/types";
 import {
-	filterStep,
+	findApplicationStep,
 	scoreStep,
 } from "@offerfinch/core/pipeline/application-flow";
 import type { PipelineDeps } from "@offerfinch/core/pipeline/ports";
@@ -348,7 +348,9 @@ describe("hidden companies", () => {
 				},
 			},
 		} as unknown as PipelineDeps;
-		expect((await filterStep(deps, "u1", jobId))?.ended).toBe(false);
+		expect(await findApplicationStep(deps, "u1", jobId)).toEqual({
+			applicationId: fresh,
+		});
 		expect(await scoreStep(deps, "u1", jobId)).toMatchObject({ ended: true });
 		const usage = await execute<{ n: number }>(
 			db,

@@ -24,7 +24,7 @@ import { showStatus } from "./matches-setup";
 /**
  * Add job from link, against local stand-ins only: a Greenhouse link (the fixture board), an
  * unknown site (a page on 127.0.0.1, allowed in test runs only), an Indeed link whose stand-in
- * shows a sign-in wall (paste fallback), a refused link, a job the filter would set aside
+ * shows a sign-in wall (paste fallback), a refused link, a job the fit score finds blocked
  * staying in the Inbox, and links read in the background: several at once, one slow and one
  * failing, the Inbox updating live, and a quit in the middle of a read. No real site is
  * contacted.
@@ -129,7 +129,7 @@ async function openDialog(app: ElectronApplication, page: Page) {
 	await expect(page.getByTestId("add-job")).toBeVisible();
 }
 
-test("add a job from a link: a board, an unknown site, a wall, a filter miss kept, a refusal", async () => {
+test("add a job from a link: a board, an unknown site, a wall, a blocked job kept, a refusal", async () => {
 	const { app, page, errors } = await launch();
 	try {
 		// A profile and test models first (as onboarding does), then setup is put off.
@@ -155,7 +155,7 @@ test("add a job from a link: a board, an unknown site, a wall, a filter miss kep
 		const livesIn = page.locator("#f-livesIn");
 		await livesIn.click();
 		await livesIn.fill("Turk");
-		await expect(page.getByRole("option", { name: "Turkey" })).toBeVisible();
+		await expect(page.getByRole("option", { name: "Türkiye" })).toBeVisible();
 		await livesIn.press("ArrowDown");
 		await livesIn.press("Enter");
 		await page.getByTestId("save-settings").click();
@@ -248,26 +248,24 @@ test("add a job from a link: a board, an unknown site, a wall, a filter miss kep
 		await page
 			.getByTestId("add-job-text")
 			.fill(
-				"Quarry Systems is hiring a platform engineer to work on-site in our Berlin office. Requirements: Go, Kubernetes, five years of backend work. Relocation is not offered.",
+				"Quarry Systems is hiring a platform engineer to work on-site in our Berlin office.\n\nRequirements\n- Go and Kubernetes, five years of backend work\n- Authorized to work in Germany\n\nRelocation is not offered.",
 			);
 		await page.getByTestId("add-job-submit").click();
 		await expect(page.getByTestId("add-job")).toBeHidden();
 
-		// 4. It fails the job filter (on-site abroad, relocation off), yet the user picked it: it
-		// is in the Inbox, marked as theirs, with the reasons as a note, and Interested stays.
+		// 4. The fit score finds a blocker (no right to work in Germany), yet the user picked it:
+		// it is in the Inbox, marked as theirs, with the blocker as a note, and Interested stays.
 		await expect(page.getByTestId("added-by-you")).toContainText(
 			"doesn't match your job search",
 			{ timeout: 60_000 },
 		);
 		await expect(page.getByTestId("added-by-you")).toContainText(
-			"The posting says: “On-site in Berlin, Germany”",
+			"Requires the right to work in Germany; you may work in Türkiye.",
 		);
 		await expect(page.getByTestId("interested")).toBeVisible();
 		await inbox(page);
 		await showStatus(page, /^Matches/);
-		await expect(row(page, "Platform Engineer")).toContainText(
-			"Added by you · outside your search",
-		);
+		await expect(row(page, "Platform Engineer")).toContainText("Added by you");
 		await expect(row(page, "Harbor Mills")).toContainText("Added by you");
 
 		// 5. Refused before anything is saved: the dialog stays and says why.

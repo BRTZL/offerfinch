@@ -13,10 +13,7 @@ import {
 	type Database,
 	DrizzlePipelineRepository,
 	ensureLocationDefaults,
-	type PendingEvent,
-	type RefilterResult,
 	type RetiredSourceSettings,
-	refilterApplications,
 	SqliteSearchPlanStore,
 	saveFilterSettings,
 } from "@offerfinch/db";
@@ -26,13 +23,12 @@ import { protectedProcedure } from "./routers/procedure";
 
 /**
  * Settings › Job search in the worker. Reading the settings fills "I live in", citizenship and
- * right to work from the profile's location the first time; saving them runs the filter again
- * over open matches (no model call), so a match the new settings rule out leaves Matches at once.
+ * right to work from the profile's location the first time. Saving them applies to new jobs
+ * only: nothing is filtered or scored again (docs/decisions.md, 2026-11-05).
  */
 
 export interface JobSearchWorker {
 	db: Database;
-	starter: { sendEvent(event: PendingEvent): Promise<unknown> };
 	log(level: "info" | "warn" | "error", message: string, data?: unknown): void;
 	/** The drafting model and spending, for Regenerate. */
 	deps: Pick<PipelineDeps, "llm" | "tailorLlm" | "spend">;
@@ -96,60 +92,27 @@ async function planView(w: JobSearchWorker, userId: string) {
 	};
 }
 
-/** The pass running or queued last, per worker: passes run one after another, never together. */
-const queues = new WeakMap<object, Promise<unknown>>();
-
 /**
- * Re-filters, wakes the runs of the matches it moved so they end, and logs the counts. Passes
- * are serialized per worker; a save while one runs supersedes it (it stops at its next write,
- * see `refilterApplications`), and the pass this call queues decides with the new settings.
+ * Bumped when stored settings need a one-time fill at startup. At a lower stored version the
+ * location fields are filled from the profile once. Jobs already here are never filtered again.
  */
-export function refilterAndWake(
-	w: JobSearchWorker,
-	userId: string,
-	why: string,
-): Promise<RefilterResult> {
-	const previous = queues.get(w) ?? Promise.resolve();
-	const pass = previous
-		.catch(() => {})
-		.then(async () => {
-			const result = await refilterApplications(w.db, userId);
-			for (const event of result.events) await w.starter.sendEvent(event);
-			w.log("info", "job search re-filtered", {
-				why,
-				checked: result.checked,
-				rejected: result.rejected,
-				restored: result.restored,
-				reranked: result.reranked,
-				superseded: result.superseded,
-			});
-			return result;
-		});
-	queues.set(w, pass);
-	return pass;
-}
-
-/**
- * Bumped when the filter or ranking changes in a way the stored matches should see. At startup a
- * lower stored version fills the location fields from the profile, then re-filters once.
- */
-// 2: the filter keeps or rejects, nothing unclear; every open job is checked again once.
+// 2: location fields from the profile (an older version also re-filtered every open job).
 const JOB_SEARCH_VERSION = 2;
 
+/** True when it ran (the stored version was older). */
 export async function upgradeJobSearch(
 	w: JobSearchWorker,
 	userId: string,
 	version: { get(): Promise<number>; set(value: number): Promise<void> },
-): Promise<RefilterResult | null> {
-	if ((await version.get()) >= JOB_SEARCH_VERSION) return null;
+): Promise<boolean> {
+	if ((await version.get()) >= JOB_SEARCH_VERSION) return false;
 	const filled = await ensureLocationDefaults(w.db, userId);
 	if (filled.changed)
 		w.log("info", "job search filled from the profile", {
 			livesIn: filled.settings.livesIn,
 		});
-	const result = await refilterAndWake(w, userId, "update");
 	await version.set(JOB_SEARCH_VERSION);
-	return result;
+	return true;
 }
 
 export function jobSearchSettingsRouter(worker: () => JobSearchWorker) {
@@ -234,11 +197,8 @@ export function jobSearchSettingsRouter(worker: () => JobSearchWorker) {
 					w.db,
 				).getFilterSettings(userId);
 				const next = filterSettingsSchema.parse({ ...current, ...input });
+				// New jobs are scored against it; the ones already here keep their score.
 				await saveFilterSettings(w.db, userId, next);
-				// Saved either way; a failed re-filter is logged and runs again at the next save.
-				await refilterAndWake(w, userId, "settings").catch((error) =>
-					w.log("warn", "job search not re-filtered", String(error)),
-				);
 				return next;
 			}),
 	};

@@ -123,8 +123,8 @@ function setUp() {
 		).run(
 			JSON.stringify({
 				searchTitles: ["Frontend Engineer"],
-				livesIn: "Turkey",
-				rightToWork: ["Turkey"],
+				livesIn: "Türkiye",
+				rightToWork: ["Türkiye"],
 				locationPrefilled: true,
 			}),
 			now,
@@ -208,12 +208,17 @@ test("remote feeds: off at first, on with one switch, read once, matches linked 
 		);
 		// Nimbus Cloud's Senior Frontend Engineer is on HN and Remotive with no shared link: kept
 		// twice, since a company and title alone never prove one vacancy (decisions.md, 2026-11-03).
+		// Remote roles limited to another country are stored too: the fit score judges where a
+		// job hires (decisions.md, 2026-11-05).
 		expect(stored.map((j) => `${j.source}: ${j.title}`)).toEqual([
 			"hackernews: Frontend Engineer, Backend Engineer",
 			"hackernews: Senior Frontend Engineer",
 			"remoteok: Front End Engineer",
+			"remoteok: Frontend Engineer",
 			"remoteok: Software Engineer",
+			"remotive: Frontend Developer",
 			"remotive: Senior Frontend Engineer",
+			"weworkremotely: Frontend Engineer",
 			"weworkremotely: Senior Front-End Engineer",
 		]);
 		// Each feed read once (HN twice: the thread, then its comments), as OfferFinch.

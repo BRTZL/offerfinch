@@ -1,5 +1,4 @@
 import type { ApplicationState } from "@offerfinch/core/domain/states";
-import type { FilterResult } from "@offerfinch/core/filter/rules";
 import type { CheckError } from "@offerfinch/core/pipeline/ports";
 import type { FitResult } from "@offerfinch/core/scoring/fit";
 import type {
@@ -17,27 +16,6 @@ import {
 import type { DrizzlePipelineRepositoryContext } from "./context";
 import { RESTARTABLE_STATES, type Tx } from "./shared";
 export const applicationsMethods = {
-	async saveFilterResult(
-		userId: string,
-		applicationId: string,
-		result: FilterResult,
-	): Promise<void> {
-		await this.db
-			.update(applications)
-			.set({
-				filterDecision: result.decision,
-				filterResult: result,
-				flags: result.flags,
-			})
-			.where(
-				and(
-					eq(applications.id, applicationId),
-					eq(applications.userId, userId),
-					eq(applications.state, "found"),
-				),
-			);
-	},
-
 	/** True when the user chose this job (one they added) anyway. */
 	async chosenAnyway(userId: string, applicationId: string): Promise<boolean> {
 		const [row] = await this.db
@@ -50,7 +28,7 @@ export const applicationsMethods = {
 					eq(applications.userId, userId),
 				),
 			);
-		// A job the user added by link is chosen on purpose: the filter is a note, not an end.
+		// A job the user added by link is chosen on purpose: a low score is a note, not an end.
 		return Boolean(row?.at) || row?.source === "manual";
 	},
 
@@ -183,26 +161,6 @@ export const applicationsMethods = {
 			);
 	},
 
-	recordFilterRejection(
-		userId: string,
-		applicationId: string,
-		result: FilterResult,
-	): Promise<boolean> {
-		return this.move(
-			userId,
-			applicationId,
-			["found"],
-			"rejected_by_filter",
-			result.summary,
-			"workflow",
-			{
-				filterDecision: result.decision,
-				filterResult: result,
-				flags: result.flags,
-			},
-		);
-	},
-
 	recordScore(
 		userId: string,
 		applicationId: string,
@@ -228,8 +186,8 @@ export const applicationsMethods = {
 	},
 
 	/**
-	 * The user's "Not interested" history for ranking: each dismissed match's company, reasons,
-	 * title and location verdict, newest first (the last 200).
+	 * The user's "Not interested" history for ranking: each dismissed match's company, reasons
+	 * and title, newest first (the last 200).
 	 */
 	async dismissalSignals(userId: string): Promise<DismissalSignal[]> {
 		const rows = await this.db
@@ -237,7 +195,6 @@ export const applicationsMethods = {
 				companyId: dismissals.companyId,
 				reasons: dismissals.reasons,
 				title: jobs.title,
-				filter: applications.filterResult,
 			})
 			.from(dismissals)
 			.innerJoin(applications, eq(applications.id, dismissals.applicationId))
@@ -249,7 +206,6 @@ export const applicationsMethods = {
 			companyId: r.companyId,
 			reasons: r.reasons,
 			title: r.title,
-			locationVerdict: r.filter?.locationVerdict ?? null,
 		}));
 	},
 

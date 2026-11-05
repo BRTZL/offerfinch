@@ -95,7 +95,7 @@ test("a long location list is one line; the posting is dark in dark mode", async
 			d.prepare(
 				`insert into filter_settings (user_id, settings, updated_at) values ('local', ?, ?)
 				on conflict(user_id) do update set settings = excluded.settings, updated_at = excluded.updated_at`,
-			).run(JSON.stringify({ ...settings, livesIn: "Turkey" }), Date.now());
+			).run(JSON.stringify({ ...settings, livesIn: "Türkiye" }), Date.now());
 		} finally {
 			d.close();
 		}

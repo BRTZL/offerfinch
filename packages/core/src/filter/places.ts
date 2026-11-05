@@ -7,7 +7,7 @@ import { COUNTRIES } from "./countries";
  */
 
 const COUNTRY_ALIASES: Record<string, string[]> = {
-	Turkey: [
+	Türkiye: [
 		"turkey",
 		"türkiye",
 		"turkiye",
@@ -340,78 +340,6 @@ const STATE_CODE_COUNTRY: Record<string, string> = {
 };
 const CANADA_PROVINCE_CODES = /,\s*(ON|BC|QC|AB|MB|NS|NB|NL|PE|SK)\b(?!\.)/;
 
-/** Regions that do not include Turkey: a remote role limited to these needs work rights there. */
-export const REGIONS_WITHOUT_TURKEY = [
-	"namer",
-	"north america",
-	"latam",
-	"latin america",
-	"south america",
-	"americas",
-	"apac",
-	"asia pacific",
-	"anz",
-	"nordics",
-	"dach",
-	"benelux",
-	"iberia",
-	"us & canada",
-	"us and canada",
-];
-
-/**
- * Legal areas Turkey is not part of. Work authorization "in the EU" is a legal requirement Turkey
- * does not meet; residence "in Europe" is geographic and stays ambiguous.
- */
-export const LEGAL_AREAS_WITHOUT_TURKEY = [
-	"eu",
-	"european union",
-	"eea",
-	"european economic area",
-	"schengen",
-];
-
-/** Regions that may include Turkey: never decisive on their own. */
-export const REGIONS_MAYBE_TURKEY = [
-	"emea",
-	"europe",
-	"eu",
-	"european union",
-	"eea",
-	"middle east",
-	"mena",
-	"international",
-];
-
-/**
- * Time zones: working hours, never a place. A role limited to one ("Remote (CET)", "US time
- * zones", "GMT+3") is never rejected for it; only the user decides whether the hours suit them.
- */
-const TIME_ZONE_PHRASE =
-	/(?:[\p{L}.&-]+\s+)?(?:[\p{L}.&-]+\s+)?\btime\s?zones?\b(?:\s+only)?/giu;
-const TIME_ZONE_OFFSET =
-	/\b(?:GMT|UTC)\s*(?:[+\-−±]\s*\d{1,2}(?::?\d{2})?)?(?:\s*(?:to|-|–)\s*(?:GMT|UTC)?\s*[+\-−±]?\s*\d{1,2}(?::?\d{2})?)?(?![\p{L}\d])|[+\-−±]\s*\d{1,2}\s*(?:hours?|hrs?|h)\b/giu;
-const TIME_ZONE_CODE =
-	/\b(?:CET|CEST|EET|EEST|BST|PST|PDT|MST|MDT|CST|CDT|EST|EDT|AEST|AEDT|IST|SGT|JST|KST|TRT|MSK)\b/gi;
-/** "Eastern Time", "Pacific Standard Time", "Central European Summer Time". */
-const TIME_ZONE_NAME =
-	/\b(?:(?:pacific|mountain|central|eastern|atlantic|alaska|hawaii|greenwich mean|coordinated universal|(?:central|eastern|western) europe(?:an)?|british|irish|india|japan|china|korea|singapore|australian (?:eastern|central|western)|moscow|turkey|turkish)\s+(?:standard\s+|daylight\s+|summer\s+)?time)\b/gi;
-
-/** The text with every time zone blanked out, so only places are left to judge. */
-export function withoutTimeZones(text: string): string {
-	return text
-		.replace(TIME_ZONE_PHRASE, " ")
-		.replace(TIME_ZONE_NAME, " ")
-		.replace(TIME_ZONE_OFFSET, " ")
-		.replace(TIME_ZONE_CODE, " ");
-}
-
-export const GLOBAL_REMOTE_LOCATION =
-	/\b(anywhere|worldwide|world wide|global|globally|international|any location|any country|all countries|location[- ]independent|fully distributed)\b/i;
-
-export const GLOBAL_REMOTE_DESCRIPTION =
-	/\b(work from anywhere|remote from anywhere|from anywhere in the world|hire (?:from )?anywhere|(?:fully )?remote[^.\n]{0,40}\b(?:anywhere|worldwide|any country|any time ?zone)\b|location[- ]independent)\b/i;
-
 function escapeRegExp(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -484,19 +412,4 @@ export function countriesInLocation(location: string): string[] {
 	if (found.size === 0 && CANADA_PROVINCE_CODES.test(location))
 		found.add("Canada");
 	return [...found];
-}
-
-export function mentionsAny(
-	text: string,
-	terms: readonly string[],
-): string | undefined {
-	const lower = text.toLowerCase();
-	return terms.find((term) => aliasPattern(term).test(lower));
-}
-
-export function isHomeCountry(
-	country: string,
-	home: readonly string[],
-): boolean {
-	return home.some((h) => h.toLowerCase() === country.toLowerCase());
 }

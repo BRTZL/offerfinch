@@ -72,7 +72,7 @@ describe("LeverSource (recorded appnation board)", () => {
 		const first = jobs[0];
 		expect(first?.source).toBe("lever");
 		expect(first?.workplaceType).toBe("hybrid");
-		expect(first?.locations[0]).toMatch(/Ankara, Turkey/);
+		expect(first?.locations[0]).toMatch(/Ankara, Türkiye/);
 		expect(first?.descriptionText).toMatch(/What You’ll Do/);
 		// List items keep their text on the bullet line.
 		expect(first?.descriptionText).not.toMatch(/^-\s*$/m);

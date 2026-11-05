@@ -13,7 +13,7 @@ export interface FoundRow {
 	reason: string | null;
 	score: number | null;
 	match: boolean;
-	/** Past the rules; its scoring paused (the model cannot run now). */
+	/** Waiting for its score; scoring paused (the model cannot run now). */
 	paused: boolean;
 	/** Its run errored before a score; `reason` says why. The next search tries it again. */
 	failed: boolean;
@@ -27,17 +27,17 @@ export type ShownRow = FoundRow & {
 };
 
 /**
- * A row still being checked against the rules: one in its "Found" beat, or one the server still
- * has as found, unless its run failed there (it is not being checked any more).
+ * A row still being read: one in its "Found" beat, or one the server still has as found (no
+ * application yet), unless its run failed there (it is not being read any more).
  */
 export const beingChecked = (r: Pick<ShownRow, "shown" | "state" | "failed">) =>
 	r.shown === "found" && !(r.failed && r.state === "found");
 
-/** A new row reads "Found" this long, so the rules pass is seen even when it beat the poll. */
+/** A new row reads "Found" this long, so the beat is seen even when scoring beat the poll. */
 const FOUND_MS = 700;
 /** A set-aside row shows its reason at least this long, then leaves with the others… */
 const ASIDE_MIN_MS = 1_200;
-/** …or on its own after this, if the rules pass is still going. */
+/** …or on its own after this, if other rows are still being read. */
 const ASIDE_MAX_MS = 3_000;
 
 /** What `shownRowsAt` remembers per job between renders. */

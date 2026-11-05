@@ -581,8 +581,7 @@ export class WorkerApp {
 					} catch (error) {
 						this.hooks.log("warn", "stale flags not cleared", String(error));
 					}
-					// A new job filter: location settings from the profile, then the stored
-					// matches filtered once more (no model call). Never holds the queue back.
+					// Location settings from the profile, once. Never holds the queue back.
 					try {
 						await upgradeJobSearch(this, LOCAL_USER_ID, {
 							get: () => this.settings.get("jobSearchVersion"),

@@ -600,6 +600,7 @@ describe("what the real CLI emits", () => {
 		const item = json.properties.requirements.items;
 		expect(item.required).toEqual([
 			"requirement",
+			"kind",
 			"importance",
 			"evidence",
 			"note",

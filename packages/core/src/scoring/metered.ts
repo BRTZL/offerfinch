@@ -112,11 +112,11 @@ export interface SubscriptionBudget {
 /**
  * Model calls (prompts sent) the subscription may make in any rolling 24 hours, until the user
  * changes it in Settings > Models. Plan limits are token-weighted and unpublished, so a call
- * count is a proxy: 40 covers a scan of about 25 new jobs scored, or a dozen scored and three or
- * four tailored (scoring is 1 call, a draft 1, up to two drafts, retries extra), and leaves the rest of the
- * plan's day for the user's own work.
+ * count is a proxy. 500 lets the fit score see every job a scan finds now that no rule sets jobs
+ * aside first (scoring is 1 call, a draft 1, up to two drafts, retries extra); jobs past it wait
+ * in found and the sweep scores them once the window has room (docs/decisions.md, 2026-11-05).
  */
-export const DEFAULT_SUBSCRIPTION_DAILY_CALLS = 40;
+export const DEFAULT_SUBSCRIPTION_DAILY_CALLS = 500;
 export const MAX_SUBSCRIPTION_DAILY_CALLS = 1_000;
 /**
  * A subscription call sends one prompt and reserves it. There is no repair inside a call: an

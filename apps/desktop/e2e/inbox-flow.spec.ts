@@ -204,8 +204,10 @@ test("Inbox: Matches grouped by company, Not interested with reasons, hide and u
 			.filter({ hasText: "Hid Acme Robotics" });
 		await expect(toast).toBeVisible();
 		await expect(page.getByTestId("inbox-group")).toHaveCount(0);
+		// Every Acme match is dismissed; one that scored below the minimum stays as scored.
 		expect(acme().filter((r) => r.state === "dismissed").length).toBe(
-			acme().filter((r) => r.state !== "rejected_by_filter").length,
+			acme().filter((r) => !(r.state === "scored" && r.ended_reason !== null))
+				.length,
 		);
 		const [stored] = readDb<{ reasons: string; note: string }>(
 			"select reasons, note from dismissals where application_id = ?",
@@ -357,9 +359,11 @@ test("Inbox: Matches grouped by company, Not interested with reasons, hide and u
 			.toMatchObject({ at: expect.any(Number) });
 		await expect(page).not.toHaveURL(new RegExp(chosen));
 
-		// What the job filter rejected is hidden everywhere: not in Closed, not in All.
+		// No rule sets a job aside: the Europe-only role was scored, below the minimum, and
+		// nothing is in rejected_by_filter, in any view.
 		const europe = () => acme().find((r) => r.external_id === "4003");
-		expect(europe()?.state).toBe("rejected_by_filter");
+		expect(europe()?.state).toBe("scored");
+		expect(europe()?.ended_reason).toMatch(/below the minimum/);
 		for (const view of [/^Closed/, /^All/]) {
 			await showStatus(page, view);
 			await expect(page.getByTestId("inbox-row").first()).toBeVisible();

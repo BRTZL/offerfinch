@@ -1,5 +1,4 @@
 import type { WorkplaceType } from "../domain/types";
-import type { LocationVerdict } from "../filter/rules";
 import { LINKEDIN_ORIGIN } from "../linkedin/runner";
 import type { SiteId } from "../sites/sites";
 import { describeSearch, type PlanSearch, rotate } from "./plan";
@@ -113,7 +112,7 @@ const INDEED_REGIONS: Record<string, string> = {
 	Austria: "at",
 	Belgium: "be",
 	Sweden: "se",
-	Turkey: "tr",
+	Türkiye: "tr",
 	Canada: "ca",
 	Mexico: "mx",
 	Brazil: "br",
@@ -316,31 +315,17 @@ export function feedKeywordsMatch(
 }
 
 /**
- * The posting is where the search looks. Its kind of work first: a remote search takes remote
- * (or unstated) work, an office search office, hybrid or unstated work. Then its place, as the
- * job filter judged it: remote worldwide takes a posting open worldwide or not clearly limited;
- * remote in a country also one that hires from the user's country; office one where the user
- * lives, may work or would move to.
+ * The posting is the kind of work the search looks for: a remote search takes remote (or
+ * unstated) work, an office search office, hybrid or unstated work. Where it hires from is the
+ * fit score's to judge (docs/decisions.md, 2026-11-05), so a place never drops a posting here.
  */
 export function feedWhereMatch(
 	posting: { workplaceType: WorkplaceType },
-	verdict: LocationVerdict | undefined,
 	s: PlanSearch,
 ): boolean {
-	const remoteWork =
-		posting.workplaceType === "remote" || posting.workplaceType === "unknown";
-	if (s.where === "remote-worldwide")
-		return remoteWork && (verdict === "remote_global" || verdict === "unclear");
-	if (s.where === "remote-in-country")
-		return (
-			remoteWork &&
-			(verdict === "remote_home" ||
-				verdict === "remote_global" ||
-				verdict === "unclear")
-		);
+	if (s.where === "onsite") return posting.workplaceType !== "remote";
 	return (
-		posting.workplaceType !== "remote" &&
-		(verdict === "home" || verdict === "relocation")
+		posting.workplaceType === "remote" || posting.workplaceType === "unknown"
 	);
 }
 

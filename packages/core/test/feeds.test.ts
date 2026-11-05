@@ -33,7 +33,6 @@ import {
 	parseWeWorkRemotely,
 	weWorkRemotelyFeed,
 } from "../src/feeds/weworkremotely";
-import { evaluateHardRequirements } from "../src/filter/rules";
 import { parseFilterSettings } from "../src/filter/settings";
 import { NoopNotifier } from "../src/notify/ntfy";
 import { LocalStep, LocalWorkflowStarter } from "../src/pipeline/local";
@@ -258,47 +257,46 @@ describe("the shared plan, applied to a feed", () => {
 			).toBe(false);
 	});
 
-	it("where: the filter's place verdict against where the search looks", () => {
+	it("where: the kind of work against where the search looks, never the place", () => {
 		const remote = search("x");
 		const home: PlanSearch = { keywords: "x", where: "remote-in-country" };
 		const office: PlanSearch = { keywords: "x", where: "onsite" };
 		const r = { workplaceType: "remote" as const };
 		const o = { workplaceType: "onsite" as const };
-		expect(feedWhereMatch(r, "remote_global", remote)).toBe(true);
-		expect(feedWhereMatch(r, "unclear", remote)).toBe(true);
-		expect(feedWhereMatch(r, "remote_home", remote)).toBe(false);
-		expect(feedWhereMatch(r, "remote_home", home)).toBe(true);
-		expect(feedWhereMatch(r, "remote_global", home)).toBe(true);
-		expect(feedWhereMatch(o, "home", office)).toBe(true);
-		expect(feedWhereMatch(r, "remote_global", office)).toBe(false);
-		// An office job in a place the filter can't judge is no remote job.
-		expect(feedWhereMatch(o, "unclear", remote)).toBe(false);
-		expect(feedWhereMatch(o, "unclear", home)).toBe(false);
+		const u = { workplaceType: "unknown" as const };
+		expect(feedWhereMatch(r, remote)).toBe(true);
+		expect(feedWhereMatch(r, home)).toBe(true);
+		expect(feedWhereMatch(u, remote)).toBe(true);
+		expect(feedWhereMatch(o, office)).toBe(true);
+		expect(feedWhereMatch(u, office)).toBe(true);
+		expect(feedWhereMatch(r, office)).toBe(false);
+		// An office job is no remote job.
+		expect(feedWhereMatch(o, remote)).toBe(false);
+		expect(feedWhereMatch(o, home)).toBe(false);
 	});
 
-	it("keeps only plausible matches, newest first, and says why the others were set aside", () => {
+	it("keeps the postings a search finds, newest first, and says why the others were set aside", () => {
 		const postings = [
 			...parseRemotive(fixture("remotive.json")).postings,
 			...parseWeWorkRemotely(fixture("weworkremotely-rss.txt")).postings,
 		];
 		const drops = new DropLog();
-		const kept = plausible(postings, SETTINGS, SEARCHES, NOW, drops);
+		const kept = plausible(postings, SEARCHES, NOW, drops);
+		// US-only roles are kept: the fit score judges where a job hires, not the feed.
 		expect(kept.map((p) => p.company)).toEqual([
 			"Fernhill Analytics",
+			"Brightwater Health",
 			"Quarry",
 			"Nimbus Cloud",
+			"Tessera Labs",
 		]);
 		expect(drops.report()).toEqual([
-			expect.objectContaining({ reason: "off_search", count: 3 }),
+			expect.objectContaining({ reason: "off_search", count: 1 }),
 			expect.objectContaining({ reason: "expired", count: 1 }),
 		]);
 		const off = drops.report()?.find((d) => d.reason === "off_search");
-		// US-only (the filter), a role no search names, and US-only again.
-		expect(off?.examples?.map((e) => e.company)).toEqual([
-			"Tessera Labs",
-			"Harbor Mills",
-			"Brightwater Health",
-		]);
+		// A role no search names.
+		expect(off?.examples?.map((e) => e.company)).toEqual(["Harbor Mills"]);
 	});
 });
 
@@ -426,15 +424,16 @@ describe("a feed provider in a scan", () => {
 		const h = harness();
 		const [run] = await h.scan();
 		expect(h.net.requests).toEqual([{ url: REMOTIVE_URL, ua: USER_AGENT }]);
+		// A US-only role is kept too: the fit score judges where it hires.
 		expect(run).toMatchObject({
 			provider: "remotive",
 			results: 4,
 			fetched: 4,
-			found: 2,
+			found: 3,
 			duplicates: 0,
 			pagesRead: 1,
 		});
-		expect(run?.newJobIds).toHaveLength(2);
+		expect(run?.newJobIds).toHaveLength(3);
 		expect(run?.searches).toEqual([
 			"Frontend Engineer · remote, worldwide",
 			"Backend Developer · remote, Turkey",
@@ -447,6 +446,10 @@ describe("a feed provider in a scan", () => {
 			[
 				"remotive",
 				"https://remotive.com/remote-jobs/software-development/senior-frontend-engineer-1001",
+			],
+			[
+				"remotive",
+				"https://remotive.com/remote-jobs/software-development/frontend-developer-1002",
 			],
 		]);
 		expect(h.state.reads.get("remotive")).toEqual([NOW]);
@@ -567,11 +570,11 @@ describe("a feed provider in a scan", () => {
 		const runs = await h.scan();
 		const by = Object.fromEntries(runs.map((r) => [r.provider, r]));
 		// Remotive's Nimbus Cloud job is new; HN's same company and title is not, nor its link.
-		expect(by.remotive?.newJobIds).toHaveLength(2);
+		expect(by.remotive?.newJobIds).toHaveLength(3);
 		expect(by["hn-hiring"]).toMatchObject({ duplicates: 1, pagesRead: 2 });
 		expect(by["hn-hiring"]?.newJobIds).toHaveLength(1);
-		expect(by.remoteok?.newJobIds).toHaveLength(2);
-		expect(by.weworkremotely?.newJobIds).toHaveLength(1);
+		expect(by.remoteok?.newJobIds).toHaveLength(3);
+		expect(by.weworkremotely?.newJobIds).toHaveLength(2);
 		const hn = h.repo.jobs.find((j) => j.job.source === "hackernews");
 		expect(hn?.job).toMatchObject({
 			title: "Frontend Engineer, Backend Engineer",
@@ -701,7 +704,7 @@ describe("review: one bad item never costs the read (#3)", () => {
 			}),
 		};
 		const [run] = await harness({ feeds: [partly] }).scan();
-		expect(run?.newJobIds).toHaveLength(2);
+		expect(run?.newJobIds).toHaveLength(3);
 		expect(run?.status).toBe("ok");
 		expect(run?.problem).toBe(
 			"2 items in the feed could not be read and were skipped",
@@ -836,7 +839,7 @@ describe("HN: where a role segment says it is (re-check E)", () => {
 		});
 	});
 
-	it("a US-only role is set aside for someone who may work only in Turkey", () => {
+	it("a US-only role is kept: the fit score judges where it hires", () => {
 		const { postings } = parseHiringThread(
 			JSON.stringify({
 				children: [
@@ -850,8 +853,10 @@ describe("HN: where a role segment says it is (re-check E)", () => {
 		);
 		const [p] = postings;
 		expect(p?.locations).toEqual(["Remote, US only"]);
-		expect(evaluateHardRequirements(p as FeedPosting, SETTINGS).decision).toBe(
-			"reject",
-		);
+		const drops = new DropLog();
+		expect(
+			plausible([p as FeedPosting], SEARCHES, NOW, drops).map((k) => k.title),
+		).toEqual(["Senior Frontend Engineer"]);
+		expect(drops.report()).toEqual([]);
 	});
 });

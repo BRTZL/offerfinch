@@ -1,15 +1,24 @@
 import { z } from "zod";
 import { canonicalCountries, canonicalCountry } from "./home";
+import { canonicalLanguages } from "./languages";
 
-/** Country names, stored as the gazetteer's names: "Türkiye" and "turkey" both become "Turkey". */
+/** Country names, stored as the gazetteer's names: "Turkey" and "turkiye" both become "Türkiye". */
 const countryList = z
 	.array(z.string())
 	.default([])
 	.transform(canonicalCountries);
 
+/** A list of short words the user typed ("Fintech", "Startup"), trimmed, blanks dropped. */
+const wordList = z
+	.array(z.string())
+	.default([])
+	.transform((v) => v.map((w) => w.trim()).filter(Boolean));
+
 /**
- * Editable per-user filter settings. The defaults name no country: the user says where they can
- * work in onboarding (Job rules), so no one person's places are built in.
+ * Editable per-user Job search settings. No rule rejects a job any more (docs/decisions.md,
+ * 2026-11-05): the search plan reads where to look, and the fit score reads the rest as the
+ * user's facts and preferences (`scoring/fit.ts`). The defaults name no country: the user says
+ * where they can work in onboarding, so no one person's places are built in.
  */
 export const filterSettingsSchema = z.object({
 	/** The country the user lives in. Empty until the profile's location or the user sets it. */
@@ -39,9 +48,12 @@ export const filterSettingsSchema = z.object({
 	 * not fill them again.
 	 */
 	locationPrefilled: z.boolean().default(false),
-	/** Languages the user can work in. Roles requiring any other language are rejected. */
-	languages: z.array(z.string()).default(["English"]),
-	/** Title keywords for target roles (case-insensitive). Empty list disables the role rule. */
+	/** Languages the user can work in. The fit score caps a job that requires another one. */
+	languages: z
+		.array(z.string())
+		.default(["English"])
+		.transform(canonicalLanguages),
+	/** Words for the roles the user targets; the fit score reads them. Empty: no preference. */
 	roleKeywords: z
 		.array(z.string())
 		.default([
@@ -66,13 +78,36 @@ export const filterSettingsSchema = z.object({
 		]),
 	/**
 	 * Job titles to search the internet for ("Senior Frontend Engineer"). Empty: the titles of
-	 * the roles in the profile.
+	 * the roles in the profile. No longer on the Job search page (2026-11-05): saving the page
+	 * clears it, so searches follow the profile and the user's own searches.
 	 */
 	searchTitles: z.array(z.string()).default([]),
-	/** Title keywords that always reject (case-insensitive). */
+	/**
+	 * Title words for roles the user does not want ("intern"): the search plan avoids them and the
+	 * fit score marks a job with one as a role mismatch.
+	 */
 	excludeTitleKeywords: z
 		.array(z.string())
 		.default(["intern", "internship", "working student", "apprentice"]),
+	/** Target levels ("Senior", "Staff"); the fit score reads them. Empty: no preference. */
+	seniority: wordList,
+	/** Kinds of role wanted ("Individual contributor", "Full-time"). Empty: no preference. */
+	wantedRoleTypes: wordList,
+	/** Kinds of role not wanted ("People management", "Contract"). */
+	unwantedRoleTypes: wordList,
+	/** Lowest yearly salary the user takes; a job paying less (as stated) is capped. Null: none. */
+	minSalary: z.number().int().min(0).nullable().default(null),
+	/** Currency of `minSalary` ("EUR"). Empty: the posting's own. */
+	salaryCurrency: z
+		.string()
+		.default("")
+		.transform((v) => v.trim().toUpperCase()),
+	/** Company sizes or stages the user prefers ("Startup", "Scale-up", "Enterprise"). */
+	companySizes: wordList,
+	/** Industries the user prefers ("Fintech", "Developer tools"). */
+	preferredIndustries: wordList,
+	/** Industries the user avoids ("Gambling", "Defense"). */
+	avoidIndustries: wordList,
 	/** Fit score (0-100) below which the application ends after scoring, with the reason saved. */
 	minScore: z.number().min(0).max(100).default(50),
 	/** No longer read: tailoring runs when the user presses Prepare. Kept so stored settings parse. */

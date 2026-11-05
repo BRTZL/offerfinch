@@ -143,14 +143,10 @@ export function AddJobDialog({
 				toast.success("Saved. Checking it against your job search now.");
 				return;
 			}
-			const first =
-				result.status === "added"
-					? "Added to Inbox."
-					: "Already in your Inbox.";
 			toast.success(
-				result.filter.matches
-					? `${first} It matches your job search; the fit score follows.`
-					: `${first} Doesn't match your job search: ${result.filter.summary}`,
+				result.status === "added"
+					? "Added to Inbox. The fit score follows."
+					: "Already in your Inbox.",
 				{ duration: 8_000 },
 			);
 		},

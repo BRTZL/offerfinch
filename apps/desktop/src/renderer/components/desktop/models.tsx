@@ -36,7 +36,7 @@ const ROLES: { role: Role; label: string; hint: string }[] = [
 	{
 		role: "scoring",
 		label: "Finding matches",
-		hint: "Scores how well each job that passes your rules fits you.",
+		hint: "Scores how well each job a search finds fits you.",
 	},
 	{
 		role: "tailoring",
@@ -356,7 +356,8 @@ export function PlanLimits() {
 				hint={
 					<span data-testid="call-budget-used">
 						{d.callBudget.used} used in the last 24 hours, Claude and Codex
-						together. Leaves room in the plans you also work with.
+						together. Leaves room in the plans you also work with; jobs past it
+						wait and are scored when there is room.
 					</span>
 				}
 			>

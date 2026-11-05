@@ -322,10 +322,10 @@ describe("each source's form of the plan", () => {
 		const home: PlanSearch = {
 			keywords: "Frontend Engineer",
 			where: "remote-in-country",
-			place: "Turkey",
+			place: "Türkiye",
 		};
 		expect(
-			siteSearch("indeed", home, "Turkey", "https://www.indeed.com", false),
+			siteSearch("indeed", home, "Türkiye", "https://www.indeed.com", false),
 		).toMatchObject({
 			origin: "https://tr.indeed.com",
 			query: "Frontend Engineer",
@@ -335,7 +335,7 @@ describe("each source's form of the plan", () => {
 			siteSearch(
 				"indeed",
 				{ keywords: "A", where: "remote-worldwide" },
-				"Turkey",
+				"Türkiye",
 				"https://www.indeed.com",
 				false,
 			),
@@ -344,19 +344,19 @@ describe("each source's form of the plan", () => {
 			siteSearch(
 				"glassdoor",
 				home,
-				"Turkey",
+				"Türkiye",
 				"https://www.glassdoor.com",
 				false,
 			),
 		).toMatchObject({
 			origin: "https://www.glassdoor.com",
-			location: "Remote Turkey",
+			location: "Remote Türkiye",
 		});
 		expect(
 			siteSearch(
 				"indeed",
 				{ keywords: "A", where: "onsite", place: "Germany" },
-				"Turkey",
+				"Türkiye",
 				"http://127.0.0.1:9",
 				true,
 			),

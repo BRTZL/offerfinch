@@ -4,10 +4,6 @@ import type {
 	WorkplaceType,
 } from "@offerfinch/core/domain/types";
 import { normalizeUrl } from "@offerfinch/core/domain/url";
-import {
-	evaluateHardRequirements,
-	type FilterResult,
-} from "@offerfinch/core/filter/rules";
 import { companyNameFor } from "@offerfinch/core/pipeline/providers";
 import { LlmPausedError } from "@offerfinch/core/scoring/llm";
 import { meteredFor } from "@offerfinch/core/scoring/metered";
@@ -54,21 +50,13 @@ type Partial_ = {
 	description?: string;
 };
 
-/** The job filter's verdict, shown as a note: a job added by link is never set aside. */
-type FilterNote = { matches: boolean; summary: string };
-
 export type AddLinkResult =
 	| { url: string; status: "added"; applicationId: string }
-	| {
-			url: string;
-			status: "exists";
-			applicationId: string;
-			filter: FilterNote | null;
-	  }
+	| { url: string; status: "exists"; applicationId: string }
 	| { url: string; status: "refused"; reason: string };
 
 export type AddPastedResult =
-	| { status: "added" | "exists"; applicationId: string; filter: FilterNote }
+	| { status: "added" | "exists"; applicationId: string }
 	| { status: "refused"; reason: string };
 
 const workplace = (text: string): WorkplaceType =>
@@ -232,7 +220,7 @@ export async function addJobLinks(
 	return results;
 }
 
-/** The posting's text, typed or pasted by the user: saved as given (cleaned), then filtered and scored. */
+/** The posting's text, typed or pasted by the user: saved as given (cleaned), then scored. */
 export async function addJobFromPaste(
 	app: WorkerApp,
 	input: { url: string; pasted: PastedPosting },
@@ -248,12 +236,8 @@ export async function addJobFromPaste(
 		const row = await addedJob(app, existing);
 		if (row?.readStatus === "failed")
 			await pasteForApplication(app, existing, input.pasted);
-		const kept = await keepExisting(app, userId, existing);
-		return {
-			status: "exists",
-			applicationId: existing,
-			filter: kept.filter ?? { matches: true, summary: "" },
-		};
+		await keepExisting(app, userId, existing);
+		return { status: "exists", applicationId: existing };
 	}
 	const job = pastedJob(url, input.pasted);
 	const repo = app.deps.repo;
@@ -265,12 +249,7 @@ export async function addJobFromPaste(
 	const application = await repo.getApplicationByJob(userId, jobId);
 	if (!application) throw new Error("the job was saved without an application");
 	await runNow(app, userId, jobId);
-	const settings = await repo.getFilterSettings(userId);
-	return {
-		status: "added",
-		applicationId: application.applicationId,
-		filter: note(evaluateHardRequirements(job, settings)),
-	};
+	return { status: "added", applicationId: application.applicationId };
 }
 
 function pastedJob(url: URL, p: PastedPosting): NormalizedJob {
@@ -497,36 +476,19 @@ export async function readPostingForJob(
 	return { ok: true };
 }
 
-const note = (result: FilterResult): FilterNote => ({
-	matches: result.decision !== "reject",
-	summary: result.summary,
-});
-
 /**
  * The job is already here: it opens. Added by link now, so it is the user's pick: one the
- * filter set aside (or a low score ended) comes back to the Inbox.
+ * filter set aside in an older version (or a low score ended) comes back to the Inbox.
  */
 async function keepExisting(
 	app: WorkerApp,
 	userId: string,
 	applicationId: string,
-): Promise<{
-	status: "exists";
-	applicationId: string;
-	filter: FilterNote | null;
-}> {
+): Promise<{ status: "exists"; applicationId: string }> {
 	const dashboard = new DashboardRepository(app.db);
 	const event = await dashboard.keepAddedJob({ userId, applicationId });
 	if (event) await app.starter.sendEvent(event);
-	const [row] = await app.db
-		.select({ filter: applications.filterResult })
-		.from(applications)
-		.where(eq(applications.id, applicationId));
-	return {
-		status: "exists",
-		applicationId,
-		filter: row?.filter ? note(row.filter) : null,
-	};
+	return { status: "exists", applicationId };
 }
 
 async function findByUrl(app: WorkerApp, userId: string, url: string) {

@@ -404,7 +404,7 @@ const CASES: Record<string, (b: TestUser) => Promise<unknown>> = {
 		// B's own budget; A's stays at the default.
 		const r = await u.rpc.models.setCallBudget({ dailyCalls: 3 });
 		expect(r.budget).toBe(3);
-		expect((await a.rpc.models.status())?.callBudget.budget).toBe(40);
+		expect((await a.rpc.models.status())?.callBudget.budget).toBe(500);
 		return r;
 	},
 	"spending.get": async (u) => {

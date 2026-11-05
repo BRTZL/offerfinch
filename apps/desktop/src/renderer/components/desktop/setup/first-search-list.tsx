@@ -45,7 +45,7 @@ function Arriving({ open, children }: { open: boolean; children: ReactNode }) {
 
 const LABEL: Record<FoundRow["state"], string> = {
 	found: "Found",
-	fits: "Fits your rules",
+	fits: "To score",
 	rejected_by_filter: "Set aside",
 	scored: "Low fit",
 };
@@ -63,10 +63,10 @@ function badgeOf(
 	// Its run errored before a score (once its "Found" beat is over): not being scored now.
 	if (row.failed && row.shown === row.state)
 		return { tone: "warning", label: "Scoring failed" };
-	// Past the rules and waiting on a paused model: not being scored now.
+	// Waiting on a paused model: not being scored now.
 	if (row.shown === "fits" && row.paused)
 		return { tone: "warning", label: "Paused" };
-	// Past the rules and no row still being checked: these are being scored now.
+	// No row still in its "Found" beat: these are being scored now.
 	if (row.shown === "fits" && rulesOver)
 		return { tone: "neutral", label: "Scoring" };
 	return { tone: "neutral", label: LABEL[row.shown] };

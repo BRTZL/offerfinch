@@ -17,8 +17,10 @@ import {
 /**
  * Settings › Job search, in the background: "I live in", citizenship and right to work are
  * filled from the profile's location at the first start after the update, the pickers search
- * and pick with the keyboard, and what is saved stays after a restart. A screenshot goes to
- * test-results/job-search-shots (or E2E_SHOTS).
+ * and pick with the keyboard, the fit-score preferences (level, pay, company, industries) are
+ * saved, and what is saved stays after a restart. Neither the update nor a save touches a job
+ * already here: no rule sets a job aside. A screenshot goes to test-results/job-search-shots
+ * (or E2E_SHOTS).
  */
 const SHOTS = path.resolve(
 	process.env.E2E_SHOTS ??
@@ -198,48 +200,32 @@ test("job search pickers: filled from the profile, changed with the keyboard, ke
 		const { page, errors } = run;
 		await openJobSearch(page);
 		// Filled from "Izmir, Turkey (GMT+3)".
-		await expect(page.locator("#f-livesIn")).toHaveValue("Turkey");
-		await expect(chips(page, "citizenship")).toHaveText(["Turkey"]);
-		await expect(chips(page, "right-to-work")).toHaveText(["Turkey"]);
+		await expect(page.locator("#f-livesIn")).toHaveValue("Türkiye");
+		await expect(chips(page, "citizenship")).toHaveText(["Türkiye"]);
+		await expect(chips(page, "right-to-work")).toHaveText(["Türkiye"]);
 		expect(readSettings()).toMatchObject({
-			livesIn: "Turkey",
-			citizenship: ["Turkey"],
-			rightToWork: ["Turkey"],
+			livesIn: "Türkiye",
+			citizenship: ["Türkiye"],
+			rightToWork: ["Türkiye"],
 			locationPrefilled: true,
 			minScore: 60,
 		});
 
-		// The update filtered the open matches once: the US one is rejected with its reason, the
-		// one with no place ranks below the Turkey one despite its higher score, and says why.
-		await expect
-			.poll(() => readApps(), { timeout: 15_000 })
-			.toMatchObject({
-				us: { state: "rejected_by_filter" },
-				emea: { state: "scored", rank: 70 },
-				tr: { state: "scored", rank: 75 },
-			});
-		expect(readApps().us?.reason).toMatch(
-			/Requires United States citizenship and a US security clearance/,
-		);
+		// No job is filtered or ranked again: the three matches stay as they were scored,
+		// the US one included (its fit score would cap it; it was scored before).
+		const seeded = {
+			us: { state: "scored", rank: null },
+			emea: { state: "scored", rank: null },
+			tr: { state: "scored", rank: null },
+		};
+		expect(readApps()).toMatchObject(seeded);
 		await page
 			.getByRole("navigation", { name: "Main" })
 			.getByRole("link", { name: /^Inbox/ })
 			.click();
 		const rows = page.getByTestId("inbox-row");
 		await expect(rows.filter({ hasText: "Frontend Engineer" })).toHaveCount(2);
-		await expect(rows.filter({ hasText: "Mission Systems" })).toHaveCount(0);
-		const titles = await rows.allInnerTexts();
-		expect(titles.findIndex((t) => t.includes("Turkey"))).toBeLessThan(
-			titles.findIndex((t) => t.includes("Distributed")),
-		);
-		await rows.filter({ hasText: "Distributed" }).click();
-		// The Fit section is in the details, opened from the fit card.
-		await page.getByTestId("fit-card").click();
-		await expect(page.getByTestId("rank-reason")).toHaveText(
-			"Ranked lower: location unclear (rank 70)",
-		);
-		fs.mkdirSync(SHOTS, { recursive: true });
-		await page.screenshot({ path: path.join(SHOTS, "ranked-lower.png") });
+		await expect(rows.filter({ hasText: "Mission Systems" })).toHaveCount(1);
 		await openJobSearch(page);
 
 		// Citizenship: type to search, arrow down, Enter.
@@ -249,11 +235,11 @@ test("job search pickers: filled from the profile, changed with the keyboard, ke
 		await expect(page.getByRole("option", { name: "Germany" })).toBeVisible();
 		await citizenship.press("ArrowDown");
 		await citizenship.press("Enter");
-		await expect(chips(page, "citizenship")).toHaveText(["Turkey", "Germany"]);
+		await expect(chips(page, "citizenship")).toHaveText(["Türkiye", "Germany"]);
 		// Escape closes the list and keeps the picks.
 		await citizenship.press("Escape");
 		await citizenship.press("Escape");
-		await expect(chips(page, "citizenship")).toHaveText(["Turkey", "Germany"]);
+		await expect(chips(page, "citizenship")).toHaveText(["Türkiye", "Germany"]);
 
 		// Relocation on, then the countries the user would move to.
 		await page.getByTestId("relocation").click();
@@ -274,26 +260,88 @@ test("job search pickers: filled from the profile, changed with the keyboard, ke
 		const livesIn = page.locator("#f-livesIn");
 		await livesIn.click();
 		await livesIn.fill("Turk");
-		await expect(page.getByRole("option", { name: "Turkey" })).toBeVisible();
+		await expect(page.getByRole("option", { name: "Türkiye" })).toBeVisible();
 		await livesIn.press("ArrowDown");
 		await livesIn.press("Enter");
-		await expect(livesIn).toHaveValue("Turkey");
+		await expect(livesIn).toHaveValue("Türkiye");
+
+		// What the fit score weighs: a level, pay, company size and industries to avoid.
+		const level = page.locator("#f-seniority");
+		await level.click();
+		await level.fill("Sen");
+		await expect(page.getByRole("option", { name: "Senior" })).toBeVisible();
+		await level.press("ArrowDown");
+		await level.press("Enter");
+		await level.press("Escape");
+		await expect(chips(page, "seniority")).toHaveText(["Senior"]);
+		await page.getByTestId("min-salary").fill("60000");
+		const currency = page.locator("#f-salaryCurrency");
+		await currency.click();
+		await currency.fill("EU");
+		await expect(page.getByRole("option", { name: "EUR" })).toBeVisible();
+		await currency.press("ArrowDown");
+		await currency.press("Enter");
+		await expect(currency).toHaveValue("EUR");
+		const sizes = page.locator("#f-companySizes");
+		await sizes.click();
+		await sizes.fill("Scale");
+		await expect(page.getByRole("option", { name: "Scale-up" })).toBeVisible();
+		await sizes.press("ArrowDown");
+		await sizes.press("Enter");
+		await sizes.press("Escape");
+		await page.locator("#f-avoidIndustries").fill("Gambling, Defense");
+		// Typed words: Enter adds one, and a word still being typed is added when the field is left.
+		const avoid = page.locator("#f-excludeTitleKeywords");
+		await avoid.fill("Contractor");
+		await avoid.press("Enter");
+		await avoid.fill("Lead");
+		// Languages by their own names: typing the English name finds Türkçe.
+		const languages = page.locator("#f-languages");
+		await languages.click();
+		await languages.fill("Türk");
+		await expect(page.getByRole("option", { name: "Türkçe" })).toBeVisible();
+		await languages.press("ArrowDown");
+		await languages.press("Enter");
+		await languages.press("Escape");
+		await expect(chips(page, "languages")).toHaveText(["English", "Türkçe"]);
 
 		await page.getByTestId("save-settings").click();
 		await expect(
-			page.getByText(/Saved\. Matches that no longer fit/),
+			page.getByText(
+				"Saved. New jobs are scored with it; jobs already here keep their score.",
+			),
 		).toBeVisible();
 		expect(readSettings()).toMatchObject({
-			livesIn: "Turkey",
-			citizenship: ["Turkey", "Germany"],
-			rightToWork: ["Turkey"],
+			livesIn: "Türkiye",
+			citizenship: ["Türkiye", "Germany"],
+			rightToWork: ["Türkiye"],
 			relocation: true,
 			relocationCountries: ["Netherlands"],
 			minScore: 60,
+			seniority: ["Senior"],
+			minSalary: 60000,
+			salaryCurrency: "EUR",
+			companySizes: ["Scale-up"],
+			avoidIndustries: ["Gambling", "Defense"],
+			languages: ["English", "Türkçe"],
+			searchTitles: [],
 		});
+		expect(readSettings().excludeTitleKeywords).toEqual(
+			expect.arrayContaining(["intern", "Contractor", "Lead"]),
+		);
+		// Saving applies to new jobs only: the matches are as they were.
+		expect(readApps()).toMatchObject(seeded);
 		fs.mkdirSync(SHOTS, { recursive: true });
 		await page.getByText("Where you can work").scrollIntoViewIfNeeded();
 		await page.screenshot({ path: path.join(SHOTS, "job-search.png") });
+		await page
+			.getByText("Role and language", { exact: true })
+			.evaluate((el) => el.scrollIntoView({ block: "start" }));
+		await page.screenshot({ path: path.join(SHOTS, "job-search-roles.png") });
+		await page.getByText("Level and kind of role").scrollIntoViewIfNeeded();
+		await page.screenshot({
+			path: path.join(SHOTS, "job-search-preferences.png"),
+		});
 		expect(errors).toEqual([]);
 	} finally {
 		await run.app.close();
@@ -303,13 +351,24 @@ test("job search pickers: filled from the profile, changed with the keyboard, ke
 	run = await launchApp({ userData });
 	try {
 		await openJobSearch(run.page);
-		await expect(run.page.locator("#f-livesIn")).toHaveValue("Turkey");
+		await expect(run.page.locator("#f-livesIn")).toHaveValue("Türkiye");
 		await expect(chips(run.page, "citizenship")).toHaveText([
-			"Turkey",
+			"Türkiye",
 			"Germany",
 		]);
 		await expect(chips(run.page, "relocation-countries")).toHaveText([
 			"Netherlands",
+		]);
+		await expect(chips(run.page, "seniority")).toHaveText(["Senior"]);
+		await expect(run.page.getByTestId("min-salary")).toHaveValue("60000");
+		await expect(
+			run.page
+				.getByTestId("tags-avoidIndustries")
+				.locator("[data-slot=tag-chip]"),
+		).toHaveText(["Gambling", "Defense"]);
+		await expect(chips(run.page, "languages")).toHaveText([
+			"English",
+			"Türkçe",
 		]);
 	} finally {
 		await run.app.close();

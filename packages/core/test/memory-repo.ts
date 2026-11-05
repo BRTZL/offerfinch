@@ -25,7 +25,7 @@ import type {
 } from "../src/pipeline/ports";
 import type { ProfileSnapshot } from "../src/profile/types";
 import type { FitResult } from "../src/scoring/fit";
-import type { RankResult } from "../src/scoring/rank";
+import type { DismissalSignal, RankResult } from "../src/scoring/rank";
 import type { ReviewFlag, ReviewStatus } from "../src/tailor/flags";
 import type { RuleIssue } from "../src/tailor/profile-rules";
 import { PERSONA_FILTER_SETTINGS } from "./helpers";
@@ -74,6 +74,11 @@ export class MemoryRepo implements PipelineRepository {
 	prepareRequests = new Set<string>();
 	requestPrepare(applicationId: string) {
 		this.prepareRequests.add(applicationId);
+	}
+	/** What the user passed on before, as ranking reads it. */
+	dismissals: DismissalSignal[] = [];
+	async dismissalSignals() {
+		return this.dismissals;
 	}
 	/** Jobs the user chose anyway (Prepare anyway on a job they added). */
 	chosen = new Set<string>();
@@ -238,14 +243,6 @@ export class MemoryRepo implements PipelineRepository {
 	async getProfile() {
 		return this.profile;
 	}
-	async saveFilterResult(
-		userId: string,
-		applicationId: string,
-		result: FilterResult,
-	) {
-		const app = this.app(userId, applicationId);
-		if (app) app.filter = result;
-	}
 	private async currentHashes(userId: string, applicationId: string) {
 		const latest = new Map<string, { version: number; content: string }>();
 		for (const d of this.documents) {
@@ -309,21 +306,6 @@ export class MemoryRepo implements PipelineRepository {
 		this.transitions.push({ id: applicationId, from: app.state, to, reason });
 		app.state = to;
 		return true;
-	}
-	async recordFilterRejection(
-		userId: string,
-		applicationId: string,
-		result: FilterResult,
-	) {
-		const app = this.app(userId, applicationId);
-		if (app) app.filter = result;
-		return this.move(
-			userId,
-			applicationId,
-			["found"],
-			"rejected_by_filter",
-			result.summary,
-		);
 	}
 	async recordScore(
 		userId: string,

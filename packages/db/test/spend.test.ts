@@ -307,7 +307,7 @@ describe("the subscription call budget in Postgres", () => {
 		);
 		expect((await tomorrow.subscriptionBudget("u1")).used).toBe(0);
 		await store.setSubscriptionDailyCalls("u1", null);
-		expect((await store.subscriptionBudget("u1")).budget).toBe(40);
+		expect((await store.subscriptionBudget("u1")).budget).toBe(500);
 		await expect(store.setSubscriptionDailyCalls("u1", 1.5)).rejects.toThrow(
 			/whole number/,
 		);

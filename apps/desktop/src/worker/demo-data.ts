@@ -34,9 +34,9 @@ Software Engineer at Quarry Systems, Jun 2018 - Jan 2021
 `;
 
 /**
- * The sample job rules: Sam lives in the Netherlands and works in English. Remote roles open
- * worldwide or to the Netherlands are kept; on-site roles elsewhere, other languages, interns
- * and roles that are not engineering are set aside before any model reads them.
+ * The sample Job search: Sam lives in the Netherlands and works in English. No rule sets a job
+ * aside: the fit score caps on-site roles Sam may not work in, and weighs interns and roles that
+ * are not engineering low.
  */
 export const SAMPLE_RULES = {
 	livesIn: "Netherlands",
@@ -58,12 +58,15 @@ export interface SampleJob {
 	company: string;
 	locations: string[];
 	workplaceType: "remote" | "hybrid" | "onsite";
-	/** What the sample shows: kept and scored well, scored low, or set aside by a rule. */
-	shows: "match" | "low-score" | "rule";
+	/** What the sample shows: scored well, or scored low (with a blocker for some). */
+	shows: "match" | "low-score";
 	description: string;
 }
 
-/** Eight fabricated postings: four matches, one that scores low, three that break a rule. */
+/**
+ * Eight fabricated postings: four matches and four that score low (one weak on skills, an
+ * internship, an on-site role without the right to work, and a sales role).
+ */
 export const SAMPLE_JOBS: SampleJob[] = [
 	{
 		id: "sample-1",
@@ -180,7 +183,7 @@ Location: remote, worldwide. We work in English.`,
 		company: "Pebble Games",
 		locations: ["Remote - Worldwide"],
 		workplaceType: "remote",
-		shows: "rule",
+		shows: "low-score",
 		description: `Pebble Games makes puzzle games for phones. Join us for a summer internship.
 
 Requirements
@@ -195,11 +198,12 @@ Location: remote, worldwide. We work in English.`,
 		company: "Copperline Payments",
 		locations: ["San Francisco, CA, United States"],
 		workplaceType: "onsite",
-		shows: "rule",
+		shows: "low-score",
 		description: `Copperline Payments builds checkout software. We are hiring a Senior React Engineer in our San Francisco office.
 
 Requirements
 - 5+ years of React and TypeScript.
+- Authorized to work in the United States.
 - Payments experience is a plus.
 
 Location: on-site in San Francisco, CA, United States. No visa sponsorship or relocation.`,
@@ -210,7 +214,7 @@ Location: on-site in San Francisco, CA, United States. No visa sponsorship or re
 		company: "Northgate Software",
 		locations: ["Remote - Worldwide"],
 		workplaceType: "remote",
-		shows: "rule",
+		shows: "low-score",
 		description: `Northgate Software sells scheduling software to hospitals. We are hiring an Account Executive.
 
 Requirements

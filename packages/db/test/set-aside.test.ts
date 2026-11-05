@@ -8,7 +8,6 @@ import {
 	DismissalStore,
 	seedCompanies,
 } from "../src/index";
-import { refilterApplications } from "../src/job-search";
 import { execute, testDb } from "./setup";
 
 let db: Database;
@@ -114,7 +113,7 @@ describe("jobs the job filter set aside, in the Inbox", () => {
 		expect(rejected.some((r) => r.id === id)).toBe(false);
 	});
 
-	it("Show in Matches brings a set-aside match back, and the re-filter leaves it alone", async () => {
+	it("Show in Matches brings a set-aside match back", async () => {
 		const id = await setAside(true);
 		const shown = await store.showInMatches({
 			userId: "u1",
@@ -128,13 +127,6 @@ describe("jobs the job filter set aside, in the Inbox", () => {
 		expect(await repo.chosenAnyway("u1", id)).toBe(true);
 		const matches = await repo.listApplications("u1", { view: "matches" });
 		expect(matches.some((r) => r.id === id)).toBe(true);
-
-		// The next re-filter does not even look at it.
-		const refiltered = await refilterApplications(db, "u1");
-		expect(refiltered.decisions.some((d) => d.applicationId === id)).toBe(
-			false,
-		);
-		expect((await row(id))?.state).toBe("scored");
 	});
 
 	it("a job set aside at its first check goes back to be scored, and nothing else can be shown", async () => {

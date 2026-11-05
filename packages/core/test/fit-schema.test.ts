@@ -12,6 +12,7 @@ const PROFILE = { files: [] } as unknown as ProfileSnapshot;
 describe("the fit-score answer", () => {
 	const requirement = {
 		requirement: "TypeScript",
+		kind: "skill_or_experience",
 		importance: "must",
 		evidence: [],
 		note: "Not in the profile.",
@@ -34,6 +35,7 @@ describe("the fit-score answer", () => {
 	it("scores an omitted status like not_met, below an unknown one", () => {
 		const req = (status: FitRequirement["status"]): FitRequirement => ({
 			requirement: "r",
+			kind: "skill_or_experience",
 			importance: "must",
 			status,
 			evidence: [],

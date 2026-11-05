@@ -217,19 +217,19 @@ describe("scan against Postgres", () => {
 			db,
 			sql`select state from applications order by state`,
 		);
-		// SQLite stores the states as text: ordered alphabetically.
+		// No rule sets the Account Executive aside: both are scored, and both match the fake.
 		expect(states.map((r) => r.state)).toEqual([
 			"ready_for_review",
-			"rejected_by_filter",
+			"ready_for_review",
 		]);
-		// The kept job was drafted, reviewed and exported, all recorded in Postgres.
-		expect(await count("documents")).toBe(6);
+		// Each was drafted, reviewed and exported, all recorded in Postgres.
+		expect(await count("documents")).toBe(12);
 		const [review] = await execute<{ passed: boolean; ats: boolean }>(
 			db,
 			sql`select passed, ats_checked_at is not null as ats from review_checks`,
 		);
 		expect(review).toEqual({ passed: 1, ats: 1 }); // SQLite booleans are 0/1 in raw SQL
-		expect(notifier.sent).toHaveLength(1);
+		expect(notifier.sent).toHaveLength(2);
 
 		const before = {
 			jobs: await count("jobs"),
@@ -247,7 +247,7 @@ describe("scan against Postgres", () => {
 			apps: await count("applications"),
 			transitions: await count("application_transitions"),
 		}).toEqual(before);
-		expect(notifier.sent).toHaveLength(1);
+		expect(notifier.sent).toHaveLength(2);
 
 		const unstarted = await repo.listUnstartedJobIds("u1", 10);
 		expect(unstarted).toEqual([]);

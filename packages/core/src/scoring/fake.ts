@@ -2,6 +2,7 @@ import {
 	fakeApplicationChatResponder,
 	fakeProfileChatResponder,
 } from "../chat/fake";
+import { countriesIn } from "../filter/places";
 import { fakeStructureResponder } from "../profile/structure";
 import type { ProfileSnapshot } from "../profile/types";
 import { fakeSearchPlanResponder } from "../search/plan";
@@ -234,44 +235,158 @@ function findQuote(
 	return undefined;
 }
 
+type FakeRequirement = FitAssessment["requirements"][number];
+
+const SPOKEN =
+	/\b(English|German|French|Spanish|Dutch|Italian|Portuguese|Polish|Swedish|Danish|Norwegian|Finnish|Japanese|Korean|Mandarin|Chinese|Hebrew|Arabic|Turkish|Russian)\b/;
+
+/**
+ * The fake's reading of a hard limit in one posting line, from <work_rights> and <job_search>
+ * as the real model would: citizenship, clearance, right to work, a place it must be done from,
+ * a language to work in. Null for a skill line.
+ */
+function fakeHardLimit(
+	line: string,
+	{ work, prefs }: FitContext,
+): Pick<FakeRequirement, "kind" | "status" | "note"> | null {
+	const named = work ? countriesIn(line) : [];
+	const covers = (countries: readonly string[]) =>
+		named.length > 0 && named.some((c) => countries.includes(c));
+	if (/\bclearance\b/i.test(line))
+		return {
+			kind: "clearance",
+			status: "not_met",
+			note: "Requires a security clearance; your profile and work rights show none.",
+		};
+	if (/\bcitizen(?:s|ship)?\b/i.test(line)) {
+		const mine = work?.citizenship ?? [];
+		if (named.length === 0)
+			return {
+				kind: "citizenship",
+				status: "unknown",
+				note: "No country named.",
+			};
+		return covers(mine)
+			? {
+					kind: "citizenship",
+					status: "met",
+					note: "Your citizenship covers it.",
+				}
+			: {
+					kind: "citizenship",
+					status: "not_met",
+					note: `Requires ${named.join(" or ")} citizenship; your citizenship is ${mine.join(", ") || "not set"}.`,
+				};
+	}
+	if (
+		/\b(?:authori[sz]ed to work|right to work|work permit|visa)\b/i.test(line)
+	) {
+		const mine = work?.rightToWork ?? [];
+		if (named.length === 0)
+			return {
+				kind: "work_authorization",
+				status: "unknown",
+				note: "No country named.",
+			};
+		return covers(mine)
+			? {
+					kind: "work_authorization",
+					status: "met",
+					note: "You may work there.",
+				}
+			: {
+					kind: "work_authorization",
+					status: "not_met",
+					note: `Requires the right to work in ${named.join(" or ")}; you may work in ${mine.join(", ") || "no country set"}.`,
+				};
+	}
+	const language = line.match(SPOKEN)?.[1];
+	if (
+		language &&
+		/\b(fluent|fluency|native|proficien\w*|required|business[- ]level)\b/i.test(
+			line,
+		)
+	) {
+		const mine = (prefs?.languages ?? ["English"]).map((l) => l.toLowerCase());
+		return mine.includes(language.toLowerCase())
+			? { kind: "language", status: "met", note: `You work in ${language}.` }
+			: {
+					kind: "language",
+					status: "not_met",
+					note: `Requires ${language}; you work in ${(prefs?.languages ?? []).join(", ") || "no language set"}.`,
+				};
+	}
+	return null;
+}
+
+/** The fake's preference reading: a title word to avoid is a role mismatch; the rest unknown. */
+function fakePreferences({
+	job,
+	prefs,
+}: FitContext): NonNullable<FitAssessment["preferences"]> {
+	if (!prefs) return [];
+	const title = job.title.toLowerCase();
+	const avoided = prefs.excludeTitles.find((w) =>
+		new RegExp(
+			`(?<!\\w)${w.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\w)`,
+		).test(title),
+	);
+	const out: NonNullable<FitAssessment["preferences"]> = [];
+	if (avoided)
+		out.push({
+			topic: "role_type",
+			status: "mismatch",
+			note: `The title has "${avoided}", a word you avoid.`,
+		});
+	return out;
+}
+
 /** Keyword match between posting bullets and profile lines. Quotes are always copied from the profile. */
 export function heuristicFitResponder(
 	request: GenerateObjectRequest<unknown>,
 ): FitAssessment {
-	const { job, profile } = request.context as FitContext;
-	const requirements = requirementLines(job.descriptionText).map((line) => {
-		const terms = SKILL_TERMS.filter((term) => termPattern(term).test(line));
-		const evidence = terms
-			.map((term) => findQuote(profile, term))
-			.filter((quote): quote is { file: string; quote: string } =>
-				Boolean(quote),
-			);
-		const found = new Set(evidence.map((e) => e.quote)).size;
-		const status: FitAssessment["requirements"][number]["status"] =
-			terms.length === 0
-				? "unknown"
-				: found === 0
-					? "not_met"
-					: evidence.length >= terms.length
-						? "met"
-						: "partial";
-		return {
-			requirement: line,
-			importance: /\b(plus|nice to have|bonus|preferred|desirable)\b/i.test(
-				line,
-			)
-				? ("nice" as const)
-				: ("must" as const),
-			status,
-			evidence,
-			note:
+	const context = request.context as FitContext;
+	const { job, profile } = context;
+	const requirements = requirementLines(job.descriptionText).map(
+		(line): FakeRequirement => {
+			const importance =
+				/\b(plus|nice to have|bonus|preferred|desirable)\b/i.test(line)
+					? ("nice" as const)
+					: ("must" as const);
+			const limit = fakeHardLimit(line, context);
+			if (limit)
+				return { requirement: line, importance, evidence: [], ...limit };
+			const terms = SKILL_TERMS.filter((term) => termPattern(term).test(line));
+			const evidence = terms
+				.map((term) => findQuote(profile, term))
+				.filter((quote): quote is { file: string; quote: string } =>
+					Boolean(quote),
+				);
+			const found = new Set(evidence.map((e) => e.quote)).size;
+			const status: FakeRequirement["status"] =
 				terms.length === 0
-					? "No known skill terms to match."
-					: `Matched ${evidence.length} of ${terms.length} terms (${terms.join(", ")}).`,
-		};
-	});
+					? "unknown"
+					: found === 0
+						? "not_met"
+						: evidence.length >= terms.length
+							? "met"
+							: "partial";
+			return {
+				requirement: line,
+				kind: "skill_or_experience",
+				importance,
+				status,
+				evidence,
+				note:
+					terms.length === 0
+						? "No known skill terms to match."
+						: `Matched ${evidence.length} of ${terms.length} terms (${terms.join(", ")}).`,
+			};
+		},
+	);
 	return {
 		requirements,
+		preferences: fakePreferences(context),
 		summary: `Heuristic match on ${requirements.length} requirement lines.`,
 	};
 }
