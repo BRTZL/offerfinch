@@ -226,7 +226,9 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 			.filter({ hasText: "Senior Full-Stack Engineer" });
 		await expect(row).toBeVisible({ timeout: 90_000 });
 		await row.click();
-		await expect(page.getByText(/Ready for review/).first()).toBeVisible({
+		await expect(
+			page.locator("[data-testid=action-bar][data-kind=review]"),
+		).toBeVisible({
 			timeout: 90_000,
 		});
 		await shot(page, "application-review");
@@ -280,7 +282,9 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 		);
 		await sidebar(page, "Home").click();
 		await openRoute(app, page, review?.path ?? "");
-		await expect(page.getByText(/Ready for review/).first()).toBeVisible();
+		await expect(
+			page.locator("[data-testid=action-bar][data-kind=review]"),
+		).toBeVisible();
 		if (!review?.path.startsWith("/applications/")) await row.click();
 		await expect(page.getByTestId("approve")).toBeVisible();
 
@@ -554,7 +558,7 @@ test("the Inbox by keyboard and right-click; nothing approves by key, menu or ‚å
 		expect(await listCol()).toBe(list0);
 		expect(await widthOf("aside[aria-label=Posting]")).toBe(posting0);
 		expect(await widthOf("[data-testid=inspector]")).toBe(details0);
-		if (openedDetails) await page.getByTestId("fit-card").click();
+		if (openedDetails) await page.getByTestId("inspector-close").click();
 		await page.getByTestId("posting-toggle").click();
 
 		// Right-click a row: the native menu (recorded here) offers no Approve; Copy works.

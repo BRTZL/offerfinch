@@ -178,6 +178,10 @@ test("Inbox redesign: one list, unread dots, the action bar, Rejected chips and 
 		await expect(page.getByTestId("inspector")).toBeVisible();
 		await page.getByTestId("fit-card").click();
 		await expect(page.getByTestId("inspector")).toHaveCount(0);
+		// The sheet closes from its own button too (it can open over the card).
+		await page.getByTestId("fit-card").click();
+		await page.getByTestId("inspector-close").click();
+		await expect(page.getByTestId("inspector")).toHaveCount(0);
 
 		// Not interested from the bar: the popover above its button; the row leaves, the next opens.
 		const leaving = await selectedRow(page).getAttribute("id");

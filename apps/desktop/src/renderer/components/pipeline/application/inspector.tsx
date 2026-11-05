@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import {
 	AfterApproveSection,
 	ChecksSection,
@@ -17,8 +18,12 @@ import {
 import { DocumentPage } from "@/components/system/document";
 import { Disclosure, Inspector } from "@/components/system/pane";
 import { ResizeHandle } from "@/components/system/resize-handle";
+import { Button } from "@/components/ui/button";
+import { keyHint } from "../../../../shared/shortcuts";
 import type { DocumentContext } from "./document-tabs";
+/** The details sheet, opened from the fit card (or ⌘⌥I); its own button closes it. */
 export function ApplicationInspector({
+	toggleDetails,
 	detailsWidth,
 	rightMax,
 	setDetailsWidth,
@@ -49,6 +54,19 @@ export function ApplicationInspector({
 				onResize={setDetailsWidth}
 				onReset={resetDetailsWidth}
 			/>
+			<div className="border-border flex shrink-0 items-center justify-between gap-2 border-b py-2 pr-3 pl-5">
+				<h2 className="text-foreground text-sm font-semibold">Details</h2>
+				<Button
+					size="icon-xs"
+					variant="ghost"
+					onClick={toggleDetails}
+					aria-label="Close the details"
+					title={`Close the details (${keyHint("toggle-inspector")})`}
+					data-testid="inspector-close"
+				>
+					<X />
+				</Button>
+			</div>
 			<SubmissionPanel
 				app={loaded}
 				confirmedNotSent={confirmedNotSent}

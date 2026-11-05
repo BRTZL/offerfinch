@@ -90,7 +90,9 @@ test("chat beside an application and the profile: proposals accepted through the
 			timeout: 60_000,
 		});
 		await page.getByTestId("interested").click();
-		await expect(page.getByText(/Ready for review/).first()).toBeVisible({
+		await expect(
+			page.locator("[data-testid=action-bar][data-kind=review]"),
+		).toBeVisible({
 			timeout: 120_000,
 		});
 		const appId = new URL(page.url()).pathname.split("/").pop() ?? "";
