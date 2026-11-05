@@ -3,6 +3,7 @@ import { Badge, Fit, type Tone } from "@/components/system/bits";
 import { useReducedMotion } from "@/lib/reduced-motion";
 import { Check, Collapse } from "@/vendor/stageshow";
 import {
+	beingChecked,
 	type FoundRow,
 	newRowBeats,
 	type RowBeats,
@@ -59,6 +60,9 @@ function badgeOf(
 		return row.match
 			? { tone: "brand", label: "Match" }
 			: { tone: "neutral", label: LABEL.scored };
+	// Its run errored before a score (once its "Found" beat is over): not being scored now.
+	if (row.failed && row.shown === row.state)
+		return { tone: "warning", label: "Scoring failed" };
 	// Past the rules and waiting on a paused model: not being scored now.
 	if (row.shown === "fits" && row.paused)
 		return { tone: "warning", label: "Paused" };
@@ -71,7 +75,8 @@ function badgeOf(
 function JobRow({ row, rulesOver }: { row: ShownRow; rulesOver: boolean }) {
 	const scored = row.shown === "scored";
 	const aside = row.shown === "rejected_by_filter";
-	const scoring = row.shown === "fits" && !row.paused;
+	const failed = row.failed && row.shown === row.state;
+	const scoring = row.shown === "fits" && !row.paused && !failed;
 	const badge = badgeOf(row, rulesOver);
 	return (
 		<div
@@ -111,6 +116,14 @@ function JobRow({ row, rulesOver }: { row: ShownRow; rulesOver: boolean }) {
 					{row.reason}
 				</span>
 			) : null}
+			{failed && row.reason ? (
+				<span
+					className="first-search-reason text-muted-foreground min-w-0 shrink truncate text-xs"
+					data-testid="first-search-failed-reason"
+				>
+					{row.reason}
+				</span>
+			) : null}
 			<Badge tone={badge.tone}>{badge.label}</Badge>
 		</div>
 	);
@@ -129,7 +142,7 @@ export function FirstSearchList({
 	hidden: number;
 }) {
 	const reduced = useReducedMotion();
-	const rulesOver = !rows.some((r) => r.shown === "found");
+	const rulesOver = !rows.some(beingChecked);
 	let open = 0;
 	const items = rows.map((row) => {
 		const visible = !row.gone && open < VISIBLE_ROWS;

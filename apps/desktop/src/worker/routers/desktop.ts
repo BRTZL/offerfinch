@@ -317,7 +317,8 @@ export const desktopStatusRouter = {
 	/**
 	 * The jobs one scan run found, for setup's live first search: each with its state (found, fits
 	 * the rules, set aside with the rule's reason, scored with its fit and whether it is a match,
-	 * or waiting on a paused model), in the order they arrived, and totals. Reads only.
+	 * waiting on a paused model, or failed to score), in the order they arrived, and totals. Reads
+	 * only.
 	 */
 	scanJobs: protectedProcedure
 		.input(z.object({ id: z.string().max(200) }))

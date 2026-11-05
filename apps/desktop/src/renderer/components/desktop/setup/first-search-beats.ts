@@ -15,6 +15,8 @@ export interface FoundRow {
 	match: boolean;
 	/** Past the rules; its scoring paused (the model cannot run now). */
 	paused: boolean;
+	/** Its run errored before a score; `reason` says why. The next search tries it again. */
+	failed: boolean;
 }
 
 export type ShownRow = FoundRow & {
@@ -23,6 +25,13 @@ export type ShownRow = FoundRow & {
 	/** A set-aside row that has shown its reason and left the list. */
 	gone: boolean;
 };
+
+/**
+ * A row still being checked against the rules: one in its "Found" beat, or one the server still
+ * has as found, unless its run failed there (it is not being checked any more).
+ */
+export const beingChecked = (r: Pick<ShownRow, "shown" | "state" | "failed">) =>
+	r.shown === "found" && !(r.failed && r.state === "found");
 
 /** A new row reads "Found" this long, so the rules pass is seen even when it beat the poll. */
 const FOUND_MS = 700;
@@ -65,7 +74,7 @@ export function shownRowsAt(
 		const fresh = now - (beats.seen.get(r.jobId) ?? now) < FOUND_MS;
 		return { ...r, shown: fresh ? ("found" as const) : r.state };
 	});
-	const checking = first.some((r) => r.shown === "found");
+	const checking = first.some(beingChecked);
 	let waiting = checking;
 	const shown = first.map((r) => {
 		if (r.shown !== "rejected_by_filter") {

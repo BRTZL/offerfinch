@@ -213,7 +213,7 @@ export class WorkerApp {
 						step,
 						{
 							...this.deps,
-							repo: scanRunRepo(this.deps.repo, this.db, run),
+							repo: scanRunRepo(this.deps.repo, run),
 							...scanLogFor(this, run, params),
 						},
 						params as unknown as ScanWorkflowParams,

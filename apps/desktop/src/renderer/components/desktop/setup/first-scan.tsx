@@ -8,7 +8,7 @@ import { Group, GroupBody } from "@/components/system/layout";
 import { SparkleBurst } from "@/components/system/sparkle";
 import { client, orpc } from "@/lib/orpc";
 import { useCelebrate } from "./celebrate";
-import type { ShownRow } from "./first-search-beats";
+import { beingChecked, type ShownRow } from "./first-search-beats";
 import {
 	firstSearchLine,
 	firstSearchSettle,
@@ -136,11 +136,12 @@ export function FirstScan({ onDone }: { onDone: () => void }) {
 		setAside: 0,
 		matches: 0,
 		paused: 0,
+		failed: 0,
 	};
-	const checking = rows.some((r) => r.shown === "found");
+	const checking = rows.some(beingChecked);
 	// The done line waits for the list's own beats: a new row still held as found, or a set-aside
 	// row that has not shown its reason and left. A job the server still has as found (its run
-	// never started or stopped) does not hold it.
+	// never started, stopped or failed) does not hold it.
 	const beating = rows.some(
 		(r) =>
 			(r.shown === "found" && r.state !== "found") ||

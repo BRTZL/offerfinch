@@ -14,6 +14,8 @@ export interface SearchCounts {
 	read: number;
 	setAside: number;
 	matches: number;
+	/** Jobs whose scoring failed (their run errored); the next search tries them again. */
+	failed: number;
 }
 
 const plural = (n: number, one: string, many = `${one}s`) =>
@@ -33,6 +35,8 @@ export const PAUSED_POLL_MS = 5_000;
  * taken after scoring was seen done (the polls tick apart, and the last scores land just before
  * `pending` reaches 0). An errored scan is settled at once. While scoring is paused (its runs
  * ended, the jobs still unscored) it is never settled: it reads slower until scoring resumes.
+ * A job whose scoring failed (its run errored) is not pending and not paused: it settles, and
+ * the done line counts it apart (`doneLine`).
  */
 export function firstSearchSettle(s: {
 	status: string | undefined;
@@ -53,6 +57,20 @@ export function firstSearchSettle(s: {
 		return { settled: false, paused: true, pollMs: PAUSED_POLL_MS };
 	const settled = s.jobsAt > s.scoringAt;
 	return { settled, paused: false, pollMs: settled ? false : POLL_MS };
+}
+
+/**
+ * The settled line. Failed scoring is never "no matches": it says how many failed and that the
+ * next search tries them again.
+ */
+function doneLine(counts: SearchCounts): string {
+	if (counts.read === 0) return `Done: no new jobs this time. ${NO_MATCHES}`;
+	const head = `Done: ${plural(counts.read, "job")} read, ${counts.setAside} set aside`;
+	const matches = plural(counts.matches, "match", "matches");
+	if (counts.failed > 0)
+		return `${head}, ${matches}. Scoring failed for ${counts.failed}; OfferFinch retries at the next search.`;
+	if (counts.matches === 0) return `${head}. ${NO_MATCHES}`;
+	return `${head}, ${matches}. ${counts.matches === 1 ? "It is" : "They are"} waiting in your Inbox.`;
 }
 
 /** Scoring waits on a paused model: the same words every poll, so the live region stays quiet. */
@@ -85,12 +103,7 @@ export function firstSearchLine(
 	// The scan ended before the first read of what it found.
 	if (counts.read === 0 && !phase.settled)
 		return "Search done. Checking what it found…";
-	if (phase.settled) {
-		if (counts.read === 0) return `Done: no new jobs this time. ${NO_MATCHES}`;
-		const head = `Done: ${read}, ${counts.setAside} set aside`;
-		if (counts.matches === 0) return `${head}. ${NO_MATCHES}`;
-		return `${head}, ${plural(counts.matches, "match", "matches")}. ${counts.matches === 1 ? "It is" : "They are"} waiting in your Inbox.`;
-	}
+	if (phase.settled) return doneLine(counts);
 	if (phase.paused && phase.paused.count > 0) return pausedLine(phase.paused);
 	// Nothing passed yet: still the rules pass (a row may be between the two reads).
 	if (phase.checking || phase.fitRules === 0)

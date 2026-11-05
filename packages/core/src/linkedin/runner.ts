@@ -1,3 +1,4 @@
+import type { PipelineRepository } from "../pipeline/ports";
 import { HELD_STOP_KINDS } from "../sites/stops";
 import {
 	detectLinkedInStop,
@@ -108,12 +109,15 @@ export interface LinkedInStore {
 	/**
 	 * Saves a listing as a `linkedin` job under its employer, unless the same job is already
 	 * stored from any source (LinkedIn id, the employer's apply link, or employer and title) or
-	 * the user removed that employer. `jobId` is the new job's, when inserted.
+	 * the user removed that employer. `jobId` is the new job's, when inserted. `jobs` inserts it:
+	 * a scan passes its own repository, which records the job as the scan run's in the same
+	 * transaction; without it the store uses its own.
 	 */
 	saveListing(
 		userId: string,
 		listing: LinkedInListing,
 		url: string,
+		jobs?: LinkedInJobInserter,
 	): Promise<{ outcome: SaveOutcome; jobId: string | null }>;
 }
 
@@ -135,8 +139,13 @@ export interface LinkedInRunResult {
 	parts: { topPicks: LinkedInPart; searches: LinkedInPart };
 }
 
+/** What inserts a saved listing's job: a scan's repository (`PipelineDeps["repo"]`). */
+export type LinkedInJobInserter = Pick<PipelineRepository, "upsertJob">;
+
 export interface LinkedInRunnerDeps {
 	store: LinkedInStore;
+	/** Inserts saved listings' jobs; a scan passes its repository (see `saveListing`). */
+	jobs?: LinkedInJobInserter;
 	browser: LinkedInBrowser;
 	/** Tells the user the runner is stopped (held stops); must carry no URL, page text or account data. */
 	alert: (stop: LinkedInStop) => Promise<void>;
@@ -483,6 +492,7 @@ async function readCards(
 				run.userId,
 				listing,
 				`${LINKEDIN_ORIGIN}/jobs/view/${card.jobId}/`,
+				deps.jobs,
 			),
 		);
 	}

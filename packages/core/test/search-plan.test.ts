@@ -619,6 +619,21 @@ describe("LinkedIn in scans", () => {
 		expect(run.problem).toMatch(/Sign in or choose Retry now/);
 		expect(opened).toEqual([]);
 	});
+
+	it("hands each listing to the scan's own repository, so a scan run records its LinkedIn jobs as they are inserted", async () => {
+		const { store } = linkedinStore({
+			lastReadAt: new Date(NOW.getTime() - 7 * 3_600_000),
+		});
+		const inserters: unknown[] = [];
+		store.saveListing = async (_u, listing, _url, jobs) => {
+			inserters.push(jobs);
+			return { outcome: "inserted" as const, jobId: `job-${listing.jobId}` };
+		};
+		const { provider } = linkedinProvider(store);
+		await provider.run(pipeline, "u1", undefined, plan);
+		expect(inserters.length).toBeGreaterThan(0);
+		expect(inserters.every((jobs) => jobs === pipeline.repo)).toBe(true);
+	});
 });
 
 describe("the plan keeps what the user did", () => {

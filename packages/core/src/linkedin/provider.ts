@@ -169,6 +169,8 @@ export class LinkedInScanProvider implements ScanProvider {
 			result = await runLinkedIn(
 				{
 					store: d.store,
+					// The scan's repository: each job is recorded as the scan run's as it is inserted.
+					jobs: pipeline.repo,
 					browser,
 					alert: d.alert,
 					debug: d.debug,

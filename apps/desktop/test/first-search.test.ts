@@ -2,9 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { NormalizedJob } from "@offerfinch/core/domain/types";
+import type { LinkedInListing } from "@offerfinch/core/linkedin/parse";
 import { applicationInstanceId } from "@offerfinch/core/workflow/types";
 import {
 	DashboardRepository,
+	DrizzleLinkedInStore,
 	ensureUser,
 	openSqlite,
 	seedCompanies,
@@ -13,12 +15,16 @@ import { migrate } from "@offerfinch/db/migrate";
 import { flowRuns } from "@offerfinch/db/schema/jobs";
 import {
 	applications,
+	applicationTransitions,
 	companies,
+	jobs,
+	scanRunJobs,
 	scanRuns,
 } from "@offerfinch/db/schema/pipeline";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+	beingChecked,
 	type FoundRow,
 	newRowBeats,
 	shownRowsAt,
@@ -150,6 +156,7 @@ describe("first search rows (desktop.scanJobs)", () => {
 			scored: 2,
 			matches: 1,
 			paused: 0,
+			failed: 0,
 		});
 		expect(view.rows.map((r) => r.jobId)).toEqual(["1", "2", "3", "4"]);
 	});
@@ -188,7 +195,7 @@ async function setupDb() {
 	const repo = new DashboardRepository(db);
 	const run = { id: "scan-u1-manual-1", userId: "u1" };
 	// The repository the scan run uses: each job it inserts is recorded as the run's.
-	const scanRepo = scanRunRepo(repo, db, run);
+	const scanRepo = scanRunRepo(repo, run);
 	const add = (
 		id: string,
 		title: string,
@@ -196,8 +203,35 @@ async function setupDb() {
 	) => via.upsertJob("u1", company?.id ?? "", job(id, title));
 	const appOf = async (jobId: string) =>
 		(await repo.getApplicationByJob("u1", jobId))?.applicationId ?? "";
-	return { db, repo, run, add, appOf };
+	return { db, repo, run, scanRepo, add, appOf };
 }
+
+const linkedinListing = (id: string): LinkedInListing => ({
+	jobId: id,
+	title: "Senior Full-Stack Engineer",
+	company: "Acme Robotics",
+	locations: ["Remote"],
+	workplaceType: "remote",
+	descriptionText: "Build fleet software.",
+	easyApply: false,
+	externalApplyUrl: null,
+});
+
+/** The application run of one job, as the runner leaves it (`job-<id>`). */
+const appRun = (
+	jobId: string,
+	over: Partial<typeof flowRuns.$inferInsert>,
+): typeof flowRuns.$inferInsert => ({
+	id: applicationInstanceId(jobId),
+	userId: "u1",
+	kind: "application",
+	params: { userId: "u1", jobId },
+	status: "complete",
+	runAfter: new Date(),
+	...over,
+});
+
+const keep = { decision: "keep" as const, summary: "", flags: [], reasons: [] };
 
 describe("the jobs a scan run found", () => {
 	it("are the jobs the scan inserted, oldest first, with their state; not a job added by link meanwhile", async () => {
@@ -320,6 +354,140 @@ describe("the jobs a scan run found", () => {
 		expect(resumed.pausedFor).toBeNull();
 		db.$close();
 	});
+	it("records a job and its run in one transaction: a failed recording leaves no job, and the retry inserts both", async () => {
+		const { db, run, add } = await setupDb();
+		const transitionsBefore = (await db.select().from(applicationTransitions))
+			.length;
+		// The membership write fails inside the insert's transaction.
+		await db.$exec(
+			"CREATE TRIGGER inject_scan_run_jobs BEFORE INSERT ON scan_run_jobs BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+		);
+		const error = await add("5", "Frontend Engineer").catch((e: Error) => e);
+		expect(error).toBeInstanceOf(Error);
+		expect(String((error as Error).cause)).toMatch(/injected/);
+		// Nothing of the job is left: no job, no application, no transition, no membership.
+		const stored = await db
+			.select({ id: jobs.id })
+			.from(jobs)
+			.where(and(eq(jobs.userId, "u1"), eq(jobs.externalId, "5")));
+		expect(stored).toEqual([]);
+		expect(await db.select().from(applications)).toEqual([]);
+		expect((await db.select().from(applicationTransitions)).length).toBe(
+			transitionsBefore,
+		);
+		expect(await db.select().from(scanRunJobs)).toEqual([]);
+		// The provider step retries: the job is new again, and recorded as the run's.
+		await db.$exec("DROP TRIGGER inject_scan_run_jobs;");
+		const retried = await add("5", "Frontend Engineer");
+		expect(retried.inserted).toBe(true);
+		expect((await jobsFoundBy(db, run)).map((j) => j.jobId)).toEqual([
+			retried.jobId,
+		]);
+		db.$close();
+	});
+
+	it("lists a LinkedIn job as the scan saves it, before LinkedIn's source report is written", async () => {
+		const { db, run, scanRepo } = await setupDb();
+		const store = new DrizzleLinkedInStore(db);
+		const url = "https://www.linkedin.com/jobs/view/4100000001/";
+		const saved = await store.saveListing(
+			"u1",
+			linkedinListing("4100000001"),
+			url,
+			scanRepo,
+		);
+		expect(saved.outcome).toBe("inserted");
+		// No source report yet (`scan_runs` has no row): the job is listed from its insert.
+		expect(await db.select().from(scanRuns)).toEqual([]);
+		const live = await jobsFoundBy(db, run);
+		expect(live.map((j) => [j.jobId, j.source, j.company])).toEqual([
+			[saved.jobId, "linkedin", "Acme Robotics"],
+		]);
+		// A linked job's read (no scan repository) is not the scan's.
+		await store.saveListing(
+			"u1",
+			{ ...linkedinListing("4100000002"), title: "Data Engineer" },
+			"https://www.linkedin.com/jobs/view/4100000002/",
+		);
+		expect(await jobsFoundBy(db, run)).toHaveLength(1);
+		db.$close();
+	});
+
+	it("a job whose application run errored is failed, with the run's error, and the step settles with it counted apart", async () => {
+		const { db, repo, run, add, appOf } = await setupDb();
+		const one = await add("1", "Frontend Engineer");
+		await repo.saveFilterResult("u1", await appOf(one.jobId), keep);
+		// The fit score's retries are spent: the runner ends the run errored, the job stays found.
+		await db.insert(flowRuns).values(
+			appRun(one.jobId, {
+				status: "errored",
+				error:
+					"Error: Claude answered 529 overloaded_error while scoring the job; try again later\n    at scoreStep (application-flow.ts:120)",
+				endedAt: new Date(),
+			}),
+		);
+		const view = firstSearchView(await jobsFoundBy(db, run), 50);
+		expect(view.rows[0]).toMatchObject({
+			state: "fits",
+			failed: true,
+			paused: false,
+			reason:
+				"Claude answered 529 overloaded_error while scoring the job; try again later",
+		});
+		expect(view.counts).toMatchObject({ failed: 1, paused: 0, matches: 0 });
+		// Not pending (`desktop.scoring` counts queued, running and waiting runs) and not paused.
+		const state = firstSearchSettle({
+			status: "complete",
+			pending: 0,
+			paused: view.counts.paused,
+			jobsAt: 2,
+			scoringAt: 1,
+		});
+		expect(state).toEqual({ settled: true, paused: false, pollMs: false });
+		const line = firstSearchLine(
+			{
+				status: "complete",
+				total: 1,
+				done: 1,
+				unit: "sources",
+				source: null,
+			},
+			view.counts,
+			{ checking: false, settled: state.settled, fitRules: 1 },
+		);
+		expect(line).toBe(
+			"Done: 1 job read, 0 set aside, 0 matches. Scoring failed for 1; OfferFinch retries at the next search.",
+		);
+		expect(line).not.toMatch(/No matches/);
+		// The next search's sweep queues it again: no longer failed.
+		await db
+			.update(flowRuns)
+			.set({ status: "queued", error: null })
+			.where(eq(flowRuns.id, applicationInstanceId(one.jobId)));
+		const again = firstSearchView(await jobsFoundBy(db, run), 50);
+		expect(again.rows[0]).toMatchObject({ failed: false, reason: null });
+		expect(again.counts.failed).toBe(0);
+		db.$close();
+	});
+
+	it("a job whose run errored at the rules is failed too, and holds no rules check open", async () => {
+		const { db, run, add } = await setupDb();
+		const one = await add("1", "Frontend Engineer");
+		await db
+			.insert(flowRuns)
+			.values(
+				appRun(one.jobId, { status: "errored", error: "database is locked" }),
+			);
+		const [row] = firstSearchView(await jobsFoundBy(db, run), 50).rows;
+		expect(row).toMatchObject({
+			state: "found",
+			failed: true,
+			reason: "database is locked",
+		});
+		if (!row) throw new Error("no row");
+		expect(beingChecked({ ...row, shown: "found" })).toBe(false);
+		db.$close();
+	});
 });
 
 describe("the row cap", () => {
@@ -416,6 +584,7 @@ describe("set-aside rows leaving the list", () => {
 		score: null,
 		match: false,
 		paused: false,
+		failed: false,
 	});
 	afterEach(() => {
 		vi.useRealTimers();
@@ -450,10 +619,24 @@ describe("set-aside rows leaving the list", () => {
 		});
 		expect(beats.gone.has("a")).toBe(false);
 	});
+
+	it("a row whose run failed at the rules does not hold the set-aside rows", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const beats = newRowBeats();
+		const failed = { ...row("f", "found"), failed: true, reason: "x" };
+		const aside = row("a", "rejected_by_filter");
+		shownRowsAt([failed, aside], beats);
+		vi.advanceTimersByTime(800);
+		expect(shownRowsAt([failed, aside], beats).shown[1]?.gone).toBe(false);
+		// 1.2 s after it was set aside, well before the 3 s limit: it leaves.
+		vi.advanceTimersByTime(1_300);
+		expect(shownRowsAt([failed, aside], beats).shown[1]?.gone).toBe(true);
+	});
 });
 
 describe("the first search's status line", () => {
-	const counts = { read: 8, setAside: 3, matches: 3 };
+	const counts = { read: 8, setAside: 3, matches: 3, failed: 0 };
 	const progress = {
 		status: "running",
 		total: 3,
@@ -489,6 +672,19 @@ describe("the first search's status line", () => {
 			),
 		).toBe(
 			"Done: 8 jobs read, 3 set aside. No matches this time. OfferFinch keeps looking every hour, and new ones show up in the Inbox.",
+		);
+	});
+
+	it("never says no matches when scoring failed; counts the failed jobs apart", () => {
+		const complete = { ...progress, status: "complete", done: 3 };
+		const settled = { ...phase, settled: true };
+		expect(firstSearchLine(complete, { ...counts, failed: 2 }, settled)).toBe(
+			"Done: 8 jobs read, 3 set aside, 3 matches. Scoring failed for 2; OfferFinch retries at the next search.",
+		);
+		expect(
+			firstSearchLine(complete, { ...counts, matches: 0, failed: 1 }, settled),
+		).toBe(
+			"Done: 8 jobs read, 3 set aside, 0 matches. Scoring failed for 1; OfferFinch retries at the next search.",
 		);
 	});
 

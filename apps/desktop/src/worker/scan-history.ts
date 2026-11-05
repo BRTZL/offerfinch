@@ -126,8 +126,8 @@ export function scanLogFor(
 			await setScanProgress(db, run.id, progress);
 		},
 		async source(result, label) {
-			// The source's new jobs were recorded as each was inserted; again here, so a step
-			// retried after its insert (which then reads the job as not new) loses none.
+			// The source's new jobs were recorded as each was inserted, in its insert's transaction;
+			// again here (safe to repeat) for a source whose inserts went another way.
 			await recordScanRunJobs(db, {
 				flowRunId: run.id,
 				userId: run.userId,
@@ -162,29 +162,28 @@ export function scanLogFor(
 
 /**
  * The repository one scan run uses: as the original, except that each job it inserts is recorded
- * as this run's (`scan_run_jobs`), so setup's live first search lists exactly the jobs the scan
- * found while it runs. A job added by link or paste goes through another repository and is not
- * recorded.
+ * as this run's (`scan_run_jobs`) in the insert's own transaction, so setup's live first search
+ * lists exactly the jobs the scan found while it runs, and a job is never stored without its run.
+ * Every source inserts through it: the board, feed, site and web-search readers take the scan's
+ * deps, and LinkedIn's store is handed it (`LinkedInRunnerDeps.jobs`). A job added by link or
+ * paste goes through another repository and is not recorded.
  */
 export function scanRunRepo(
 	repo: PipelineDeps["repo"],
-	db: Database,
 	run: { id: string; userId: string },
 ): PipelineDeps["repo"] {
-	const upsertJob: PipelineDeps["repo"]["upsertJob"] = async (
+	const upsertJob: PipelineDeps["repo"]["upsertJob"] = (
 		userId,
 		companyId,
 		job,
-	) => {
-		const result = await repo.upsertJob(userId, companyId, job);
-		if (result.inserted && userId === run.userId)
-			await recordScanRunJobs(db, {
-				flowRunId: run.id,
-				userId,
-				jobIds: [result.jobId],
-			});
-		return result;
-	};
+		options,
+	) =>
+		repo.upsertJob(
+			userId,
+			companyId,
+			job,
+			userId === run.userId ? { ...options, scanRunId: run.id } : options,
+		);
 	return new Proxy(repo, {
 		get(target, key) {
 			if (key === "upsertJob") return upsertJob;

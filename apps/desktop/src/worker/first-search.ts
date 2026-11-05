@@ -40,6 +40,11 @@ export interface FirstSearchRow {
 	match: boolean;
 	/** Past the rules, but its scoring paused (the model cannot run now); it waits for a score. */
 	paused: boolean;
+	/**
+	 * Its application run errored before a score (retries spent): it stays found until the next
+	 * search's sweep starts it again. `reason` holds the run's error, shortened.
+	 */
+	failed: boolean;
 }
 
 export interface FoundJob {
@@ -54,6 +59,8 @@ export interface FoundJob {
 	score: number | null;
 	/** Why its scoring paused, when its last application run ended paused at the fit score. */
 	pausedFor?: string | null;
+	/** Why its scoring failed, when its application run errored with the job still found. */
+	failedFor?: string | null;
 }
 
 /** Rows shown at most; the counts cover every job. */
@@ -83,13 +90,20 @@ export function firstSearchRow(
 		score: null,
 		match: false,
 		paused: false,
+		failed: false,
 	};
 	switch (fate.kind) {
-		case "checking":
+		case "checking": {
 			// The rules passed (or flagged it) and the result is stored; scoring comes next.
-			return job.filterResult && job.filterResult.decision !== "reject"
-				? { ...base, state: "fits", paused: Boolean(job.pausedFor) }
-				: { ...base, state: "found" };
+			const fits = Boolean(
+				job.filterResult && job.filterResult.decision !== "reject",
+			);
+			const state = fits ? "fits" : "found";
+			// Its run errored before a score (at the rules or the fit score): failed, with why.
+			if (job.failedFor)
+				return { ...base, state, failed: true, reason: job.failedFor };
+			return { ...base, state, paused: fits && Boolean(job.pausedFor) };
+		}
 		case "filtered":
 			return { ...base, state: "rejected_by_filter", reason: fate.message };
 		case "hidden_company":
@@ -139,6 +153,7 @@ export function firstSearchView(found: FoundJob[], minScore: number) {
 		...(room > 0 ? aside.slice(-room) : []),
 	]);
 	const paused = all.filter((r) => r.paused);
+	const failed = all.filter((r) => r.failed);
 	const pausedFor =
 		found.find((j) => j.pausedFor && paused.some((r) => r.jobId === j.jobId))
 			?.pausedFor ?? null;
@@ -156,6 +171,8 @@ export function firstSearchView(found: FoundJob[], minScore: number) {
 			scored: count("scored"),
 			matches: all.filter((r) => r.match).length,
 			paused: paused.length,
+			/** Jobs whose scoring failed (their run errored); the next search tries them again. */
+			failed: failed.length,
 		},
 	};
 }
@@ -184,17 +201,45 @@ async function jobIdsOf(
 	return [...new Set((history?.sources ?? []).flatMap((s) => s.newJobIds))];
 }
 
+/** A run's error as a row's reason: its first line, without "Error:", in about 100 characters. */
+function shortError(message: string): string {
+	const line = (message.split("\n")[0] ?? "")
+		.replace(/^(\w*Error:\s*)+/, "")
+		.replace(/\s+/g, " ")
+		.trim();
+	if (!line) return "It stopped with an error";
+	return line.length > 100 ? `${line.slice(0, 99).trimEnd()}…` : line;
+}
+
+/** The paused run's `waitingFor`, when it ended paused at the fit score; else null. */
+function pausedWaitingFor(result: string | null): string | null {
+	if (!result) return null;
+	let parsed: { outcome?: unknown; state?: unknown; waitingFor?: unknown };
+	try {
+		parsed = JSON.parse(result);
+	} catch {
+		return null;
+	}
+	return parsed.outcome === "paused" &&
+		parsed.state === "found" &&
+		typeof parsed.waitingFor === "string"
+		? parsed.waitingFor
+		: null;
+}
+
 /**
- * For jobs still found: why scoring paused, when the job's application run (one per job) ended
- * paused at the fit score (`{ outcome: "paused", state: "found" }`, the model could not run).
- * A run that is queued or running again is not paused.
+ * For jobs still found, how the job's application run (one per job) ended without a score:
+ * `paused` at the fit score (`{ outcome: "paused", state: "found" }`, the model could not run),
+ * with the pause's message, or `failed` (the run errored, its retries spent), with its error
+ * shortened. A run that is queued or running again is neither.
  */
-async function pausedScoring(
+async function scoringStops(
 	db: Database,
 	userId: string,
 	jobIds: string[],
-): Promise<Map<string, string>> {
+): Promise<{ paused: Map<string, string>; failed: Map<string, string> }> {
 	const paused = new Map<string, string>();
+	const failed = new Map<string, string>();
 	for (let i = 0; i < jobIds.length; i += 400) {
 		const chunk = jobIds.slice(i, i + 400);
 		const runs = await db
@@ -202,6 +247,7 @@ async function pausedScoring(
 				params: flowRuns.params,
 				status: flowRuns.status,
 				result: flowRuns.result,
+				error: flowRuns.error,
 			})
 			.from(flowRuns)
 			.where(
@@ -211,27 +257,21 @@ async function pausedScoring(
 				),
 			);
 		for (const run of runs) {
-			if (run.status !== "complete" || !run.result) continue;
-			let result: { outcome?: unknown; state?: unknown; waitingFor?: unknown };
-			try {
-				result = JSON.parse(run.result);
-			} catch {
+			const jobId = run.params.jobId;
+			if (typeof jobId !== "string") continue;
+			if (run.status === "errored") {
+				failed.set(jobId, shortError(run.error ?? ""));
 				continue;
 			}
-			const jobId = run.params.jobId;
-			if (
-				typeof jobId === "string" &&
-				result.outcome === "paused" &&
-				result.state === "found" &&
-				typeof result.waitingFor === "string"
-			)
-				paused.set(jobId, result.waitingFor);
+			const waitingFor =
+				run.status === "complete" ? pausedWaitingFor(run.result) : null;
+			if (waitingFor) paused.set(jobId, waitingFor);
 		}
 	}
-	return paused;
+	return { paused, failed };
 }
 
-/** The jobs a run found, oldest first, with this user's applications and why scoring paused. */
+/** The jobs a run found, oldest first, with this user's applications and why scoring stopped. */
 export async function jobsFoundBy(
 	db: Database,
 	run: { id: string; userId: string },
@@ -284,7 +324,7 @@ export async function jobsFoundBy(
 			a.createdAt.getTime() - b.createdAt.getTime() ||
 			(a.jobId < b.jobId ? -1 : a.jobId > b.jobId ? 1 : 0),
 	);
-	const paused = await pausedScoring(
+	const { paused, failed } = await scoringStops(
 		db,
 		run.userId,
 		rows.filter((r) => r.state === "found").map((r) => r.jobId),
@@ -293,5 +333,6 @@ export async function jobsFoundBy(
 		...r,
 		filterResult: (r.filterResult as FilterResult | null) ?? null,
 		pausedFor: paused.get(r.jobId) ?? null,
+		failedFor: failed.get(r.jobId) ?? null,
 	}));
 }
