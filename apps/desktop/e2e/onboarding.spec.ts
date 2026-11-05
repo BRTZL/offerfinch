@@ -7,7 +7,7 @@ import {
 	test,
 } from "@playwright/test";
 
-import { launchApp, openRoute, tempUserData } from "./launch";
+import { launchApp, openRoute, pickFakeModels, tempUserData } from "./launch";
 
 /**
  * The first run as a focused, full-window flow: no app sidebar, one centred column, a footer
@@ -122,6 +122,8 @@ test("onboarding: centred, steady footer, keyboard and drag and drop on the resu
 		await expect(page.getByTestId("step-count")).toContainText("Step 1 of 5");
 		await expect(page.getByTestId("setup-ai")).toBeVisible();
 		await frames(app, page, "connect-ai");
+		// A model to draft with, so the resume step offers Upload and Paste (see setup-open-steps).
+		await pickFakeModels(page);
 		// Back and the primary action stay where they are from step to step.
 		const back1 = await boxOf(page, "step-back");
 		const primary1 = await boxOf(page, "step-continue");

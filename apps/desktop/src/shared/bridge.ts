@@ -170,8 +170,15 @@ export type UpdateState =
 			currentVersion: string;
 			version: string;
 			percent: number;
+			/** The release's notes as plain lines (GitHub's release body), newest first. */
+			notes: string[];
 	  }
-	| { status: "ready"; currentVersion: string; version: string }
+	| {
+			status: "ready";
+			currentVersion: string;
+			version: string;
+			notes: string[];
+	  }
 	| {
 			status: "error";
 			currentVersion: string;

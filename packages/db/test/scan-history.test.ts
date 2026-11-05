@@ -12,6 +12,7 @@ import {
 	type Database,
 	listScanRuns,
 	recordIdleSources,
+	recordScanRunJobs,
 	recordScanSource,
 	SCAN_HISTORY_KEEP,
 	scanJobs,
@@ -170,18 +171,47 @@ describe("scan history", () => {
 		});
 	});
 
-	it("keeps the newest 100 runs per user", async () => {
+	it("keeps the newest 100 runs per user, and the job lists of those only", async () => {
+		const [company] = await execute<{ id: string }>(
+			db,
+			sql`select id from companies where user_id = 'u1' limit 1`,
+		);
+		const { jobId } = await repo.upsertJob(
+			"u1",
+			company?.id ?? "",
+			job("bulk-job", "Bulk Engineer"),
+		);
 		const base = Date.now() + 10_000;
-		for (let i = 0; i < SCAN_HISTORY_KEEP + 5; i++)
+		for (let i = 0; i < SCAN_HISTORY_KEEP + 5; i++) {
 			await beginScanRun(db, {
 				userId: "u1",
 				flowRunId: `scan-u1-bulk-${i}`,
 				trigger: "timer",
 				startedAt: new Date(base + i),
 			});
+			if (i === 0 || i === SCAN_HISTORY_KEEP + 4)
+				await recordScanRunJobs(db, {
+					flowRunId: `scan-u1-bulk-${i}`,
+					userId: "u1",
+					jobIds: [jobId, jobId],
+				});
+		}
 		const rows = await listScanRuns(db, "u1", 500);
 		expect(rows).toHaveLength(SCAN_HISTORY_KEEP);
 		expect(rows[0]?.flowRunId).toBe(`scan-u1-bulk-${SCAN_HISTORY_KEEP + 4}`);
 		expect(rows.some((r) => r.flowRunId === "scan-u1-bulk-0")).toBe(false);
+		// The pruned run's jobs go; the kept one's stay (recorded twice, stored once).
+		await beginScanRun(db, {
+			userId: "u1",
+			flowRunId: "scan-u1-bulk-last",
+			trigger: "timer",
+			startedAt: new Date(base + 1_000),
+		});
+		expect(
+			await execute<{ flow_run_id: string }>(
+				db,
+				sql`select flow_run_id from scan_run_jobs order by flow_run_id`,
+			),
+		).toEqual([{ flow_run_id: `scan-u1-bulk-${SCAN_HISTORY_KEEP + 4}` }]);
 	});
 });

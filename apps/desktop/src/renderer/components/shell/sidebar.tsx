@@ -9,16 +9,13 @@ import {
 	UserRound,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useDemoMode } from "@/components/desktop/demo";
 import { Cells, Mark } from "@/components/system/bits";
 import { SidebarToggle } from "@/components/system/shell";
 import { SubNavGroup, SubNavLink } from "@/components/system/subnav";
-import { Button } from "@/components/ui/button";
-import { desktop } from "@/lib/desktop";
 import { orpc } from "@/lib/orpc";
 import { prefetchScreen } from "@/lib/prefetch";
 import { Link, usePathname } from "@/lib/router";
-import { useUpdateState } from "@/lib/updates";
+import { UpdateIndicator } from "./update-indicator";
 
 type Item = {
 	href: string;
@@ -74,15 +71,12 @@ function SidebarLink({ item, active }: { item: Item; active: boolean }) {
 
 /**
  * The window's sidebar: the traffic lights at its top, the pages with plain counts (as in
- * Mail), and the scan state with the mark at its foot.
+ * Mail), and the scan state with the mark at its foot, beside the update indicator.
  */
 export function Sidebar() {
 	const pathname = usePathname();
 	const status = useDesktopStatus();
 	const s = status.data;
-	const update = useUpdateState();
-	// Try-it mode installs nothing (main refuses it too).
-	const demo = useDemoMode();
 	const progress = useScanProgress(s?.state === "scanning" ? s.scanId : null);
 	const main: Item[] = [
 		{ href: "/", label: "Home", icon: <House /> },
@@ -145,65 +139,55 @@ export function Sidebar() {
 					/>
 				))}
 			</div>
-			<Link
-				href="/scans"
-				className="ease-standard hover:bg-hover focus-visible:ring-ring mx-2 mt-auto mb-2 flex items-center gap-3 rounded-lg px-2 py-2 transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-inset"
-				data-testid="scan-status"
-				title="Scan history: what each scan searched, found and set aside"
-				onMouseEnter={() => prefetchScreen("/scans")}
-			>
-				<Mark size={16} />
-				<div className="flex min-w-0 flex-col gap-1">
-					{!s ? (
-						<span className="text-muted-foreground text-xs">Starting…</span>
-					) : s.state === "scanning" ? (
-						<>
-							<span className="text-foreground truncate text-xs">
-								{p?.total
-									? `Scanning ${Math.min(p.done + 1, p.total)} of ${p.total}`
-									: "Scanning…"}
-							</span>
-							{p?.total ? (
-								<Cells
-									total={p.total}
-									on={p.done}
-									tone="ink"
-									size="sm"
-									label={`${p.done} of ${p.total} ${p.unit} read`}
-								/>
-							) : null}
-						</>
-					) : (
-						<>
-							<span className="text-foreground truncate text-xs">
-								{s.paused
-									? "Scans paused"
-									: s.lastScanAt
-										? `Scanned ${since(s.lastScanAt)}`
-										: "Not scanned yet"}
-							</span>
-							{s.lastScanSummary ? (
-								<span className="text-2xs text-muted-foreground truncate">
-									{s.lastScanSummary}
+			<div className="mx-2 mt-auto mb-2 flex items-center gap-1">
+				<Link
+					href="/scans"
+					className="ease-standard hover:bg-hover focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2 py-2 transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-inset"
+					data-testid="scan-status"
+					title="Scan history: what each scan searched, found and set aside"
+					onMouseEnter={() => prefetchScreen("/scans")}
+				>
+					<Mark size={16} />
+					<div className="flex min-w-0 flex-col gap-1">
+						{!s ? (
+							<span className="text-muted-foreground text-xs">Starting…</span>
+						) : s.state === "scanning" ? (
+							<>
+								<span className="text-foreground truncate text-xs">
+									{p?.total
+										? `Scanning ${Math.min(p.done + 1, p.total)} of ${p.total}`
+										: "Scanning…"}
 								</span>
-							) : null}
-						</>
-					)}
-				</div>
-			</Link>
-			{update?.status === "ready" && !demo ? (
-				<div className="px-3 pb-3">
-					<Button
-						size="sm"
-						className="w-full"
-						data-testid="sidebar-update"
-						title={`OfferFinch ${update.version} is downloaded`}
-						onClick={() => void desktop.updates.install()}
-					>
-						Restart to Update
-					</Button>
-				</div>
-			) : null}
+								{p?.total ? (
+									<Cells
+										total={p.total}
+										on={p.done}
+										tone="ink"
+										size="sm"
+										label={`${p.done} of ${p.total} ${p.unit} read`}
+									/>
+								) : null}
+							</>
+						) : (
+							<>
+								<span className="text-foreground truncate text-xs">
+									{s.paused
+										? "Scans paused"
+										: s.lastScanAt
+											? `Scanned ${since(s.lastScanAt)}`
+											: "Not scanned yet"}
+								</span>
+								{s.lastScanSummary ? (
+									<span className="text-2xs text-muted-foreground truncate">
+										{s.lastScanSummary}
+									</span>
+								) : null}
+							</>
+						)}
+					</div>
+				</Link>
+				<UpdateIndicator />
+			</div>
 		</nav>
 	);
 }

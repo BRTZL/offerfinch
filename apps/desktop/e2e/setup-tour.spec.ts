@@ -137,8 +137,9 @@ test("setup's happy path: found both CLIs, five steps, first matches with a chir
 
 		// 4. Stay in the loop.
 		await expect(page.getByTestId("step-count")).toContainText("Step 4 of 5");
-		await page.getByTestId("notify-test").click();
+		// Continue never waits for a test notification.
 		await expect(page.getByTestId("step-continue")).toBeEnabled();
+		await page.getByTestId("notify-test").click();
 		await beat(page);
 		await frames(app, page, "6-stay-in-the-loop");
 		await page.getByTestId("step-continue").click();
@@ -148,15 +149,14 @@ test("setup's happy path: found both CLIs, five steps, first matches with a chir
 		await frames(app, page, "7-first-search");
 		await page.getByTestId("first-scan-start").click();
 		await expect(page.getByTestId("first-scan-progress")).toContainText(
-			/first .*in\./,
+			/Done: .* waiting in your Inbox\./,
 			{ timeout: 120_000 },
 		);
 		await expect.poll(async () => (await chirps(app)).length).toBe(2);
-		// The first matches, inline: up to three rows with company, title and fit.
+		// The jobs it found, live; the matches with company, title and fit.
 		const rows = page.getByTestId("first-match");
 		await expect(rows.first()).toBeVisible();
 		expect(await rows.count()).toBeGreaterThanOrEqual(1);
-		expect(await rows.count()).toBeLessThanOrEqual(3);
 		await expect(rows.first().locator("[data-fit]")).toBeVisible();
 		await expect(page.getByTestId("onboarding-finish")).toHaveText(
 			"Open the Inbox",

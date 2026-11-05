@@ -229,13 +229,21 @@ async function main() {
 		}
 	});
 
-	// Catch up after sleep: the worker starts this hour's scan if it has not run.
-	powerMonitor.on("resume", () =>
-		mainState.worker.post({ type: "wake", reason: "resume" }),
-	);
-	powerMonitor.on("unlock-screen", () =>
-		mainState.worker.post({ type: "wake", reason: "unlock" }),
-	);
+	// Catch up after sleep: the worker starts this hour's scan if it has not run. Updates are
+	// checked again too, after a pause: right after waking the network is often not back yet.
+	const checkUpdatesSoon = () => {
+		setTimeout(() => mainState.updates?.checkIfStale(), 45_000).unref?.();
+	};
+	powerMonitor.on("resume", () => {
+		mainState.worker.post({ type: "wake", reason: "resume" });
+		checkUpdatesSoon();
+	});
+	powerMonitor.on("unlock-screen", () => {
+		mainState.worker.post({ type: "wake", reason: "unlock" });
+		checkUpdatesSoon();
+	});
+	// Coming back to the window hears of a new release without waiting for the timer.
+	app.on("browser-window-focus", () => mainState.updates?.checkIfStale());
 
 	const openedAtLogin =
 		app.getLoginItemSettings().wasOpenedAtLogin ||

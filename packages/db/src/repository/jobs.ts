@@ -5,7 +5,10 @@ import type {
 	SourceHealth,
 } from "@offerfinch/core/domain/types";
 import { normalizeUrl } from "@offerfinch/core/domain/url";
-import type { ApplicationRecord } from "@offerfinch/core/pipeline/ports";
+import type {
+	ApplicationRecord,
+	UpsertJobOptions,
+} from "@offerfinch/core/pipeline/ports";
 import {
 	and,
 	asc,
@@ -24,6 +27,7 @@ import {
 	applicationTransitions,
 	companies,
 	jobs,
+	scanRunJobs,
 } from "../schema/pipeline";
 import type { DrizzlePipelineRepositoryContext } from "./context";
 
@@ -79,6 +83,7 @@ export const jobsMethods = {
 		userId: string,
 		companyId: string,
 		job: NormalizedJob,
+		options: UpsertJobOptions = {},
 	): Promise<{ jobId: string; inserted: boolean }> {
 		const urlNormalized = normalizeUrl(job.url);
 		return this.db.transaction(async (tx) => {
@@ -185,6 +190,13 @@ export const jobsMethods = {
 						tx,
 					);
 			}
+			// The scan run that found it, in the same transaction: a job is never stored without
+			// it, so a retried step (which then reads the job as not new) loses none.
+			if (options.scanRunId)
+				await tx
+					.insert(scanRunJobs)
+					.values({ flowRunId: options.scanRunId, userId, jobId: row.id })
+					.onConflictDoNothing();
 			return { jobId: row.id, inserted: true };
 		});
 	},

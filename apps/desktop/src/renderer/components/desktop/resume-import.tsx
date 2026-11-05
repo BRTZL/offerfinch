@@ -7,7 +7,7 @@ import {
 	PenLine,
 	Type,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useStepAction } from "@/components/desktop/step-action";
 import { ErrorLine, IconTile, Notice } from "@/components/system/bits";
@@ -38,6 +38,14 @@ const sizeLabel = (bytes: number) =>
 		? `${(bytes / MB).toFixed(1)} MB`
 		: `${Math.max(1, Math.round(bytes / 1000))} KB`;
 const ACCEPT = ".pdf,.txt,.md,application/pdf,text/plain,text/markdown";
+
+/** Why a picked file cannot be read, or null when it can. */
+function refuseFile(file: File): string | null {
+	if (!/\.(pdf|txt|md|markdown)$/i.test(file.name))
+		return "Choose a PDF, TXT or Markdown file.";
+	if (file.size > 5 * MB) return "That file is over 5 MB.";
+	return null;
+}
 
 type Mode = "choose" | "upload" | "paste";
 type Picked = {
@@ -80,6 +88,57 @@ function useFileDrop(onFile: (file: File) => void, enabled: boolean) {
 }
 
 /**
+ * The three ways in. `blocked` (no model can draft yet) turns Upload and Paste off; Start from
+ * scratch needs no model.
+ */
+function ResumeOptions({
+	blocked,
+	dragging,
+	onUpload,
+	onPaste,
+	onScratch,
+}: {
+	blocked?: ReactNode;
+	dragging: boolean;
+	onUpload: () => void;
+	onPaste: () => void;
+	onScratch?: () => void;
+}) {
+	const off = Boolean(blocked);
+	return (
+		<fieldset className="flex flex-col gap-2">
+			<legend className="sr-only">How to add your resume</legend>
+			<OptionCard
+				icon={<FileUp />}
+				title="Upload a file"
+				description="PDF, TXT or Markdown, up to 5 MB. Click, or drop it anywhere here."
+				onClick={onUpload}
+				dragging={dragging}
+				disabled={off}
+				testId="resume-option-upload"
+			/>
+			<OptionCard
+				icon={<Type />}
+				title="Paste or type it"
+				description="Your resume or a few notes about your work."
+				onClick={onPaste}
+				disabled={off}
+				testId="resume-option-paste"
+			/>
+			{onScratch ? (
+				<OptionCard
+					icon={<PenLine />}
+					title="Start from scratch"
+					description="Add your roles and skills by hand in Profile."
+					onClick={onScratch}
+					testId="resume-option-scratch"
+				/>
+			) : null}
+		</fieldset>
+	);
+}
+
+/**
  * Step: the resume, by one of three ways: upload a file (click or drop), paste or type it, or
  * start from scratch. Your AI drafts profile records from the text; nothing is saved until the
  * draft is reviewed. In onboarding, "Draft my profile" sits in the footer.
@@ -87,9 +146,15 @@ function useFileDrop(onFile: (file: File) => void, enabled: boolean) {
 export function ResumeImport({
 	onDraft,
 	onScratch,
+	blocked,
 }: {
 	onDraft: (draft: Draft) => void;
 	onScratch?: () => void;
+	/**
+	 * Why no model can draft from a resume yet, shown above the options: Upload, Paste and a
+	 * dropped file are off; Start from scratch still works.
+	 */
+	blocked?: ReactNode;
 }) {
 	const existing = useQuery({
 		...orpc.profile.get.queryOptions(),
@@ -105,24 +170,17 @@ export function ResumeImport({
 		onSuccess: (result) => onDraft(result.records),
 	});
 	const read = async (file: File) => {
+		if (blocked) return;
 		setMode("upload");
 		setText("");
 		structure.reset();
-		if (!/\.(pdf|txt|md|markdown)$/i.test(file.name)) {
+		const refused = refuseFile(file);
+		if (refused) {
 			setPicked({
 				name: file.name,
 				size: file.size,
 				state: "error",
-				error: "Choose a PDF, TXT or Markdown file.",
-			});
-			return;
-		}
-		if (file.size > 5 * MB) {
-			setPicked({
-				name: file.name,
-				size: file.size,
-				state: "error",
-				error: "That file is over 5 MB.",
+				error: refused,
 			});
 			return;
 		}
@@ -150,11 +208,15 @@ export function ResumeImport({
 		}
 	};
 	const ready = text.trim().length >= 20 && picked?.state !== "reading";
-	const drop = useFileDrop((file) => void read(file), !structure.isPending);
+	const drop = useFileDrop(
+		(file) => void read(file),
+		!structure.isPending && !blocked,
+	);
 	const inFooter = useStepAction({
 		label: "Draft my profile",
 		onClick: () => structure.mutate(),
-		disabled: mode === "choose" || !ready || structure.isPending,
+		disabled:
+			mode === "choose" || !ready || structure.isPending || Boolean(blocked),
 		busy: structure.isPending,
 		testId: "onboarding-structure",
 		title:
@@ -200,35 +262,17 @@ export function ResumeImport({
 					your answers to questions stay.
 				</Notice>
 			)}
+			{/* Readiness can arrive after a way in was opened: the notice shows in every mode. */}
+			{blocked}
 			{picker}
 			{mode === "choose" && (
-				<fieldset className="flex flex-col gap-2">
-					<legend className="sr-only">How to add your resume</legend>
-					<OptionCard
-						icon={<FileUp />}
-						title="Upload a file"
-						description="PDF, TXT or Markdown, up to 5 MB. Click, or drop it anywhere here."
-						onClick={() => fileInput.current?.click()}
-						dragging={drop.dragging}
-						testId="resume-option-upload"
-					/>
-					<OptionCard
-						icon={<Type />}
-						title="Paste or type it"
-						description="Your resume or a few notes about your work."
-						onClick={() => setMode("paste")}
-						testId="resume-option-paste"
-					/>
-					{onScratch ? (
-						<OptionCard
-							icon={<PenLine />}
-							title="Start from scratch"
-							description="Add your roles and skills by hand in Profile."
-							onClick={onScratch}
-							testId="resume-option-scratch"
-						/>
-					) : null}
-				</fieldset>
+				<ResumeOptions
+					blocked={blocked}
+					dragging={drop.dragging}
+					onUpload={() => fileInput.current?.click()}
+					onPaste={() => setMode("paste")}
+					onScratch={onScratch}
+				/>
 			)}
 			{mode === "upload" && (
 				<div className="flex flex-col gap-3">
@@ -324,7 +368,7 @@ export function ResumeImport({
 			{!inFooter && mode !== "choose" ? (
 				<div>
 					<Button
-						disabled={!ready}
+						disabled={!ready || Boolean(blocked)}
 						pending={structure.isPending}
 						onClick={() => structure.mutate()}
 						data-testid="onboarding-structure"

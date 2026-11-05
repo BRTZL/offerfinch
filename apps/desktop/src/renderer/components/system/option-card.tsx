@@ -13,6 +13,7 @@ export function OptionCard({
 	description,
 	onClick,
 	dragging,
+	disabled,
 	testId,
 }: {
 	icon: ReactNode;
@@ -20,6 +21,7 @@ export function OptionCard({
 	description: ReactNode;
 	onClick: () => void;
 	dragging?: boolean;
+	disabled?: boolean;
 	testId?: string;
 }) {
 	return (
@@ -29,9 +31,11 @@ export function OptionCard({
 			data-testid={testId}
 			data-dragging={dragging || undefined}
 			onClick={onClick}
+			disabled={disabled}
 			className={cn(
 				"border-border bg-card ease-standard hover:bg-hover focus-visible:ring-ring flex w-full items-start gap-3 rounded-xl border px-4 py-3.5 text-left shadow-xs transition-colors duration-150 outline-none focus-visible:ring-2",
 				dragging && "border-primary bg-primary-surface",
+				disabled && "pointer-events-none opacity-50",
 			)}
 		>
 			<IconTile>{icon}</IconTile>

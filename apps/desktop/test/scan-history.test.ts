@@ -359,6 +359,7 @@ describe("a running scan's progress", () => {
 			total: 2,
 			done: 0,
 			line: "Reading Job-board search: frontend remote",
+			source: "Job-board search",
 		});
 		await log.source(
 			{ provider: "job-board-search", queries: 1, fetched: 3, newJobIds: [] },
@@ -374,6 +375,7 @@ describe("a running scan's progress", () => {
 			total: 2,
 			done: 1,
 			line: "Reading Indeed…",
+			source: "Indeed",
 		});
 	});
 });
