@@ -8,7 +8,7 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
-## Unreleased
+## 0.1.6 (2026-11-05)
 
 - OfferFinch checks for a new version every 30 minutes, and again when your Mac wakes or you
   come back to the window, instead of every 6 hours.
