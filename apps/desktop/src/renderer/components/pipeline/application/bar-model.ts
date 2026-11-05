@@ -50,6 +50,18 @@ export function approveBlocked(app: BarApp | undefined): string | null {
 	return "Only documents that passed every check can be approved.";
 }
 
+/**
+ * The document the More menu's exports (Save PDF, Open Word Document, Copy Text) act on: the
+ * open tab's, or none while an earlier version is on screen, since they would act on the
+ * current version instead of the one being read (the document bar hides its menu then too).
+ */
+export function exportTarget(
+	label: string | null,
+	readingEarlier: boolean,
+): string | null {
+	return readingEarlier ? null : label;
+}
+
 export type MoreItem =
 	| { id: "redraft"; label: string; hint: string; disabled: string | null }
 	| { id: "open-posting" | "copy-link"; label: string }

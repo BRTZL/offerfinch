@@ -16,7 +16,7 @@ import { ResizeHandle } from "@/components/system/resize-handle";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { DetailActionBar, type DocumentExports } from "./action-bar";
-import { barKind } from "./bar-model";
+import { barKind, exportTarget } from "./bar-model";
 import {
 	applicationDocuments,
 	DOCUMENT_LABEL,
@@ -49,6 +49,7 @@ export function ApplicationDetail(props: ApplicationDetailProps) {
 		postingOpen,
 		setPostingOpen,
 		tab,
+		older,
 		detailsOpen,
 		toggleDetails,
 		rightOpen,
@@ -227,7 +228,10 @@ export function ApplicationDetail(props: ApplicationDetailProps) {
 					</ReadingColumn>
 				)}
 				{bar({
-					label: current ? (DOCUMENT_LABEL[tab] ?? null) : null,
+					label: exportTarget(
+						current ? (DOCUMENT_LABEL[tab] ?? null) : null,
+						older?.appId === loaded.id && older.kind === tab,
+					),
 					content: current?.content ?? null,
 					pdfId: pdf?.id ?? null,
 					docxId: docx?.id ?? null,

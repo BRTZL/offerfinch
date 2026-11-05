@@ -188,12 +188,31 @@ test("Redraft the letter with an instruction: version 2 of the letter, the CV un
 			page.getByRole("button", { name: "Edit Cover letter" }),
 		).toHaveCount(0);
 		await expect(page.getByTestId("view-toggle")).toHaveCount(0);
+		// The bar's More keeps Redraft and the posting, but no export that would act on
+		// version 2 while version 1 is on screen.
+		await page.getByTestId("more-actions").click();
+		const more = page.getByTestId("more-menu");
+		await expect(more.getByTestId("more-redraft")).toBeVisible();
+		await expect(more.getByTestId("more-open-posting")).toBeVisible();
+		await expect(more.getByTestId("more-copy-link")).toBeVisible();
+		for (const id of ["more-copy-text", "more-save-pdf", "more-open-docx"])
+			await expect(more.getByTestId(id)).toHaveCount(0);
+		await page.keyboard.press("Escape");
+		await expect(more).toHaveCount(0);
 		await shots(app, page, "redraft-version-1");
 		await page
 			.getByTestId("earlier-version")
 			.getByRole("button", { name: /Back to version 2/ })
 			.click();
 		await expect(page.getByTestId("doc-cover_letter")).toBeVisible();
+		// Back on version 2, Copy Text copies version 2, not version 1.
+		await app.evaluate(({ clipboard }) => clipboard.writeText(""));
+		await page.getByTestId("more-actions").click();
+		await page.getByTestId("more-copy-text").click();
+		await expect
+			.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
+			.toBe(latest("cover_letter")?.content);
+		expect(latest("cover_letter")?.content).not.toBe(letter?.content);
 
 		// Metered like any tailoring call.
 		expect(

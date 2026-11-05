@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	approveBlocked,
 	barKind,
+	exportTarget,
 	moreItems,
 } from "../src/renderer/components/pipeline/application/bar-model";
 import {
@@ -294,6 +295,24 @@ describe("Action bar", () => {
 			disabled: "The Word file is not exported yet",
 		});
 		for (const item of items) expect(item.label).not.toMatch(/(…|\.\.\.)$/);
+	});
+
+	it("leaves the document's exports out of More while an earlier version is on screen", () => {
+		expect(exportTarget("Letter", false)).toBe("Letter");
+		expect(exportTarget("Letter", true)).toBeNull();
+		const earlier = moreItems({
+			app: app(),
+			hasDocuments: true,
+			document: exportTarget("Letter", true),
+			pdf: true,
+			docx: true,
+		});
+		// Redraft and the posting stay; nothing that would act on the current version.
+		expect(earlier.map((i) => i.id)).toEqual([
+			"redraft",
+			"open-posting",
+			"copy-link",
+		]);
 	});
 
 	it("turns Redraft off while one runs, and leaves it out before anything is drafted", () => {
