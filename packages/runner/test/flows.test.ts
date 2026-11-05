@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import type { NormalizedJob } from "@offerfinch/core/domain/types";
 import type { ExportInput, ExportResult } from "@offerfinch/core/export/export";
 import { NoopNotifier } from "@offerfinch/core/notify/ntfy";
@@ -72,8 +73,9 @@ describe("the core flows on the durable runner", () => {
 			db,
 			"u1",
 			await loadProfileFromDir(
-				new URL("../../core/test/fixtures/tailor-profile", import.meta.url)
-					.pathname,
+				fileURLToPath(
+					new URL("../../core/test/fixtures/tailor-profile", import.meta.url),
+				),
 			),
 			"test",
 		);

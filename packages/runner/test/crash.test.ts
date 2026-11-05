@@ -1,11 +1,14 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { flowRuns, flowSteps } from "@offerfinch/db/schema/jobs";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import { openTestDb, probeLog, tempDbPath, until } from "./helpers";
 
-const WORKER = new URL("./fixtures/probe-worker.ts", import.meta.url).pathname;
+const WORKER = fileURLToPath(
+	new URL("./fixtures/probe-worker.ts", import.meta.url),
+);
 
 function worker(file: string, run: string, env: Record<string, string> = {}) {
 	return spawn(process.execPath, ["--import", "tsx", WORKER, file, run], {

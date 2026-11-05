@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import type { ExportInput, ExportResult } from "@offerfinch/core/export/export";
 import { NoopNotifier } from "@offerfinch/core/notify/ntfy";
 import { runApplicationFlow } from "@offerfinch/core/pipeline/application-flow";
@@ -49,8 +50,9 @@ describe("Redraft on the durable runner", () => {
 			db,
 			"u1",
 			await loadProfileFromDir(
-				new URL("../../core/test/fixtures/tailor-profile", import.meta.url)
-					.pathname,
+				fileURLToPath(
+					new URL("../../core/test/fixtures/tailor-profile", import.meta.url),
+				),
 			),
 			"test",
 		);

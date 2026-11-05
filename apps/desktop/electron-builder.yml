@@ -14,11 +14,10 @@ files:
   - "!out/meta.json"
   - "!out/**/*.map"
   - package.json
-  # Only what runs: better-sqlite3's JS and its macOS prebuilds, Playwright's core without
+  # Only what runs: better-sqlite3's JS and platform prebuilds, Playwright's core without
   # its trace viewer and recorder UIs.
   - "!**/node_modules/better-sqlite3/{deps,src,build,docs}/**"
   - "!**/node_modules/better-sqlite3/binding.gyp"
-  - "!**/node_modules/better-sqlite3/prebuilds/{linux,linuxmusl,win32}-*"
   - "!**/node_modules/playwright-core/lib/vite/**"
   - "!**/node_modules/playwright-core/lib/webp_codec.wasm"
 extraResources:
@@ -39,6 +38,8 @@ npmRebuild: false
 nodeGypRebuild: false
 electronLanguages: [en]
 mac:
+  files:
+    - "!**/node_modules/better-sqlite3/prebuilds/{linux,linuxmusl,win32}-*"
   target:
     - target: dmg
       arch: [arm64, x64]
@@ -70,6 +71,20 @@ mac:
     # The notification chirp: macOS finds a notification sound by name in the bundle's Resources.
     - from: build/chirp.aiff
       to: chirp.aiff
+win:
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+  # electron-builder converts this 1024px source to ICO.
+  icon: build/icon.png
+  files:
+    - "!**/node_modules/better-sqlite3/prebuilds/{darwin,linux,linuxmusl}-*"
+  # Windows releases and updates are not published yet.
+  publish: null
+nsis:
+  oneClick: true
+  perMachine: false
+  artifactName: OfferFinch-${version}-${arch}-setup.exe
 # Window art and volume icon: rendered by scripts/icons.mjs (docs/brand).
 dmg:
   title: OfferFinch ${version}
