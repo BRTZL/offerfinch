@@ -101,6 +101,44 @@ export const aiRouter = {
 		};
 	}),
 	/**
+	 * Installs a provider OfferFinch downloads itself (Gemini through Antigravity: Google's pinned
+	 * server, checked against its size and hash before it is unpacked). Returns its state after.
+	 */
+	install: protectedProcedure
+		.input(z.object({ provider: z.literal("antigravity") }))
+		.handler(async ({ input }) => {
+			const w = worker();
+			try {
+				const state = await w.subscriptions.install(input.provider);
+				await w.rebuild();
+				return { state };
+			} catch (error) {
+				throw new ORPCError("BAD_REQUEST", {
+					message: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}),
+	/**
+	 * OfferFinch's own sign-in to a provider (Gemini through Antigravity): Google's page opens in
+	 * the browser, and this answers once the sign-in finished (or failed, or timed out after five
+	 * minutes). Asking again while one waits opens the same page again. Returns the state after.
+	 */
+	signIn: protectedProcedure
+		.input(z.object({ provider: z.literal("antigravity") }))
+		.handler(async ({ input }) => {
+			const w = worker();
+			try {
+				const state = await w.subscriptions.signIn(input.provider);
+				await w.rebuild();
+				w.runner.poke();
+				return { state };
+			} catch (error) {
+				throw new ORPCError("BAD_REQUEST", {
+					message: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}),
+	/**
 	 * What each plan has used of its windows and OfferFinch's share, as last read: nothing is
 	 * started. The reads happen with each call, with each CLI check, and on `refreshUsage`.
 	 */

@@ -16,6 +16,7 @@ import { isAutomated } from "./automation";
 import { recoverInterruptedRestore } from "./backup";
 import { moveDatabaseOnce } from "./database-file";
 import { demoFolder, eraseLeftoverDemo } from "./demo";
+import { openSignInPage } from "./external-links";
 import { registerIpc } from "./ipc";
 import { buildMenu } from "./menu";
 import { noticeActionDeps } from "./notice-action-deps";
@@ -191,6 +192,7 @@ async function main() {
 			mainState.lastStatus = message.status;
 			updateTray();
 		} else if (message.type === "notify") void showNotice(message.notice);
+		else if (message.type === "openSignIn") void openSignInPage(message.url);
 		else if (message.type === "log")
 			log(`worker ${message.level}: ${message.message}`, message.data);
 		else if (message.type === "fatal") {

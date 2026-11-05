@@ -11,20 +11,25 @@ import type {
 	PlanSnapshot,
 	PlanUsageSink,
 } from "@offerfinch/core/scoring/plan-usage";
+import { formatModelRef, type ModelInfo } from "../shared/providers";
+import { antigravityState } from "./antigravity";
 import type { LocalLlmFactory } from "./model-factories";
 import {
 	CLAUDE_FIX,
 	type CliState,
 	CODEX_FIX,
+	type ManagedProvider,
 	type Subscriptions,
 	withProviders,
 } from "./subscriptions";
 
 /**
- * Test runs only: Claude Code and Codex as a test says they are, never the CLIs on this Mac.
- * The state comes from `fake-clis.json` in the data folder, read on every check so a test can
- * change it while the app runs:
- * `{"claude": "logged_in", "codex": "missing"}`. Unset: neither is installed.
+ * Test runs only: Claude Code, Codex and Gemini (Antigravity) as a test says they are, never the
+ * CLIs on this Mac or Google's server. The state comes from `fake-clis.json` in the data folder,
+ * read on every check so a test can change it while the app runs:
+ * `{"claude": "logged_in", "codex": "missing", "antigravity": "logged_out"}`. Unset: none is
+ * installed. Antigravity's Install and Sign in move it on in the file (missing, then logged_out,
+ * then logged_in) without a download or a browser.
  */
 type FakeCli = "logged_in" | "logged_out" | "not_subscription" | "missing";
 const FAKE_FILE = "fake-clis.json";
@@ -39,10 +44,13 @@ interface FakeUsage {
 	weekly?: number;
 }
 
+type FakeName = "claude" | "codex" | "antigravity";
+
 interface FakeState {
 	claude: FakeCli;
 	codex: FakeCli;
-	usage: Partial<Record<"claude" | "codex", FakeUsage>>;
+	antigravity: FakeCli;
+	usage: Partial<Record<FakeName, FakeUsage>>;
 }
 
 function read(dir: string): FakeState {
@@ -57,25 +65,45 @@ function read(dir: string): FakeState {
 		return {
 			claude: pick(raw.claude),
 			codex: pick(raw.codex),
+			antigravity: pick(raw.antigravity),
 			usage: {
 				claude: usage(raw.usage?.claude),
 				codex: usage(raw.usage?.codex),
 			},
 		};
 	} catch {
-		return { claude: "missing", codex: "missing", usage: {} };
+		return {
+			claude: "missing",
+			codex: "missing",
+			antigravity: "missing",
+			usage: {},
+		};
 	}
 }
 
+/** Sets one stand-in's state in the file, keeping the rest. */
+function write(dir: string, name: FakeName, value: FakeCli): void {
+	const file = path.join(dir, FAKE_FILE);
+	let raw: Record<string, unknown> = {};
+	try {
+		raw = JSON.parse(fs.readFileSync(file, "utf8"));
+	} catch {}
+	fs.writeFileSync(file, JSON.stringify({ ...raw, [name]: value }));
+}
+
 /** Stand-in calls made so far, per CLI: each moves the session window by one point. */
-const fakeCalls: Record<"claude" | "codex", number> = { claude: 0, codex: 0 };
+const fakeCalls: Record<FakeName, number> = {
+	claude: 0,
+	codex: 0,
+	antigravity: 0,
+};
 
 /** When the stand-in's windows began: one hour before this worker started, so a call is in them. */
 const FAKE_WINDOWS_START = Date.now() - 3_600_000;
 
 /** The stand-in's plan usage as a snapshot: a 5-hour and a 7-day window, both running. */
 function fakeSnapshot(
-	cli: "claude" | "codex",
+	cli: FakeName,
 	usage: FakeUsage | undefined,
 	now: Date,
 ): PlanSnapshot | null {
@@ -149,15 +177,15 @@ function stateOf(cli: "claude" | "codex", fake: FakeCli): CliState {
 class FakeCliProvider implements LlmProvider {
 	readonly billing = "subscription" as const;
 	readonly name: string;
-	readonly vendor: "anthropic" | "openai";
+	readonly vendor: string;
 	readonly ownerUserId: string;
 	private readonly fake = new FakeLlmProvider();
 	constructor(
 		private readonly input: {
 			name: string;
-			vendor: "anthropic" | "openai";
+			vendor: string;
 			ownerUserId: string;
-			cli: "claude" | "codex";
+			cli: FakeName;
 			state: () => FakeState;
 			planUsage: PlanUsageSink | undefined;
 		},
@@ -222,11 +250,75 @@ export function fakeSubscriptions(
 			planUsage?.(cli === "codex" ? "openai" : "anthropic").sample(snapshot);
 		return stateOf(cli, state[cli]);
 	};
-	return withProviders({
-		refresh: () => real.refresh(),
-		usePath: (pathEnv) => real.usePath(pathEnv),
-		factory,
-		claude: () => check("claude"),
-		codex: () => check("codex"),
-	});
+	return withProviders(
+		{
+			refresh: () => real.refresh(),
+			usePath: (pathEnv) => real.usePath(pathEnv),
+			factory,
+			claude: () => check("claude"),
+			codex: () => check("codex"),
+		},
+		{ antigravity: fakeAntigravity(dir) },
+	);
+}
+
+/** The stand-in's Antigravity models: two families with Google's three thinking levels. */
+const FAKE_GEMINI: ModelInfo[] = [
+	["gemini-3.8-flash", "Gemini 3.8 Flash"],
+	["gemini-4-argon", "Gemini 4 Argon"],
+].map(([id, name]) => ({
+	ref: formatModelRef("antigravity", id as string),
+	name: name as string,
+	provider: "antigravity",
+	billing: "subscription",
+	efforts: ["low", "medium", "high"],
+}));
+
+/** Gemini (Antigravity) from `fake-clis.json`: Install and Sign in only move the file on. */
+function fakeAntigravity(dir: string): ManagedProvider {
+	const state = async (): Promise<CliState> => {
+		const fake = read(dir).antigravity;
+		const installed = fake !== "missing";
+		return antigravityState({
+			platform: process.platform,
+			installed: installed ? "/test/antigravity/agy_acp_server.par" : null,
+			signedIn: fake === "logged_in",
+			probe:
+				fake === "logged_in"
+					? {
+							login: "logged_in",
+							detail: "Signed in with Google (test stand-in).",
+							version: "test",
+							families: [],
+						}
+					: null,
+		});
+	};
+	return {
+		state,
+		models: async () =>
+			read(dir).antigravity === "logged_in" ? FAKE_GEMINI : [],
+		factory: ({ model, ownerUserId }) =>
+			new FakeCliProvider({
+				name: `antigravity:${model}`,
+				vendor: "google",
+				ownerUserId,
+				cli: "antigravity",
+				state: () => read(dir),
+				planUsage: undefined,
+			}),
+		async install() {
+			if (read(dir).antigravity === "missing")
+				write(dir, "antigravity", "logged_out");
+			return state();
+		},
+		async signIn() {
+			if (read(dir).antigravity === "missing")
+				throw new Error(
+					"Install Gemini (Antigravity) first, then sign in with Google.",
+				);
+			write(dir, "antigravity", "logged_in");
+			return state();
+		},
+	};
 }
