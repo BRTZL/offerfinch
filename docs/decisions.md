@@ -683,3 +683,9 @@ and no money held per call. They also asked for Codex on Finding matches and Dra
 | The claims check on Claude was not wired before (the pipeline refused it, and the factory passed the OpenAI model to the Claude plan); it now runs on `claude-opus-5-5` by default, on the plan or an Anthropic key | The builder's default: the scoring model; the claims check is the strictest call |
 | Fit and draft schemas sent to Codex use only the keywords the real Codex backend accepted for the claims check (unit test); no real Codex scoring or drafting call was made in this change | One real call per role is the open check |
 
+## 2026-11-05: Update checks every 30 minutes, and an update indicator in the sidebar
+
+Installed apps check GitHub Releases at launch, every 30 minutes, and on waking, unlocking or the window coming forward when the last check is over 10 minutes old (waking waits 45 s for the network). Replaces the 6-hour interval of 2026-11-02: a release took up to 6 hours to be found, longer on a Mac that slept through the timer. A check is one small request (`latest-mac.yml` and the release feed), and the download is differential, so it costs a few MB per release (0.1.4 and 0.1.5 downloaded 2.5 and 3.9 MB of a 116 MB zip).
+
+The sidebar foot shows the update after T3 Code's indicator: nothing while up to date, a ring while it downloads, then a restart button with a green check. It opens the version, the first two lines of the release's notes (GitHub's release body, read as plain text) and Later / Restart now. It replaces the full-width Restart to Update button.
+

@@ -27,7 +27,7 @@ export function updateLine(state: UpdateState | null): string {
 		case "disabled":
 			return state.reason;
 		case "idle":
-			return "Checks GitHub for a new version every 6 hours.";
+			return "Checks GitHub for a new version every 30 minutes.";
 		case "checking":
 			return "Checking for a new version…";
 		case "up-to-date":
