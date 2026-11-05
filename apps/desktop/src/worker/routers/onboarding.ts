@@ -1,6 +1,10 @@
 import { DashboardRepository } from "@offerfinch/db";
 import { z } from "zod";
-import { SETUP_STEPS, setupProgress } from "../../shared/setup-steps";
+import {
+	SETUP_STEPS,
+	setupComplete,
+	setupProgress,
+} from "../../shared/setup-steps";
 import { protectedProcedure } from "./procedure";
 import { providerStatus, worker } from "./shared";
 
@@ -11,10 +15,14 @@ export const onboardingRouter = {
 		const repo = new DashboardRepository(w.db);
 		const profile = await repo.profileFiles(context.session.user.id);
 		const sources = await providerStatus(w, context.session.user.id);
+		// The five steps, also when the progress was stored by the eight-step setup.
+		const progress = setupProgress(state);
 		return {
 			...state,
-			// The five steps, also when the progress was stored by the eight-step setup.
-			...setupProgress(state),
+			...progress,
+			// Finished only with every step done and none skipped; a row an earlier version marked
+			// complete with skipped steps reads as open again.
+			completedAt: setupComplete(progress) ? state.completedAt : null,
 			hasProfile: Boolean(profile),
 			/** Sources set up and on: a scan needs at least one. */
 			sources: sources.filter((p) => p.ready).length,
@@ -40,7 +48,7 @@ export const onboardingRouter = {
 				done: [...done],
 				skipped: [...skipped],
 			});
-			const all = SETUP_STEPS.every((s) => progress.done.includes(s));
+			const all = setupComplete(progress);
 			const next = {
 				...state,
 				done: [...done],

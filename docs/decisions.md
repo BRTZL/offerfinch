@@ -689,3 +689,19 @@ Installed apps check GitHub Releases at launch, every 30 minutes, and on waking,
 
 The sidebar foot shows the update after T3 Code's indicator: nothing while up to date, a ring while it downloads, then a restart button with a green check. It opens the version, the first two lines of the release's notes (GitHub's release body, read as plain text) and Later / Restart now. It replaces the full-width Restart to Update button.
 
+## 2026-11-05: Setup's open steps stay open
+
+Four gaps in the five-step setup: a First search that could not run was marked done by the
+generic Continue, skipped steps counted as done ("5 of 5 setup steps done" after skipping
+everything), Stay in the loop held Continue until a test notification was delivered, and the
+resume step let you paste a resume with no model to draft it, failing only afterwards
+(`pages/onboarding.tsx`, `components/desktop/setup/steps.tsx`, `components/desktop/resume-import.tsx`,
+`shared/setup-steps.ts`, `worker/routers/onboarding.ts`, `pages/home.tsx`).
+
+| Decision | Why |
+| --- | --- |
+| A blocked First search registers its own footer action: "Add your resume" (to Your resume) without a saved profile, else "Choose where to look" (to What you want). `next()` never marks `scan`; only the search's own finish does | Continue there finished setup without a search |
+| The stored shape is unchanged: a skipped step stays in `done` (the wizard moves past it) and in `skipped`. `openSteps` (not done, or skipped) and `setupComplete` (none open) in `shared/setup-steps.ts` decide; `mark` sets `completedAt` only when complete, and `get` returns `completedAt: null` for a row an earlier version completed with skips. `whats-new` and diagnostics still read the raw row | Progress from both earlier versions keeps parsing; a skip is a choice to come back, not a finish |
+| Home's setup notice names what is open ("Setup: AI not connected, no resume yet."; a skipped AI or resume step whose work exists anyway, from Settings or Profile, reads "AI step skipped" or "resume step skipped") and Continue setup opens `/onboarding?step=<first open>`, past the welcome. The step trail and the time left count only steps done and not skipped | The count hid which step was missing |
+| Stay in the loop's Continue is always on. The test button and the macOS permission notice stay as information. A notification never shown (`unknown`) after that step was passed is a Home "Needs you" line to Settings › Notifications; `unsupported` gets none, `blocked`/`failed` keep theirs | Setup should not wall on macOS permission; Home is where an open issue waits |
+| The resume step reads the scoring role (`profile.structure` runs on it) from `ai.get`, and on a plan the CLI login from `ai.subscriptions` through `readyNow`. When none can run: a notice with "Connect your AI" back to step 1, Upload, Paste and the file drop off, Start from scratch on. Nothing is shown or disabled while the roles load | The worker's error came only after a paste or upload |

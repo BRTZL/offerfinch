@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+	openSteps,
+	openStepsLine,
 	SETUP_STEPS,
+	setupComplete,
 	setupProgress,
+	stepFrom,
 	timeLeft,
 } from "../src/shared/setup-steps";
 
@@ -66,6 +70,69 @@ describe("setup progress from the eight-step setup", () => {
 		});
 		expect(p.done).toEqual([...SETUP_STEPS]);
 		expect(p.skipped).toEqual(["scan"]);
+	});
+});
+
+describe("open steps: skipped is not done", () => {
+	it("skipping every step leaves every step open, and setup unfinished", () => {
+		const all = [...SETUP_STEPS];
+		const p = setupProgress({ done: all, skipped: ["ai", "profile", "loop"] });
+		expect(openSteps(p)).toEqual(["ai", "profile", "loop"]);
+		expect(setupComplete(p)).toBe(false);
+	});
+
+	it("is complete only with every step done and none skipped", () => {
+		expect(setupComplete({ done: [...SETUP_STEPS], skipped: [] })).toBe(true);
+		expect(
+			setupComplete({ done: ["ai", "profile", "wants", "loop"], skipped: [] }),
+		).toBe(false);
+		expect(openSteps({ done: ["ai", "wants"], skipped: [] })).toEqual([
+			"profile",
+			"loop",
+			"scan",
+		]);
+	});
+
+	it("reads an eight-step row with a skipped part as open", () => {
+		const p = setupProgress({
+			done: [
+				"ai",
+				"resume",
+				"profile",
+				"rules",
+				"watchlist",
+				"notifications",
+				"login",
+				"scan",
+			],
+			skipped: ["login"],
+		});
+		expect(openSteps(p)).toEqual(["loop"]);
+		expect(setupComplete(p)).toBe(false);
+	});
+
+	it("says what is still open, in order", () => {
+		const none = { aiReady: false, hasProfile: false };
+		expect(openStepsLine(["ai", "profile"], none)).toBe(
+			"Setup: AI not connected, no resume yet.",
+		);
+		expect(openStepsLine(["profile", "loop"], none)).toBe(
+			"Setup: No resume yet, notifications not set up.",
+		);
+		expect(openStepsLine([], none)).toBeNull();
+	});
+
+	it("a skipped step whose work was done elsewhere only says it was skipped", () => {
+		const both = { aiReady: true, hasProfile: true };
+		expect(openStepsLine(["ai", "profile"], both)).toBe(
+			"Setup: AI step skipped, resume step skipped.",
+		);
+	});
+
+	it("reads ?step= only for a real step", () => {
+		expect(stepFrom("loop")).toBe("loop");
+		expect(stepFrom("resume")).toBeNull();
+		expect(stepFrom(null)).toBeNull();
 	});
 });
 

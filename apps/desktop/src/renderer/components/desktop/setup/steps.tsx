@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { GeneralSettings } from "@/components/desktop/general";
@@ -8,9 +8,13 @@ import {
 	DraftReview,
 	ResumeImport,
 } from "@/components/desktop/resume-import";
+import { useStepAction } from "@/components/desktop/step-action";
+import { Notice } from "@/components/system/bits";
 import { Group, Section } from "@/components/system/layout";
-import { client } from "@/lib/orpc";
+import { Button } from "@/components/ui/button";
+import { client, orpc } from "@/lib/orpc";
 import { preloadable } from "@/lib/preloadable";
+import { readyNow } from "../../../../shared/auto-connect";
 import type { SetupStep } from "../../../../shared/setup-steps";
 import { ConnectAi } from "./connect-ai";
 import { FirstScan } from "./first-scan";
@@ -52,15 +56,69 @@ export const STEP_META: Record<SetupStep, { title: string; lead: string }> = {
 	},
 };
 
+/**
+ * Whether a model can draft a profile from a resume now: `profile.structure` runs on the scoring
+ * model. A plan's role is ready only while its CLI is signed in (`readyNow`), so the CLI states
+ * are read only when scoring is on a plan. Null while that is still being read.
+ */
+function useCanDraft(): boolean | null {
+	const ai = useQuery(orpc.ai.get.queryOptions());
+	const scoring = ai.data?.roles.find((r) => r.role === "scoring");
+	const onPlan =
+		scoring?.mode === "claude-subscription" ||
+		scoring?.mode === "codex-subscription";
+	const clis = useQuery({
+		...orpc.ai.subscriptions.queryOptions(),
+		staleTime: 30_000,
+		enabled: Boolean(scoring?.ready && onPlan),
+		meta: { quiet: true },
+	});
+	if (!ai.data) return null;
+	if (!scoring?.ready) return false;
+	if (!onPlan) return true;
+	if (!clis.data) return clis.isError ? false : null;
+	const [now] = readyNow([scoring], {
+		claude: clis.data.claude.login.state === "logged_in",
+		codex: clis.data.codex.login.state === "logged_in",
+	});
+	return Boolean(now?.ready);
+}
+
+/** No model can draft yet: say so before anything is pasted, and offer the way back. */
+function ConnectAiFirst({ onConnect }: { onConnect: () => void }) {
+	return (
+		<Notice
+			tone="warning"
+			data-testid="resume-needs-ai"
+			title="Connect your AI first to draft a profile from your resume"
+			actions={
+				<Button
+					variant="outline"
+					onClick={onConnect}
+					data-testid="resume-connect-ai"
+				>
+					Connect your AI
+				</Button>
+			}
+		>
+			Uploading or pasting needs a model to read it. You can still start from
+			scratch and add your roles and skills by hand.
+		</Notice>
+	);
+}
+
 /** Your resume, then the draft it makes, reviewed in the same step. */
 function ProfileStep({
 	hasProfile,
 	onDone,
+	go,
 }: {
 	hasProfile: boolean;
 	onDone: () => void;
+	go: (step: SetupStep) => void;
 }) {
 	const queryClient = useQueryClient();
+	const canDraft = useCanDraft();
 	const [draft, setDraft] = useState<Draft | null>(null);
 	const scratch = useMutation({
 		// Start from scratch: an empty About record, then the roles and skills are added by hand.
@@ -88,7 +146,17 @@ function ProfileStep({
 				<DraftReview draft={draft} setDraft={setDraft} onSaved={onDone} />
 			</div>
 		);
-	return <ResumeImport onDraft={setDraft} onScratch={() => scratch.mutate()} />;
+	return (
+		<ResumeImport
+			onDraft={setDraft}
+			onScratch={() => scratch.mutate()}
+			blocked={
+				canDraft === false ? (
+					<ConnectAiFirst onConnect={() => go("ai")} />
+				) : null
+			}
+		/>
+	);
 }
 
 /** The rules and the sources together: what to look for, and where. */
@@ -122,13 +190,32 @@ function LoopStep() {
 	);
 }
 
+/**
+ * The first search cannot run yet: what it needs, and the footer's action goes to that step.
+ * There is no Continue here, so a search that never ran is never marked done.
+ */
 function ScanBlocked({
 	hasProfile,
 	sources,
+	go,
 }: {
 	hasProfile: boolean;
 	sources: number;
+	go: (step: SetupStep) => void;
 }) {
+	useStepAction(
+		hasProfile
+			? {
+					label: "Choose where to look",
+					onClick: () => go("wants"),
+					testId: "first-scan-go-wants",
+				}
+			: {
+					label: "Add your resume",
+					onClick: () => go("profile"),
+					testId: "first-scan-go-profile",
+				},
+	);
 	const missing = [
 		hasProfile ? null : "a saved profile",
 		sources > 0 ? null : "a search service in What you want",
@@ -147,6 +234,7 @@ export function StepBody({
 	sources,
 	onDone,
 	onFinished,
+	go,
 }: {
 	step: SetupStep;
 	hasProfile: boolean;
@@ -155,12 +243,14 @@ export function StepBody({
 	onDone: () => void;
 	/** The first search is done and the user opens the Inbox. */
 	onFinished: () => void;
+	/** Opens another step (a blocked step's way to what it needs). */
+	go: (step: SetupStep) => void;
 }) {
 	switch (step) {
 		case "ai":
 			return <ConnectAi />;
 		case "profile":
-			return <ProfileStep hasProfile={hasProfile} onDone={onDone} />;
+			return <ProfileStep hasProfile={hasProfile} onDone={onDone} go={go} />;
 		case "wants":
 			return <WantsStep />;
 		case "loop":
@@ -169,7 +259,7 @@ export function StepBody({
 			return hasProfile && sources > 0 ? (
 				<FirstScan onDone={onFinished} />
 			) : (
-				<ScanBlocked hasProfile={hasProfile} sources={sources} />
+				<ScanBlocked hasProfile={hasProfile} sources={sources} go={go} />
 			);
 	}
 }
