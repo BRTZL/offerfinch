@@ -3,7 +3,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SubscriptionUnavailableError } from "@offerfinch/core/scoring/llm";
+import {
+	LlmNotBilledError,
+	SubscriptionUnavailableError,
+} from "@offerfinch/core/scoring/llm";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -663,17 +666,34 @@ describe("what a failed call means", () => {
 		).toMatchObject({ kind: "logged_out", notBilled: true });
 	});
 
-	it("stops a plan source whose answer cost money, as paid", () => {
+	it("stops a plan model listed at $0 whose answer cost money, as paid; never Go on its listed price", () => {
+		expect(
+			openCodePause(
+				{ ...base, cost: 0.012 },
+				"subscription",
+				"opencode:opencode",
+				now,
+				true,
+			),
+		).toMatchObject({ kind: "extra_usage", paid: true });
+		// Go lists its models at their per-token price: an answer's cost is not a charge.
 		expect(
 			openCodePause(
 				{ ...base, cost: 0.012 },
 				"subscription",
 				"opencode:opencode-go",
 				now,
+				false,
 			),
-		).toMatchObject({ kind: "extra_usage", paid: true });
+		).toBeNull();
 		expect(
-			openCodePause({ ...base, cost: 0.012 }, "api", "opencode:opencode", now),
+			openCodePause(
+				{ ...base, cost: 0.012 },
+				"api",
+				"opencode:opencode",
+				now,
+				true,
+			),
 		).toBeNull();
 	});
 
@@ -904,6 +924,87 @@ describe("the provider", () => {
 				/tool|retry|structured output/,
 			);
 		}
+	});
+
+	it("never stops a source's other models for a refusal about one model on this computer", async () => {
+		const breaker = new Breaker();
+		const missing = make({ breaker, entry: () => null });
+		await expect(
+			missing.provider.generateObject(request()),
+		).rejects.toMatchObject({ kind: "boundary" });
+		const other = make({ breaker });
+		await expect(other.provider.generateObject(request())).resolves.toEqual({
+			ok: true,
+		});
+	});
+
+	it("says a pay-per-use failure the vendor refused before processing was not billed", async () => {
+		const paid = {
+			...entry,
+			model: "gpt-5.5-pro",
+			billing: "api" as const,
+			price: { input: 30, cachedInput: 30, output: 180, source: "t" },
+		};
+		const refused = make({
+			model: "gpt-5.5-pro",
+			entry: () => paid,
+			runCall: async (input) => {
+				input.onModelCall?.();
+				return answered({
+					text: null,
+					tokens: null,
+					failure: {
+						type: "provider.error",
+						message: "response_format not supported",
+						status: 400,
+						body: null,
+					},
+					relay: {
+						forwarded: 1,
+						refused: 0,
+						other: 0,
+						upstreamStatus: 422,
+						retryAfter: null,
+						upstreamError: null,
+						body: null,
+					},
+				});
+			},
+		});
+		void refused.provider.price;
+		await expect(
+			refused.provider.generateObject(request()),
+		).rejects.toBeInstanceOf(LlmNotBilledError);
+		const unclear = make({
+			model: "gpt-5.5-pro",
+			entry: () => paid,
+			runCall: async () =>
+				answered({
+					text: null,
+					tokens: null,
+					failure: {
+						type: "provider.error",
+						message: "bad gateway",
+						status: 400,
+						body: null,
+					},
+					relay: {
+						forwarded: 1,
+						refused: 0,
+						other: 0,
+						upstreamStatus: 502,
+						retryAfter: null,
+						upstreamError: null,
+						body: null,
+					},
+				}),
+		});
+		void unclear.provider.price;
+		const error = await unclear.provider
+			.generateObject(request())
+			.catch((e) => e);
+		expect(error).not.toBeInstanceOf(LlmNotBilledError);
+		expect(String(error)).toMatch(/bad gateway/);
 	});
 
 	it("accepts JSON in a Markdown fence", async () => {

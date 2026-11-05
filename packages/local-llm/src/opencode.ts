@@ -8,8 +8,10 @@ import {
 	fullPrompt,
 	type GenerateObjectRequest,
 	type LlmBilling,
+	LlmNotBilledError,
 	type LlmProvider,
 	type LlmUsage,
+	NOT_BILLED_STATUSES,
 	redactRequest,
 	type SubscriptionPauseKind,
 	SubscriptionUnavailableError,
@@ -1189,25 +1191,26 @@ export function retryAfterDate(
 	return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
-/** HTTP statuses an upstream returns before any model work: the request was not billed. */
-const NOT_BILLED = new Set([400, 401, 403, 404, 413, 422, 429]);
-
 /**
  * Maps a call's outcome to a pause, or null: a plan's limit (OpenCode's free limit, Go's limit,
- * a coding plan's rate limit) waits for its reset; a refused login waits for the user; a plan
- * source whose answer cost money drew on the paid balance and stops like Claude's extra usage.
+ * a coding plan's rate limit) waits for its reset; a refused login waits for the user. A plan
+ * model that OpenCode lists at $0 (a free model, a coding plan's) whose answer still cost money
+ * drew on the paid balance and stops like Claude's extra usage. OpenCode Go lists its models at
+ * their per-token price, so a Go answer's cost says nothing about the plan and is not used.
  */
 export function openCodePause(
 	result: Pick<OpenCodeCallResult, "failure" | "cost" | "sent" | "relay">,
 	billing: LlmBilling,
 	vendor: string,
 	now: Date,
+	/** The model is listed at $0, so any cost on its answer was charged. */
+	listedFree = false,
 ): OpenCodePause | null {
 	const upstream = result.relay?.upstreamStatus ?? null;
 	const notBilled =
 		!result.sent ||
 		!result.relay?.forwarded ||
-		(upstream !== null && NOT_BILLED.has(upstream));
+		(upstream !== null && NOT_BILLED_STATUSES.has(upstream));
 	const failure = result.failure;
 	const text = `${failure?.type ?? ""} ${failure?.message ?? ""} ${failure?.body ?? ""}`;
 	if (failure) {
@@ -1244,7 +1247,7 @@ export function openCodePause(
 			};
 		return null;
 	}
-	if (billing === "subscription" && (result.cost ?? 0) > 0)
+	if (billing === "subscription" && listedFree && (result.cost ?? 0) > 0)
 		return {
 			kind: "extra_usage",
 			detail: `OpenCode charged this call to your paid balance ($${(result.cost ?? 0).toFixed(4)}) instead of the plan: it is recorded at its price, and ${vendor} calls are stopped until you resume them in Settings › Models.`,
@@ -1287,6 +1290,9 @@ export interface OpenCodeProviderOptions {
 	upstream?: string;
 	breaker?: Breaker;
 }
+
+/** Refusals that never trip a source's breaker (see `OpenCodeProvider.refuse`). */
+const LOCAL_REFUSALS = new WeakSet<SubscriptionUnavailableError>();
 
 /** One breaker per OpenCode source: a limit or logout stops that source's callers only. */
 const BREAKERS = new Map<string, Breaker>();
@@ -1363,10 +1369,23 @@ export class OpenCodeProvider implements LlmProvider {
 		try {
 			return await this.call(request);
 		} catch (error) {
-			if (error instanceof SubscriptionUnavailableError)
+			if (
+				error instanceof SubscriptionUnavailableError &&
+				!LOCAL_REFUSALS.has(error)
+			)
 				this.breaker.trip(error, this.now());
 			throw error;
 		}
+	}
+
+	/**
+	 * A refusal about this one model on this computer (not listed yet, not offered, its price not
+	 * reserved): it pauses the call but never stops the source's other models.
+	 */
+	private refuse(detail: string): SubscriptionUnavailableError {
+		const error = this.pause("boundary", detail, { notBilled: true });
+		LOCAL_REFUSALS.add(error);
+		return error;
 	}
 
 	private loginProblem(): string | null {
@@ -1417,13 +1436,10 @@ export class OpenCodeProvider implements LlmProvider {
 			entry = this.options.entry();
 		}
 		if (!entry)
-			throw this.pause(
-				"boundary",
+			throw this.refuse(
 				`${this.options.source}/${this.options.model} is not in OpenCode's model list on this computer. Choose another model in Settings › Models.`,
-				{ notBilled: true },
 			);
-		if (entry.unavailable)
-			throw this.pause("boundary", entry.unavailable, { notBilled: true });
+		if (entry.unavailable) throw this.refuse(entry.unavailable);
 		// A pay-per-use call is sent only at the price the cap reserved it at.
 		if (
 			this.billing === "api" &&
@@ -1432,10 +1448,8 @@ export class OpenCodeProvider implements LlmProvider {
 				entry.price.output > quoted.output ||
 				entry.price.input > quoted.input)
 		)
-			throw this.pause(
-				"boundary",
+			throw this.refuse(
 				`the price of ${this.options.source}/${this.options.model} was not known when the call was reserved; it runs on the next try.`,
-				{ notBilled: true },
 			);
 		const login = this.loginProblem();
 		if (login)
@@ -1503,22 +1517,21 @@ export class OpenCodeProvider implements LlmProvider {
 			throw this.pause("boundary", result.boundary, {
 				notBilled: !result.sent,
 			});
-		const pause = openCodePause(result, this.billing, this.vendor, this.now());
+		const price = this.options.entry()?.price;
+		const listedFree =
+			!!price &&
+			price.input === 0 &&
+			price.output === 0 &&
+			price.cachedInput === 0;
+		const pause = openCodePause(
+			result,
+			this.billing,
+			this.vendor,
+			this.now(),
+			listedFree,
+		);
 		if (pause) throw this.pause(pause.kind, pause.detail, pause);
-		if (result.toolAttempt)
-			throw new Error(
-				`${this.name}: the model tried to use a tool during ${request.task} (${result.toolAttempt}); OpenCode offered none, the session was stopped and the answer discarded.`,
-			);
-		if (result.retried)
-			throw new Error(
-				`${this.name}: OpenCode scheduled a retry during ${request.task}; it was stopped after one request${result.relay?.upstreamStatus ? ` (upstream HTTP ${result.relay.upstreamStatus})` : ""}.`,
-			);
-		if (result.timedOut)
-			throw new Error(`${this.name}: ${request.task} timed out`);
-		if (result.failure)
-			throw new Error(
-				`${this.name}: ${request.task} failed: ${result.failure.type}: ${result.failure.message.slice(0, 300)}`,
-			);
+		this.throwFailure(request, result);
 		if (result.text === null)
 			throw new Error(`${this.name}: ${request.task} ended without an answer`);
 		let parsed: unknown;
@@ -1530,6 +1543,40 @@ export class OpenCodeProvider implements LlmProvider {
 			);
 		}
 		return request.schema.parse(parsed);
+	}
+
+	/**
+	 * A call that ended without an answer. Pay per use: when the request never left the relay, or
+	 * the vendor refused it before processing (400, 401, 403, 404, 413, 422, 429), it was not
+	 * billed, and says so, so the cap releases its reservation instead of holding it.
+	 */
+	private throwFailure<T>(
+		request: GenerateObjectRequest<T>,
+		result: OpenCodeCallResult,
+	): void {
+		const message = this.failureMessage(request, result);
+		if (!message) return;
+		const upstream = result.relay?.upstreamStatus ?? null;
+		const notBilled =
+			!result.relay?.forwarded ||
+			(upstream !== null && NOT_BILLED_STATUSES.has(upstream));
+		if (this.billing === "api" && notBilled && !result.tokens)
+			throw new LlmNotBilledError(request.task, upstream ?? 400, message);
+		throw new Error(message);
+	}
+
+	private failureMessage<T>(
+		request: GenerateObjectRequest<T>,
+		result: OpenCodeCallResult,
+	): string | null {
+		if (result.toolAttempt)
+			return `${this.name}: the model tried to use a tool during ${request.task} (${result.toolAttempt}); OpenCode offered none, the session was stopped and the answer discarded.`;
+		if (result.retried)
+			return `${this.name}: OpenCode scheduled a retry during ${request.task}; it was stopped after one request${result.relay?.upstreamStatus ? ` (upstream HTTP ${result.relay.upstreamStatus})` : ""}.`;
+		if (result.timedOut) return `${this.name}: ${request.task} timed out`;
+		if (result.failure)
+			return `${this.name}: ${request.task} failed: ${result.failure.type}: ${result.failure.message.slice(0, 300)}`;
+		return null;
 	}
 }
 

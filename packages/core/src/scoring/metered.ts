@@ -202,6 +202,7 @@ export class MeteredLlm implements LlmProvider {
 
 	readonly billing: LlmBilling;
 	readonly vendor: string | undefined;
+	readonly reportsModelCalls: boolean | undefined;
 
 	constructor(
 		private readonly inner: LlmProvider,
@@ -211,6 +212,12 @@ export class MeteredLlm implements LlmProvider {
 		this.name = inner.name;
 		this.billing = billingOf(inner);
 		this.vendor = inner.vendor;
+		this.reportsModelCalls = inner.reportsModelCalls;
+	}
+
+	/** The inner provider's own price, read when asked (it may be listed later). */
+	get price(): LlmProvider["price"] {
+		return this.inner.price;
 	}
 
 	async generateObject<T>(raw: GenerateObjectRequest<T>): Promise<T> {
