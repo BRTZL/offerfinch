@@ -44,7 +44,9 @@ describe("Windows subscriptions", () => {
 			readFile: () => `IF EXIST "%dp0%\\node.exe" (\r\n${shim}`,
 			resolve: (file: string) => file,
 			isFile: (file: string) =>
-				file === exe || file === "C:\\global\\claude.cmd",
+				file === exe ||
+				file === "C:\\global\\claude.cmd" ||
+				file === "C:\\global\\node.exe",
 		};
 		expect(findCliOnPath("claude", "C:\\global", "win32", ".CMD", checks)).toBe(
 			exe,

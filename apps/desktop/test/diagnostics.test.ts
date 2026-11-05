@@ -479,6 +479,15 @@ describe.skipIf(process.platform !== "darwin")("saving the zip", () => {
 });
 
 describe("Windows home redaction on every host", () => {
+	it("redacts an account whose folder starts with the current account name", () => {
+		expect(
+			redactDiagnostics(
+				String.raw`C:\Users\Alex Sample\Documents\cv.pdf`,
+				{ names: [], emails: [], phones: [], links: [] },
+				String.raw`C:\Users\Alex`,
+			),
+		).toBe(String.raw`~\Documents\cv.pdf`);
+	});
 	it.each([
 		[
 			String.raw`C:\Users\Sample Account\Documents\cv.pdf`,

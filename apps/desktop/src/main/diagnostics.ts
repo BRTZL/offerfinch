@@ -203,7 +203,10 @@ const STAMPS =
 	/(?<![\d+])(?:20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])(?:[01]\d|2[0-3])[0-5]\d[0-5]\d|1[6-9]\d{11})(?!\d)/g;
 
 function redactAll(text: string, known: KnownPersonal, home: string): string {
-	let out = text.replace(URL_QUERY, "$1");
+	let out = text
+		.replace(URL_QUERY, "$1")
+		.replace(ENCODED_WINDOWS_HOME_FOLDER, "~")
+		.replace(WINDOWS_HOME_FOLDER, "~");
 	if (home.length > 1) {
 		const windows = path.win32.isAbsolute(home);
 		const pattern = windows
@@ -214,10 +217,7 @@ function redactAll(text: string, known: KnownPersonal, home: string): string {
 			: escapeRegExp(home);
 		out = out.replace(new RegExp(pattern, windows ? "gi" : "g"), "~");
 	}
-	out = out
-		.replace(ENCODED_WINDOWS_HOME_FOLDER, "~")
-		.replace(WINDOWS_HOME_FOLDER, "~")
-		.replace(HOME_FOLDER, "~");
+	out = out.replace(HOME_FOLDER, "~");
 	for (const pattern of linkPatterns(known.links))
 		out = out.replace(pattern, "[link]");
 	out = redactContact(out, [...known.emails, ...known.phones]);
