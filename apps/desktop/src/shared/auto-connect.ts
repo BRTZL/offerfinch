@@ -1,141 +1,77 @@
 /**
- * Setup's Connect AI step picks Claude Code and Codex by itself when they are on this Mac and
- * signed in to a plan. Pure, so the worker and the tests share it.
+ * Setup's Connect AI step fills the steps still without a model from what is signed in on this
+ * computer. Pure, so the worker and the tests share it.
  */
+import {
+	CLAUDE_DEFAULTS,
+	type Effort,
+	FAKE_PROVIDER,
+	formatModelRef,
+	type ModelRef,
+	type ProviderId,
+	parseModelRef,
+	ROLES,
+	type Role,
+} from "./providers";
 
-export type Role = "scoring" | "tailoring" | "claims";
-export type Mode =
-	| "api"
-	| "claude-subscription"
-	| "codex-subscription"
-	| "fake";
+export type { Role } from "./providers";
 
-const ROLE_KEYS: readonly Role[] = ["scoring", "tailoring", "claims"];
+type RoleChoice = { model: ModelRef | null; effort?: Effort };
+export type AiChoice = Record<Role, RoleChoice>;
 
-type RoleSettings = { mode: Mode; model?: string; effort?: string };
-export type AiChoice = Record<Role, RoleSettings>;
-
-/** The two model companies: Anthropic (Claude) and OpenAI (Codex, ChatGPT). */
-export type Vendor = "anthropic" | "openai";
-
-const VENDOR_NAME: Record<Vendor, string> = {
-	anthropic: "Claude",
-	openai: "OpenAI",
-};
-
-/** The company drafts are written by, or null on test models. */
-export function draftingVendor(settings: Pick<AiChoice, "tailoring">) {
-	return vendorOf("tailoring", settings.tailoring.mode, null);
+/** What a signed-in provider gives a step that has no model yet. */
+function defaultRef(provider: "claude" | "codex", role: Role): ModelRef {
+	return provider === "claude"
+		? formatModelRef("claude", CLAUDE_DEFAULTS[role])
+		: // The account's default Codex model.
+			formatModelRef("codex", "");
 }
 
 /**
- * The company a role's choice runs on; null for test models. An API key is Anthropic's for
- * finding matches and drafting. For checking drafts it is the other company's than drafting:
- * OpenAI's while drafts are Claude's, Anthropic's while they are OpenAI's.
- */
-export function vendorOf(
-	role: Role,
-	mode: Mode,
-	drafting: Vendor | null,
-): Vendor | null {
-	if (mode === "fake") return null;
-	if (mode === "claude-subscription") return "anthropic";
-	if (mode === "codex-subscription") return "openai";
-	if (role !== "claims") return "anthropic";
-	return drafting === "openai" ? "anthropic" : "openai";
-}
-
-/**
- * Why a role cannot take a choice, or null. A draft is never checked by the company that wrote
- * it, so checking drafts must stay on the other company than drafting. Without the rest of the
- * settings, nothing is refused.
- */
-export function unavailable(
-	role: Role,
-	mode: Mode,
-	settings?: AiChoice,
-): string | null {
-	if (!settings) return null;
-	if (role === "claims") {
-		const drafting = draftingVendor(settings);
-		if (drafting && vendorOf("claims", mode, drafting) === drafting)
-			return `Drafts are written by ${VENDOR_NAME[drafting]}, so ${VENDOR_NAME[drafting]} can't check them`;
-		return null;
-	}
-	if (role === "tailoring") {
-		const drafting = vendorOf("tailoring", mode, null);
-		const checkMode = settings.claims.mode;
-		// An API-key checker follows drafting to the other company; a plan does not.
-		if (
-			drafting &&
-			checkMode !== "api" &&
-			vendorOf("claims", checkMode, drafting) === drafting
-		)
-			return `Drafts are checked by ${VENDOR_NAME[drafting]}. Choose another checker first`;
-	}
-	return null;
-}
-
-/**
- * A role is still open when it is on the default (an API key) and no key is stored for its
- * vendor: a stored key, test models or a subscription are the user's choice and stay.
- */
-function open(
-	role: Role,
-	settings: AiChoice,
-	keys: { anthropic: boolean; openai: boolean },
-): boolean {
-	if (settings[role].mode !== "api") return false;
-	const vendor = vendorOf(role, "api", draftingVendor(settings));
-	return vendor === "openai" ? !keys.openai : !keys.anthropic;
-}
-
-/**
- * The roles a signed-in Claude Code and Codex fill: Claude finds matches and drafts, Codex
- * checks drafts. Only open roles are filled, and never with a choice `unavailable` refuses.
+ * Fills every step without a model: all three on Claude when Claude Code is signed in, else all
+ * three on Codex. Any model may do any step, the same one included. A step the user chose a
+ * model for is never changed.
  */
 export function autoFill(input: {
 	settings: AiChoice;
-	claude: boolean;
-	codex: boolean;
-	keys: { anthropic: boolean; openai: boolean };
+	signedIn: Partial<Record<ProviderId, boolean>>;
 }): { settings: AiChoice; filled: Role[] } {
+	const provider = input.signedIn.claude
+		? "claude"
+		: input.signedIn.codex
+			? "codex"
+			: null;
 	const next: AiChoice = { ...input.settings };
 	const filled: Role[] = [];
-	for (const role of ROLE_KEYS) {
-		const mode: Mode | null =
-			role === "claims"
-				? input.codex
-					? "codex-subscription"
-					: null
-				: input.claude
-					? "claude-subscription"
-					: null;
-		if (!mode || unavailable(role, mode, next)) continue;
-		if (!open(role, next, input.keys)) continue;
-		// The model and effort belonged to the API choice; the plan's defaults apply.
-		next[role] = { mode };
+	if (!provider) return { settings: next, filled };
+	for (const role of ROLES) {
+		if (next[role].model !== null) continue;
+		next[role] = { model: defaultRef(provider, role) };
 		filled.push(role);
 	}
 	return { settings: next, filled };
 }
 
+/** The provider a stored choice runs on, or null for none (and the test models). */
+export function providerOfRef(ref: string | null): ProviderId | null {
+	if (!ref) return null;
+	const parsed = parseModelRef(ref);
+	return parsed && parsed.provider !== FAKE_PROVIDER ? parsed.provider : null;
+}
+
 /**
- * Whether each role can run now: its configuration is ready (`ready`, from the worker) and, on a
- * plan, that plan's CLI is installed and signed in. A subscription choice stays the user's when
- * the CLI is gone or signed out; it is just not ready until it is back.
+ * Whether each step can run now: its configuration is ready (`ready`, from the worker) and its
+ * provider is signed in. A choice stays the user's when the provider is gone or signed out; it
+ * is just not ready until it is back. The test models need no sign-in.
  */
 export function readyNow<
-	R extends { role: Role; mode: string; ready: boolean },
->(roles: R[], signedIn: { claude: boolean; codex: boolean }): R[] {
-	return roles.map((r) => ({
-		...r,
-		ready:
-			r.ready &&
-			(r.mode === "claude-subscription"
-				? signedIn.claude
-				: r.mode === "codex-subscription"
-					? signedIn.codex
-					: true),
-	}));
+	R extends { role: Role; model: string | null; ready: boolean },
+>(roles: R[], signedIn: Partial<Record<ProviderId, boolean>>): R[] {
+	return roles.map((r) => {
+		const provider = providerOfRef(r.model);
+		return {
+			...r,
+			ready: r.ready && (provider === null || Boolean(signedIn[provider])),
+		};
+	});
 }

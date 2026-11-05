@@ -7,7 +7,12 @@ import {
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 import { autoFill } from "../../shared/auto-connect";
-import { VENDOR_RULE } from "../pipeline";
+import {
+	PROVIDER_IDS,
+	PROVIDER_NAMES,
+	parseModelRef,
+	providerOff,
+} from "../../shared/providers";
 import { planUsageViews } from "../plan-usage";
 import { aiSettingsSchema } from "../settings";
 import { protectedProcedure } from "./procedure";
@@ -19,7 +24,6 @@ export const aiRouter = {
 		return {
 			settings: await w.settings.get("ai"),
 			roles: w.roles,
-			vendorRule: VENDOR_RULE,
 			// Try-it mode runs on the test models too.
 			fakeAllowed: Boolean(w.init.demo || w.init.test?.fakeModels),
 		};
@@ -28,7 +32,7 @@ export const aiRouter = {
 		const w = worker();
 		for (const role of ["scoring", "tailoring", "claims"] as const)
 			if (
-				input[role].mode === "fake" &&
+				parseModelRef(input[role].model ?? "")?.provider === "fake" &&
 				!w.init.demo &&
 				!w.init.test?.fakeModels
 			)
@@ -58,13 +62,42 @@ export const aiRouter = {
 			claude,
 			codex,
 			usage: await planUsageViews(w.planUsage, store, context.session.user.id),
-			vendorRule: VENDOR_RULE,
 			extraUsageOffConfirmedAt: await store.extraUsageOffConfirmedAt(
 				context.session.user.id,
 			),
 			callBudget: await store.subscriptionBudget(context.session.user.id),
 			codexHeadroomPercent: CODEX_HEADROOM_PERCENT,
 			codexCredits: CODEX_CREDITS_HOWTO,
+		};
+	}),
+	/**
+	 * Every provider with its state on this computer and the models it offers: whether it runs on
+	 * this platform (`off`, why not), installed and signed in, and its models. The pickers offer
+	 * the models of the providers that are on and signed in, and the test models in test runs.
+	 */
+	models: protectedProcedure.handler(async () => {
+		const w = worker();
+		await w.pathRefresh;
+		const providers = await Promise.all(
+			PROVIDER_IDS.map(async (provider) => {
+				const [state, models] = await Promise.all([
+					w.subscriptions.state(provider),
+					w.subscriptions.models(provider),
+				]);
+				const off = providerOff(provider, process.platform);
+				return {
+					provider,
+					name: PROVIDER_NAMES[provider],
+					off,
+					signedIn: !off && state.login.state === "logged_in",
+					state,
+					models,
+				};
+			}),
+		);
+		return {
+			providers,
+			fakeAllowed: Boolean(w.init.demo || w.init.test?.fakeModels),
 		};
 	}),
 	/**
@@ -94,10 +127,10 @@ export const aiRouter = {
 		);
 	}),
 	/**
-	 * Setup's Connect AI: finds Claude Code and Codex, and gives each role that is still open
-	 * (on an API key with none stored) the signed-in one: Claude finds matches and drafts, Codex
-	 * checks drafts. A choice the user made is never changed. `refresh` reads PATH and the
-	 * logins again (Check again, after installing or signing in).
+	 * Setup's Connect AI: finds Claude Code and Codex, and gives each step still without a model
+	 * the signed-in one: Claude for all three when it is signed in, else Codex. A choice the user
+	 * made is never changed. `refresh` reads PATH and the logins again (Check again, after
+	 * installing or signing in).
 	 */
 	autoConnect: protectedProcedure
 		.input(z.object({ refresh: z.boolean().default(false) }))
@@ -112,11 +145,13 @@ export const aiRouter = {
 			const settings = await w.settings.get("ai");
 			const { settings: next, filled } = autoFill({
 				settings,
-				claude: claude.login.state === "logged_in",
-				codex: codex.login.state === "logged_in",
-				keys: {
-					anthropic: w.hasSecret("anthropic"),
-					openai: w.hasSecret("openai"),
+				signedIn: {
+					claude:
+						!providerOff("claude", process.platform) &&
+						claude.login.state === "logged_in",
+					codex:
+						!providerOff("codex", process.platform) &&
+						codex.login.state === "logged_in",
 				},
 			});
 			if (filled.length) {

@@ -46,7 +46,7 @@ import {
 	startManualScan,
 } from "@offerfinch/runner";
 import { and, desc, eq, gt, inArray, isNotNull } from "drizzle-orm";
-import type { SecretName, SiteTabId } from "../shared/bridge";
+import type { SiteTabId } from "../shared/bridge";
 import {
 	type NativeNotice,
 	type NoticeOutcome,
@@ -127,15 +127,6 @@ export class WorkerApp {
 	readonly runner: FlowRunner;
 	deps!: PipelineDeps;
 	roles: RoleState[] = [];
-	private secrets: Partial<Record<SecretName, string>>;
-	/** Whether a key is stored (never the key itself). */
-	hasSecret(name: SecretName): boolean {
-		return Boolean(this.secrets[name]);
-	}
-	/** The stored keys, for building a provider in this process. */
-	secretValues(): Partial<Record<SecretName, string>> {
-		return this.secrets;
-	}
 	private notifications!: NotificationSettings;
 	private readonly batcher: NoticeBatcher;
 	private readonly followUpDelivery: FollowUpDelivery;
@@ -154,8 +145,6 @@ export class WorkerApp {
 		db: Database,
 	) {
 		this.db = db;
-		// Try-it mode never holds a key, whatever main sends (setSecrets refuses them too).
-		this.secrets = init.demo ? {} : init.secrets;
 		this.settings = new SettingsStore(db);
 		this.planUsage = new PlanUsageTracker({
 			userId: LOCAL_USER_ID,
@@ -340,12 +329,12 @@ export class WorkerApp {
 		await this.rebuild();
 	}
 
-	/** (Re)builds the pipeline after a settings or key change. Running steps keep their deps. */
+	/** (Re)builds the pipeline after a settings change. Running steps keep their deps. */
 	async rebuild(): Promise<void> {
 		const built = buildPipeline({
 			local: this.init.test?.fakeCodex
 				? (input) =>
-						input.provider === "codex-subscription"
+						input.provider === "codex"
 							? new FakeCodexSubscription(input.ownerUserId, this.init.userData)
 							: this.subscriptions.factory(input)
 				: this.subscriptions.factory,
@@ -355,7 +344,6 @@ export class WorkerApp {
 			test: Boolean(this.init.test),
 			db: this.db,
 			ai: await this.settings.get("ai"),
-			secrets: this.secrets,
 			workflows: this.starter,
 			browser: localChromeProvider((open) => {
 				this.browsersOpen = open;
@@ -382,20 +370,6 @@ export class WorkerApp {
 				: { closedPostings: new DrizzleClosedPostingStore(this.db) }),
 		};
 		this.roles = built.roles;
-	}
-
-	async setSecrets(secrets: Partial<Record<SecretName, string>>) {
-		// Try-it mode's worker takes no key: main sends none, and one that arrives is dropped.
-		if (this.init.demo) {
-			this.hooks.log("warn", "keys refused: sample data", {
-				names: Object.keys(secrets),
-			});
-			return;
-		}
-		this.secrets = secrets;
-		await this.rebuild();
-		// Work paused for want of a model can go on now.
-		this.runner.poke();
 	}
 
 	async setNotifications(value: NotificationSettings) {

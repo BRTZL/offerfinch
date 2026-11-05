@@ -18,10 +18,15 @@ import {
 	SqliteSearchStore,
 	saveFilterSettings,
 } from "@offerfinch/db";
+import { FAKE_MODEL_REF } from "../shared/providers";
 import { SETUP_STEPS } from "../shared/setup-steps";
 import { SAMPLE_JOBS, SAMPLE_RESUME, SAMPLE_RULES } from "./demo-data";
 import { LOCAL_USER_ID, SettingsStore } from "./settings";
-import type { CliState, Subscriptions } from "./subscriptions";
+import {
+	type CliState,
+	type Subscriptions,
+	withProviders,
+} from "./subscriptions";
 
 /**
  * Try-it mode (docs/decisions.md, 2026-11-05): the worker runs on a demo folder of its own with
@@ -116,9 +121,9 @@ export async function seedDemo(db: Database, version: string): Promise<void> {
 	await saveFilterSettings(db, LOCAL_USER_ID, SAMPLE_RULES);
 	const settings = new SettingsStore(db);
 	await settings.set("ai", {
-		scoring: { mode: "fake" },
-		tailoring: { mode: "fake" },
-		claims: { mode: "fake" },
+		scoring: { model: FAKE_MODEL_REF },
+		tailoring: { model: FAKE_MODEL_REF },
+		claims: { model: FAKE_MODEL_REF },
 	});
 	await settings.set("notifications", {
 		match: false,
@@ -164,11 +169,11 @@ const absent: CliState = {
  * shell is started. Every check reads as not installed.
  */
 export function demoSubscriptions(): Subscriptions {
-	return {
+	return withProviders({
 		refresh: async () => "",
 		usePath: () => {},
 		factory: ({ provider, model }) => new DemoCli(`${provider}:${model ?? ""}`),
 		claude: async () => absent,
 		codex: async () => absent,
-	};
+	});
 }

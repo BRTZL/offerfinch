@@ -31,15 +31,10 @@ async function settingsSummary(app: WorkerApp) {
 	return {
 		models: (["scoring", "tailoring", "claims"] as const).map((role) => ({
 			role,
-			kind: ai[role].mode,
-			model: ai[role].model ?? "default",
+			model: ai[role].model ?? "none",
 			effort: ai[role].effort ?? "default",
 			provider: app.roles.find((r) => r.role === role)?.provider ?? null,
 		})),
-		keysStored: {
-			anthropic: app.hasSecret("anthropic"),
-			openai: app.hasSecret("openai"),
-		},
 		sources: providers.map((p) => ({
 			source: p.provider,
 			on: p.enabled,

@@ -5,17 +5,8 @@ import type {
 	PipelineDeps,
 	WorkflowStarter,
 } from "@offerfinch/core/pipeline/ports";
-import {
-	AnthropicProvider,
-	DEFAULT_ANTHROPIC_MODEL,
-	DEFAULT_TAILOR_MODEL,
-} from "@offerfinch/core/scoring/anthropic";
-import {
-	FakeLlmProvider,
-	FakeSubscriptionProvider,
-} from "@offerfinch/core/scoring/fake";
-import { type LlmProvider, vendorOf } from "@offerfinch/core/scoring/llm";
-import { OpenAiProvider } from "@offerfinch/core/scoring/openai";
+import { FakeLlmProvider } from "@offerfinch/core/scoring/fake";
+import type { LlmProvider } from "@offerfinch/core/scoring/llm";
 import type { BrowserProvider } from "@offerfinch/core/scrape/browser";
 import { HostRateLimiter } from "@offerfinch/core/scrape/rate-limit";
 import { RobotsCache } from "@offerfinch/core/scrape/robots";
@@ -30,50 +21,35 @@ import {
 	DrizzlePipelineRepository,
 	DrizzleSpendStore,
 } from "@offerfinch/db";
+import {
+	type Effort,
+	FAKE_PROVIDER,
+	type ModelRef,
+	type ProviderId,
+	parseModelRef,
+} from "../shared/providers";
+
+/** The model a step runs on: a model reference and, when the model has levels, its effort. */
+export interface RoleModel {
+	model: ModelRef;
+	effort?: Effort;
+}
 
 /** Model choices supplied by desktop settings, never loaded from deployment environment variables. */
 export interface ModelConfig {
+	/** Finding matches. Unset: refused, or the fake when `allowFake` is set (tests). */
+	scoring?: RoleModel;
+	/** Drafting. Unset: the scoring model drafts too. */
+	tailoring?: RoleModel;
+	/** Checking drafts. Unset: no check is configured (`createPipelineDeps` leaves it out). */
+	claims?: RoleModel;
 	/**
-	 * Fit scoring (and tailoring, unless TAILOR_LLM_PROVIDER says otherwise): `anthropic`, `fake`,
-	 * `claude-subscription` or `codex-subscription` (local only), or `fake-subscription` (tests).
-	 * Defaults to anthropic when ANTHROPIC_API_KEY is set, else fake.
-	 */
-	scoringProvider?: string;
-	/** Tailoring only; unset: LLM_PROVIDER. Same values. */
-	tailoringProvider?: string;
-	/**
-	 * The one account a subscription provider answers for (its id). Required with any
-	 * subscription provider; calls for every other account are refused.
+	 * The one account a model on the user's own sign-in answers for (its id). Required with any
+	 * real model; calls for every other account are refused.
 	 */
 	ownerUserId?: string;
-	anthropicKey?: string;
-	scoringModel?: string;
-	scoringEffort?: string;
-	/**
-	 * Tailoring only (the largest call). Unset: `claude-sonnet-5-5` on Claude, the account's
-	 * default on Codex, with ANTHROPIC_EFFORT. Fit scoring keeps ANTHROPIC_MODEL (default
-	 * `claude-opus-5-5` on Claude, the account's default on Codex).
-	 */
-	tailoringModel?: string;
-	tailoringEffort?: string;
 	/** Fake claims check only: "1" makes every check throw (e2e of a failing check). */
 	FAKE_CLAIMS_FAIL?: string;
-	/**
-	 * Claims check provider, the other company than tailoring's: `openai`, `anthropic`, `fake`,
-	 * or a plan through its local CLI, `codex-subscription` or `claude-subscription` (local only,
-	 * docs/decisions.md). Defaults to openai when OPENAI_API_KEY is set.
-	 */
-	claimsProvider?: string;
-	/** Claims check on Claude (`anthropic`, `claude-subscription`). Unset: `claude-opus-5-5`. */
-	claimsModel?: string;
-	/** codex-subscription only. Unset: the account's default Codex model. */
-	codexModel?: string;
-	/** codex-subscription only: low, medium, high, xhigh or max. Unset: the model's default. */
-	codexEffort?: string;
-	openaiKey?: string;
-	/** Required with OPENAI_API_KEY; there is no default model. */
-	openaiModel?: string;
-	openaiEffort?: string;
 	/**
 	 * Comma-separated hosts automatic submission may click submit on, e.g.
 	 * "jobs.ashbyhq.com,job-boards.greenhouse.io,jobs.lever.co". Default: none but 127.0.0.1 and
@@ -100,262 +76,123 @@ function boardBases(env: ModelConfig): ApplyDeps["boardBases"] {
 	return JSON.parse(env.APPLY_BOARD_BASES) as ApplyDeps["boardBases"];
 }
 
-/** Providers that start a vendor's local CLI on the user's own subscription. */
-const SUBSCRIPTION_PROVIDERS = [
-	"claude-subscription",
-	"codex-subscription",
-] as const;
-type SubscriptionProviderName = (typeof SUBSCRIPTION_PROVIDERS)[number];
 type LlmRole = "scoring" | "tailoring" | "claims";
 
 /**
- * Builds a subscription provider using @offerfinch/local-llm. The desktop worker supplies
- * this factory; runtimes without it refuse subscription providers at start.
+ * Builds a provider's model on the user's own sign-in (Claude Code, Codex, ...). The desktop
+ * worker supplies it (`worker/subscriptions.ts`); runtimes without it refuse every real model.
  */
 export type LocalLlmFactory = (input: {
 	role: LlmRole;
-	provider: SubscriptionProviderName;
+	provider: ProviderId;
+	/** The provider's model id; "" on Codex is the account's default model. */
 	model: string;
-	effort?: (typeof EFFORTS)[number];
+	effort?: Effort;
 	ownerUserId: string;
 }) => LlmProvider;
 
-function isSubscription(name: string): name is SubscriptionProviderName {
-	return (SUBSCRIPTION_PROVIDERS as readonly string[]).includes(name);
-}
+const STEP_NAME: Record<LlmRole, string> = {
+	scoring: "Finding matches",
+	tailoring: "Drafting",
+	claims: "Checking drafts",
+};
 
-/** The error a subscription provider gets anywhere but the user's own Mac. */
-function localOnlyError(variable: string, provider: string): Error {
-	return new Error(
-		`${variable}=${provider} runs only on the user's Mac through the vendor's local CLI. Choose the subscription in the mode menu under Who does each step in Settings › Models, or choose API key. This runtime cannot start a local subscription CLI.`,
-	);
-}
-
-function subscriptionOwner(env: ModelConfig, variable: string): string {
-	const owner = env.ownerUserId?.trim();
-	if (!owner)
+function owner(env: ModelConfig, role: LlmRole): string {
+	const id = env.ownerUserId?.trim();
+	if (!id)
 		throw new Error(
-			`${variable} uses a subscription, but no local owner is configured. In Settings › Models, use the mode menu under Who does each step to switch to API key and back to the subscription. Subscription models never answer for other accounts.`,
+			`${STEP_NAME[role]} runs on your own sign-in, but no local owner is configured. Choose its model again in Settings › Models. Your models never answer for other accounts.`,
 		);
-	if (owner.includes("@"))
+	if (id.includes("@"))
 		throw new Error(
-			"The subscription owner must use its account id, not its email. In Settings › Models, use the mode menu under Who does each step to switch to API key and back to the subscription.",
+			"The model owner must use its account id, not its email. Choose the model again in Settings › Models.",
 		);
-	return owner;
+	return id;
 }
 
-function subscriptionProvider(
-	env: ModelConfig,
-	variable: string,
-	input: Omit<Parameters<LocalLlmFactory>[0], "ownerUserId">,
-	local: LocalLlmFactory | undefined,
-): LlmProvider {
-	if (!local) throw localOnlyError(variable, input.provider);
-	return local({ ...input, ownerUserId: subscriptionOwner(env, variable) });
+/** The test models for a step; the claims check gets the claims responder. */
+function fakeFor(role: LlmRole, env: ModelConfig): LlmProvider {
+	if (role !== "claims") return new FakeLlmProvider();
+	return new FakeLlmProvider({
+		"claims-check": (request) => {
+			// Fake only: lets an e2e run show a check that keeps failing, then its retry. Read at
+			// call time, so a running e2e server can turn it on and off.
+			const live = typeof process === "undefined" ? undefined : process.env;
+			if ((live?.FAKE_CLAIMS_FAIL ?? env.FAKE_CLAIMS_FAIL) === "1")
+				throw new Error("Fake claims check failure (FAKE_CLAIMS_FAIL=1)");
+			return fakeClaimsResponder(request);
+		},
+	});
 }
 
 /**
- * Picks the scoring model. Empty strings in desktop settings count as unset.
- * The fake scorer is used only when asked for, or when `allowFake` is set (test fixtures): its
- * placeholder scores end real matches as low score, so the worker must fail loudly instead.
+ * One step's model, from its reference, whatever the provider: any model may do any step, the
+ * same model all three included. Unset: the fake when `allowFake` is set (test fixtures), else a
+ * loud failure (the fake's placeholder scores would end real matches as low score).
  */
+function buildRole(
+	role: LlmRole,
+	choice: RoleModel | undefined,
+	env: ModelConfig,
+	options: { allowFake?: boolean; local?: LocalLlmFactory },
+): LlmProvider {
+	if (!choice) {
+		if (options.allowFake) return fakeFor(role, env);
+		throw new Error(
+			`No model chosen for ${STEP_NAME[role]}: choose one in Settings › Models`,
+		);
+	}
+	const ref = parseModelRef(choice.model);
+	if (!ref)
+		throw new Error(`Unknown model for ${STEP_NAME[role]}: ${choice.model}`);
+	if (ref.provider === FAKE_PROVIDER) return fakeFor(role, env);
+	if (!options.local)
+		throw new Error(
+			`${STEP_NAME[role]} runs ${ref.provider} through its CLI on the user's computer; this runtime cannot start one.`,
+		);
+	return options.local({
+		role,
+		provider: ref.provider,
+		model: ref.model,
+		effort: choice.effort,
+		ownerUserId: owner(env, role),
+	});
+}
+
+/** Finding matches' model (`env.scoring`). */
 export function createLlm(
 	env: ModelConfig,
 	options: { allowFake?: boolean; local?: LocalLlmFactory } = {},
 ): LlmProvider {
-	const provider =
-		env.scoringProvider ||
-		(env.anthropicKey ? "anthropic" : options.allowFake ? "fake" : "");
-	if (!provider)
-		throw new Error(
-			"No LLM configured: set ANTHROPIC_API_KEY, or LLM_PROVIDER=fake for testing",
-		);
-	if (provider === "fake") return new FakeLlmProvider();
-	if (provider === "fake-subscription")
-		return new FakeSubscriptionProvider(undefined);
-	if (isSubscription(provider))
-		return subscriptionProvider(
-			env,
-			"LLM_PROVIDER",
-			{
-				role: "scoring",
-				provider,
-				model: planModel(provider, env.scoringModel, DEFAULT_ANTHROPIC_MODEL),
-				effort: effortOf(env.scoringEffort),
-			},
-			options.local,
-		);
-	if (provider !== "anthropic")
-		throw new Error(`Unknown LLM_PROVIDER: ${provider}`);
-	if (!env.anthropicKey)
-		throw new Error("LLM_PROVIDER=anthropic needs ANTHROPIC_API_KEY");
-	return new AnthropicProvider({
-		apiKey: env.anthropicKey,
-		model: env.scoringModel || DEFAULT_ANTHROPIC_MODEL,
-		effort: effortOf(env.scoringEffort),
-	});
-}
-
-const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
-
-/** A plan's model: the one named, else Claude's default on Claude, the account's on Codex (""). */
-function planModel(
-	provider: SubscriptionProviderName,
-	model: string | undefined,
-	claudeDefault: string,
-): string {
-	return model || (provider === "codex-subscription" ? "" : claudeDefault);
-}
-
-function effortOf(value: string | undefined) {
-	if (!value) return;
-	const effort = EFFORTS.find((e) => e === value);
-	if (!effort)
-		throw new Error(`Unknown effort "${value}": use ${EFFORTS.join(", ")}`);
-	return effort;
+	return buildRole("scoring", env.scoring, env, options);
 }
 
 /**
- * The tailoring model: `claude-sonnet-5-5` on Claude unless TAILOR_MODEL names another, the
- * account's default on Codex. Effort: TAILOR_EFFORT, else ANTHROPIC_EFFORT, else the provider's
- * default (medium). The fake stays the fake. The provider is TAILOR_LLM_PROVIDER when set, else
- * the scoring one's. The claims check is built after it, on the other company.
+ * Drafting's model (`env.tailoring`). Unset: the scoring model `llm` drafts too. Its effort,
+ * unset, is the scoring step's.
  */
 export function createTailorLlm(
 	env: ModelConfig,
 	llm: LlmProvider,
 	options: { allowFake?: boolean; local?: LocalLlmFactory } = {},
 ): LlmProvider {
-	const chosen = env.tailoringProvider;
-	if (chosen && chosen !== llm.name.split(":")[0]) {
-		if (chosen === "fake") return new FakeLlmProvider();
-		if (chosen === "fake-subscription")
-			return new FakeSubscriptionProvider(undefined);
-		if (chosen !== "anthropic" && !isSubscription(chosen))
-			throw new Error(`Unknown TAILOR_LLM_PROVIDER: ${chosen}`);
-		if (chosen === "anthropic" && !env.anthropicKey)
-			throw new Error("TAILOR_LLM_PROVIDER=anthropic needs ANTHROPIC_API_KEY");
-	}
-	const provider = chosen || llm.name.split(":")[0];
-	if (provider && isSubscription(provider))
-		return subscriptionProvider(
-			env,
-			chosen ? "TAILOR_LLM_PROVIDER" : "LLM_PROVIDER",
-			{
-				role: "tailoring",
-				provider,
-				model: planModel(provider, env.tailoringModel, DEFAULT_TAILOR_MODEL),
-				effort: effortOf(env.tailoringEffort || env.scoringEffort),
-			},
-			options.local,
-		);
-	if (provider !== "anthropic") return llm;
-	return new AnthropicProvider({
-		apiKey: env.anthropicKey,
-		model: env.tailoringModel || DEFAULT_TAILOR_MODEL,
-		effort: effortOf(env.tailoringEffort || env.scoringEffort),
-	});
+	const tailoring = env.tailoring;
+	if (!tailoring) return llm;
+	const effort = tailoring.effort ?? env.scoring?.effort;
+	return buildRole(
+		"tailoring",
+		effort ? { ...tailoring, effort } : tailoring,
+		env,
+		options,
+	);
 }
 
-/**
- * Picks the claims-check model. It must be the other company than the tailoring model's, so a
- * draft is never checked by the company that wrote it: OpenAI (an API key or Codex) for drafts
- * by Claude, Anthropic (an API key or the Claude plan) for drafts by Codex. The fake is used only
- * when asked for or allowed by the caller, such as in desktop tests.
- */
+/** Checking drafts' model (`env.claims`), on any provider, the drafting one's included. */
 export function createClaimsLlm(
 	env: ModelConfig,
-	options: {
-		allowFake?: boolean;
-		tailoring?: LlmProvider;
-		local?: LocalLlmFactory;
-	} = {},
+	options: { allowFake?: boolean; local?: LocalLlmFactory } = {},
 ): LlmProvider {
-	const provider =
-		env.claimsProvider ||
-		(env.openaiKey ? "openai" : options.allowFake ? "fake" : "");
-	if (!provider)
-		throw new Error(
-			"No claims-check LLM configured: set OPENAI_API_KEY and OPENAI_MODEL, or CLAIMS_LLM_PROVIDER=fake for testing",
-		);
-	if (provider === "fake")
-		return new FakeLlmProvider({
-			"claims-check": (request) => {
-				// Fake only: lets an e2e run show a check that keeps failing, then its retry. Read at
-				// call time, so a running e2e server can turn it on and off.
-				const live = typeof process === "undefined" ? undefined : process.env;
-				if ((live?.FAKE_CLAIMS_FAIL ?? env.FAKE_CLAIMS_FAIL) === "1")
-					throw new Error("Fake claims check failure (FAKE_CLAIMS_FAIL=1)");
-				return fakeClaimsResponder(request);
-			},
-		});
-	if (isSubscription(provider)) {
-		const claims = subscriptionProvider(
-			env,
-			"CLAIMS_LLM_PROVIDER",
-			provider === "codex-subscription"
-				? {
-						role: "claims",
-						provider,
-						model: env.codexModel || "",
-						effort: effortOf(env.codexEffort),
-					}
-				: {
-						role: "claims",
-						provider,
-						model: env.claimsModel || DEFAULT_ANTHROPIC_MODEL,
-					},
-			options.local,
-		);
-		assertOtherVendor(claims, options.tailoring);
-		return claims;
-	}
-	if (provider === "anthropic") {
-		if (!env.anthropicKey)
-			throw new Error("CLAIMS_LLM_PROVIDER=anthropic needs ANTHROPIC_API_KEY");
-		const claims = new AnthropicProvider({
-			apiKey: env.anthropicKey,
-			model: env.claimsModel || DEFAULT_ANTHROPIC_MODEL,
-		});
-		assertOtherVendor(claims, options.tailoring);
-		return claims;
-	}
-	if (provider !== "openai")
-		throw new Error(`Unknown CLAIMS_LLM_PROVIDER: ${provider}`);
-	if (!env.openaiKey || !env.openaiModel)
-		throw new Error(
-			"CLAIMS_LLM_PROVIDER=openai needs OPENAI_API_KEY and OPENAI_MODEL",
-		);
-	const claims = new OpenAiProvider({
-		apiKey: env.openaiKey,
-		model: env.openaiModel,
-		reasoningEffort: (env.openaiEffort || undefined) as
-			| "minimal"
-			| "low"
-			| "medium"
-			| "high"
-			| undefined,
-	});
-	assertOtherVendor(claims, options.tailoring);
-	return claims;
-}
-
-/** A draft is never checked by the vendor that wrote it (fakes aside). */
-function assertOtherVendor(
-	claims: LlmProvider,
-	tailoring: LlmProvider | undefined,
-): void {
-	if (!tailoring) return;
-	const vendor = vendorOf(claims);
-	if (vendor.startsWith("fake")) return;
-	if (vendor === vendorOf(tailoring))
-		throw new Error(
-			`The claims check must use a different provider from tailoring (both ${vendor})`,
-		);
-}
-
-function claimsConfigured(env: ModelConfig): boolean {
-	return Boolean(env.claimsProvider || env.openaiKey);
+	return buildRole("claims", env.claims, env, options);
 }
 
 /** Dependencies and optional local capabilities used to build the desktop pipeline. */
@@ -371,9 +208,9 @@ export interface CreatePipelineOptions {
 	log?: PipelineDeps["log"];
 	llm?: LlmProvider;
 	claimsLlm?: LlmProvider;
-	/** Allow the fake scorer when no key is set, for desktop tests. */
+	/** Allow the fake models for steps without a model, for desktop tests. */
 	allowFakeLlm?: boolean;
-	/** Builds subscription providers in the desktop worker. Unset: they are refused. */
+	/** Builds models on the user's own sign-ins in the desktop worker. Unset: they are refused. */
 	localLlm?: LocalLlmFactory;
 }
 
@@ -419,10 +256,9 @@ export function createPipelineDeps(
 		// loudly at the review step instead of every scan failing at startup.
 		claimsLlm:
 			options.claimsLlm ??
-			(claimsConfigured(options.env) || options.allowFakeLlm
+			(options.env.claims || options.allowFakeLlm
 				? createClaimsLlm(options.env, {
 						allowFake: options.allowFakeLlm,
-						tailoring: tailorLlm ?? llm,
 						local: options.localLlm,
 					})
 				: undefined),

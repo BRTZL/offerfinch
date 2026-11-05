@@ -17,6 +17,7 @@ import {
 	type CliState,
 	CODEX_FIX,
 	type Subscriptions,
+	withProviders,
 } from "./subscriptions";
 
 /**
@@ -202,10 +203,11 @@ export function fakeSubscriptions(
 	planUsage?: (vendor: "anthropic" | "openai") => PlanUsageSink,
 ): Subscriptions {
 	const factory: LocalLlmFactory = ({ provider, model, ownerUserId }) => {
-		const cli = provider === "codex-subscription" ? "codex" : "claude";
+		const cli = provider === "codex" ? "codex" : "claude";
 		const vendor = cli === "codex" ? "openai" : "anthropic";
 		return new FakeCliProvider({
-			name: `${provider}:${model || "test"}`,
+			// The names the real providers have (`claude-subscription:…`, `codex-subscription:…`).
+			name: `${cli}-subscription:${model || "test"}`,
 			vendor,
 			ownerUserId,
 			cli,
@@ -220,11 +222,11 @@ export function fakeSubscriptions(
 			planUsage?.(cli === "codex" ? "openai" : "anthropic").sample(snapshot);
 		return stateOf(cli, state[cli]);
 	};
-	return {
+	return withProviders({
 		refresh: () => real.refresh(),
 		usePath: (pathEnv) => real.usePath(pathEnv),
 		factory,
 		claude: () => check("claude"),
 		codex: () => check("codex"),
-	};
+	});
 }

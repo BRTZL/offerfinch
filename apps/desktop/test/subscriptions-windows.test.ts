@@ -1,4 +1,3 @@
-import { CODEX_SUBSCRIPTION } from "@offerfinch/local-llm";
 import { afterEach, expect, it, vi } from "vitest";
 import {
 	fallbackDirs,
@@ -38,7 +37,7 @@ it("reports the macOS boundary and pauses Codex without install advice on Window
 	expect(state.fix).toBeNull();
 	const provider = cli.factory({
 		role: "scoring",
-		provider: CODEX_SUBSCRIPTION,
+		provider: "codex",
 		model: "default",
 		ownerUserId: "synthetic",
 	});

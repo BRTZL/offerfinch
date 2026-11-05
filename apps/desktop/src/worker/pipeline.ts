@@ -46,8 +46,14 @@ import {
 	SqliteSiteStore,
 	SqliteWebStore,
 } from "@offerfinch/db";
-import { draftingVendor, type Vendor, vendorOf } from "../shared/auto-connect";
-import type { SecretName } from "../shared/bridge";
+import {
+	type ModelRef,
+	PROVIDER_NAMES,
+	type ProviderId,
+	parseModelRef,
+	providerOff,
+	type Role,
+} from "../shared/providers";
 import type { SiteTabHost } from "./checks";
 import { SampleJobsProvider } from "./demo";
 import {
@@ -57,6 +63,7 @@ import {
 	createTailorLlm,
 	type LocalLlmFactory,
 	type ModelConfig,
+	type RoleModel,
 } from "./model-factories";
 import type { AiSettings } from "./settings";
 import { saveDebugSnapshot } from "./site-debug";
@@ -105,14 +112,9 @@ const withTest = <P extends LlmProvider | undefined>(p: P, delayMs = 0): P =>
 		? new FakeWithConnectionTest(p, delayMs)
 		: p) as P;
 
-/** The claims check never runs on the company that wrote the draft. */
-export const VENDOR_RULE =
-	"A draft is never checked by the company that wrote it. Drafts by Claude (your plan or an Anthropic key) are checked by OpenAI (Codex or an OpenAI key); drafts by Codex are checked by Claude (your plan or an Anthropic key).";
-
 export interface PipelineInputs {
 	db: Database;
 	ai: AiSettings;
-	secrets: Partial<Record<SecretName, string>>;
 	workflows: WorkflowStarter;
 	browser: BrowserProvider;
 	blobs: BlobStore;
@@ -122,8 +124,10 @@ export interface PipelineInputs {
 	demo?: boolean;
 	fakeDelayMs?: number;
 	boardBases?: Record<string, string>;
-	/** Builds Claude and Codex subscription providers (unset: subscriptions are not offered). */
+	/** Builds the models on the user's own sign-ins (unset: only the test models run). */
 	local?: LocalLlmFactory;
+	/** The platform the providers run on; unset: this process's. */
+	platform?: string;
 	/** The account subscriptions answer for: the local user. */
 	ownerUserId: string;
 	/** The app's folder. */
@@ -144,141 +148,96 @@ export interface PipelineInputs {
 
 /** What each role runs on, in words, for the status and Settings > Models. */
 export interface RoleState {
-	role: "scoring" | "tailoring" | "claims";
-	mode: AiSettings["scoring"]["mode"];
+	role: Role;
+	/** The stored choice; null while none is chosen. */
+	model: ModelRef | null;
 	provider: string;
 	billing: "api" | "subscription";
 	ready: boolean;
 	problem: string | null;
 }
 
-type Role = "scoring" | "tailoring" | "claims";
+const STEP_NAME: Record<Role, string> = {
+	scoring: "Finding matches",
+	tailoring: "Drafting",
+	claims: "Checking drafts",
+};
 
-/** The company's name for messages. */
-const COMPANY: Record<Vendor, string> = {
-	anthropic: "Claude",
-	openai: "OpenAI",
+/** Providers whose models this version cannot run yet; the next versions add them. */
+const NOT_BUILT: Partial<Record<ProviderId, string>> = {
+	opencode: "OpenCode models are not available in this version yet.",
+	antigravity:
+		"Gemini (Antigravity) models are not available in this version yet.",
 };
 
 /** Why a role's choice cannot run, or null when it can be built. */
 function problemOf(
 	role: Role,
 	ai: AiSettings,
-	secrets: PipelineInputs["secrets"],
-	input: Pick<PipelineInputs, "fakeModels" | "local">,
+	input: Pick<PipelineInputs, "fakeModels" | "local" | "platform">,
 ): string | null {
-	const mode = ai[role].mode;
-	if (mode === "fake")
+	const model = ai[role].model;
+	if (!model)
+		return `Choose a model for ${STEP_NAME[role]} in Settings > Models.`;
+	const ref = parseModelRef(model);
+	if (!ref)
+		return `${model} is not a model OfferFinch knows. Choose another in Settings > Models.`;
+	if (ref.provider === "fake")
 		return input.fakeModels
 			? null
 			: "Test models are only available in test runs.";
-	const drafting = draftingVendor(ai);
-	const vendor = vendorOf(role, mode, drafting);
-	if (role === "claims" && drafting && vendor === drafting)
-		return `${COMPANY[drafting]} writes the drafts, so it can't check them. ${VENDOR_RULE}`;
-	if (mode !== "api")
-		return input.local
-			? null
-			: "Subscriptions are not available in this build.";
-	if (vendor === "openai") {
-		if (!secrets.openai)
-			return "Add an OpenAI API key in Settings > Models for the claims check.";
-		if (!ai.claims.model)
-			return "Choose the OpenAI model for the claims check in Settings > Models.";
-		return null;
-	}
-	return secrets.anthropic
+	const off =
+		providerOff(ref.provider, input.platform ?? process.platform) ??
+		NOT_BUILT[ref.provider];
+	if (off) return `${off} Choose another model in Settings > Models.`;
+	return input.local
 		? null
-		: "Add an Anthropic API key in Settings > Models.";
+		: `${PROVIDER_NAMES[ref.provider]} models are not available in this build.`;
 }
 
-/**
- * The model a role's setting names, when it belongs to the company the role runs on: a Claude
- * model never goes to OpenAI or Codex, nor an OpenAI model to Claude (a choice made for one
- * company stays stored when the role moves to the other). Unset: that company's default.
- */
-function modelFor(vendor: Vendor | null, model: string | undefined) {
+/** A role's stored choice for the factories, or undefined while none is chosen. */
+function choiceOf(ai: AiSettings, role: Role): RoleModel | undefined {
+	const { model, effort } = ai[role];
 	if (!model) return;
-	const claude = model.startsWith("claude");
-	return (vendor === "anthropic") === claude ? model : undefined;
+	return effort ? { model, effort } : { model };
 }
 
 /**
- * Builds the pipeline from the desktop's per-role settings and the keys main decrypted, through
- * the model factories (`createLlm`, `createTailorLlm`, `createClaimsLlm`, which
- * also enforce the vendor rule). A role without a usable model gets a provider that pauses,
- * so the app runs (and scans) before AI is connected.
+ * Builds the pipeline from the desktop's per-role settings, through the model factories
+ * (`createLlm`, `createTailorLlm`, `createClaimsLlm`). Any model may do any step. A role without
+ * a usable model gets a provider that pauses, so the app runs (and scans) before AI is connected.
  */
 export function buildPipeline(input: PipelineInputs): {
 	deps: PipelineDeps;
 	roles: RoleState[];
 } {
-	const { ai, secrets } = input;
+	const { ai } = input;
 	const problems = {
-		scoring: problemOf("scoring", ai, secrets, input),
-		tailoring: problemOf("tailoring", ai, secrets, input),
-		claims: problemOf("claims", ai, secrets, input),
+		scoring: problemOf("scoring", ai, input),
+		tailoring: problemOf("tailoring", ai, input),
+		claims: problemOf("claims", ai, input),
 	};
-	const drafting = draftingVendor(ai);
-	const vendors = {
-		scoring: vendorOf("scoring", ai.scoring.mode, drafting),
-		tailoring: vendorOf("tailoring", ai.tailoring.mode, drafting),
-		claims: vendorOf("claims", ai.claims.mode, drafting),
-	};
-	const providerName = (role: Role) =>
-		ai[role].mode === "fake"
-			? "fake"
-			: ai[role].mode === "api"
-				? (vendors[role] ?? "anthropic")
-				: ai[role].mode;
-	const model = (role: Role) => modelFor(vendors[role], ai[role].model);
 	const env: ModelConfig = {
 		SUBMIT_ALLOWED_HOSTS: "",
 		ownerUserId: input.ownerUserId,
-		anthropicKey: secrets.anthropic,
-		openaiKey: secrets.openai,
 		APPLY_BOARD_BASES: input.boardBases
 			? JSON.stringify(input.boardBases)
 			: undefined,
+		scoring: choiceOf(ai, "scoring"),
+		tailoring: choiceOf(ai, "tailoring"),
+		claims: choiceOf(ai, "claims"),
 	};
-	env.scoringModel = model("scoring");
-	if (ai.scoring.effort) env.scoringEffort = ai.scoring.effort;
-	env.tailoringModel = model("tailoring");
-	if (ai.tailoring.effort) env.tailoringEffort = ai.tailoring.effort;
-	if (ai.claims.mode === "codex-subscription") {
-		env.codexModel = model("claims");
-		if (ai.claims.effort) env.codexEffort = ai.claims.effort;
-	} else if (vendors.claims === "openai") env.openaiModel = model("claims");
-	else env.claimsModel = model("claims");
 	const options = { allowFake: input.fakeModels, local: input.local };
 	const notConnected = (role: Role) =>
 		new NotConnectedProvider(`not-connected:${role}`, problems[role] ?? "");
 	const delay = input.fakeDelayMs ?? 0;
 
 	let llm: LlmProvider = notConnected("scoring");
-	if (!problems.scoring)
-		llm = createLlm(
-			{ ...env, scoringProvider: providerName("scoring") },
-			options,
-		);
+	if (!problems.scoring) llm = createLlm(env, options);
 	let tailorLlm: LlmProvider = notConnected("tailoring");
-	if (!problems.tailoring)
-		tailorLlm = createTailorLlm(
-			{ ...env, tailoringProvider: providerName("tailoring") },
-			llm,
-			options,
-		);
+	if (!problems.tailoring) tailorLlm = createTailorLlm(env, llm, options);
 	let claimsLlm: LlmProvider = notConnected("claims");
-	if (!problems.claims)
-		claimsLlm = createClaimsLlm(
-			{ ...env, claimsProvider: providerName("claims") },
-			{
-				...options,
-				tailoring: tailorLlm.name.startsWith("not-connected")
-					? undefined
-					: tailorLlm,
-			},
-		);
+	if (!problems.claims) claimsLlm = createClaimsLlm(env, options);
 	if (input.fakeModels) {
 		llm = withTest(llm, delay);
 		tailorLlm = withTest(tailorLlm, delay);
@@ -322,7 +281,7 @@ export function buildPipeline(input: PipelineInputs): {
 				role === "scoring" ? llm : role === "tailoring" ? tailorLlm : claimsLlm;
 			return {
 				role,
-				mode: ai[role].mode,
+				model: ai[role].model,
 				provider: provider.name,
 				billing: billingOf(provider),
 				ready: problems[role] === null,

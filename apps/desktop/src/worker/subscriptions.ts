@@ -31,6 +31,13 @@ import type {
 	ClaudeQuery,
 	ClaudeSession,
 } from "@offerfinch/local-llm/isolated";
+import {
+	EFFORTS,
+	formatModelRef,
+	type ModelInfo,
+	PROVIDER_NAMES,
+	type ProviderId,
+} from "../shared/providers";
 import type { LocalLlmFactory } from "./model-factories";
 
 /**
@@ -316,7 +323,8 @@ export interface CliState {
 	fix: CliFix | null;
 }
 
-export interface Subscriptions {
+/** The CLI checks and the factory each run has (real, test stand-ins, try-it mode). */
+export interface CliChecks {
 	/**
 	 * Re-reads PATH from the login shell (seconds with a heavy shell profile) and finds the
 	 * CLIs. Returns the PATH, so it can be cached for the next start.
@@ -331,6 +339,77 @@ export interface Subscriptions {
 	 */
 	claude(options?: { fresh?: boolean }): Promise<CliState>;
 	codex(options?: { fresh?: boolean }): Promise<CliState>;
+}
+
+export interface Subscriptions extends CliChecks {
+	/** A provider's state: installed where, which version against the tested one, signed in. */
+	state(provider: ProviderId, options?: { fresh?: boolean }): Promise<CliState>;
+	/** The models a provider offers, whether or not it is signed in now. */
+	models(provider: ProviderId): Promise<ModelInfo[]>;
+}
+
+/** Claude's models on the plan: the defaults the steps use, and Haiku. */
+const CLAUDE_MODELS: ModelInfo[] = [
+	["claude-opus-5-5", "Claude Opus 5.5"],
+	["claude-sonnet-5-5", "Claude Sonnet 5.5"],
+	["claude-haiku-5-5", "Claude Haiku 5.5"],
+].map(([id, name]) => ({
+	ref: formatModelRef("claude", id as string),
+	name: name as string,
+	provider: "claude",
+	billing: "subscription",
+	efforts: [...EFFORTS],
+}));
+
+/**
+ * Codex's models on the plan: the account's default (empty model, what Codex picks for the
+ * plan), then the known ones. The app-server's own list is not read yet (it would start the CLI
+ * for a list).
+ */
+const CODEX_MODELS: ModelInfo[] = [
+	["", "Codex account default"],
+	["gpt-6.1-sol", "GPT-6.1 Sol"],
+	["gpt-6.1-terra", "GPT-6.1 Terra"],
+].map(([id, name]) => ({
+	ref: formatModelRef("codex", id as string),
+	name: name as string,
+	provider: "codex",
+	billing: "subscription",
+	efforts: [...EFFORTS],
+}));
+
+/** A provider this version does not run yet: not installed, nothing to offer. */
+function notInstalled(provider: ProviderId): CliState {
+	return {
+		path: null,
+		version: null,
+		tested: "",
+		login: {
+			state: "logged_out",
+			detail: `${PROVIDER_NAMES[provider]} is not installed.`,
+		},
+		command: null,
+		fix: null,
+	};
+}
+
+/** `state` and `models` for every provider, on top of a run's CLI checks. */
+export function withProviders(checks: CliChecks): Subscriptions {
+	return {
+		...checks,
+		state: (provider, options) =>
+			provider === "claude"
+				? checks.claude(options)
+				: provider === "codex"
+					? checks.codex(options)
+					: Promise.resolve(notInstalled(provider)),
+		models: async (provider) =>
+			provider === "claude"
+				? CLAUDE_MODELS
+				: provider === "codex"
+					? CODEX_MODELS
+					: [],
+	};
 }
 
 /** A role whose CLI is missing: its calls pause with what to install, never fail. */
@@ -368,7 +447,7 @@ export function subscriptions(input: {
 		codexCache = null;
 	};
 	usePath(mergePath(null));
-	return {
+	return withProviders({
 		usePath,
 		async refresh() {
 			const pathEnv = await resolvedPath();
@@ -376,7 +455,7 @@ export function subscriptions(input: {
 			return pathEnv;
 		},
 		factory: ({ provider, model, effort, ownerUserId }) => {
-			if (provider === CLAUDE_SUBSCRIPTION)
+			if (provider === "claude")
 				return claudeBinary
 					? new ClaudeSubscriptionProvider({
 							model,
@@ -392,14 +471,14 @@ export function subscriptions(input: {
 							"anthropic",
 							`Claude Code (claude) was not found. Install it (${CLAUDE_FIX.install.command}), run claude and log in with /login.`,
 						);
-			if (provider === CODEX_SUBSCRIPTION && process.platform === "win32")
+			if (provider === "codex" && process.platform === "win32")
 				return new MissingCli(
 					`${CODEX_SUBSCRIPTION}:${model}`,
 					"openai",
 					CODEX_MACOS_ONLY,
 					"boundary",
 				);
-			if (provider === CODEX_SUBSCRIPTION)
+			if (provider === "codex")
 				return codexBinary
 					? new CodexSubscriptionProvider({
 							model,
@@ -415,7 +494,12 @@ export function subscriptions(input: {
 							"openai",
 							"The Codex CLI (`codex`) was not found. Install it (npm install -g @openai/codex), then run `codex login` in Terminal.",
 						);
-			throw new Error(`Unknown subscription provider: ${provider}`);
+			return new MissingCli(
+				`${provider}:${model}`,
+				provider,
+				`${PROVIDER_NAMES[provider]} models are not available in this version yet.`,
+				"boundary",
+			);
 		},
 		async claude(options = {}) {
 			if (!options.fresh && fresh(claudeCache))
@@ -500,5 +584,5 @@ export function subscriptions(input: {
 			codexCache = { at: Date.now(), state };
 			return state;
 		},
-	};
+	});
 }
