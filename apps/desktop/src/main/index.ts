@@ -15,6 +15,7 @@ import { createUpdates } from "./app-updates";
 import { isAutomated } from "./automation";
 import { recoverInterruptedRestore } from "./backup";
 import { moveDatabaseOnce } from "./database-file";
+import { demoFolder, eraseDemo } from "./demo";
 import { registerIpc } from "./ipc";
 import { buildMenu } from "./menu";
 import { noticeActionDeps } from "./notice-action-deps";
@@ -74,7 +75,11 @@ if (TEST_MODE)
 /* ------------------------------------------------------------- lifecycle */
 
 async function workerInit(): Promise<WorkerInit> {
-	const userData = app.getPath("userData");
+	// Try-it mode: the worker gets the demo folder and no keys; the real data stays shut.
+	const demo = mainState.demo;
+	const userData = demo
+		? demoFolder(app.getPath("userData"))
+		: app.getPath("userData");
 	const test = TEST_MODE
 		? {
 				fakeModels: process.env.OFFERFINCH_FAKE_MODELS === "1",
@@ -104,7 +109,8 @@ async function workerInit(): Promise<WorkerInit> {
 		claudeHost: path
 			.join(outDir, "worker", "claude-host.mjs")
 			.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`),
-		secrets: await mainState.secrets.all(),
+		secrets: demo ? {} : await mainState.secrets.all(),
+		...(demo ? { demo: true } : {}),
 		test,
 	};
 }
@@ -124,6 +130,9 @@ async function main() {
 	fs.mkdirSync(app.getPath("logs"), { recursive: true });
 	// A restore the app quit in the middle of is undone first, so the earlier data is in place.
 	recoverInterruptedRestore(app.getPath("userData"), log);
+	// Sample data a quit in try-it mode left behind: the demo ends with the app.
+	if (eraseDemo(app.getPath("userData")))
+		log("demo data from the last run deleted");
 	// Before the worker opens it: the database's file is settled first.
 	mainState.databaseFile = await moveDatabaseOnce(app.getPath("userData"), {
 		open: (file, readonly) => new Database(file, { readonly }),

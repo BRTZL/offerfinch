@@ -10,6 +10,12 @@ function report(notice: NativeNotice, outcome: NoticeOutcome) {
 }
 
 export async function showNotice(notice: NativeNotice) {
+	// Try-it mode: no notification is ever shown about sample data.
+	if (mainState.demo) {
+		log("notification skipped: demo mode", { kind: notice.kind });
+		report(notice, "skipped");
+		return;
+	}
 	if (notice.onlyIfUnfocused && windowInFront()) {
 		log("notification skipped: the window is in front", { kind: notice.kind });
 		report(notice, "skipped");

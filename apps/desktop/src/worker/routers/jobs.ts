@@ -33,11 +33,21 @@ async function fromFeed(
 	return Boolean(row && FEED_SOURCES.has(row.source));
 }
 
+/** Try-it mode reads no page from the internet: links are refused there (worker/demo.ts). */
+function refuseInDemo() {
+	if (worker().init.demo)
+		throw new ORPCError("BAD_REQUEST", {
+			message:
+				"With sample data, OfferFinch reads no page from the internet. Leave demo to add jobs by link.",
+		});
+}
+
 export const jobsRouter = {
 	/** Reads a job's posting again and stores it cleaned (structured data, main content). */
 	reread: protectedProcedure
 		.input(z.object({ id: z.string().uuid() }))
 		.handler(async ({ context, input }) => {
+			refuseInDemo();
 			// A remote feed gave the whole posting; its page there (an HN post, a page behind a
 			// browser check) is never read by the app (docs/decisions.md, 2026-11-03).
 			if (await fromFeed(context.session.user.id, input.id))
@@ -54,6 +64,7 @@ export const jobsRouter = {
 	addLinks: protectedProcedure
 		.input(z.object({ text: z.string().trim().min(1).max(20_000) }))
 		.handler(({ input }) => {
+			refuseInDemo();
 			const urls = splitLinks(input.text);
 			if (urls.length > 25)
 				throw new ORPCError("BAD_REQUEST", {
@@ -80,6 +91,7 @@ export const jobsRouter = {
 	retryRead: protectedProcedure
 		.input(z.object({ id: z.string().uuid() }))
 		.handler(async ({ input }) => {
+			refuseInDemo();
 			await refuse(() => retryRead(worker(), input.id));
 			return { ok: true };
 		}),

@@ -15,6 +15,12 @@ export interface WorkerInit {
 	/** The bundled Claude Agent SDK host script, forked as Node for each Claude call. */
 	claudeHost: string;
 	secrets: Partial<Record<SecretName, string>>;
+	/**
+	 * Try-it mode (worker/demo.ts): `userData` is the demo folder, the test models run every
+	 * role, the sample source is the only one, and no CLI, login shell or network is used. Its
+	 * own switch, not a test hook: it works in a shipped build, and wins over `test`.
+	 */
+	demo?: boolean;
 	/** Test runs: fake models, fixture boards, a fixed clock offset. */
 	test?: {
 		fakeModels?: boolean;

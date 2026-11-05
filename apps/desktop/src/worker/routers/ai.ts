@@ -20,13 +20,18 @@ export const aiRouter = {
 			settings: await w.settings.get("ai"),
 			roles: w.roles,
 			vendorRule: VENDOR_RULE,
-			fakeAllowed: Boolean(w.init.test?.fakeModels),
+			// Try-it mode runs on the test models too.
+			fakeAllowed: Boolean(w.init.demo || w.init.test?.fakeModels),
 		};
 	}),
 	set: protectedProcedure.input(aiSettingsSchema).handler(async ({ input }) => {
 		const w = worker();
 		for (const role of ["scoring", "tailoring", "claims"] as const)
-			if (input[role].mode === "fake" && !w.init.test?.fakeModels)
+			if (
+				input[role].mode === "fake" &&
+				!w.init.demo &&
+				!w.init.test?.fakeModels
+			)
 				throw new ORPCError("BAD_REQUEST", {
 					message: "Test models are only available in test runs",
 				});

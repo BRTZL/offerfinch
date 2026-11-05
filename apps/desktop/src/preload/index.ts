@@ -40,6 +40,11 @@ const bridge: DesktopBridge = {
 	openDocument: (id) => ipcRenderer.invoke(IPC.openDocument, String(id)),
 	saveDocument: (id) => ipcRenderer.invoke(IPC.saveDocument, String(id)),
 	saveDataExport: () => ipcRenderer.invoke(IPC.saveDataExport),
+	demo: {
+		state: () => ipcRenderer.invoke(IPC.demoState),
+		enter: () => ipcRenderer.invoke(IPC.demoEnter),
+		leave: () => ipcRenderer.invoke(IPC.demoLeave),
+	},
 	backup: {
 		save: () => ipcRenderer.invoke(IPC.backupSave),
 		check: () => ipcRenderer.invoke(IPC.backupCheck),

@@ -49,6 +49,7 @@ import {
 import { draftingVendor, type Vendor, vendorOf } from "../shared/auto-connect";
 import type { SecretName } from "../shared/bridge";
 import type { SiteTabHost } from "./checks";
+import { SampleJobsProvider } from "./demo";
 import {
 	createClaimsLlm,
 	createLlm,
@@ -117,6 +118,8 @@ export interface PipelineInputs {
 	blobs: BlobStore;
 	notifier: Notifier;
 	fakeModels: boolean;
+	/** Try-it mode: the sample jobs are the only source (worker/demo.ts). */
+	demo?: boolean;
 	fakeDelayMs?: number;
 	boardBases?: Record<string, string>;
 	/** Builds Claude and Codex subscription providers (unset: subscriptions are not offered). */
@@ -339,6 +342,8 @@ async function scanProviders(
 	db: Database,
 	userId: string,
 ): Promise<ScanProvider[]> {
+	// Try-it mode never runs a real source, whatever Sources says.
+	if (input.demo) return [new SampleJobsProvider(db)];
 	const states = await listProviders(db, userId);
 	const out: ScanProvider[] = [];
 	const origins = siteOrigins(Boolean(input.test));

@@ -8,6 +8,13 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
+## Unreleased
+
+- Try OfferFinch before connecting anything: Try it with sample data, on the first screen,
+  opens the app with a made-up profile and eight sample jobs. Matches, drafts and Applied all
+  work, with no AI connection and nothing sent anywhere. Leave demo deletes the sample data and
+  takes you back; your own data is never touched.
+
 ## 0.1.5 (2026-11-04)
 
 - The job filter now keeps or rejects, nothing in between, and what it rejects is hidden

@@ -8,6 +8,7 @@ import {
 	shell,
 } from "electron";
 import { type AppCommand, IPC } from "../shared/bridge";
+import { windowTitle } from "./demo-actions";
 import { APP_ORIGIN, serveRenderer } from "./protocol";
 import {
 	BACKGROUND,
@@ -82,7 +83,7 @@ export function createWindow(initialPath = "/"): BrowserWindow {
 		show: false,
 		// Tests never show the window; it still paints so they can drive and capture it.
 		paintWhenInitiallyHidden: true,
-		title: "OfferFinch",
+		title: windowTitle(),
 		// Painted before the page loads, so dark mode starts dark (no white flash).
 		backgroundColor: windowBackground(),
 		// No title bar: the traffic lights sit in the sidebar, centred in the 52 pt toolbar.
@@ -148,6 +149,11 @@ export function createWindow(initialPath = "/"): BrowserWindow {
 		"restore",
 	] as const)
 		win.on(event as "focus", active);
+	// The page's <title> would replace it: the title says when sample data is shown.
+	win.on("page-title-updated", (event) => {
+		event.preventDefault();
+		win.setTitle(windowTitle());
+	});
 	win.once("ready-to-show", () => {
 		if (!BACKGROUND) win.show();
 		log("window shown", { ms: Date.now() - mainState.startedAt });

@@ -206,6 +206,9 @@ export type RestoreResult =
 	| { status: "restored"; safetyBackup: string }
 	| { status: "failed"; error: string };
 
+/** Entering or leaving try-it mode: done (the window reloads on its own), or why not. */
+export type DemoResult = { ok: true } | { ok: false; error: string };
+
 export interface DesktopBridge {
 	info(): Promise<AppInfo>;
 	/** Opens an http(s) link in the default browser. Anything else is refused. */
@@ -220,6 +223,17 @@ export interface DesktopBridge {
 	 * Backup and restore of the whole data folder's database and files (main/backup.ts). The
 	 * renderer passes no paths: main asks with its own dialogs.
 	 */
+	/**
+	 * Try-it mode (sample data in a folder of its own, docs/decisions.md 2026-11-05). Entering
+	 * and leaving restart the worker and reload every window at Home.
+	 */
+	demo: {
+		/** Whether the app runs on the sample data now. */
+		state(): Promise<boolean>;
+		enter(): Promise<DemoResult>;
+		/** Deletes the sample data and goes back to the real data (or the first-run welcome). */
+		leave(): Promise<DemoResult>;
+	};
 	backup: {
 		/** Saves a backup zip where the user picks. */
 		save(): Promise<BackupSaveResult>;
@@ -342,6 +356,9 @@ export const IPC = {
 	backupCheck: "backup:check",
 	backupDiscard: "backup:discard",
 	backupRestore: "backup:restore",
+	demoState: "demo:state",
+	demoEnter: "demo:enter",
+	demoLeave: "demo:leave",
 	saveInterviewEvent: "files:save-interview",
 	openProof: "files:proof",
 	diagnosticsPrepare: "diagnostics:prepare",
