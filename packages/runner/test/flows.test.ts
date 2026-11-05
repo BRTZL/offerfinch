@@ -94,7 +94,12 @@ describe("the core flows on the durable runner", () => {
 					kind: "greenhouse",
 					listJobs: async () => [
 						job(1),
-						job(3, { title: "Account Executive" }),
+						// Scored too (no rule sets a job aside): a citizenship it lacks caps it low.
+						job(3, {
+							title: "Account Executive",
+							descriptionText:
+								"Requirements\n- Must be a US Citizen\n- Closing B2B deals",
+						}),
 					],
 				},
 			},
@@ -135,10 +140,15 @@ describe("the core flows on the durable runner", () => {
 					.from(applications)
 			).sort((a, b) => a.state.localeCompare(b.state));
 		// Tailoring is on demand: the match waits in scored until Prepare.
-		await until(async () =>
-			(await stateOf()).some((a) => a.state === "scored"),
+		await until(
+			async () =>
+				(await stateOf()).filter((a) => a.state === "scored").length === 2,
 		);
-		const listed = (await stateOf()).find((a) => a.state === "scored");
+		const ended = await db
+			.select({ id: applications.id, ended: applications.endedReason })
+			.from(applications);
+		expect(ended.filter((a) => a.ended !== null)).toHaveLength(1);
+		const listed = ended.find((a) => a.ended === null);
 		await live.sendEvent(
 			await new DashboardRepository(db).requestPrepare({
 				userId: "u1",
@@ -160,7 +170,7 @@ describe("the core flows on the durable runner", () => {
 		expect(scanRun).toBeDefined();
 		expect((await stateOf()).map((a) => a.state)).toEqual([
 			"ready_for_review",
-			"rejected_by_filter",
+			"scored",
 		]);
 		const kept = (await stateOf()).find((a) => a.state === "ready_for_review");
 		if (!kept) throw new Error("no application");

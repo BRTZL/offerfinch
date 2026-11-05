@@ -23,7 +23,49 @@ const LIST_FIELDS = [
 	"searchTitles",
 	"roleKeywords",
 	"excludeTitleKeywords",
+	"wantedRoleTypes",
+	"unwantedRoleTypes",
+	"preferredIndustries",
+	"avoidIndustries",
 ] as const;
+
+const LEVELS = [
+	"Intern",
+	"Junior",
+	"Mid-level",
+	"Senior",
+	"Staff",
+	"Principal",
+	"Lead",
+	"Manager",
+	"Director",
+];
+
+const COMPANY_SIZES = [
+	"Startup",
+	"Scale-up",
+	"Mid-size",
+	"Enterprise",
+	"Agency or consultancy",
+	"Non-profit",
+	"Public sector",
+];
+
+const CURRENCIES = [
+	"EUR",
+	"USD",
+	"GBP",
+	"CHF",
+	"CAD",
+	"AUD",
+	"SEK",
+	"NOK",
+	"DKK",
+	"PLN",
+	"TRY",
+	"INR",
+	"JPY",
+];
 
 const list = (value: string) =>
 	value
@@ -31,7 +73,11 @@ const list = (value: string) =>
 		.map((v) => v.trim())
 		.filter(Boolean);
 
-/** The rules every new job passes before any model call: location, languages, title, score. */
+/**
+ * What the user is looking for: where to search, and what the fit score weighs every new job
+ * against (work rights, place, languages, roles, level, pay, company). Nothing here sets a job
+ * aside on its own, and saving changes no job already in the Inbox.
+ */
 export function JobFilterSettings() {
 	const queryClient = useQueryClient();
 	const settings = useQuery(orpc.settings.get.queryOptions());
@@ -44,7 +90,7 @@ export function JobFilterSettings() {
 		onSuccess: (value) => {
 			setForm(value);
 			toast.success(
-				"Saved. Matches that no longer fit moved to Closed; new searches use it.",
+				"Saved. New jobs are scored with it; jobs already here keep their score.",
 			);
 			void queryClient.invalidateQueries({ queryKey: orpc.settings.key() });
 		},
@@ -60,7 +106,7 @@ export function JobFilterSettings() {
 			next[key] = list(String(data.get(key) ?? ""));
 		return next;
 	};
-	// In onboarding, Continue saves the rules on screen (defaults included), so they are stored.
+	// In onboarding, Continue saves the settings on screen (defaults included), so they are stored.
 	const embeddedSave = useContext(EmbeddedSave);
 	useEffect(() => {
 		if (!embeddedSave) return;
@@ -101,7 +147,7 @@ export function JobFilterSettings() {
 		<SettingsPage
 			id="job-filter"
 			title="Job search"
-			description="What kind of job you are looking for, and what every source searches for. Jobs that do not fit go to Rejected with the reason; new searches use your changes."
+			description="What kind of job you are looking for, and what every source searches for. The fit score weighs every new job against it; jobs already in your Inbox keep their score."
 		>
 			<QueryState
 				isLoading={settings.isLoading}
@@ -124,7 +170,7 @@ export function JobFilterSettings() {
 							<Field
 								id="f-livesIn"
 								label="I live in"
-								hint="Filled from your profile's location. Remote jobs must hire from here."
+								hint="Filled from your profile's location. The fit score checks that remote jobs hire from here."
 							>
 								<ComboboxField
 									id="f-livesIn"
@@ -139,7 +185,7 @@ export function JobFilterSettings() {
 							<Field
 								id="f-citizenship"
 								label="Citizenship"
-								hint="Jobs that need another citizenship or a security clearance are left out."
+								hint="The fit score rates jobs that need another citizenship or a security clearance below your minimum."
 							>
 								<MultiComboboxField
 									id="f-citizenship"
@@ -154,7 +200,7 @@ export function JobFilterSettings() {
 							<Field
 								id="f-rightToWork"
 								label="Right to work in"
-								hint="Office and hybrid jobs there are kept; anywhere else needs a visa."
+								hint="Office and hybrid jobs elsewhere need a visa; the fit score rates them below your minimum unless they offer one."
 							>
 								<MultiComboboxField
 									id="f-rightToWork"
@@ -168,14 +214,14 @@ export function JobFilterSettings() {
 							</Field>
 							<Toggle
 								label="Remote from my country"
-								hint="Remote jobs that hire people where you live or may work."
+								hint="Searched for. The fit score uses this."
 								checked={form.keepRemoteFromHome}
 								onChange={(v) => set("keepRemoteFromHome", v)}
 								testId="remote-from-home"
 							/>
 							<Toggle
 								label="Worldwide remote"
-								hint="Remote jobs open in any country."
+								hint="Remote jobs open in any country. Searched for; the fit score uses this."
 								checked={form.keepGlobalRemote}
 								onChange={(v) => set("keepGlobalRemote", v)}
 								testId="global-remote"
@@ -183,7 +229,7 @@ export function JobFilterSettings() {
 							<Field
 								id="f-keepOnsiteIn"
 								label="Office or hybrid also in"
-								hint="Other countries where you could go to an office without moving."
+								hint="Other countries where you could go to an office without moving. Searched; the fit score uses this."
 							>
 								<MultiComboboxField
 									id="f-keepOnsiteIn"
@@ -196,7 +242,7 @@ export function JobFilterSettings() {
 							</Field>
 							<Toggle
 								label="Relocation"
-								hint="Office jobs abroad, only when the posting offers relocation or visa support."
+								hint="Office jobs abroad that offer relocation or visa support. The fit score uses this."
 								checked={form.relocation}
 								onChange={(v) => set("relocation", v)}
 								testId="relocation"
@@ -225,7 +271,7 @@ export function JobFilterSettings() {
 							<Field
 								id="f-searchTitles"
 								label="Search for"
-								hint="Job titles for the searches below, separated by commas. Empty: the titles of the roles in your profile."
+								hint="Job titles for the searches below, separated by commas. Empty: the titles of the roles in your profile. The fit score uses them too."
 							>
 								<Input
 									{...text("searchTitles")}
@@ -234,24 +280,130 @@ export function JobFilterSettings() {
 							</Field>
 							<Field
 								id="f-roleKeywords"
-								label="Title words"
-								hint="Words a job title should contain, such as frontend or engineer."
+								label="Target roles"
+								hint="Words for the roles you want, such as frontend or engineer. The fit score uses this."
 							>
 								<Input {...text("roleKeywords")} />
 							</Field>
 							<Field
 								id="f-excludeTitleKeywords"
-								label="Skip titles with"
-								hint="Words that rule a job out, such as intern."
+								label="Titles to avoid"
+								hint="Words for roles you don't want, such as intern. Searches skip them; the fit score counts them as a poor fit."
 							>
 								<Input {...text("excludeTitleKeywords")} />
 							</Field>
 							<Field
 								id="f-languages"
 								label="Languages you work in"
-								hint="Jobs that need another language are left out."
+								hint="The fit score rates jobs that require another language below your minimum."
 							>
 								<Input {...text("languages")} />
+							</Field>
+						</Group>
+					</Section>
+					<Section title="Level and kind of role">
+						<Group>
+							<Field
+								id="f-seniority"
+								label="Level"
+								hint="The levels you want. Empty: any. The fit score uses this."
+							>
+								<MultiComboboxField
+									id="f-seniority"
+									aria-label="Level"
+									data-testid="seniority"
+									items={LEVELS}
+									value={form.seniority}
+									onValueChange={(v) => set("seniority", v)}
+									placeholder="Any level"
+								/>
+							</Field>
+							<Field
+								id="f-wantedRoleTypes"
+								label="Kinds of role you want"
+								hint="Separated by commas, such as individual contributor or full-time. The fit score uses this."
+							>
+								<Input {...text("wantedRoleTypes")} placeholder="Any" />
+							</Field>
+							<Field
+								id="f-unwantedRoleTypes"
+								label="Kinds of role you don't want"
+								hint="Separated by commas, such as people management or contract. The fit score counts them as a poor fit."
+							>
+								<Input {...text("unwantedRoleTypes")} placeholder="None" />
+							</Field>
+						</Group>
+					</Section>
+					<Section title="Pay">
+						<Group>
+							<Field
+								id="f-minSalary"
+								label="Minimum yearly salary"
+								hint="A job whose stated pay is below it is rated below your minimum fit. Jobs that state no pay are not marked down. Empty: no minimum."
+							>
+								<div className="flex items-center gap-2">
+									<Input
+										id="f-minSalary"
+										type="number"
+										min={0}
+										step={1000}
+										className="w-32 tabular-nums"
+										data-testid="min-salary"
+										value={form.minSalary ?? ""}
+										onChange={(e) =>
+											set(
+												"minSalary",
+												e.target.value === ""
+													? null
+													: Math.max(0, Math.round(Number(e.target.value))),
+											)
+										}
+										placeholder="None"
+									/>
+									<ComboboxField
+										id="f-salaryCurrency"
+										aria-label="Currency"
+										data-testid="salary-currency"
+										items={CURRENCIES}
+										value={form.salaryCurrency || null}
+										onValueChange={(v) => set("salaryCurrency", v ?? "")}
+										placeholder="Currency"
+										className="w-28"
+									/>
+								</div>
+							</Field>
+						</Group>
+					</Section>
+					<Section title="Company and industry">
+						<Group>
+							<Field
+								id="f-companySizes"
+								label="Company size or stage"
+								hint="The kinds of company you prefer. Empty: any. The fit score uses this."
+							>
+								<MultiComboboxField
+									id="f-companySizes"
+									aria-label="Company size or stage"
+									data-testid="company-sizes"
+									items={COMPANY_SIZES}
+									value={form.companySizes}
+									onValueChange={(v) => set("companySizes", v)}
+									placeholder="Any"
+								/>
+							</Field>
+							<Field
+								id="f-preferredIndustries"
+								label="Industries you prefer"
+								hint="Separated by commas, such as fintech or developer tools. The fit score uses this."
+							>
+								<Input {...text("preferredIndustries")} placeholder="Any" />
+							</Field>
+							<Field
+								id="f-avoidIndustries"
+								label="Industries to avoid"
+								hint="Separated by commas, such as gambling. The fit score counts them as a poor fit."
+							>
+								<Input {...text("avoidIndustries")} placeholder="None" />
 							</Field>
 						</Group>
 					</Section>
@@ -260,7 +412,7 @@ export function JobFilterSettings() {
 							<Field
 								id="f-minimum-fit"
 								label="Minimum fit"
-								hint="From 0 to 100. Weaker matches go to Rejected."
+								hint="From 0 to 100. Weaker matches go to Rejected, with the reason."
 							>
 								<Input
 									id="f-minimum-fit"

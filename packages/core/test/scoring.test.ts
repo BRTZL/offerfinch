@@ -46,6 +46,7 @@ describe("evidence verification", () => {
 			requirements: [
 				{
 					requirement: "TypeScript",
+					kind: "skill_or_experience",
 					importance: "must",
 					status: "met",
 					evidence: [
@@ -55,6 +56,7 @@ describe("evidence verification", () => {
 				},
 				{
 					requirement: "Kubernetes",
+					kind: "skill_or_experience",
 					importance: "must",
 					status: "met",
 					evidence: [
@@ -67,6 +69,7 @@ describe("evidence verification", () => {
 				},
 				{
 					requirement: "Python",
+					kind: "skill_or_experience",
 					importance: "nice",
 					status: "met",
 					evidence: [{ file: "experience/2023-python.md", quote: "Python" }],
@@ -92,6 +95,7 @@ describe("evidence verification", () => {
 				requirements: [
 					{
 						requirement: "x",
+						kind: "skill_or_experience",
 						importance: "must",
 						status: "met",
 						evidence: [

@@ -287,24 +287,8 @@ function expectedStages(before: Snapshot): Record<string, unknown>[] {
 	return stages;
 }
 
-/**
- * The applications a re-filter looks at again (`refilterApplications`): only when the stored job
- * filter version is older, and only listed matches not set aside, prepared, ended, chosen anyway
- * or added by hand. Of the fixture: a1 (found), and a3 (scored) where the schema predates
- * `chosen_anyway_at`, so the user's "show anyway" on it cannot be stored. Every other
- * application must come through unchanged (a10 apart, see allowedChanges).
- */
-function refilteredApps(before: Snapshot, latest: boolean): string[] {
-	if (latest) return [];
-	const chosenAnyway = before.applications?.get("id=a3")?.chosen_anyway_at;
-	// Drafts waiting for answers (a5) or review (a6) are checked again too.
-	return chosenAnyway === undefined
-		? ["a1", "a3", "a5", "a6"]
-		: ["a1", "a5", "a6"];
-}
-
 /** The values start-up is meant to change, as "table [key] column" patterns. */
-function allowedChanges(refiltered: string[]): RegExp[] {
+function allowedChanges(): RegExp[] {
 	const j10 = applicationInstanceId("j10");
 	return [
 		// Settings it moves or refreshes.
@@ -329,10 +313,6 @@ function allowedChanges(refiltered: string[]): RegExp[] {
 		/^source_providers \[user_id=local, provider=(job-board-search|web-search)\] config$/,
 		/^source_providers \[user_id=local, provider=linkedin\] enabled$/,
 		/^search_plans \[user_id=local\] user$/,
-		// A newer job filter: these matches' filter result and flags are computed again.
-		...refiltered.map(
-			(id) => new RegExp(`^applications \\[id=${id}\\] (filter_result|flags)$`),
-		),
 	];
 }
 
@@ -395,35 +375,20 @@ describe.concurrent.each(POINTS)("upgrade from schema %s", (point) => {
 			// set aside goes back to the Inbox.
 			`flow_steps [run_id=${applicationInstanceId("j10")}, key=score#1]`,
 		]);
-		const refiltered = refilteredApps(before, point === LATEST);
-		const allowed = allowedChanges(refiltered);
+		// No job is filtered again at start-up (docs/decisions.md, 2026-11-05).
+		const allowed = allowedChanges();
 		expect(
 			changes.changed.filter((c) => !allowed.some((a) => a.test(c))),
 		).toEqual([]);
-		// Said once more for the applications: none changes but a10 and the re-filtered ones
-		// (a9, needs_human and added by hand, keeps its flags, for one).
-		const touched = new Set(["a10", ...refiltered]);
+		// Said once more for the applications: none changes but a10 (a9, needs_human and added
+		// by hand, keeps its flags, for one; matches keep their filter result and flags).
+		const touched = new Set(["a10"]);
 		expect(
 			changes.changed.filter((c) => {
 				const id = /^applications \[id=(\w+)\]/.exec(c)?.[1];
 				return id !== undefined && !touched.has(id);
 			}),
 		).toEqual([]);
-		// The re-filtered matches pass the current rules; their old "unclear" flag is gone.
-		const verdicts: Record<string, string> = {
-			a1: "remote_home",
-			a3: "home",
-			a5: "remote_home",
-			a6: "home",
-		};
-		for (const id of refiltered) {
-			const app = after.applications?.get(`id=${id}`);
-			expect(JSON.parse(String(app?.filter_result)), id).toMatchObject({
-				decision: "keep",
-				locationVerdict: verdicts[id],
-			});
-			expect(app?.flags, id).toBe("[]");
-		}
 		// Exactly the rows start-up is meant to add, and the flow event is the workflow event's.
 		const all = addedRows(before, after);
 		// Stage entries by their order of record (their ids are random).

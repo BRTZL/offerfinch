@@ -6,9 +6,9 @@ import { launchApp, pickFakeModels, RESUME, tempUserData } from "./launch";
 /**
  * Setup's first search waits for the scoring the search started, not for the scan alone: a scan
  * ends before its jobs are scored. With slow test models the matches arrive after the scan and
- * the no-match line never shows; with every job set aside by a rule, nothing is scored and the
- * no-match line does show. The list is live: every job shows as found first, a set-aside job
- * shows the rule it broke, and a scored one its fit.
+ * the no-match line never shows; with every job scored below the minimum, the no-match line does
+ * show. The list is live: every job shows as found first, then waits for its score, and a scored
+ * one shows its fit. No rule sets a job aside.
  */
 let boards: Awaited<ReturnType<typeof startFixtureBoards>>;
 test.beforeAll(async () => {
@@ -70,7 +70,13 @@ async function watchProgress(page: Page) {
 const DONE_WITH_MATCHES =
 	/Done: \d+ jobs? read, \d+ set aside, \d+ match(es)?\. (They are|It is) waiting in your Inbox\./;
 
-async function walkToFirstSearch(page: Page, excludeTitles?: string) {
+async function walkToFirstSearch(
+	page: Page,
+	{
+		excludeTitles,
+		minScore,
+	}: { excludeTitles?: string; minScore?: number } = {},
+) {
 	await page.getByTestId("welcome-start").click({ timeout: 30_000 });
 	await pickFakeModels(page);
 	await page.getByTestId("step-continue").click();
@@ -81,6 +87,8 @@ async function walkToFirstSearch(page: Page, excludeTitles?: string) {
 	await expect(page.getByTestId("step-count")).toContainText("Step 3 of 5");
 	if (excludeTitles)
 		await page.locator("#f-excludeTitleKeywords").fill(excludeTitles);
+	if (minScore !== undefined)
+		await page.locator("#f-minimum-fit").fill(String(minScore));
 	await page.getByTestId("step-continue").click();
 	await expect(page.getByTestId("step-count")).toContainText("Step 4 of 5");
 	await page.getByTestId("step-skip").click();
@@ -112,9 +120,9 @@ test("matches scored after the scan ended still arrive; no false no-match line",
 		);
 		const lines = await seen.lines();
 		// The scan was done before any match was scored: setup waited, and said so.
-		expect(lines.some((l) => l.includes("Scoring them"))).toBe(true);
+		expect(lines.some((l) => /Scoring \d+ jobs?/.test(l))).toBe(true);
 		expect(lines.some((l) => l.includes("No matches this time"))).toBe(false);
-		// Every row came in as found, then passed the rules and was scored.
+		// Every row came in as found, then was scored.
 		const rows = await seen.rows();
 		expect(rows.states).toContain("found");
 		expect(rows.states).toContain("scored");
@@ -124,14 +132,15 @@ test("matches scored after the scan ended still arrive; no false no-match line",
 	}
 });
 
-test("every job set aside by a rule: the friendly no-match line", async () => {
+test("every job scored below the minimum: the friendly no-match line", async () => {
 	const { app, page, errors } = await launchApp({
 		userData: tempUserData(),
 		rewrite: boards.rewrite,
 		siteOrigins: boards.siteOrigins,
 	});
 	try {
-		await walkToFirstSearch(page, "Engineer");
+		// A title to avoid takes 15 off every engineering role; nothing reaches a minimum of 100.
+		await walkToFirstSearch(page, { excludeTitles: "Engineer", minScore: 100 });
 		const seen = await watchProgress(page);
 		await page.getByTestId("first-scan-start").click();
 		await expect(page.getByTestId("first-scan-progress")).toContainText(
@@ -142,14 +151,11 @@ test("every job set aside by a rule: the friendly no-match line", async () => {
 			/Done: \d+ jobs? read, \d+ set aside\. No matches this time/,
 		);
 		await expect(page.getByTestId("first-match")).toHaveCount(0);
-		// Each job showed as found, then as set aside with the rule it broke, then left.
+		// Each job showed as found, then was scored low; none was set aside by a rule.
 		const rows = await seen.rows();
 		expect(rows.states).toContain("found");
-		expect(rows.states).toContain("rejected_by_filter");
-		expect(rows.reasons).toContain('Title contains "Engineer".');
-		await expect(
-			page.locator('[data-testid="first-search-list"] li:not([aria-hidden])'),
-		).toHaveCount(0);
+		expect(rows.states).toContain("scored");
+		expect(rows.states).not.toContain("rejected_by_filter");
 		await expect(page.getByTestId("onboarding-finish")).toHaveText(
 			"Open the Inbox",
 		);

@@ -471,6 +471,7 @@ describe("tailoring on demand (PLAN A)", () => {
 				requirements: [
 					{
 						requirement: "TypeScript",
+						kind: "skill_or_experience",
 						importance: "must",
 						status: "met",
 						evidence: [],
@@ -478,6 +479,7 @@ describe("tailoring on demand (PLAN A)", () => {
 					},
 					{
 						requirement: "Elixir",
+						kind: "skill_or_experience",
 						importance: "must",
 						status: "not_met",
 						evidence: [],
@@ -528,24 +530,29 @@ describe("tailoring on demand (PLAN A)", () => {
 });
 
 describe("Prepare anyway (a job the user added and chose on purpose)", () => {
-	it("scores and drafts a job the filter set aside, its filter result kept", async () => {
+	it("scores and drafts a job the filter set aside before rules stopped rejecting, its filter result kept", async () => {
 		const llm = new FakeLlmProvider();
 		const { repo, app, wake } = await setup(
 			llm,
-			{
-				// Living and working elsewhere only, so the job's place sets it aside.
-				livesIn: "Japan",
-				rightToWork: ["Japan"],
-				keepOnsiteIn: [],
-				keepRemoteFromHome: false,
-				keepGlobalRemote: false,
-			},
+			{ livesIn: "Japan", rightToWork: ["Japan"] },
 			new FakeLlmProvider(),
 			PROFILE,
 			true,
 		);
-		expect(app.state).toBe("rejected_by_filter");
-		expect(llm.calls).toEqual([]);
+		// No rule sets a job aside now: the scan scored it.
+		expect(app.filter).toBeNull();
+		expect(llm.calls.map((c) => c.task)).toEqual(["fit-score"]);
+		// As an application set aside by an older version reads: rejected_by_filter, never scored.
+		app.state = "rejected_by_filter";
+		app.filter = {
+			decision: "reject",
+			summary: "Remote only within the United States.",
+			reasons: [],
+			flags: [],
+		};
+		app.fit = null;
+		app.endedReason = null;
+		llm.calls.length = 0;
 		// What the app's Prepare anyway does: back to found, chosen, preparation requested.
 		repo.chosen.add(app.id);
 		repo.requestPrepare(app.id);

@@ -1,8 +1,6 @@
 import { beginSubmissionStep, submitStep } from "../apply/submit";
 import { isWaitingState } from "../domain/states";
-import { workContext } from "../filter/home";
-import { evaluateHardRequirements, type FilterResult } from "../filter/rules";
-import { scoreFit } from "../scoring/fit";
+import { fitSettings, scoreFit } from "../scoring/fit";
 import { LlmPausedError } from "../scoring/llm";
 import { meteredFor } from "../scoring/metered";
 import { rankScored } from "../scoring/rank";
@@ -35,46 +33,24 @@ import { redraftInReview } from "./redraft";
 
 export type ApplicationOutcome =
 	| { outcome: "read_failed"; reason: string }
-	| { outcome: "rejected_by_filter"; reason: string }
 	| { outcome: "low_score"; score: number; reason: string }
 	| { outcome: "no_profile"; reason: string }
 	| { outcome: "paused"; state: string; waitingFor: string }
 	| { outcome: "finished"; state: string };
 
-/** Step 1: hard requirements, no AI. Idempotent: a retry after the write reads the stored result. */
-export async function filterStep(
+/**
+ * Step 1, still named "hard filter" (step names are running instances' replay state): finds the
+ * application. No rule rejects a job any more (docs/decisions.md, 2026-11-05): every found job
+ * goes to the fit score, which judges place, work rights and language itself. A step result
+ * cached by an older run may hold more fields (`ended`, `result`); only `applicationId` is read.
+ */
+export async function findApplicationStep(
 	deps: PipelineDeps,
 	userId: string,
 	jobId: string,
-): Promise<{
-	applicationId: string;
-	ended: boolean;
-	result: FilterResult;
-} | null> {
+): Promise<{ applicationId: string } | null> {
 	const app = await deps.repo.getApplicationByJob(userId, jobId);
-	if (!app) return null;
-	if (app.state !== "found") {
-		const stored = app.filter ?? {
-			decision: "keep",
-			summary: "already filtered",
-			reasons: [],
-			flags: [],
-		};
-		return {
-			applicationId: app.applicationId,
-			ended: app.state === "rejected_by_filter",
-			result: stored,
-		};
-	}
-	const settings = await deps.repo.getFilterSettings(userId);
-	const result = evaluateHardRequirements(app.job, settings);
-	const chosen = await deps.repo.chosenAnyway?.(userId, app.applicationId);
-	if (result.decision === "reject" && !chosen) {
-		await deps.repo.recordFilterRejection(userId, app.applicationId, result);
-		return { applicationId: app.applicationId, ended: true, result };
-	}
-	await deps.repo.saveFilterResult(userId, app.applicationId, result);
-	return { applicationId: app.applicationId, ended: false, result };
+	return app ? { applicationId: app.applicationId } : null;
 }
 
 /** Step 2: fit score against profile evidence. Idempotent: a scored application is not re-scored. */
@@ -98,7 +74,6 @@ export async function scoreStep(
 	const profile = await deps.repo.getProfile(userId);
 	if (!profile) return { noProfile: true };
 	const settings = await deps.repo.getFilterSettings(userId);
-	const ctx = workContext(settings);
 	let fit: Awaited<ReturnType<typeof scoreFit>>;
 	try {
 		fit = await scoreFit(
@@ -106,14 +81,7 @@ export async function scoreStep(
 			{
 				job: { ...app.job, companyName: app.companyName },
 				profile,
-				work: {
-					livesIn: ctx.livesIn,
-					citizenship: ctx.citizenship,
-					rightToWork: ctx.rightToWork,
-					locationVerdict: app.filter?.locationVerdict,
-					locationNote: app.filter?.reasons.find((r) => r.rule === "location")
-						?.message,
-				},
+				...fitSettings(settings),
 			},
 		);
 	} catch (error) {
@@ -122,20 +90,17 @@ export async function scoreStep(
 		throw error;
 	}
 	const chosen = await deps.repo.chosenAnyway?.(userId, app.applicationId);
+	// A blocker (a must-have work right, place, citizenship, clearance or language not met; pay
+	// below the minimum) is named first: it is why the score is capped.
+	const blockers = fit.blockers ?? [];
 	const reason =
 		fit.score < settings.minScore && !chosen
-			? `Fit score ${fit.score} is below the minimum of ${settings.minScore}.`
+			? `${blockers.length > 0 ? `${blockers.join(" ")} ` : ""}Fit score ${fit.score} is below the minimum of ${settings.minScore}.`
 			: null;
 	// Deterministic, no model call: the order of Matches.
 	const rank = rankScored({
 		score: fit.score,
-		job: {
-			title: app.job.title,
-			descriptionText: app.job.descriptionText,
-			companyId: app.companyId,
-		},
-		filter: app.filter,
-		profile,
+		job: { companyId: app.companyId, title: app.job.title },
 		dismissals: (await deps.repo.dismissalSignals?.(userId)) ?? [],
 	});
 	await deps.repo.recordScore(userId, app.applicationId, fit, reason, rank);
@@ -151,7 +116,7 @@ async function alertStep(
 	const app = await deps.repo.getApplicationByJob(userId, jobId);
 	if (!app || app.score === null) return false;
 	const settings = await deps.repo.getFilterSettings(userId);
-	// The rank is the score less the penalties (unclear place, a company passed on): what Matches
+	// The rank is the score less the penalties (a company or similar jobs passed on): what Matches
 	// orders by. A job ranked below the bar is not a strong match, whatever its raw score.
 	if ((app.rank ?? app.score) < settings.alertMinScore) return false;
 	if (!(await deps.repo.claimAlert(userId, app.applicationId))) return false;
@@ -201,8 +166,8 @@ async function prepareOnce(
 }
 
 /**
- * ApplicationWorkflow body. Filter and score run first and end the instance (reason saved) on a
- * rejection or low score. Then: prepare (draft), review (independent claims check, rules, PDF and
+ * ApplicationWorkflow body. The fit score runs first and ends the instance (reason saved) on a
+ * low score; the "hard filter" step only finds the application and never ends the run. Then: prepare (draft), review (independent claims check, rules, PDF and
  * DOCX export, ATS check), pauses for answers and for approval, then submits once on approval
  * when the user's switch allows (see `apply/submit.ts`). Every wake-up re-reads Postgres, which decides; a timed-out wait only ever moves the
  * application to `expired`. Step names are part of running instances' state: do not rename them.
@@ -223,13 +188,12 @@ export async function runApplicationFlow(
 		});
 		if (!read.ok) return { outcome: "read_failed", reason: read.reason };
 	}
-	const filtered = await step.do("hard filter", () =>
-		filterStep(deps, userId, jobId),
+	// Kept by name for running instances' replay; it rejects nothing (findApplicationStep).
+	const found = await step.do("hard filter", () =>
+		findApplicationStep(deps, userId, jobId),
 	);
 	// Outside a step, so it is not retried: a job the user does not own fails the instance.
-	if (!filtered) throw new ApplicationNotFoundError(userId, jobId);
-	if (filtered.ended)
-		return { outcome: "rejected_by_filter", reason: filtered.result.summary };
+	if (!found) throw new ApplicationNotFoundError(userId, jobId);
 
 	const scored = await step.do(
 		"fit score",
@@ -255,7 +219,7 @@ export async function runApplicationFlow(
 	});
 
 	const store: ApplicationStore = deps.repo;
-	const { applicationId } = filtered;
+	const { applicationId } = found;
 	for (let wake = 0; wake < MAX_WAKEUPS; wake++) {
 		const state = await step.do(
 			`read state ${wake}`,

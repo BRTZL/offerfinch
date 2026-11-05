@@ -357,7 +357,7 @@ describe("the web search provider", () => {
 		// where the user lives) as plain words.
 		expect(h.searched).toEqual([
 			"Frontend Engineer jobs remote",
-			"Frontend Engineer jobs Turkey",
+			"Frontend Engineer jobs Türkiye",
 		]);
 		// The LinkedIn result, the private address and the repeat are never opened.
 		expect(h.opened).toEqual([

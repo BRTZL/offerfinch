@@ -75,16 +75,21 @@ describe("scan flow + application flow (local runner)", () => {
 		});
 		expect(first.jobsInserted).toBe(2);
 		expect(first.workflows.created).toHaveLength(2);
+		// No rule sets a job aside: the Spanish-speaking role is scored, and its language
+		// requirement caps the score below the minimum with the blocker as the reason.
 		expect(repo.apps.map((a) => a.state).sort()).toEqual([
 			"ready_for_review",
-			"rejected_by_filter",
+			"scored",
 		]);
 		expect(notifier.sent).toHaveLength(1);
 
-		const rejected = repo.apps.find((a) => a.state === "rejected_by_filter");
-		expect(rejected?.filter?.summary).toMatch(/Requires Spanish/);
-		expect(workflows.outcomes.get(rejected?.jobId ?? "")).toMatchObject({
-			outcome: "rejected_by_filter",
+		const low = repo.apps.find((a) => a.state === "scored");
+		expect(low?.filter).toBeNull();
+		expect(low?.endedReason).toMatch(
+			/Requires Spanish.*Fit score \d+ is below the minimum/,
+		);
+		expect(workflows.outcomes.get(low?.jobId ?? "")).toMatchObject({
+			outcome: "low_score",
 		});
 		const kept = repo.apps.find((a) => a.state === "ready_for_review");
 		expect(workflows.outcomes.get(kept?.jobId ?? "")).toMatchObject({
@@ -191,7 +196,8 @@ describe("scan flow + application flow (local runner)", () => {
 		};
 		await runScanFlow(new LocalStep(), deps, { userId: "u1", trigger: "cli" });
 		expect(sizes).toEqual([100, 100, 30]);
-	});
+		// Every job is scored now (no rule rejects one first): 230 fake scorings.
+	}, 30_000);
 
 	it("derives instance ids from job ids within Cloudflare's 100-character limit", () => {
 		const id = applicationInstanceId("0b7d0d2c-5a6e-4f7a-9a39-0c2f8f1b2c3d");

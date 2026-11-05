@@ -49,7 +49,7 @@ function workplace(value: string | undefined): WorkplaceType {
 }
 
 const COUNTRY_NAMES: Record<string, string> = {
-	TR: "Turkey",
+	TR: "Türkiye",
 	US: "United States",
 	GB: "United Kingdom",
 	DE: "Germany",

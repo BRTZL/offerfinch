@@ -4,8 +4,6 @@ import type {
 	WorkplaceType,
 } from "../domain/types";
 import { companyNameKey } from "../domain/url";
-import { evaluateHardRequirements } from "../filter/rules";
-import type { FilterSettings } from "../filter/settings";
 import type { PipelineDeps } from "../pipeline/ports";
 import {
 	NO_SEARCHES,
@@ -34,8 +32,9 @@ import { type FeedFetch, FeedReadError, feedFetcher } from "./http";
  * Remote-job feeds (Remotive, Remote OK, We Work Remotely, Hacker News "Who is hiring?"): public
  * APIs and RSS read with plain GETs, no browser and no sign-in. Each is read whole at most every
  * 6 hours (Remotive asks for at most 4 requests a day; the others are held to the same pace) and
- * filtered here by the shared search plan and the job filter, so only plausible matches are
- * stored, at most 25 new ones a read: every stored job is scored by a model. Jobs link back to
+ * kept here when one of the shared search plan's searches finds them (no rule sets a job aside:
+ * the fit score judges place and work rights), at most 25 new ones a read: every stored job is
+ * scored by a model. Jobs link back to
  * the feed's own page, which names the feed (their terms ask for it), and are handed off.
  */
 
@@ -199,7 +198,7 @@ export class FeedProvider implements ScanProvider {
 			out.problem = `Next ${this.label} read in ${inAbout(next.getTime() - now.getTime())}.`;
 			return out;
 		}
-		const { settings, searches } = await searchesFor(deps, userId, plan);
+		const { searches } = await searchesFor(deps, userId, plan);
 		if (searches.length === 0) {
 			out.problem = NO_SEARCHES;
 			return out;
@@ -225,7 +224,7 @@ export class FeedProvider implements ScanProvider {
 		out.results = postings.length;
 		out.fetched = postings.length;
 		const drops = new DropLog();
-		const kept = plausible(postings, settings, searches, now, drops);
+		const kept = plausible(postings, searches, now, drops);
 		const waiting = await this.save(deps, userId, kept, out, signal);
 		out.dropped = drops.report();
 		// Notes, not failures: the source ran (as web search's caps).
@@ -345,13 +344,12 @@ export class FeedProvider implements ScanProvider {
 
 /**
  * The postings worth storing, newest first (a capped read keeps the newest; the next read the
- * rest): open, not set aside by the job filter, and found by one of the plan's searches (its
- * words in the title or tags, and the place the filter judged where the search looks). Each
- * other one is logged with its reason for the scan history.
+ * rest): open, and found by one of the plan's searches (its words in the title or tags, and the
+ * kind of work it looks for: remote or office). Each other one is logged with its reason for the
+ * scan history.
  */
 export function plausible(
 	postings: FeedPosting[],
-	settings: FilterSettings,
 	searches: PlanSearch[],
 	now: Date,
 	drops: DropLog,
@@ -363,14 +361,9 @@ export function plausible(
 				drops.add("expired", example);
 				return false;
 			}
-			const result = evaluateHardRequirements(p, settings);
-			const fits =
-				result.decision !== "reject" &&
-				searches.some(
-					(s) =>
-						feedKeywordsMatch(p, s) &&
-						feedWhereMatch(p, result.locationVerdict, s),
-				);
+			const fits = searches.some(
+				(s) => feedKeywordsMatch(p, s) && feedWhereMatch(p, s),
+			);
 			if (!fits) drops.add("off_search", example);
 			return fits;
 		})

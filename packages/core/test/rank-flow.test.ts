@@ -27,9 +27,14 @@ function posting(id: string, overrides: Partial<NormalizedJob>): NormalizedJob {
 }
 
 describe("scoring stores a rank and tells the scorer where the user may work", () => {
-	it("ranks a match with an unclear place below the same job in Turkey", async () => {
+	it("ranks from the fit score alone, and sends work rights and preferences, never a filter verdict", async () => {
 		const repo = new MemoryRepo(PROFILE);
 		repo.onDemand = true;
+		repo.settings = {
+			...repo.settings,
+			seniority: ["Senior"],
+			preferredIndustries: ["Developer tools"],
+		};
 		repo.addCompany({ name: "Acme", source: "greenhouse", sourceKey: "acme" });
 		const llm = new FakeLlmProvider();
 		const workflows = new LocalWorkflowStarter();
@@ -57,24 +62,29 @@ describe("scoring stores a rank and tells the scorer where the user may work", (
 		workflows.bind(deps);
 		await runScanFlow(new LocalStep(), deps, { userId: "u1", trigger: "cli" });
 
-		const [turkey, emea] = ["1", "2"].map((id) =>
+		const [turkey, remote] = ["1", "2"].map((id) =>
 			repo.apps.find(
 				(a) => repo.jobs.find((j) => j.id === a.jobId)?.job.externalId === id,
 			),
 		);
 		expect(turkey?.state).toBe("scored");
-		expect(emea?.state).toBe("scored");
-		expect(turkey?.fit?.score).toBe(emea?.fit?.score);
+		expect(remote?.state).toBe("scored");
+		// Same score, same rank: an unstated place is the fit score's to weigh, not a penalty.
+		expect(turkey?.fit?.score).toBe(remote?.fit?.score);
 		expect(turkey?.rank?.rank).toBe(turkey?.fit?.score);
-		expect(emea?.rank?.rank).toBeLessThan(turkey?.rank?.rank ?? 0);
-		expect(emea?.rank?.penalties[0]?.reason).toBe("location unclear");
+		expect(remote?.rank?.rank).toBe(remote?.fit?.score);
+		expect(remote?.rank?.penalties).toEqual([]);
 
 		const prompts = llm.calls.filter((c) => c.task === "fit-score");
 		expect(prompts[0]?.prompt).toMatch(
-			/<work_rights>\nLives in: Turkey\nCitizenship: Turkey\nRight to work in: Turkey\n<\/work_rights>/,
+			/<work_rights>\nLives in: Türkiye\nCitizenship: Türkiye\nRight to work in: Türkiye\n<\/work_rights>/,
 		);
-		expect(prompts.map((p) => p.prompt).join("\n")).toMatch(
-			/Location check: unclear/,
+		expect(prompts[0]?.prompt).toMatch(/Target levels: Senior\n/);
+		expect(prompts[0]?.prompt).toMatch(
+			/Preferred industries: Developer tools\n/,
+		);
+		expect(prompts.map((p) => p.prompt).join("\n")).not.toMatch(
+			/Location check/,
 		);
 	});
 });
@@ -85,11 +95,19 @@ describe("the strong-match notification follows the rank", () => {
 			const repo = new MemoryRepo(PROFILE);
 			repo.onDemand = true;
 			repo.settings = { ...repo.settings, alertMinScore };
-			repo.addCompany({
-				name: "Acme",
+			const passedOn = repo.addCompany({
+				name: "Passed On Labs",
 				source: "greenhouse",
 				sourceKey: "acme",
 			});
+			// The user passed on a job at this company before: its new jobs rank 25 lower.
+			repo.dismissals = [
+				{
+					companyId: passedOn.id,
+					reasons: ["company"],
+					title: "Backend Engineer",
+				},
+			];
 			const notified: string[] = [];
 			const workflows = new LocalWorkflowStarter();
 			const deps: PipelineDeps = {
@@ -97,14 +115,7 @@ describe("the strong-match notification follows the rank", () => {
 				sources: {
 					greenhouse: {
 						kind: "greenhouse",
-						listJobs: async () => [
-							posting("1", { title: "Senior Software Engineer, Ankara" }),
-							posting("2", {
-								title: "Senior Software Engineer, EMEA",
-								locations: ["Remote"],
-								workplaceType: "remote",
-							}),
-						],
+						listJobs: async () => [posting("1", {})],
 					},
 				},
 				llm: new FakeLlmProvider(),
@@ -123,14 +134,16 @@ describe("the strong-match notification follows the rank", () => {
 				userId: "u1",
 				trigger: "cli",
 			});
-			const score = repo.apps[0]?.fit?.score ?? 0;
-			return { notified, score };
+			const app = repo.apps[0];
+			return { notified, score: app?.fit?.score ?? 0, rank: app?.rank?.rank };
 		};
-		// Nothing alerts with the bar above every score; this run only tells us the fake's score.
-		const { score } = await run(101);
-		expect(score).toBeGreaterThan(15);
-		// Both jobs score the same; the EMEA one is ranked 15 lower for its unclear place.
-		const { notified } = await run(score - 10);
-		expect(notified).toEqual(["Senior Software Engineer, Ankara"]);
+		const { score, rank } = await run(101);
+		expect(score).toBeGreaterThan(25);
+		expect(rank).toBe(score - 25);
+		// Above the rank, below the score: no alert.
+		expect((await run(score - 10)).notified).toEqual([]);
+		expect((await run(score - 30)).notified).toEqual([
+			"Senior Software Engineer",
+		]);
 	});
 });

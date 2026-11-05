@@ -105,10 +105,10 @@ export function firstSearchLine(
 		return "Search done. Checking what it found…";
 	if (phase.settled) return doneLine(counts);
 	if (phase.paused && phase.paused.count > 0) return pausedLine(phase.paused);
-	// Nothing passed yet: still the rules pass (a row may be between the two reads).
+	// None waiting for a score yet (a row may be between the two reads).
 	if (phase.checking || phase.fitRules === 0)
-		return `${read}. Checking them against your rules…`;
+		return `${read}. Getting them ready to score…`;
 	return phase.fitRules === 1
-		? "1 fits your rules. Scoring it…"
-		: `${phase.fitRules} fit your rules. Scoring them…`;
+		? "Scoring 1 job against what you want…"
+		: `Scoring ${phase.fitRules} jobs against what you want…`;
 }

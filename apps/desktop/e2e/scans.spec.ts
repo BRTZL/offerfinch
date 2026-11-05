@@ -20,7 +20,7 @@ import {
 
 /**
  * Scan history against local stand-ins only, in the background: job-board search on the fixture
- * boards (one posting the job filter sets aside), Indeed on a stand-in search page, Glassdoor on
+ * boards (one posting scored below the minimum for a requirement it cannot meet), Indeed on a stand-in search page, Glassdoor on
  * a stand-in check that pauses it. The Scans screen lists the run with its outcome, and its
  * detail shows each source's funnel, the jobs found, what was set aside and why, and the paused
  * source with what to do. A screenshot goes to test-results/scans-shots (or E2E_SHOTS).
@@ -51,7 +51,7 @@ function readDb<T>(query: string, ...params: unknown[]): T[] {
 	}
 }
 
-test("the scan history: found, set aside with reasons, and a paused source", async () => {
+test("the scan history: found, scored below the minimum with reasons, and a paused source", async () => {
 	const boards = await startFixtureBoards();
 	const PAGES: Record<string, Record<string, string>> = {
 		"127.0.0.1": {
@@ -145,10 +145,16 @@ test("the scan history: found, set aside with reasons, and a paused source", asy
 				{ timeout: 120_000 },
 			)
 			.toBe(0);
-		const filtered = readDb<{ n: number }>(
-			"select count(*) n from applications where state = 'rejected_by_filter'",
+		// No rule sets a job aside; the one it cannot take is scored below the minimum.
+		expect(
+			readDb<{ n: number }>(
+				"select count(*) n from applications where state = 'rejected_by_filter'",
+			)[0]?.n,
+		).toBe(0);
+		const below = readDb<{ n: number }>(
+			"select count(*) n from applications where state = 'scored' and ended_reason is not null",
 		)[0]?.n;
-		expect(filtered).toBeGreaterThan(0);
+		expect(below).toBeGreaterThan(0);
 
 		const detail = page.getByTestId("scan-detail");
 		await expect(page.getByTestId("scan-outcome")).toHaveText(
@@ -158,14 +164,14 @@ test("the scan history: found, set aside with reasons, and a paused source", asy
 		await expect(row).toContainText(/Found \d+ new match/);
 		await expect(row).toContainText("Scan now");
 
-		// Job-board search: its funnel, the jobs it saved, and what the filter set aside.
+		// Job-board search: its funnel, the jobs it saved, and what scored below the minimum.
 		const search = detail.getByTestId("scan-source-job-board-search");
 		await expect(search.getByTestId("scan-funnel")).toContainText("read");
 		await expect(search.getByTestId("scan-found")).toContainText(
 			"Listed in Inbox",
 		);
 		await expect(search.getByTestId("scan-dropped")).toContainText(
-			/Filtered by (language|location)/,
+			/Scored below your minimum/i,
 		);
 		// Indeed ran on its stand-in and saved its two postings.
 		const indeed = detail.getByTestId("scan-source-indeed");

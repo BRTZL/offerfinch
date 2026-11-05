@@ -84,12 +84,6 @@ export class DrizzlePipelineRepository
 		);
 	}
 
-	saveFilterResult(
-		...args: Parameters<typeof applicationsMethods.saveFilterResult>
-	) {
-		return applicationsMethods.saveFilterResult.apply(this, args);
-	}
-
 	protected currentHashes(
 		...args: Parameters<typeof approvalMethods.currentHashes>
 	) {
@@ -222,12 +216,6 @@ export class DrizzlePipelineRepository
 
 	protected move(...args: Parameters<typeof eventsMethods.move>) {
 		return eventsMethods.move.apply(this, args);
-	}
-
-	recordFilterRejection(
-		...args: Parameters<typeof applicationsMethods.recordFilterRejection>
-	) {
-		return applicationsMethods.recordFilterRejection.apply(this, args);
 	}
 
 	recordScore(...args: Parameters<typeof applicationsMethods.recordScore>) {

@@ -1,7 +1,7 @@
 /**
  * Every country the settings pickers offer, by the one name the filter uses for it. Names match
- * the gazetteer's keys in `places.ts` ("Turkey", "United States"), so a setting and a posting's
- * location always compare equal. Never store a localized name ("Türkiye") as a setting.
+ * the gazetteer's keys in `places.ts` ("Türkiye", "United States"), so a setting and a posting's
+ * location always compare equal. Never store another name ("Turkey", "Türkei") as a setting.
  */
 export const COUNTRIES = [
 	"Afghanistan",
@@ -185,7 +185,7 @@ export const COUNTRIES = [
 	"Tonga",
 	"Trinidad and Tobago",
 	"Tunisia",
-	"Turkey",
+	"Türkiye",
 	"Turkmenistan",
 	"Tuvalu",
 	"Uganda",
@@ -234,6 +234,3 @@ export const EU_MEMBERS = [
 	"Spain",
 	"Sweden",
 ];
-
-/** EEA and Schengen add these to the EU. */
-export const EEA_EXTRA = ["Iceland", "Liechtenstein", "Norway"];

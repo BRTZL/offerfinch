@@ -12,7 +12,7 @@ import {
 } from "@offerfinch/db";
 import { migrate } from "@offerfinch/db/migrate";
 import { flowRuns } from "@offerfinch/db/schema/jobs";
-import { companies } from "@offerfinch/db/schema/pipeline";
+import { applications, companies } from "@offerfinch/db/schema/pipeline";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
@@ -96,22 +96,28 @@ describe("scan history in the worker", () => {
 			company?.id ?? "",
 			job("2", "Platform Engineer"),
 		);
-		// The job filter set one aside for its location.
+		// The job filter of an older version set one aside for its location.
 		const filteredApp =
 			(await repo.getApplicationByJob("u1", filtered.jobId))?.applicationId ??
 			"";
-		await repo.saveFilterResult("u1", filteredApp, {
-			decision: "reject",
-			summary: "On-site in Berlin",
-			flags: [],
-			reasons: [
-				{
-					rule: "location",
-					outcome: "reject",
-					message: "On-site in Berlin, Germany",
+		await db
+			.update(applications)
+			.set({
+				filterDecision: "reject",
+				filterResult: {
+					decision: "reject",
+					summary: "On-site in Berlin",
+					flags: [],
+					reasons: [
+						{
+							rule: "location",
+							outcome: "reject",
+							message: "On-site in Berlin, Germany",
+						},
+					],
 				},
-			],
-		});
+			})
+			.where(eq(applications.id, filteredApp));
 		await repo.transition("u1", filteredApp, {
 			from: ["found"],
 			to: "rejected_by_filter",

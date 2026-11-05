@@ -370,17 +370,26 @@ type FilterNote = {
 };
 
 /**
- * A job the user added by link: it stays in the Inbox whatever the job filter says. When the
- * filter would have set it aside, its reasons are a note, each quoting what the posting said.
+ * A job the user added by link: it stays in the Inbox whatever its fit score says. What blocks
+ * it (the fit score's blockers, or the reasons an older version's job filter gave) is a note.
  */
 function AddedByYou({ app }: { app: AppDetail }) {
 	const filter = app.filter as FilterNote | null;
-	const misses = (filter?.reasons ?? []).filter((r) => r.outcome === "reject");
-	if (filter?.decision !== "reject" || misses.length === 0)
+	const misses = (filter?.reasons ?? [])
+		.filter((r) => r.outcome === "reject")
+		.map((r) => ({
+			key: r.rule,
+			text: `${r.message}${r.evidence ? ` The posting says: “${r.evidence}”.` : ""}`,
+		}));
+	const blockers = (
+		(app.fit as { blockers?: string[] } | null)?.blockers ?? []
+	).map((text) => ({ key: text, text }));
+	const notes = filter?.decision === "reject" ? misses : blockers;
+	if (notes.length === 0)
 		return (
 			<span>
-				Added by you. It matches your job search. Interested drafts a tailored
-				CV, letter and answers from your profile, using your models.
+				Added by you. Interested drafts a tailored CV, letter and answers from
+				your profile, using your models.
 			</span>
 		);
 	return (
@@ -390,11 +399,8 @@ function AddedByYou({ app }: { app: AppDetail }) {
 				you picked it, and Interested still drafts it:
 			</span>
 			<ul className="text-muted-foreground flex list-disc flex-col gap-0.5 pl-4">
-				{misses.map((r) => (
-					<li key={r.rule}>
-						{r.message}
-						{r.evidence ? ` The posting says: “${r.evidence}”.` : ""}
-					</li>
+				{notes.map((n) => (
+					<li key={n.key}>{n.text}</li>
 				))}
 			</ul>
 		</span>

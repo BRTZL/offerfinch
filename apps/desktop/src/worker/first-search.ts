@@ -19,7 +19,11 @@ import { and, eq, inArray } from "drizzle-orm";
  * not one of them. A run from before that table reads its sources' `newJobIds` instead.
  */
 
-/** Where a found job stands: read, past the rules, set aside by one, or scored. */
+/**
+ * Where a found job stands: read, waiting for its score (`fits`: no rule sets a job aside any
+ * more, docs/decisions.md 2026-11-05), set aside (a hidden company, or the job filter of an
+ * older version), or scored.
+ */
 export type FirstSearchState =
 	| "found"
 	| "fits"
@@ -33,12 +37,12 @@ export interface FirstSearchRow {
 	title: string;
 	source: string;
 	state: FirstSearchState;
-	/** For a set-aside job: the rule it broke, in a few words. */
+	/** For a set-aside job: why, in a few words. */
 	reason: string | null;
 	score: number | null;
 	/** Scored at or above the user's minimum score. */
 	match: boolean;
-	/** Past the rules, but its scoring paused (the model cannot run now); it waits for a score. */
+	/** Waiting for its score, but scoring paused (the model cannot run now). */
 	paused: boolean;
 	/**
 	 * Its application run errored before a score (retries spent): it stays found until the next
@@ -94,15 +98,16 @@ export function firstSearchRow(
 	};
 	switch (fate.kind) {
 		case "checking": {
-			// The rules passed (or flagged it) and the result is stored; scoring comes next.
-			const fits = Boolean(
-				job.filterResult && job.filterResult.decision !== "reject",
-			);
-			const state = fits ? "fits" : "found";
-			// Its run errored before a score (at the rules or the fit score): failed, with why.
+			// Saved with its application: the fit score is next.
+			const state = job.state ? "fits" : "found";
+			// Its run errored before a score: failed, with why.
 			if (job.failedFor)
 				return { ...base, state, failed: true, reason: job.failedFor };
-			return { ...base, state, paused: fits && Boolean(job.pausedFor) };
+			return {
+				...base,
+				state,
+				paused: state === "fits" && Boolean(job.pausedFor),
+			};
 		}
 		case "filtered":
 			return { ...base, state: "rejected_by_filter", reason: fate.message };

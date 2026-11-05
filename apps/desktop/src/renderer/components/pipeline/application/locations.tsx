@@ -1,3 +1,5 @@
+import { canonicalCountry } from "@offerfinch/core/filter/home";
+import { countriesInLocation } from "@offerfinch/core/filter/places";
 import { useQuery } from "@tanstack/react-query";
 import {
 	Popover,
@@ -18,16 +20,18 @@ function placeName(location: string): string {
 
 /**
  * Where a job is, in one short line. A long list (a posting open in 140 countries) reads as a
- * summary — "Remote in 141 countries, including Turkey" — and the full list opens on hover or
+ * summary — "Remote in 141 countries, including Türkiye" — and the full list opens on hover or
  * click, so it never pushes the posting off screen.
  */
 export function Locations({ locations }: { locations: string[] }) {
 	const settings = useQuery(orpc.settings.get.queryOptions());
-	const home = settings.data?.livesIn?.trim() ?? "";
+	const livesIn = settings.data?.livesIn?.trim() ?? "";
+	const home = livesIn ? canonicalCountry(livesIn) : "";
 	if (locations.length <= INLINE) return <>{locations.join(" · ")}</>;
 
+	// By the gazetteer, so "Remote (Turkey)" counts for someone in Türkiye.
 	const isHome = (location: string) =>
-		home !== "" && location.toLowerCase().includes(home.toLowerCase());
+		home !== "" && countriesInLocation(location).includes(home);
 	const homeLocation = locations.find(isHome);
 	const allRemote = locations.every((l) => REMOTE.test(l));
 	const summary = allRemote

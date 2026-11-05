@@ -17,6 +17,7 @@ import {
 	SubscriptionUnavailableError,
 } from "../src/scoring/llm";
 import {
+	DEFAULT_SUBSCRIPTION_DAILY_CALLS,
 	MeteredLlm,
 	paidBasis,
 	type SpendStore,
@@ -701,6 +702,66 @@ describe("the subscription call budget", () => {
 		const swept = await sweepStuckApplications(deps, "u1", { now: later });
 		expect(swept.restarted).toEqual([app.jobId]);
 		expect(repo.apps[0]?.state).not.toBe("found");
+	});
+
+	it("queues the jobs a scan finds past the budget, and scores them as the window frees room", async () => {
+		const spend = new MemorySpend(100_000_000);
+		spend.budget = 2;
+		const scoring = new FakeSubscriptionProvider("u1");
+		const repo = new MemoryRepo(structuredClone(PROFILE));
+		repo.onDemand = true;
+		repo.addCompany({ name: "Acme", source: "greenhouse", sourceKey: "acme" });
+		const postings = [1, 2, 3, 4, 5].map((n) => ({
+			...POSTING,
+			externalId: `q${n}`,
+			url: `https://boards.greenhouse.io/acme/jobs/q${n}`,
+		}));
+		const workflows = new LocalWorkflowStarter();
+		const deps: PipelineDeps = {
+			repo,
+			sources: {
+				greenhouse: { kind: "greenhouse", listJobs: async () => postings },
+			},
+			llm: scoring,
+			claimsLlm: new FakeLlmProvider(),
+			exporter: fakeExporter(),
+			now: () => new Date("2026-10-30T12:00:00Z"),
+			notifier: new NoopNotifier(),
+			workflows,
+			spend,
+		};
+		workflows.bind(deps);
+		await runScanFlow(new LocalStep(), deps, { userId: "u1", trigger: "cli" });
+		const states = () => repo.apps.map((a) => a.state).sort();
+		// Two calls of room: two scored, three wait in found, each paused on the budget.
+		expect(states()).toEqual(["found", "found", "found", "scored", "scored"]);
+		expect(scoring.calls).toHaveLength(2);
+		expect(
+			spend.rows.filter((r) => /call_budget/.test(r.error ?? "")),
+		).toHaveLength(3);
+		const later = new Date(Date.now() + 3 * 60 * 60_000);
+		// Still used up: the sweep leaves them waiting.
+		const held = await sweepStuckApplications(deps, "u1", { now: later });
+		expect(held.restarted).toEqual([]);
+		expect(held.waiting).toMatch(/2 of 2 model calls/);
+		// The window moves on (the calls leave it): the sweep starts them; two more are scored.
+		spend.rows = [];
+		await sweepStuckApplications(deps, "u1", { now: later });
+		expect(states()).toEqual(["found", "scored", "scored", "scored", "scored"]);
+		spend.rows = [];
+		await sweepStuckApplications(deps, "u1", { now: later });
+		expect(states()).toEqual([
+			"scored",
+			"scored",
+			"scored",
+			"scored",
+			"scored",
+		]);
+		expect(scoring.calls).toHaveLength(5);
+	});
+
+	it("defaults to 500 calls a day", () => {
+		expect(DEFAULT_SUBSCRIPTION_DAILY_CALLS).toBe(500);
 	});
 
 	it("does not start preparation without room for a draft, and says why on the application", async () => {

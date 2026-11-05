@@ -72,7 +72,7 @@ const reject = {
 };
 
 describe("first search rows (desktop.scanJobs)", () => {
-	it("a job with no application yet, or not checked yet, is found", () => {
+	it("a job with no application yet is found", () => {
 		expect(
 			firstSearchRow(found({ state: null, applicationId: null }), 50),
 		).toMatchObject({
@@ -81,10 +81,11 @@ describe("first search rows (desktop.scanJobs)", () => {
 			score: null,
 			match: false,
 		});
-		expect(firstSearchRow(found(), 50).state).toBe("found");
 	});
 
-	it("a found job with a passing filter result fits the rules", () => {
+	it("a found job with its application waits for its score: no rule checks it first", () => {
+		expect(firstSearchRow(found(), 50).state).toBe("fits");
+		// One an older version's filter kept reads the same.
 		const row = firstSearchRow(
 			found({
 				filterResult: { decision: "keep", summary: "", flags: [], reasons: [] },
@@ -151,8 +152,8 @@ describe("first search rows (desktop.scanJobs)", () => {
 		);
 		expect(view.counts).toEqual({
 			read: 4,
-			found: 1,
-			fits: 0,
+			found: 0,
+			fits: 1,
 			setAside: 1,
 			scored: 2,
 			matches: 1,
@@ -232,8 +233,6 @@ const appRun = (
 	...over,
 });
 
-const keep = { decision: "keep" as const, summary: "", flags: [], reasons: [] };
-
 describe("the jobs a scan run found", () => {
 	it("are the jobs the scan inserted, oldest first, with their state; not a job added by link meanwhile", async () => {
 		const { db, repo, run, add, appOf } = await setupDb();
@@ -249,7 +248,11 @@ describe("the jobs a scan run found", () => {
 		await tick();
 		const third = await add("3", "Data Engineer");
 		const secondApp = await appOf(second.jobId);
-		await repo.saveFilterResult("u1", secondApp, reject);
+		// Set aside as an older version's filter did (nothing new does).
+		await db
+			.update(applications)
+			.set({ filterResult: reject, filterDecision: "reject" })
+			.where(eq(applications.id, secondApp));
 		await repo.transition("u1", secondApp, {
 			from: ["found"],
 			to: "rejected_by_filter",
@@ -264,7 +267,7 @@ describe("the jobs a scan run found", () => {
 		const live = firstSearchView(await jobsFoundBy(db, run), 50);
 		expect(live.rows.map((r) => [r.title, r.state, r.reason, r.score])).toEqual(
 			[
-				["Frontend Engineer", "found", null, null],
+				["Frontend Engineer", "fits", null, null],
 				["Platform Engineer", "rejected_by_filter", "Needs German", null],
 				["Data Engineer", "scored", null, 82],
 			],
@@ -317,14 +320,8 @@ describe("the jobs a scan run found", () => {
 	});
 
 	it("a job whose scoring paused is paused, with the pause's reason, until its run is queued again", async () => {
-		const { db, repo, run, add, appOf } = await setupDb();
+		const { db, run, add } = await setupDb();
 		const one = await add("1", "Frontend Engineer");
-		await repo.saveFilterResult("u1", await appOf(one.jobId), {
-			decision: "keep",
-			summary: "",
-			flags: [],
-			reasons: [],
-		});
 		const message =
 			"Subscription paused (usage_limit, fake-subscription): the fake plan's usage limit is reached.";
 		await db.insert(flowRuns).values({
@@ -415,9 +412,8 @@ describe("the jobs a scan run found", () => {
 	});
 
 	it("a job whose application run errored is failed, with the run's error, and the step settles with it counted apart", async () => {
-		const { db, repo, run, add, appOf } = await setupDb();
+		const { db, run, add } = await setupDb();
 		const one = await add("1", "Frontend Engineer");
-		await repo.saveFilterResult("u1", await appOf(one.jobId), keep);
 		// The fit score's retries are spent: the runner ends the run errored, the job stays found.
 		await db.insert(flowRuns).values(
 			appRun(one.jobId, {
@@ -497,7 +493,7 @@ describe("the jobs a scan run found", () => {
 		}
 	});
 
-	it("a job whose run errored at the rules is failed too, and holds no rules check open", async () => {
+	it("a job whose run errored before its score is failed too, and holds no check open", async () => {
 		const { db, run, add } = await setupDb();
 		const one = await add("1", "Frontend Engineer");
 		await db
@@ -507,12 +503,12 @@ describe("the jobs a scan run found", () => {
 			);
 		const [row] = firstSearchView(await jobsFoundBy(db, run), 50).rows;
 		expect(row).toMatchObject({
-			state: "found",
+			state: "fits",
 			failed: true,
 			reason: "The model did not answer.",
 		});
 		if (!row) throw new Error("no row");
-		expect(beingChecked({ ...row, shown: "found" })).toBe(false);
+		expect(beingChecked({ ...row, shown: "fits" })).toBe(false);
 		db.$close();
 	});
 });
@@ -684,9 +680,9 @@ describe("the first search's status line", () => {
 		const complete = { ...progress, status: "complete", done: 3 };
 		expect(
 			firstSearchLine(complete, counts, { ...phase, checking: true }),
-		).toBe("8 jobs read. Checking them against your rules…");
+		).toBe("8 jobs read. Getting them ready to score…");
 		expect(firstSearchLine(complete, counts, phase)).toBe(
-			"5 fit your rules. Scoring them…",
+			"Scoring 5 jobs against what you want…",
 		);
 		expect(firstSearchLine(complete, counts, { ...phase, settled: true })).toBe(
 			"Done: 8 jobs read, 3 set aside, 3 matches. They are waiting in your Inbox.",

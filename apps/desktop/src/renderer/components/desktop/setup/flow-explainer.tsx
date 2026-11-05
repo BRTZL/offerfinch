@@ -26,7 +26,8 @@ import "./flow-explainer.css";
 /**
  * The Welcome's picture of the whole loop, as a short looping demo of the Inbox (stageshow kit,
  * drawn with the app's own rows and meters): roles arrive from the job boards, each is scored
- * against the profile, the misfits are set aside with their reason, and the one picked is drafted
+ * against the profile and what the user wants, the misfits are set aside with their reason (a
+ * low fit, or a place they can't work in), and the one picked is drafted
  * and checked. It ends on what the user keeps: they apply, nothing is sent.
  *
  * Every company and role is made up. Under reduced motion the stage shows the poster, the loop's
@@ -44,8 +45,8 @@ type Job = {
 	company: string;
 	title: string;
 	source: string;
-	/** The fit once scored; null for a role the job rules set aside before scoring. */
-	fit: number | null;
+	/** The fit once scored. */
+	fit: number;
 	/** Why a misfit is set aside, in the Inbox's own words. */
 	aside?: string;
 };
@@ -68,8 +69,8 @@ const JOBS: Job[] = [
 		company: "Halcyon Health",
 		title: "Frontend Engineer",
 		source: "We Work Remotely",
-		fit: null,
-		aside: "Set aside: on-site in São Paulo",
+		fit: 18,
+		aside: "On-site in São Paulo, where you can't work",
 	},
 	{
 		company: "Kestrel Bank",
@@ -203,7 +204,7 @@ function FitSlot({ job, scored }: { job: Job; scored: boolean }) {
 		<States
 			className="ofx-fit"
 			align="end"
-			value={!scored ? "pending" : job.fit === null ? "none" : "fit"}
+			value={scored ? "fit" : "pending"}
 			states={{
 				pending: (
 					<LoaderCircle
@@ -211,12 +212,11 @@ function FitSlot({ job, scored }: { job: Job; scored: boolean }) {
 						aria-hidden
 					/>
 				),
-				none: <span className="text-muted-foreground">—</span>,
 				fit: (
 					<span
 						className={cn(
 							"font-mono text-xs font-semibold tabular-nums",
-							fitTone(job.fit ?? 0),
+							fitTone(job.fit),
 						)}
 					>
 						{job.fit}

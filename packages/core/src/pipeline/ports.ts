@@ -148,6 +148,10 @@ export interface ApplicationRecord {
 	/** Absent from repositories that do not return it; ranking then skips same-company signals. */
 	companyId?: string;
 	job: NormalizedJob;
+	/**
+	 * The job filter's result, on applications checked before no rule rejected a job (docs/
+	 * decisions.md, 2026-11-05); null on every newer one. Read for display only.
+	 */
 	filter: FilterResult | null;
 	score: number | null;
 	/** The order of Matches: the score less penalties; absent or null before ranking. */
@@ -232,23 +236,11 @@ export interface PipelineRepository {
 	 */
 	prepareRequested?(userId: string, applicationId: string): Promise<boolean>;
 	/**
-	 * True when the user chose this job anyway ("Prepare anyway" on a job they added): its filter
-	 * result and fit score are shown but end nothing.
+	 * True when the user chose this job anyway ("Prepare anyway" on a job they added): its fit
+	 * score is shown but ends nothing.
 	 */
 	chosenAnyway?(userId: string, applicationId: string): Promise<boolean>;
 	getProfile(userId: string): Promise<ProfileSnapshot | null>;
-	/** Stores a passing (or unclear) filter result; the application stays `found`. */
-	saveFilterResult(
-		userId: string,
-		applicationId: string,
-		result: FilterResult,
-	): Promise<void>;
-	/** found -> rejected_by_filter with the stated reason. False when the state had moved on. */
-	recordFilterRejection(
-		userId: string,
-		applicationId: string,
-		result: FilterResult,
-	): Promise<boolean>;
 	/** found -> scored with the evidence. `endedReason` is set when the score is below the minimum. */
 	recordScore(
 		userId: string,
@@ -453,7 +445,7 @@ export interface PipelineDeps {
 	workflows: WorkflowStarter;
 	/**
 	 * While a scan's sources run, how often (ms) it starts the runs of jobs they saved so far, so
-	 * each job is filtered and scored as soon as it is saved, not after the last source. Unset:
+	 * each job is scored as soon as it is saved, not after the last source. Unset:
 	 * runs start once, after every source (tests, and runtimes with their own queue).
 	 */
 	startDuringScanMs?: number;

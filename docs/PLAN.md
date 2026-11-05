@@ -11,7 +11,7 @@
 - **Jobs:** resumable job queue in SQLite, replacing Cloudflare Workflows and Cron, same flow bodies.
 - **Browser:** headless browser on the user's computer, started only when needed and closed after.
 - **AI:** per-role choice of API key (macOS Keychain) or subscription (Claude login; ChatGPT through the local Codex CLI if the safety spike passes).
-- **Onboarding:** connect AI, import resume, set job rules, first scan.
+- **Onboarding:** connect AI, import resume, say what you want (Job search), first scan.
 - **Performance targets:** measured and reported: cold start, idle memory, and memory during a scan.
 - **Removed:** Cloudflare, Alchemy, PlanetScale, Axiom, Better-Auth, invites, ntfy from the product.
 - **Unchanged rules:** nothing goes out without approval; hand-off on Ashby, Greenhouse, Lever and LinkedIn; no bot-detection bypass; claims trace to the profile.
@@ -35,7 +35,7 @@ The user tested the native redesign and corrected the product. Each item lands i
 
 | | What | Done when |
 |---|---|---|
-| A | **Jobs from the whole internet.** The user never adds companies. Search queries come from the profile (titles, skills, location, work setup) and are editable as plain search preferences. Sources are pluggable providers in Settings › Sources, each with on/off, status and last result: job-board search (Ashby, Greenhouse and Lever postings at any company, found through web search and read from those boards' public data, no login), LinkedIn (the dedicated, signed-in Chrome profile, read-only, human pace, stops at any challenge), Indeed and Glassdoor (local browser, read-only, human pace, stops at a block or a login wall). No stealth or bot-detection bypass; hand-off always. Results are deduplicated by normalized company, title and URL; a company is data on the job. Cheap hard filters first, then batched scoring within the call budgets. **Tailoring is on demand:** scoring lists matches; Prepare on a job starts tailoring. States: found → filtered → scored → listed; Prepare → questions → review → approve → hand-off | Watchlist and company-seeded scans gone; providers tested on fixtures (no contact with LinkedIn, Indeed or Glassdoor; job-board search may use real public calls for a test profile); no automatic preparation |
+| A | **Jobs from the whole internet.** The user never adds companies. Search queries come from the profile (titles, skills, location, work setup) and are editable as plain search preferences. Sources are pluggable providers in Settings › Sources, each with on/off, status and last result: job-board search (Ashby, Greenhouse and Lever postings at any company, found through web search and read from those boards' public data, no login), LinkedIn (the dedicated, signed-in Chrome profile, read-only, human pace, stops at any challenge), Indeed and Glassdoor (local browser, read-only, human pace, stops at a block or a login wall). No stealth or bot-detection bypass; hand-off always. Results are deduplicated by normalized company, title and URL; a company is data on the job. No rule sets a job aside: every found job is scored (a must-have work right, place, citizenship, clearance or language the user does not meet caps the score below their minimum), within the call budgets; jobs past the budget wait and are scored later. **Tailoring is on demand:** scoring lists matches; Prepare on a job starts tailoring. States: found → scored → listed; Prepare → questions → review → approve → hand-off | Watchlist and company-seeded scans gone; providers tested on fixtures (no contact with LinkedIn, Indeed or Glassdoor; job-board search may use real public calls for a test profile); no automatic preparation |
 | B | **No current role.** The setting, its UI, the `current_role` rule and the redraft switch go; tailoring picks the relevant experience | No reference left; claims tests green |
 | C | **The profile in the database.** Structured records replace the Markdown files and `answers.md`: Experience, Projects, About you, Skills, Education, Extras, each fact with its source and date; answers become facts. Tailoring, fit scoring, claims evidence and the claim audit cite records. Resume import drafts records. A one-way import of the installed app's profile, with a backup, runs only when the user starts it. The Profile page has a view per section, Add in the header, add and edit in a dialog | Every claims test passes, with new tests for a claim citing a missing or edited record |
 | D | **Home in one calm column:** what needs you, then new matches; little else. Scan now shows the next scan on hover | |
@@ -113,7 +113,7 @@ After `applied`, the application's stage with the employer is tracked apart from
 Two Cloudflare Workflows (user's design, 2026-10-30):
 
 1. **`ScanWorkflow`**, started by the hourly cron: fetch each source as its own retryable step, deduplicate, save new jobs, and start one `ApplicationWorkflow` per new job only.
-2. **`ApplicationWorkflow`**, one per new job: hard filter, fit score, prepare, claims check, pause for answers (`step.waitForEvent`), pause for approval, apply, record proof. A failed filter or low score ends the instance with the reason saved. Stops such as `needs_human` pause the same way.
+2. **`ApplicationWorkflow`**, one per new job: fit score (its first step keeps the name "hard filter" for running instances but rejects nothing), prepare, claims check, pause for answers (`step.waitForEvent`), pause for approval, apply, record proof. A low score ends the instance with the reason saved. Stops such as `needs_human` pause the same way.
 
 Instance IDs derive from the job ID, so retries can't start a second one. Starts are batched to stay within Cloudflare's limits.
 
@@ -175,7 +175,7 @@ Use the Anthropic and OpenAI batch APIs for background work such as fit scoring 
 
 ## Later: first-pass decisions
 
-Add OpenAI's Decisions API (`POST /v1/decisions`, user's choice, 2026-10-30) as a cheap gate between the hard filter and the fit score: does an unclear posting allow someone in Turkey, and is the role relevant enough to score? Probabilities below a threshold fall through to the full score; they don't reject the job. Written fit evidence, tailoring and the claims check stay on the current models. Posting text remains untrusted input. Check its status, schema and pricing in OpenAI's docs first, because secondary sources disagree on availability.
+Add OpenAI's Decisions API (`POST /v1/decisions`, user's choice, 2026-10-30) as a cheap gate before the fit score: does an unclear posting allow someone in Turkey, and is the role relevant enough to score? Probabilities below a threshold fall through to the full score; they don't reject the job. Written fit evidence, tailoring and the claims check stay on the current models. Posting text remains untrusted input. Check its status, schema and pricing in OpenAI's docs first, because secondary sources disagree on availability.
 
 ## Open questions
 

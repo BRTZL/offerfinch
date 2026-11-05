@@ -44,7 +44,7 @@ export const STEP_META: Record<SetupStep, { title: string; lead: string }> = {
 	},
 	wants: {
 		title: "What you want",
-		lead: "Your rules, and where to look. Jobs that break a rule are set aside before any AI reads them.",
+		lead: "What you want, and where to look. Your AI weighs every job it finds against it.",
 	},
 	loop: {
 		title: "Stay in the loop",
@@ -52,7 +52,7 @@ export const STEP_META: Record<SetupStep, { title: string; lead: string }> = {
 	},
 	scan: {
 		title: "First search",
-		lead: "OfferFinch searches now, sets aside jobs that break your rules and scores the rest. Nothing is drafted until you press Prepare.",
+		lead: "OfferFinch searches now and scores every job it finds against what you want. Nothing is drafted until you press Prepare.",
 	},
 };
 
@@ -159,11 +159,11 @@ function ProfileStep({
 	);
 }
 
-/** The rules and the sources together: what to look for, and where. */
+/** Job search and the sources together: what to look for, and where. */
 function WantsStep() {
 	return (
 		<div className="flex flex-col gap-8">
-			<Section title="Job rules" data-testid="setup-rules">
+			<Section title="Job search" data-testid="setup-rules">
 				<JobFilterSettings />
 			</Section>
 			<Section title="Where to look" data-testid="setup-sources">
