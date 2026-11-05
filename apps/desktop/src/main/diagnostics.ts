@@ -135,9 +135,10 @@ const URL_QUERY =
 /** Any user's home folder, not only this one ("/Users/<name>/…" names the account). */
 const HOME_FOLDER = /\/Users\/[^/\s"'`:]+/g;
 // Includes slash-normalized and JSON-escaped paths, and accounts other than this user's.
-const WINDOWS_HOME_FOLDER = /(?:[a-z]:)?[\\/]+Users[\\/]+[^\\/"'`\r\n]+/gi;
+const WINDOWS_HOME_FOLDER =
+	/(?<![\w.%-])(?:[a-z]:[\\/]+|\\+(?:\?\\[a-z]:\\+|[^\\/\s]+\\+)?)Users[\\/]+[^\\/"\r\n:;|=,+*?<>[\]]+/gi;
 const ENCODED_WINDOWS_HOME_FOLDER =
-	/(?:[a-z]%3a)?(?:%5c|%2f)+Users(?:%5c|%2f)+(?:(?!%5c|%2f|%22|%27|%0a|%0d)[^"'`\r\n])+/gi;
+	/(?<![\w.%-])(?:[a-z]%3a(?:%5c|%2f)+|(?:%5c)+)Users(?:%5c|%2f)+(?:(?!%5c|%2f|%22|%0a|%0d|%3a|%3b|%7c|%3d|%2c|%2b|%2a|%3f|%3c|%3e|%5b|%5d)[^\\/"\r\n:;|=,+*?<>[\]])+/gi;
 const SECRET_KEY = /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}/g;
 const BEARER = /\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 const JWT = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}(?:\.[A-Za-z0-9_-]*)?/g;
@@ -203,10 +204,7 @@ const STAMPS =
 	/(?<![\d+])(?:20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])(?:[01]\d|2[0-3])[0-5]\d[0-5]\d|1[6-9]\d{11})(?!\d)/g;
 
 function redactAll(text: string, known: KnownPersonal, home: string): string {
-	let out = text
-		.replace(URL_QUERY, "$1")
-		.replace(ENCODED_WINDOWS_HOME_FOLDER, "~")
-		.replace(WINDOWS_HOME_FOLDER, "~");
+	let out = text.replace(URL_QUERY, "$1");
 	if (home.length > 1) {
 		const windows = path.win32.isAbsolute(home);
 		const pattern = windows
@@ -215,9 +213,20 @@ function redactAll(text: string, known: KnownPersonal, home: string): string {
 					.map(escapeRegExp)
 					.join(String.raw`[\\/]+`)
 			: escapeRegExp(home);
-		out = out.replace(new RegExp(pattern, windows ? "gi" : "g"), "~");
+		out = out.replace(
+			new RegExp(
+				windows
+					? String.raw`(?<![\w.%-])${pattern}(?=[\\/]|$|["\r\n])`
+					: pattern,
+				windows ? "gi" : "g",
+			),
+			"~",
+		);
 	}
-	out = out.replace(HOME_FOLDER, "~");
+	out = out
+		.replace(ENCODED_WINDOWS_HOME_FOLDER, "~")
+		.replace(WINDOWS_HOME_FOLDER, "~")
+		.replace(HOME_FOLDER, "~");
 	for (const pattern of linkPatterns(known.links))
 		out = out.replace(pattern, "[link]");
 	out = redactContact(out, [...known.emails, ...known.phones]);

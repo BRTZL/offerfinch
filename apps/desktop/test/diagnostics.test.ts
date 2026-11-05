@@ -450,36 +450,75 @@ describe("bounded reads", () => {
 	});
 });
 
-describe.skipIf(process.platform !== "darwin")("saving the zip", () => {
+describe("saving the zip", () => {
 	it("is private to this user and replaces the earlier file", async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "of-diagnostics-"));
 		const target = path.join(dir, "bundle.zip");
 		fs.writeFileSync(target, "older", { mode: 0o644 });
 		await zipDiagnostics([{ name: "system.txt", text: "x" }], target);
-		expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+		if (process.platform !== "win32")
+			expect(fs.statSync(target).mode & 0o777).toBe(0o600);
 		expect(fs.readFileSync(target).subarray(0, 2).toString()).toBe("PK");
 		expect(fs.existsSync(`${target}.partial`)).toBe(false);
 	});
 
-	it("keeps the earlier file and leaves no partial when it fails", async () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "of-diagnostics-"));
-		const target = path.join(dir, "bundle.zip");
-		fs.writeFileSync(target, "older");
-		// A folder this user cannot write to: ditto cannot create the partial file.
-		fs.chmodSync(dir, 0o500);
-		try {
-			await expect(
-				zipDiagnostics([{ name: "system.txt", text: "x" }], target),
-			).rejects.toThrow();
-			expect(fs.readFileSync(target, "utf8")).toBe("older");
-			expect(fs.existsSync(`${target}.partial`)).toBe(false);
-		} finally {
-			fs.chmodSync(dir, 0o700);
-		}
-	});
+	it.skipIf(process.platform === "win32")(
+		"keeps the earlier file and leaves no partial when it fails",
+		async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "of-diagnostics-"));
+			const target = path.join(dir, "bundle.zip");
+			fs.writeFileSync(target, "older");
+			// A folder this user cannot write to: ditto cannot create the partial file.
+			fs.chmodSync(dir, 0o500);
+			try {
+				await expect(
+					zipDiagnostics([{ name: "system.txt", text: "x" }], target),
+				).rejects.toThrow();
+				expect(fs.readFileSync(target, "utf8")).toBe("older");
+				expect(fs.existsSync(`${target}.partial`)).toBe(false);
+			} finally {
+				fs.chmodSync(dir, 0o700);
+			}
+		},
+	);
 });
 
 describe("Windows home redaction on every host", () => {
+	it.each(["O'Brien", "John`Smith"])(
+		"redacts punctuation in account %s, including the current home",
+		(account) => {
+			const home = `C:\\Users\\${account}`;
+			const input = `${home}\\Documents\\cv.pdf`;
+			for (const currentHome of [home, String.raw`C:\Users\OtherSample`]) {
+				expect(
+					redactDiagnostics(
+						input,
+						{ names: [], emails: [], phones: [], links: [] },
+						currentHome,
+					),
+				).toBe(String.raw`~\Documents\cv.pdf`);
+			}
+		},
+	);
+	it.each([
+		[
+			"GET https://api.example.com/v1/users/42 failed status 500 retry later",
+			"GET https://api.example.com/v1/users/42 failed status 500 retry later",
+		],
+		[
+			"/Users/alex: permission denied, then retry ok",
+			"~: permission denied, then retry ok",
+		],
+		["/users/alex: permission denied", "/users/alex: permission denied"],
+	])("keeps non-Windows text readable: %s", (input, expected) => {
+		expect(
+			redactDiagnostics(
+				input,
+				{ names: [], emails: [], phones: [], links: [] },
+				HOME,
+			),
+		).toBe(expected);
+	});
 	it("redacts an account whose folder starts with the current account name", () => {
 		expect(
 			redactDiagnostics(

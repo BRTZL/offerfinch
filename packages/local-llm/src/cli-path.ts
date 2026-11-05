@@ -16,7 +16,7 @@ export function findCliOnPath(
 	const isFile = checks.isFile ?? executableCheck(platform);
 	const resolve = checks.resolve ?? fs.realpathSync;
 	const paths = platform === "win32" ? path.win32 : path;
-	const extensions = cliExtensions(platform, pathExt);
+	const extensions = cliExtensions(platform, pathExt, name);
 	for (const dir of pathEnv.split(paths.delimiter).filter(Boolean)) {
 		for (const ext of extensions) {
 			const candidate = paths.join(dir, `${name}${ext}`);
@@ -52,7 +52,11 @@ function isExecutableFile(file: string, platform: NodeJS.Platform): boolean {
 	}
 }
 
-function cliExtensions(platform: NodeJS.Platform, pathExt: string): string[] {
+function cliExtensions(
+	platform: NodeJS.Platform,
+	pathExt: string,
+	name: string,
+): string[] {
 	return platform === "win32"
 		? [
 				...new Set([
@@ -63,7 +67,9 @@ function cliExtensions(platform: NodeJS.Platform, pathExt: string): string[] {
 							const value = ext.trim().toLowerCase();
 							return value.startsWith(".") ? value : `.${value}`;
 						})
-						.filter((ext) => ext !== "."),
+						.filter(
+							(ext) => ext === ".exe" || isClaudeShim(platform, name, ext),
+						),
 				]),
 			]
 		: [""];
@@ -79,15 +85,14 @@ function shimExecutable(
 		/"(?:%dp0%|%~dp0)[\\/]?([^"\r\n]+\.(?:exe|js))"/gi,
 	)) {
 		const target = match[1];
-		if (
-			!target ||
-			/%/.test(target) ||
-			path.win32.basename(target).toLowerCase() === "node.exe"
-		)
-			continue;
+		if (!target || /%/.test(target)) continue;
 		const native = nativeTarget(target);
-		if (!native) continue;
-		const executable = path.win32.resolve(path.win32.dirname(shim), native);
+		if (!native || path.win32.basename(native).toLowerCase() !== "claude.exe")
+			continue;
+		const directory = path.win32.dirname(shim);
+		const executable = path.win32.resolve(directory, native);
+		const relative = path.win32.relative(directory, executable);
+		if (relative.startsWith("..") || path.win32.isAbsolute(relative)) continue;
 		if (isFile(executable)) return executable;
 	}
 	return null;

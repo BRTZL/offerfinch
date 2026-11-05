@@ -18,6 +18,30 @@ import { execFile } from "node:child_process";
 afterEach(() => vi.restoreAllMocks());
 
 describe("Windows subscriptions", () => {
+	it.each([
+		String.raw`"%dp0%\..\..\Windows\System32\cmd.exe"`,
+		String.raw`"%dp0%\C:\Windows\System32\powershell.exe"`,
+		String.raw`"%~dp0\..\evil\claude-code\cli.js"`,
+		String.raw`"%dp0%\C:\elsewhere\claude.exe"`,
+		String.raw`"%dp0%\powershell.exe"`,
+	])("rejects unsafe shim target %s even when it exists", (contents) => {
+		expect(
+			findCliOnPath("claude", String.raw`C:\npm`, "win32", ".CMD", {
+				isFile: (file) =>
+					!file.toLowerCase().endsWith(String.raw`\npm\claude.exe`),
+				readFile: () => contents,
+				resolve: (file) => file,
+			}),
+		).toBeNull();
+	});
+	it("rejects scripts from PATHEXT outside the shim branch", () => {
+		expect(
+			findCliOnPath("claude", String.raw`C:\npm`, "win32", ".JS;.EXE", {
+				isFile: (file) => file.endsWith(".js"),
+				resolve: (file) => file,
+			}),
+		).toBeNull();
+	});
 	it.each(["darwin", "linux"] as const)(
 		"omits Windows-only variables on %s",
 		(platform) => {
@@ -37,6 +61,10 @@ describe("Windows subscriptions", () => {
 		[
 			'@ECHO off\r\n"%~dp0\\node_modules\\.pnpm\\@anthropic-ai+claude-code@1.0.0\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*',
 			String.raw`node_modules\.pnpm\@anthropic-ai+claude-code@1.0.0\node_modules\@anthropic-ai\claude-code\bin\claude.exe`,
+		],
+		[
+			String.raw`"%~dp0\global\5\node_modules\@anthropic-ai\claude-code\bin\CLAUDE.EXE" %*`,
+			String.raw`global\5\node_modules\@anthropic-ai\claude-code\bin\CLAUDE.EXE`,
 		],
 	])("resolves a quoted npm or pnpm target: %s", (shim, target) => {
 		const exe = `C:\\global\\${target}`;
@@ -117,7 +145,7 @@ describe("Windows subscriptions", () => {
 				isFile: (file) => file === `${root}\\codex.cmd`,
 				resolve: (file) => file,
 			}),
-		).toBe(`${root}\\codex.cmd`);
+		).toBeNull();
 	});
 	it("reads registry PATH with absolute PowerShell, never a login shell", async () => {
 		vi.stubEnv("SystemRoot", "C:\\Windows");
