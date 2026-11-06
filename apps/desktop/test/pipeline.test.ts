@@ -91,22 +91,23 @@ describe("model roles", () => {
 			tailoring: { model: "antigravity:gemini-3.8-flash" },
 			claims: { model: FAKE_MODEL_REF },
 		});
-		expect(later.roles.map((r) => r.ready)).toEqual([false, false, false]);
-		expect(later.roles[0]?.problem).toMatch(
-			/OpenCode models are not available/,
-		);
+		expect(later.roles.map((r) => r.ready)).toEqual([true, false, false]);
+		expect(later.roles[0]?.problem).toBeNull();
 		expect(later.roles[1]?.problem).toMatch(/Antigravity\) models are not/);
 		expect(later.roles[2]?.problem).toMatch(/only available in test runs/);
 		const windows = build(
 			{
 				scoring: { model: "claude:claude-opus-5-5" },
 				tailoring: { model: "codex:" },
-				claims: { model: "claude:claude-opus-5-5" },
+				claims: { model: "opencode:opencode/deepseek-v4.1-flash-free" },
 			},
 			"win32",
 		);
-		expect(windows.roles.map((r) => r.ready)).toEqual([true, false, true]);
+		expect(windows.roles.map((r) => r.ready)).toEqual([true, false, false]);
 		expect(windows.roles[1]?.problem).toMatch(/Codex runs only on macOS/);
+		expect(windows.roles[2]?.problem).toMatch(
+			/OpenCode is not available on Windows/,
+		);
 	});
 });
 

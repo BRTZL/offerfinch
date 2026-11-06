@@ -1,4 +1,9 @@
-import { DashboardRepository, DrizzleSpendStore } from "@offerfinch/db";
+import {
+	DashboardRepository,
+	DrizzleSpendStore,
+	type SubscriptionVendor,
+	vendorLabel,
+} from "@offerfinch/db";
 import { flowRuns } from "@offerfinch/db/schema/jobs";
 import { applications, companies, jobs } from "@offerfinch/db/schema/pipeline";
 import {
@@ -203,7 +208,7 @@ export const desktopStatusRouter = {
 					await new DrizzleSpendStore(w.db).paidStops(userId),
 				)
 					.filter(([, at]) => at !== null)
-					.map(([vendor]) => (vendor === "openai" ? "Codex" : "Claude")),
+					.map(([vendor]) => vendorLabel(vendor as SubscriptionVendor)),
 				subscriptionCalls: spending.subscriptionCalls,
 				callBudget: subscriptionRoles.length
 					? await new DrizzleSpendStore(w.db).subscriptionBudget(userId)

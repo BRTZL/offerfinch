@@ -165,7 +165,6 @@ const STEP_NAME: Record<Role, string> = {
 
 /** Providers whose models this version cannot run yet; the next versions add them. */
 const NOT_BUILT: Partial<Record<ProviderId, string>> = {
-	opencode: "OpenCode models are not available in this version yet.",
 	antigravity:
 		"Gemini (Antigravity) models are not available in this version yet.",
 };

@@ -171,6 +171,8 @@ export class WorkerApp {
 		else {
 			const local = subscriptions({
 				hostScript: init.claudeHost,
+				// Test runs never touch the user's OpenCode database.
+				opencodeSweep: !init.test,
 				log: (message, data) => hooks.log("info", message, data),
 				planUsage,
 			});

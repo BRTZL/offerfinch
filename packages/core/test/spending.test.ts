@@ -18,6 +18,7 @@ import {
 	LlmNotBilledError,
 	type LlmProvider,
 	LlmRefusalError,
+	SubscriptionUnavailableError,
 } from "../src/scoring/llm";
 import {
 	MeteredLlm,
@@ -25,7 +26,7 @@ import {
 	type SpendStore,
 } from "../src/scoring/metered";
 import { OpenAiProvider } from "../src/scoring/openai";
-import { estimateCost } from "../src/scoring/pricing";
+import { estimateCost, worstCaseMicros } from "../src/scoring/pricing";
 import { FIXTURES, fakeExporter } from "./helpers";
 import { MemoryRepo } from "./memory-repo";
 
@@ -436,6 +437,118 @@ describe("a call with an unknown outcome", () => {
 		await call(spend, silent);
 		expect(spend.rows[0]?.status).toBe("settled");
 		expect(spend.rows[0]?.micros).toBeGreaterThan(0);
+	});
+});
+
+/**
+ * Pay-per-use models priced by their provider (OpenCode's sources): reserved at least at their
+ * own price, settled at it, and released when the call never went out or the vendor refused it.
+ */
+describe("a provider with its own price", () => {
+	const expensive = { input: 30, cachedInput: 30, output: 180, source: "test" };
+	const priced = (
+		behaviour: (request: GenerateObjectRequest<unknown>) => Promise<unknown>,
+		extra: Partial<LlmProvider> = {},
+	): LlmProvider => ({
+		name: "opencode:opencode/gpt-5.5-pro",
+		billing: "api",
+		price: expensive,
+		reportsModelCalls: true,
+		generateObject: behaviour as LlmProvider["generateObject"],
+		...extra,
+	});
+	const call = (spend: MemorySpend, provider: LlmProvider) =>
+		new MeteredLlm(provider, spend, {
+			userId: "u1",
+			applicationId: "a1",
+		}).generateObject({
+			task: "tailor",
+			system: "s",
+			prompt: "p",
+			schema: z.object({ ok: z.boolean() }),
+			maxTokens: 1_000,
+		});
+
+	it("reserves at least the model's own price, above the table's highest rate", () => {
+		const own = worstCaseMicros(
+			"opencode/gpt-5.5-pro",
+			10_000,
+			1_000,
+			expensive,
+		);
+		const table = worstCaseMicros("opencode/gpt-5.5-pro", 10_000, 1_000);
+		expect(own).toBe(10_000 * 30 * 2 + 1_000 * 180);
+		expect(own).toBeGreaterThan(table);
+	});
+
+	it("settles at its own price, not the fallback rate", async () => {
+		const spend = new MemorySpend(100_000_000);
+		await call(
+			spend,
+			priced(async (request) => {
+				request.onModelCall?.();
+				request.onUsage?.({
+					model: "opencode/gpt-5.5-pro",
+					inputTokens: 1_000,
+					outputTokens: 100,
+					cachedInputTokens: 0,
+					cacheWriteTokens: 0,
+				});
+				return { ok: true };
+			}),
+		);
+		expect(spend.rows[0]).toMatchObject({
+			status: "settled",
+			micros: 1_000 * 30 + 100 * 180,
+		});
+	});
+
+	it("releases the reservation when the call stopped before it was sent", async () => {
+		const spend = new MemorySpend(100_000_000);
+		await expect(
+			call(
+				spend,
+				priced(async () => {
+					throw new Error("the version gate refused it");
+				}),
+			),
+		).rejects.toThrow(/gate/);
+		expect(spend.rows[0]).toMatchObject({ status: "settled", micros: 0 });
+	});
+
+	it("holds a sent call that failed without a refusal", async () => {
+		const spend = new MemorySpend(100_000_000);
+		await expect(
+			call(
+				spend,
+				priced(async (request) => {
+					request.onModelCall?.();
+					throw new Error("stream lost");
+				}),
+			),
+		).rejects.toThrow(/stream/);
+		expect(spend.rows[0]?.status).toBe("reserved");
+	});
+
+	it("releases a sent call the vendor refused before processing (a not-billed pause)", async () => {
+		const spend = new MemorySpend(100_000_000);
+		await expect(
+			call(
+				spend,
+				priced(async (request) => {
+					request.onModelCall?.();
+					throw new SubscriptionUnavailableError(
+						"logged_out",
+						"opencode:opencode/gpt-5.5-pro",
+						"401",
+						undefined,
+						false,
+						true,
+					);
+				}),
+			),
+		).rejects.toBeInstanceOf(SubscriptionUnavailableError);
+		expect(spend.rows[0]).toMatchObject({ status: "settled", micros: 0 });
 	});
 });
 

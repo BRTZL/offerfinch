@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { FakeLlmProvider } from "@offerfinch/core/scoring/fake";
+import type { LlmBilling } from "@offerfinch/core/scoring/llm";
 import {
 	type GenerateObjectRequest,
 	type LlmProvider,
@@ -11,11 +12,15 @@ import type {
 	PlanSnapshot,
 	PlanUsageSink,
 } from "@offerfinch/core/scoring/plan-usage";
+import { openCodeBilling } from "@offerfinch/local-llm/opencode";
+import type { ModelInfo } from "../shared/providers";
 import type { LocalLlmFactory } from "./model-factories";
 import {
 	CLAUDE_FIX,
 	type CliState,
 	CODEX_FIX,
+	OPENCODE_FIX,
+	openCodeModelInfo,
 	type Subscriptions,
 	withProviders,
 } from "./subscriptions";
@@ -24,7 +29,8 @@ import {
  * Test runs only: Claude Code and Codex as a test says they are, never the CLIs on this Mac.
  * The state comes from `fake-clis.json` in the data folder, read on every check so a test can
  * change it while the app runs:
- * `{"claude": "logged_in", "codex": "missing"}`. Unset: neither is installed.
+ * `{"claude": "logged_in", "codex": "missing", "opencode": "logged_in"}`. Unset: none is
+ * installed.
  */
 type FakeCli = "logged_in" | "logged_out" | "not_subscription" | "missing";
 const FAKE_FILE = "fake-clis.json";
@@ -42,8 +48,44 @@ interface FakeUsage {
 interface FakeState {
 	claude: FakeCli;
 	codex: FakeCli;
+	opencode: FakeCli;
 	usage: Partial<Record<"claude" | "codex", FakeUsage>>;
 }
+
+/** The stand-in's OpenCode models: a free one and Go on the plan, one pay-per-use. */
+const FAKE_OPENCODE_MODELS: ModelInfo[] = [
+	[
+		"opencode",
+		"deepseek-v4.1-flash-free",
+		"DeepSeek V4.1 Flash Free",
+		["low", "high", "max"],
+		null,
+	],
+	["opencode-go", "glm-5.1", "GLM-5.1", ["low", "high"], null],
+	[
+		"opencode",
+		"gpt-6.1-sol",
+		"GPT-6.1 Sol",
+		["low", "medium", "high"],
+		{ input: 2, cachedInput: 0.1, output: 10, source: "test" },
+	],
+].map(([source, model, name, variants, price]) =>
+	openCodeModelInfo({
+		source: source as string,
+		model: model as string,
+		name: name as string,
+		billing: openCodeBilling(source as string, model as string),
+		variants: variants as string[],
+		price: price as {
+			input: number;
+			cachedInput: number;
+			output: number;
+			source: string;
+		} | null,
+		baseURL: "http://127.0.0.1:9/test",
+		unavailable: null,
+	}),
+);
 
 function read(dir: string): FakeState {
 	try {
@@ -57,13 +99,19 @@ function read(dir: string): FakeState {
 		return {
 			claude: pick(raw.claude),
 			codex: pick(raw.codex),
+			opencode: pick(raw.opencode),
 			usage: {
 				claude: usage(raw.usage?.claude),
 				codex: usage(raw.usage?.codex),
 			},
 		};
 	} catch {
-		return { claude: "missing", codex: "missing", usage: {} };
+		return {
+			claude: "missing",
+			codex: "missing",
+			opencode: "missing",
+			usage: {},
+		};
 	}
 }
 
@@ -115,9 +163,17 @@ function fakeSnapshot(
 	};
 }
 
-function stateOf(cli: "claude" | "codex", fake: FakeCli): CliState {
-	const fix = cli === "claude" ? CLAUDE_FIX : CODEX_FIX;
-	const name = cli === "claude" ? "Claude Code" : "The Codex CLI";
+type Cli = "claude" | "codex" | "opencode";
+
+function stateOf(cli: Cli, fake: FakeCli): CliState {
+	const fix =
+		cli === "claude" ? CLAUDE_FIX : cli === "codex" ? CODEX_FIX : OPENCODE_FIX;
+	const name =
+		cli === "claude"
+			? "Claude Code"
+			: cli === "codex"
+				? "The Codex CLI"
+				: "OpenCode";
 	const login: LlmLoginState =
 		fake === "logged_in"
 			? { state: "logged_in", detail: "Signed in to a plan (test stand-in)." }
@@ -147,24 +203,30 @@ function stateOf(cli: "claude" | "codex", fake: FakeCli): CliState {
 
 /** A signed-in stand-in answers like the test models; a signed-out one pauses, as the CLI does. */
 class FakeCliProvider implements LlmProvider {
-	readonly billing = "subscription" as const;
+	readonly billing: LlmBilling;
 	readonly name: string;
-	readonly vendor: "anthropic" | "openai";
+	readonly vendor: string;
 	readonly ownerUserId: string;
+	readonly price?: LlmProvider["price"];
+	readonly reportsModelCalls = true;
 	private readonly fake = new FakeLlmProvider();
 	constructor(
 		private readonly input: {
 			name: string;
-			vendor: "anthropic" | "openai";
+			vendor: string;
 			ownerUserId: string;
-			cli: "claude" | "codex";
+			cli: Cli;
 			state: () => FakeState;
 			planUsage: PlanUsageSink | undefined;
+			billing?: LlmBilling;
+			price?: LlmProvider["price"];
 		},
 	) {
 		this.name = input.name;
 		this.vendor = input.vendor;
 		this.ownerUserId = input.ownerUserId;
+		this.billing = input.billing ?? "subscription";
+		this.price = input.price;
 	}
 	async generateObject<T>(request: GenerateObjectRequest<T>): Promise<T> {
 		const { cli, state, planUsage } = this.input;
@@ -175,6 +237,18 @@ class FakeCliProvider implements LlmProvider {
 				"the test stand-in CLI is not signed in",
 			);
 		// As the CLIs do: the plan's usage before the prompt, the prompt, the usage after.
+		if (cli === "opencode") {
+			request.onModelCall?.();
+			request.onUsage?.({
+				model: this.name.slice("opencode:".length),
+				inputTokens: 100,
+				outputTokens: 10,
+				cachedInputTokens: 0,
+				cacheWriteTokens: 0,
+			});
+			if (request.task === "connection-test") return { ok: true } as T;
+			return await this.fake.generateObject(request);
+		}
 		const call = planUsage?.call();
 		const before = fakeSnapshot(cli, state().usage[cli], new Date());
 		if (before) planUsage?.sample(before);
@@ -203,6 +277,24 @@ export function fakeSubscriptions(
 	planUsage?: (vendor: "anthropic" | "openai") => PlanUsageSink,
 ): Subscriptions {
 	const factory: LocalLlmFactory = ({ provider, model, ownerUserId }) => {
+		if (provider === "opencode") {
+			const source = model.slice(0, model.indexOf("/"));
+			const info = FAKE_OPENCODE_MODELS.find(
+				(m) => m.ref === `opencode:${model}`,
+			);
+			return new FakeCliProvider({
+				name: `opencode:${model}`,
+				vendor: `opencode:${source}`,
+				ownerUserId,
+				cli: "opencode",
+				state: () => read(dir),
+				planUsage: undefined,
+				billing: info?.billing ?? "subscription",
+				price: info?.price
+					? { ...info.price, cachedInput: info.price.input, source: "test" }
+					: undefined,
+			});
+		}
 		const cli = provider === "codex" ? "codex" : "claude";
 		const vendor = cli === "codex" ? "openai" : "anthropic";
 		return new FakeCliProvider({
@@ -228,5 +320,8 @@ export function fakeSubscriptions(
 		factory,
 		claude: () => check("claude"),
 		codex: () => check("codex"),
+		opencode: async () => stateOf("opencode", read(dir).opencode),
+		opencodeModels: async () =>
+			read(dir).opencode === "missing" ? [] : FAKE_OPENCODE_MODELS,
 	});
 }
