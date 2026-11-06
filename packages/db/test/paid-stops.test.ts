@@ -235,6 +235,7 @@ describe("an unclear ending is on the plan", () => {
 		expect(await s.paidStops("u1")).toEqual({
 			anthropic: null,
 			openai: null,
+			google: null,
 		});
 		expect(await s.extraUsageOffConfirmedAt("u1")).toBeInstanceOf(Date);
 	});

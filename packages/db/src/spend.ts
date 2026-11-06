@@ -24,8 +24,12 @@ export const MAX_SPENDING_CAP_MICROS = 2_000_000_000;
 
 type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
-/** A plan's vendor: Claude, Codex, or one OpenCode source (`opencode:opencode-go`). */
-export type SubscriptionVendor = "anthropic" | "openai" | `opencode:${string}`;
+/** A plan's vendor: Claude, Codex, Gemini (Antigravity), or one OpenCode source (`opencode:opencode-go`). */
+export type SubscriptionVendor =
+	| "anthropic"
+	| "openai"
+	| "google"
+	| `opencode:${string}`;
 
 const isOpenCode = (vendor: string): vendor is `opencode:${string}` =>
 	vendor.startsWith("opencode:") && vendor.length > "opencode:".length;
@@ -34,24 +38,27 @@ const isOpenCode = (vendor: string): vendor is `opencode:${string}` =>
 export function subscriptionPrefix(vendor: SubscriptionVendor): string {
 	if (vendor === "anthropic") return "claude-subscription:";
 	if (vendor === "openai") return "codex-subscription:";
+	if (vendor === "google") return "antigravity:";
 	return `${vendor}/`;
 }
 
 export function vendorLabel(vendor: SubscriptionVendor): string {
 	if (vendor === "anthropic") return "Claude";
 	if (vendor === "openai") return "Codex";
+	if (vendor === "google") return "Gemini";
 	return `OpenCode (${vendor.slice("opencode:".length)})`;
 }
 
 /**
  * The vendor of a subscription provider (`claude-subscription:…`, `codex-subscription:…`,
- * `opencode:<source>/<model>`).
+ * `antigravity:<model>`, `opencode:<source>/<model>`).
  */
 export function subscriptionVendor(
 	provider: string,
 ): SubscriptionVendor | null {
 	if (provider.startsWith("claude-subscription:")) return "anthropic";
 	if (provider.startsWith("codex-subscription:")) return "openai";
+	if (/^antigravity(-subscription)?:/.test(provider)) return "google";
 	const opencode = /^opencode:([^/]+)\//.exec(provider);
 	return opencode ? `opencode:${opencode[1]}` : null;
 }
@@ -337,7 +344,12 @@ export class DrizzleSpendStore implements SpendStore {
 				.filter((p) => isOpenCode(p.vendor))
 				.map((p) => [p.vendor, p.pausedAt]),
 		);
-		return { ...opencode, anthropic: at("anthropic"), openai: at("openai") };
+		return {
+			...opencode,
+			anthropic: at("anthropic"),
+			openai: at("openai"),
+			google: at("google"),
+		};
 	}
 
 	/**
@@ -381,8 +393,9 @@ export class DrizzleSpendStore implements SpendStore {
 	 * confirmation, are never touched.
 	 */
 	async recordPaidStop(userId: string, vendor: string): Promise<void> {
-		const v: SubscriptionVendor =
-			vendor === "openai" || isOpenCode(vendor) ? vendor : "anthropic";
+		// Kept as the vendor it is: mapping an unknown vendor onto Claude would stop Claude and
+		// withdraw its extra-usage confirmation for another company's paid call.
+		const v = vendor as SubscriptionVendor;
 		await this.db
 			.insert(subscriptionPauses)
 			.values({
