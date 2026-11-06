@@ -1,5 +1,12 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+	existsSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -456,5 +463,131 @@ describe("an unknown state at start", () => {
 		expect(start.result).toMatchObject({ busy: 1, projects: 0 });
 		expect(start.pending).toBeNull();
 		reader.close();
+	});
+});
+
+/**
+ * Finding: start treated "no project row of OfferFinch's" as proof nothing was owed. A call's
+ * scrub ran while a reader blocked the checkpoint, its intent and marker were gone (an older
+ * build, or a lost file), then the project row was deleted: start found projects 0, busy 1 and
+ * marked nothing, with the prompt still in the WAL. The use record says OfferFinch ran calls.
+ */
+describe("a database OfferFinch has used, with its project row gone", () => {
+	it("marks a checkpoint that cannot finish at start, and finishes once the reader closes", () => {
+		const reader = holdReader();
+		const call = beginCall(target, now);
+		addSession("ses_gone");
+		const scrub = scrubOpenCodeSessions(target.dbFile, ["ses_gone"], {
+			busyTimeoutMs: 50,
+		});
+		expect(scrub).toMatchObject({ busy: 1, clean: false });
+		// No intent, no marker, no project row: nothing in the database says OfferFinch was here.
+		rmSync(call.file);
+		const db = new Database(target.dbFile);
+		db.prepare("DELETE FROM project WHERE id = 'ours'").run();
+		db.close();
+		expect(intents()).toEqual([]);
+		expect(readPendingCleanup(target)).toBeNull();
+		expect(count("session_v2")).toBe(0);
+		expect(filesWithPrompt()).toContain("opencode.db-wal");
+
+		const start = attemptCleanup(target, { idle: true, now, start: true });
+		expect(start.result).toMatchObject({ rows: 0, busy: 1, projects: 0 });
+		expect(start.pending).toMatchObject({ since: now.toISOString() });
+		expect(readPendingCleanup(target)).not.toBeNull();
+		expect(filesWithPrompt()).toContain("opencode.db-wal");
+
+		reader.prepare("COMMIT").run();
+		reader.close();
+		expect(attemptCleanup(target, { idle: true, now }).pending).toBeNull();
+		expect(readPendingCleanup(target)).toBeNull();
+		expect(filesWithPrompt()).toEqual([]);
+	}, 30_000);
+});
+
+/**
+ * Finding: another process could publish its intent and create its session after a sweep checked
+ * the intents and before it deleted (foreign call alive, its session swept). The lock is held
+ * across both, so a call starting then waits until the sweep is done.
+ */
+describe("a call another process starts while a sweep runs", () => {
+	const wait = (ms: number) =>
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+	const lockFiles = () =>
+		readdirSync(target.base).filter((f) => f.startsWith("cleanup-lock-"));
+
+	it("waits for the sweep: its session is never deleted", async () => {
+		addSession("ses_left");
+		const started = join(target.base, "racer-started");
+		const inserted = join(target.base, "racer-inserted");
+		let child: ReturnType<typeof spawn> | null = null;
+		let exited: Promise<number | null> | null = null;
+		const attempt = attemptCleanup(target, {
+			idle: true,
+			now: new Date(),
+			start: true,
+			beforeSweep: () => {
+				// Intents checked, nothing deleted yet: the other process starts its call now.
+				child = spawn(
+					process.execPath,
+					[CHILD, "racer", JSON.stringify(target), "ses_race"],
+					{ env: { ...process.env, PROMPT_CANARY: PROMPT }, stdio: "ignore" },
+				);
+				const spawned = child;
+				exited = new Promise((done) => spawned.once("exit", done));
+				const deadline = Date.now() + 15_000;
+				while (!existsSync(started) && Date.now() < deadline) wait(10);
+				expect(existsSync(started)).toBe(true);
+				// Long enough for it to publish its intent and write its session, were it not waiting.
+				const settle = Date.now() + 1500;
+				while (!existsSync(inserted) && Date.now() < settle) wait(10);
+			},
+		});
+		expect(await exited).toBe(0);
+		// Only the session that was there before the sweep; the other call's is intact.
+		expect(attempt.result?.rows).toBeGreaterThan(0);
+		const db = new Database(target.dbFile, { readonly: true });
+		const ids = db.prepare("SELECT id FROM session_v2").all();
+		db.close();
+		expect(ids).toEqual([{ id: "ses_race" }]);
+		expect(lockFiles()).toEqual([]);
+	}, 30_000);
+
+	it("only checkpoints while another live process holds the lock, and takes over a dead one's", () => {
+		addSession("ses_held");
+		const id = createHash("sha256")
+			.update(target.dbFile)
+			.digest("hex")
+			.slice(0, 16);
+		const lock = join(target.base, `cleanup-lock-${id}`);
+
+		// A live process (this one's parent) took it a moment ago.
+		writeFileSync(
+			lock,
+			JSON.stringify({
+				pid: process.ppid,
+				since: new Date().toISOString(),
+				token: "theirs",
+			}),
+		);
+		const held = attemptCleanup(target, { idle: true, now: new Date() });
+		expect(held.result?.rows).toBe(0);
+		expect(count("session_v2")).toBe(1);
+		expect(readFileSync(lock, "utf8")).toContain("theirs");
+
+		// Its process is gone: the lock is stale, and the sweep runs.
+		const dead = spawnSync(process.execPath, ["-e", ""]).pid;
+		writeFileSync(
+			lock,
+			JSON.stringify({
+				pid: dead,
+				since: new Date().toISOString(),
+				token: "dead",
+			}),
+		);
+		const swept = attemptCleanup(target, { idle: true, now: new Date() });
+		expect(swept.result?.rows).toBeGreaterThan(0);
+		expect(count("session_v2")).toBe(0);
+		expect(lockFiles()).toEqual([]);
 	});
 });

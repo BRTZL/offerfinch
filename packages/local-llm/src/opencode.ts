@@ -30,6 +30,7 @@ import {
 	type CallIntent,
 	CLEANUP_GRACE_MS,
 	CLEANUP_REFUSAL,
+	CleanupLockBusyError,
 	type CleanupTarget,
 	cleanupDue,
 	cleanupOverdue,
@@ -1037,6 +1038,9 @@ export async function sweepOpenCodeCrashes(input: {
 const INTENT_REFUSAL =
 	"OfferFinch could not write the note it keeps while an OpenCode call runs (so that a crash cannot leave the prompt in OpenCode's database unnoticed); nothing was sent. Check that OfferFinch's data folder is writable.";
 
+const LOCK_REFUSAL =
+	"Another OfferFinch process kept OpenCode's cleanup busy for longer than a call waits; nothing was sent. The call is tried again later.";
+
 /** Event types that mean the model tried something other than answering. */
 const TOOL_EVENT = /^session\.(tool|shell|skill|permission|form|subagent)\b/;
 
@@ -1266,8 +1270,9 @@ export async function runOpenCodeCall(
 	let intent: CallIntent;
 	try {
 		intent = beginCall(ctx.target, new Date());
-	} catch {
-		result.boundary = INTENT_REFUSAL;
+	} catch (error) {
+		result.boundary =
+			error instanceof CleanupLockBusyError ? LOCK_REFUSAL : INTENT_REFUSAL;
 		result.cleanupRefused = true;
 		return result;
 	}

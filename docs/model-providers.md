@@ -115,10 +115,19 @@ From [research/opencode-v2-lockdown.md](research/opencode-v2-lockdown.md) and
    it only after its scrub finished or the marker was written durably in its place. An intent whose
    process is gone, or older than 30 minutes, is adopted as an unfinished cleanup (rows possibly
    left) at start and on every retry; a live one of another process keeps the sweep to a
-   checkpoint. At start, a checkpoint that cannot finish with no marker or intent is marked too
-   when OfferFinch's own project is in the database (an older build may have crashed without an
-   intent); with no project of OfferFinch's nothing of its calls can be there, so the user's busy
-   OpenCode alone never stops calls. The cleanup is retried, sweep and
+   checkpoint. Whether anything can be owed is never read from the user's database (a project row
+   can be deleted while the prompt is still in the WAL): before its first intent, a call writes a
+   use record there (`opencode-used-<db>.json`, durably). At start, a checkpoint that cannot
+   finish with no marker or intent is marked when that record exists, or when OfferFinch's own
+   project is in the database (builds that ran calls before the record; the record is then
+   written); with neither, OfferFinch never ran a call on this database, so the user's busy
+   OpenCode alone never stops calls. One lock file per database (`cleanup-lock-<db>`, created
+   exclusively, holding a pid, start time and token) is held while a call publishes its intent
+   and while a sweep checks the intents and deletes, so another process (the desktop holds a
+   single-instance lock, but a restarted worker can overlap the one it replaces) cannot start a
+   call between the two. A call waits up to 5 s for it, then is refused; a sweep that cannot take
+   it at once only checkpoints. A lock whose process is gone, of this process's own id, or older
+   than a minute is taken over (moved aside and read again, so a fresh one is put back). The cleanup is retried, sweep and
    checkpoint even with no rows left, on a timer with backoff, before each call and at start;
    while another OfferFinch call runs, only the checkpoint (its session is not swept). After a
    2-minute grace period OpenCode calls are refused (a local `boundary` refusal that does not trip

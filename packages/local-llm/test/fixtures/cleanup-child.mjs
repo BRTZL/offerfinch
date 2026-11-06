@@ -4,6 +4,9 @@
 //                                     its scrub, then the process dies before the marker
 //   overlap <target-json> <session>  the same call, alive until it reads a line on stdin, then
 //                                     its cleanup finishes normally
+//   racer <target-json> <session>    a call starting while this test's sweep runs: writes
+//                                     <base>/racer-started, publishes its intent, writes its
+//                                     session, writes <base>/racer-inserted, then exits
 import { registerHooks } from "node:module";
 import { createInterface } from "node:readline";
 
@@ -24,6 +27,10 @@ const target = JSON.parse(targetJson);
 const { beginCall, finishCall } = await import("../../src/opencode-cleanup.ts");
 const { default: Database } = await import("better-sqlite3");
 
+const { writeFileSync } = await import("node:fs");
+const { join } = await import("node:path");
+if (mode === "racer") writeFileSync(join(target.base, "racer-started"), "");
+
 const intent = beginCall(target, new Date());
 const db = new Database(target.dbFile);
 const prompt = process.env.PROMPT_CANARY ?? "PROMPT";
@@ -34,6 +41,11 @@ db.prepare(
 	"INSERT INTO session_message (id, session_id, type, seq, data) VALUES (?, ?, 'user', 1, ?)",
 ).run(`msg_${session}`, session, `${prompt} ${"filler ".repeat(800)}`);
 db.close();
+
+if (mode === "racer") {
+	writeFileSync(join(target.base, "racer-inserted"), "");
+	process.exit(0);
+}
 
 if (mode === "crash") {
 	finishCall(target, intent, session, {

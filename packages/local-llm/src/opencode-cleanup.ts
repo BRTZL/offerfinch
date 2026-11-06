@@ -3,12 +3,14 @@ import {
 	closeSync,
 	existsSync,
 	fsyncSync,
+	linkSync,
 	mkdirSync,
 	openSync,
 	readdirSync,
 	readFileSync,
 	renameSync,
 	rmSync,
+	statSync,
 	writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -40,9 +42,22 @@ import {
  * only after its scrub finished or the marker was written (durably) in its place. An intent whose
  * process is gone (or older than any call can run) is adopted as an unfinished cleanup, at start
  * and on every retry; one whose process still runs (another worker sharing the folder) keeps the
- * sweep to a checkpoint, so that call's session is never deleted from under it. At start, a
- * checkpoint that cannot finish is unfinished cleanup too when OfferFinch's project is in the
- * database (an older build may have crashed without an intent).
+ * sweep to a checkpoint, so that call's session is never deleted from under it.
+ *
+ * Whether anything can be owed is never read from the user's database (a project row can be
+ * deleted while the prompt is still in the WAL): before its first intent, a call writes a use
+ * record (durably) saying OfferFinch has run OpenCode calls on this database. At start, a
+ * checkpoint that cannot finish is unfinished cleanup when that record exists (or OfferFinch's
+ * project is in the database: an older build ran calls without one); with neither, a busy
+ * checkpoint is only the user's OpenCode reading.
+ *
+ * Another OfferFinch process (the desktop holds a single-instance lock, but a restarted worker
+ * can overlap the one it replaces) could publish its intent and create its session between a
+ * sweep's intent check and its deletion. So one lock file per database (created exclusively,
+ * holding a pid and a token) is held across a call's intent publication and across a sweep's
+ * intent check and deletion: a call waits for it (briefly, then is refused); a sweep that cannot
+ * take it at once only checkpoints. A lock whose process is gone (or that is older than any held
+ * lock can be) is taken over.
  */
 
 /** How long OpenCode calls go on while a cleanup is unfinished, before they are refused. */
@@ -90,6 +105,21 @@ function dbId(target: CleanupTarget): string {
 
 function markerFile(target: CleanupTarget): string {
 	return join(target.base, `cleanup-pending-${dbId(target)}.json`);
+}
+
+function useFile(target: CleanupTarget): string {
+	return join(target.base, `opencode-used-${dbId(target)}.json`);
+}
+
+/** OfferFinch has run (or started) an OpenCode call on this database. */
+function everUsed(target: CleanupTarget): boolean {
+	return existsSync(useFile(target));
+}
+
+/** The use record, on disk; written once, never removed. */
+function recordUse(target: CleanupTarget, now: Date): void {
+	if (!everUsed(target))
+		writeDurable(useFile(target), JSON.stringify({ since: now.toISOString() }));
 }
 
 /** The unfinished cleanup, or null. An unreadable marker counts as overdue. */
@@ -150,6 +180,131 @@ function removeDurable(file: string): void {
 	syncDir(dirname(file));
 }
 
+// ---------------------------------------------------------------------------------------------
+// The interprocess lock: one per database, held for a few synchronous steps at a time.
+
+/** How long a call waits for the lock before it is refused (a sweep holds it about a second). */
+const LOCK_WAIT_MS = 5_000;
+
+/** A lock older than this is stale whoever holds it: no section holds it for this long. */
+const LOCK_STALE_MS = 60_000;
+
+const LOCK_POLL_MS = 20;
+
+interface HeldLock {
+	file: string;
+	token: string;
+}
+
+function lockFile(target: CleanupTarget): string {
+	return join(target.base, `cleanup-lock-${dbId(target)}`);
+}
+
+function sleepSync(ms: number): void {
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function readText(file: string): string | null {
+	try {
+		return readFileSync(file, "utf8");
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * The lock's holder can no longer be in its section: its process is gone, it is this process
+ * (every section is synchronous, so a lock of this pid was left by an earlier instance or a throw
+ * that skipped its release), or it is older than any section. An unreadable lock (being written)
+ * is stale only when old.
+ */
+function lockStale(file: string, text: string, now: number): boolean {
+	let held: { pid?: unknown; since?: unknown } | null = null;
+	try {
+		held = JSON.parse(text);
+	} catch {}
+	const since =
+		typeof held?.since === "string" ? Date.parse(held.since) : Number.NaN;
+	if (typeof held?.pid !== "number" || Number.isNaN(since)) {
+		try {
+			return now - statSync(file).mtimeMs >= LOCK_STALE_MS;
+		} catch {
+			return true;
+		}
+	}
+	return (
+		held.pid === process.pid ||
+		now - since >= LOCK_STALE_MS ||
+		!processRuns(held.pid)
+	);
+}
+
+/**
+ * Removes the lock when it is stale; true when the lock may be free now. Moved aside first and
+ * read again, so a fresh lock another process took in the meantime is put back, never deleted.
+ */
+function takeOverStale(file: string): boolean {
+	const text = readText(file);
+	if (text === null) return true;
+	if (!lockStale(file, text, Date.now())) return false;
+	const aside = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.stale`;
+	try {
+		renameSync(file, aside);
+	} catch {
+		return true;
+	}
+	if (readText(aside) !== text)
+		try {
+			// Not the stale lock: back in place, unless yet another one was taken meanwhile.
+			linkSync(aside, file);
+		} catch {}
+	rmSync(aside, { force: true });
+	return true;
+}
+
+/** Takes the lock, waiting up to `waitMs`; null when another process still holds it. */
+function acquireLock(target: CleanupTarget, waitMs: number): HeldLock | null {
+	const file = lockFile(target);
+	mkdirSync(target.base, { recursive: true, mode: 0o700 });
+	const token = randomBytes(8).toString("hex");
+	const deadline = Date.now() + waitMs;
+	for (;;) {
+		let fd: number | null = null;
+		try {
+			fd = openSync(file, "wx", 0o600);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+		}
+		if (fd !== null) {
+			try {
+				writeSync(
+					fd,
+					JSON.stringify({
+						pid: process.pid,
+						since: new Date().toISOString(),
+						token,
+					}),
+				);
+			} finally {
+				closeSync(fd);
+			}
+			return { file, token };
+		}
+		if (takeOverStale(file)) continue;
+		if (Date.now() >= deadline) return null;
+		sleepSync(LOCK_POLL_MS);
+	}
+}
+
+/** Gives the lock back, only if it is still this holder's. */
+function releaseLock(lock: HeldLock): void {
+	const text = readText(lock.file);
+	try {
+		if (text !== null && JSON.parse(text).token === lock.token)
+			rmSync(lock.file, { force: true });
+	} catch {}
+}
+
 function writePending(target: CleanupTarget, pending: PendingCleanup): void {
 	writeDurable(markerFile(target), JSON.stringify(pending));
 }
@@ -160,6 +315,14 @@ function clearPending(target: CleanupTarget): void {
 
 // ---------------------------------------------------------------------------------------------
 // Intents: one per running call.
+
+/** Another OfferFinch process held the cleanup lock for longer than a call waits for it. */
+export class CleanupLockBusyError extends Error {
+	constructor() {
+		super("another OfferFinch process holds the OpenCode cleanup lock");
+		this.name = "CleanupLockBusyError";
+	}
+}
 
 /** A call's intent file: written before OpenCode starts, removed once its cleanup is settled. */
 export interface CallIntent {
@@ -244,8 +407,12 @@ export function beginCall(target: CleanupTarget, now: Date): CallIntent {
 		target.base,
 		`${intentPrefix(target)}${process.pid}-${randomBytes(6).toString("hex")}.json`,
 	);
+	// Under the lock: a sweep that checked the intents must finish deleting before this one appears.
+	const lock = acquireLock(target, LOCK_WAIT_MS);
+	if (!lock) throw new CleanupLockBusyError();
 	activeIntents.add(file);
 	try {
+		recordUse(target, now);
 		writeDurable(
 			file,
 			JSON.stringify({ pid: process.pid, since: now.toISOString() }),
@@ -253,6 +420,8 @@ export function beginCall(target: CleanupTarget, now: Date): CallIntent {
 	} catch (error) {
 		activeIntents.delete(file);
 		throw error;
+	} finally {
+		releaseLock(lock);
 	}
 	return { file };
 }
@@ -313,17 +482,72 @@ export interface CleanupAttempt {
 	error: string | null;
 }
 
+interface SweepOutcome {
+	/** The sweep ran (else only the checkpoint). */
+	idle: boolean;
+	/** The marker before this attempt. */
+	was: PendingCleanup | null;
+	result: ScrubResult | null;
+	error: string | null;
+}
+
+/**
+ * Stale intents adopted, then the sweep when nothing else of OfferFinch's runs (no call here, no
+ * live intent of another process, and this process holds the lock from the check through the
+ * deletion), else only the checkpoint.
+ */
+function sweepOrCheckpoint(
+	target: CleanupTarget,
+	options: { idle: boolean; now: Date; beforeSweep?: () => void },
+): SweepOutcome {
+	// Never waited for: a call holds it only while it publishes its intent.
+	const lock = options.idle ? acquireLock(target, 0) : null;
+	const outcome: SweepOutcome = {
+		idle: false,
+		was: null,
+		result: null,
+		error: null,
+	};
+	try {
+		const foreignLive = adoptStaleIntents(target, options.now);
+		outcome.idle = lock !== null && !foreignLive;
+		outcome.was = readPendingCleanup(target);
+		if (outcome.idle) options.beforeSweep?.();
+		try {
+			outcome.result = outcome.idle
+				? sweepOpenCodeProject(target.dbFile, target.cwd, {
+						busyTimeoutMs: RETRY_BUSY_TIMEOUT_MS,
+					})
+				: checkpointOpenCodeDb(target.dbFile, {
+						busyTimeoutMs: RETRY_BUSY_TIMEOUT_MS,
+					});
+		} catch (caught) {
+			outcome.error = caught instanceof Error ? caught.message : String(caught);
+		}
+	} finally {
+		if (lock) releaseLock(lock);
+	}
+	return outcome;
+}
+
 /**
  * One try: with no other OfferFinch call running (`idle`, and no live intent of another process),
  * the sweep (every session of OfferFinch's project, then the checkpoint); otherwise only the
- * checkpoint, so a running call's session is never deleted from under it. Stale intents are
- * adopted first. A busy checkpoint with no marker and nothing deleted says nothing about
- * OfferFinch's calls (the user's service is just reading) and is not marked, except at `start`
- * when OfferFinch's project is in the database: then it may be an older crash's leftovers.
+ * checkpoint, so a running call's session is never deleted from under it. The sweep holds the
+ * lock from the intent check through the deletion; when another process holds it, only the
+ * checkpoint. Stale intents are adopted first. A busy checkpoint with no marker and nothing
+ * deleted is not marked unless at `start` OfferFinch has used this database (the use record, or
+ * its project in the database): then it may be a crash's leftovers.
  */
 export function attemptCleanup(
 	target: CleanupTarget,
-	options: { idle: boolean; now: Date; start?: boolean },
+	options: {
+		idle: boolean;
+		now: Date;
+		start?: boolean;
+		/** Tests: runs between the intent check and the sweep (another process starting a call). */
+		beforeSweep?: () => void;
+	},
 ): CleanupAttempt {
 	if (!existsSync(target.dbFile)) {
 		clearPending(target);
@@ -331,22 +555,7 @@ export function attemptCleanup(
 			if (!intentLive(intent, options.now)) removeDurable(intent.file);
 		return { pending: null, result: null, error: null };
 	}
-	const foreignLive = adoptStaleIntents(target, options.now);
-	const idle = options.idle && !foreignLive;
-	const was = readPendingCleanup(target);
-	let result: ScrubResult | null = null;
-	let error: string | null = null;
-	try {
-		result = idle
-			? sweepOpenCodeProject(target.dbFile, target.cwd, {
-					busyTimeoutMs: RETRY_BUSY_TIMEOUT_MS,
-				})
-			: checkpointOpenCodeDb(target.dbFile, {
-					busyTimeoutMs: RETRY_BUSY_TIMEOUT_MS,
-				});
-	} catch (caught) {
-		error = caught instanceof Error ? caught.message : String(caught);
-	}
+	const { idle, was, result, error } = sweepOrCheckpoint(target, options);
 	// A sweep that ran removed every row of the project; a checkpoint alone removes none.
 	const rowsLeft = error
 		? idle || (was?.rowsLeft ?? false)
@@ -355,9 +564,14 @@ export function attemptCleanup(
 		clearPending(target);
 		return { pending: null, result, error };
 	}
-	// Ours unless the sweep found no project of OfferFinch's (a checkpoint alone cannot tell).
-	const ours = result?.projects === undefined || result.projects > 0;
-	if (!was && !error && result && result.rows === 0 && !(options.start && ours))
+	// Debt may be owed when OfferFinch has used this database. The database can prove it (its
+	// project is there: recorded, for builds that ran calls before the record) but never disprove
+	// it: the project row can be gone while the prompt is still in the WAL. A checkpoint alone
+	// (another call runs) counts as used.
+	if ((result?.projects ?? 0) > 0) recordUse(target, options.now);
+	const used =
+		everUsed(target) || (result !== null && result.projects === undefined);
+	if (!was && !error && result && result.rows === 0 && !(options.start && used))
 		return { pending: null, result, error };
 	return {
 		pending: markPending(target, rowsLeft, options.now, true),
