@@ -33,6 +33,7 @@ const make = (
 	disabledReason: string | null = null,
 	clock = { now: new Date("2026-11-02T12:00:00Z") },
 	beforeWindowsInstall = async () => {},
+	platform: NodeJS.Platform = "darwin",
 ) => {
 	const updater = new StubUpdater();
 	const states: UpdateState[] = [];
@@ -40,6 +41,7 @@ const make = (
 	const updates = new Updates(updater, {
 		currentVersion: "0.1.0",
 		beforeWindowsInstall,
+		platform,
 		disabledReason,
 		onChange: (s) => states.push(s),
 		onReady: (v) => ready.push(v),
@@ -51,22 +53,18 @@ const make = (
 
 describe("Updates", () => {
 	it("silently installs and restarts on Windows", async () => {
-		vi.stubGlobal("process", { ...process, platform: "win32" });
-		try {
-			const { updater, updates } = make();
+		{
+			const { updater, updates } = make(null, undefined, undefined, "win32");
 			updater.emit("update-downloaded", { version: "0.2.0" });
 			expect(updates.install()).toBe(true);
 			await vi.waitFor(() =>
 				expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true),
 			);
-		} finally {
-			vi.unstubAllGlobals();
 		}
 	});
 
 	it("waits for Windows shutdown and refuses a second restart press", async () => {
-		vi.stubGlobal("process", { ...process, platform: "win32" });
-		try {
+		{
 			let finish = () => {};
 			const shutdown = vi.fn(
 				() =>
@@ -74,7 +72,7 @@ describe("Updates", () => {
 						finish = resolve;
 					}),
 			);
-			const { updater, updates } = make(null, undefined, shutdown);
+			const { updater, updates } = make(null, undefined, shutdown, "win32");
 			updater.emit("update-downloaded", { version: "0.2.0" });
 			expect(updates.install()).toBe(true);
 			expect(updates.install()).toBe(false);
@@ -87,37 +85,34 @@ describe("Updates", () => {
 					true,
 				),
 			);
-		} finally {
-			vi.unstubAllGlobals();
 		}
 	});
 
 	it("does not launch NSIS when Windows shutdown fails", async () => {
-		vi.stubGlobal("process", { ...process, platform: "win32" });
-		try {
-			const { updater, updates } = make(null, undefined, async () => {
-				throw new Error("still running");
-			});
+		{
+			const { updater, updates } = make(
+				null,
+				undefined,
+				async () => {
+					throw new Error("still running");
+				},
+				"win32",
+			);
 			updater.emit("update-downloaded", { version: "0.2.0" });
 			updates.install();
 			await vi.waitFor(() => expect(updates.get().status).toBe("error"));
 			expect(updater.quitAndInstall).not.toHaveBeenCalled();
-		} finally {
-			vi.unstubAllGlobals();
 		}
 	});
 
 	it("keeps macOS restart immediate without Windows shutdown", () => {
-		vi.stubGlobal("process", { ...process, platform: "darwin" });
-		try {
+		{
 			const shutdown = vi.fn(async () => {});
-			const { updater, updates } = make(null, undefined, shutdown);
+			const { updater, updates } = make(null, undefined, shutdown, "darwin");
 			updater.emit("update-downloaded", { version: "0.2.0" });
 			expect(updates.install()).toBe(true);
 			expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true);
 			expect(shutdown).not.toHaveBeenCalled();
-		} finally {
-			vi.unstubAllGlobals();
 		}
 	});
 

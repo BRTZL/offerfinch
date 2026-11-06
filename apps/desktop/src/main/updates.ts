@@ -176,6 +176,8 @@ export class Updates {
 			now?: () => Date;
 			/** Windows must release child processes before NSIS launches. */
 			beforeWindowsInstall: () => Promise<void>;
+			/** The platform the install path follows (tests pin it). */
+			platform?: NodeJS.Platform;
 		},
 	) {
 		this.state = options.disabledReason
@@ -428,7 +430,7 @@ export class Updates {
 			this.options.log("update install refused: try-it mode runs");
 			return false;
 		}
-		if (process.platform === "win32") {
+		if ((this.options.platform ?? process.platform) === "win32") {
 			this.installing = true;
 			void this.options
 				.beforeWindowsInstall()
