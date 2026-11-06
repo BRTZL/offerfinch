@@ -15,6 +15,7 @@ import {
 	stageRestore,
 } from "../src/main/backup";
 import { DB_FILE } from "../src/main/database-file";
+import { createZipTools, windowsTarPath } from "../src/main/zip";
 
 const folder = (name: string) =>
 	fs.mkdtempSync(path.join(os.tmpdir(), `of-backup-${name}-`));
@@ -64,7 +65,12 @@ const titles = (file: string) => {
 
 const unzip = (zip: string) => {
 	const out = folder("unzip");
-	execFileSync("/usr/bin/ditto", ["-x", "-k", zip, out]);
+	execFileSync(
+		process.platform === "win32" ? windowsTarPath() : "/usr/bin/ditto",
+		process.platform === "win32"
+			? ["-x", "-f", zip, "-C", out]
+			: ["-x", "-k", zip, out],
+	);
 	return out;
 };
 
@@ -140,7 +146,7 @@ describe("checking a backup before restoring", () => {
 	it("refuses a zip with a path out of the staging folder or a symlink, writing nothing outside", async () => {
 		const outsideDir = folder("outside");
 		const evil = path.join(folder("evil"), "evil.zip");
-		execFileSync("python3", [
+		execFileSync(process.platform === "win32" ? "python" : "python3", [
 			"-I",
 			"-c",
 			[
@@ -173,7 +179,7 @@ describe("checking a backup before restoring", () => {
 		db.prepare("delete from jobs").run();
 		db.close();
 		const tampered = path.join(folder("t"), "t.zip");
-		execFileSync("/usr/bin/ditto", ["-c", "-k", "--norsrc", out, tampered]);
+		await createZipTools().create(out, tampered);
 		await expect(
 			stageRestore({
 				userData: dataFolder("b", []),
@@ -209,7 +215,7 @@ describe("checking a backup before restoring", () => {
 			JSON.stringify({ ...manifest, format: 99 }),
 		);
 		const newer = path.join(folder("n"), "n.zip");
-		execFileSync("/usr/bin/ditto", ["-c", "-k", "--norsrc", out, newer]);
+		await createZipTools().create(out, newer);
 		await expect(
 			stageRestore({
 				userData: dataFolder("b", []),
@@ -219,6 +225,29 @@ describe("checking a backup before restoring", () => {
 		).rejects.toBeInstanceOf(BackupError);
 	});
 });
+
+// Exercise the restore's real layout, manifest and database checks on a tar-written zip.
+describe.skipIf(!["darwin", "win32"].includes(process.platform))(
+	"Windows zip restore compatibility",
+	() => {
+		it("stages a real backup repacked by bsdtar to a .partial name", async () => {
+			const { zip } = await backupOf(dataFolder("tar", ["Sample role"]));
+			const source = unzip(zip);
+			const partial = path.join(folder("tar-out"), "backup.zip.partial");
+			await createZipTools({
+				platform: "win32",
+				tar: process.platform === "darwin" ? "/usr/bin/tar" : windowsTarPath(),
+			}).create(source, partial);
+			const staged = await stageRestore({
+				userData: dataFolder("target", []),
+				zipFile: partial,
+				known: KNOWN,
+			});
+			expect(staged.summary).toMatchObject({ jobs: 1, files: 1 });
+			expect(titles(path.join(staged.dir, DB_FILE))).toEqual(["Sample role"]);
+		});
+	},
+);
 
 describe("restoring", () => {
 	const restoreInto = async (

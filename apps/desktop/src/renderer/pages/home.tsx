@@ -300,7 +300,7 @@ export default function HomePage() {
 			"notifications-untested",
 			"/settings/notifications",
 			"Notifications are not tested yet",
-			"Send a test so you hear about new matches. macOS may ask to allow OfferFinch",
+			"Send a test so you hear about new matches. Your system may ask to allow OfferFinch",
 			"home-needs-notify-test",
 		);
 	if (!s.chrome)

@@ -36,7 +36,7 @@ import type { BackupSummary } from "../../../../shared/bridge";
 /** Survives the reload after a restore, so the page can say it worked. */
 const RESTORED_FLAG = "offerfinch:restored";
 
-/** Everything stored on this Mac for you: a backup to keep or move, a restore, the JSON export. */
+/** Everything stored on this computer for you: a backup to keep or move, a restore, the JSON export. */
 export function YourDataSettings() {
 	const save = useMutation({
 		mutationFn: () => desktop.saveDataExport(),
@@ -56,7 +56,7 @@ export function YourDataSettings() {
 		<SettingsPage
 			id="your-data"
 			title="Your data"
-			description="Everything is stored on this Mac, in the app's folder. Back it up as one file to keep it safe or move it to another Mac, or download it as JSON to read. API keys and site sign-ins are never included."
+			description="Everything is stored on this computer, in the app's folder. Back it up as one file to keep it safe or move it to another computer, or download it as JSON to read. API keys and site sign-ins are never included."
 		>
 			<StorageSummary />
 			<Section title="Backup">
@@ -86,7 +86,7 @@ export function YourDataSettings() {
 			<Section title="Privacy">
 				<Group data-testid="privacy">
 					<DocRow
-						label="What is stored and what leaves this Mac"
+						label="What is stored and what leaves this computer"
 						hint="What OfferFinch keeps here, what it sends to the model vendors you chose and the job sites it reads, and nothing else."
 						title="Privacy"
 						text={privacyDoc}
@@ -166,7 +166,7 @@ function ExportBackup() {
 	return (
 		<FormRow
 			label="Export backup"
-			hint="One .zip with your profile, answers, jobs, applications, documents, PDFs and settings, to keep or to restore on another Mac. API keys and site sign-ins are not included: add your keys and sign in to sites again after restoring."
+			hint="One .zip with your profile, answers, jobs, applications, documents, PDFs and settings, to keep or to restore on another computer. API keys and site sign-ins are not included: add your keys and sign in to sites again after restoring."
 		>
 			<Button
 				variant="outline"
@@ -290,7 +290,7 @@ function RestoreBackup() {
 						<AlertDialogDescription>
 							Everything here now is replaced by the backup. A copy of it is
 							saved in the backups folder first. Your API keys and site sign-ins
-							on this Mac stay as they are.
+							on this computer stay as they are.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					{checked ? <BackupContents summary={checked.summary} /> : null}
@@ -332,7 +332,7 @@ function EraseData() {
 	return (
 		<FormRow
 			label="Erase everything"
-			hint="Removes your profile, answers, jobs, applications, documents, files and settings from this Mac. API keys stay in the Keychain until you remove them in Models. It cannot be undone."
+			hint="Removes your profile, answers, jobs, applications, documents, files and settings from this computer. API keys stay in encrypted storage until you remove them in Models. It cannot be undone."
 		>
 			<Button
 				variant="destructive"
@@ -367,7 +367,7 @@ function EraseData() {
 	);
 }
 
-/** What is stored on this Mac, counted, and the room it takes. */
+/** What is stored on this computer, counted, and the room it takes. */
 function StorageSummary() {
 	const summary = useQuery(orpc.storage.summary.queryOptions());
 	const d = summary.data;
@@ -386,7 +386,7 @@ function StorageSummary() {
 		],
 	];
 	return (
-		<Section title="Stored on this Mac">
+		<Section title="Stored on this computer">
 			<Group data-testid="storage-summary">
 				{rows.map(([label, value]) => (
 					<Row

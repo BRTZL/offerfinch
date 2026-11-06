@@ -59,14 +59,14 @@ describe("keyboard shortcuts", () => {
 	});
 
 	it("keeps the accelerators the menu had before the list existed", () => {
-		expect(accelerator("command-menu")).toBe("Command+K");
-		expect(accelerator("toggle-inspector")).toBe("Command+Alt+I");
-		expect(accelerator("toggle-sidebar")).toBe("Command+\\");
-		expect(accelerator("settings")).toBe("Command+,");
-		expect(GO_PAGES.map((g) => accelerator(g.id))).toEqual(
+		expect(accelerator("command-menu", true)).toBe("Command+K");
+		expect(accelerator("toggle-inspector", true)).toBe("Command+Alt+I");
+		expect(accelerator("toggle-sidebar", true)).toBe("Command+\\");
+		expect(accelerator("settings", true)).toBe("Command+,");
+		expect(GO_PAGES.map((g) => accelerator(g.id, true))).toEqual(
 			GO_PAGES.map((_, i) => `Command+${i + 1}`),
 		);
-		expect(accelerator("shortcuts")).toBe("Command+/");
+		expect(accelerator("shortcuts", true)).toBe("Command+/");
 	});
 
 	it("puts every shortcut in a group the sheet shows, with a unique id", () => {
@@ -81,7 +81,7 @@ describe("keyboard shortcuts", () => {
 		for (const group of SHORTCUT_GROUPS) {
 			const keys = all
 				.filter((s) => s.group === group)
-				.flatMap((s) => s.keys.map(comboLabel));
+				.flatMap((s) => s.keys.map((combo) => comboLabel(combo)));
 			expect(new Set(keys).size).toBe(keys.length);
 		}
 	});
@@ -91,6 +91,10 @@ describe("keyboard shortcuts", () => {
 	});
 
 	it("tells keys apart by their modifiers", () => {
+		const macMatches = (
+			event: Parameters<typeof matches>[0],
+			id: Parameters<typeof matches>[1],
+		) => matches(event, id, true);
 		const key = (k: string, mods: Partial<KeyboardEvent> = {}) => ({
 			key: k,
 			metaKey: false,
@@ -99,19 +103,25 @@ describe("keyboard shortcuts", () => {
 			shiftKey: false,
 			...mods,
 		});
-		expect(matches(key("k", { metaKey: true }), "command-menu")).toBe(true);
+		expect(macMatches(key("k", { metaKey: true }), "command-menu")).toBe(true);
 		expect(
-			matches(key("k", { metaKey: true, shiftKey: true }), "command-menu"),
+			macMatches(key("k", { metaKey: true, shiftKey: true }), "command-menu"),
 		).toBe(false);
-		expect(matches(key("k"), "command-menu")).toBe(false);
-		expect(matches(key("k"), "inbox-previous")).toBe(true);
-		expect(matches(key("k", { metaKey: true }), "inbox-previous")).toBe(false);
-		expect(matches(key("P", { shiftKey: true }), "inbox-prepare")).toBe(true);
-		expect(matches(key("p", { ctrlKey: true }), "inbox-prepare")).toBe(false);
-		expect(matches(key("Backspace"), "inbox-dismiss")).toBe(true);
-		expect(matches(key("/", { metaKey: true }), "shortcuts")).toBe(true);
+		expect(macMatches(key("k"), "command-menu")).toBe(false);
+		expect(macMatches(key("k"), "inbox-previous")).toBe(true);
+		expect(macMatches(key("k", { metaKey: true }), "inbox-previous")).toBe(
+			false,
+		);
+		expect(macMatches(key("P", { shiftKey: true }), "inbox-prepare")).toBe(
+			true,
+		);
+		expect(macMatches(key("p", { ctrlKey: true }), "inbox-prepare")).toBe(
+			false,
+		);
+		expect(macMatches(key("Backspace"), "inbox-dismiss")).toBe(true);
+		expect(macMatches(key("/", { metaKey: true }), "shortcuts")).toBe(true);
 		expect(
-			comboLabel(shortcut("toggle-inspector").keys[0] ?? { key: "" }),
+			comboLabel(shortcut("toggle-inspector").keys[0] ?? { key: "" }, true),
 		).toBe("⌥⌘I");
 	});
 
@@ -142,7 +152,7 @@ describe("keyboard shortcuts", () => {
 				const file = path.join(dir, entry.name);
 				if (entry.isDirectory()) walk(file);
 				else if (/\.tsx?$/.test(entry.name)) {
-					const rel = path.relative(root, file);
+					const rel = path.relative(root, file).split(path.sep).join("/");
 					// Code only: comments may name a key.
 					const code = fs
 						.readFileSync(file, "utf8")
@@ -162,4 +172,34 @@ describe("keyboard shortcuts", () => {
 		walk(root);
 		expect(offenders).toEqual([]);
 	});
+});
+
+it("Windows puts Settings and Quit in File and excludes macOS app roles", async () => {
+	const { menuTemplate } = await import("../src/main/menu");
+	const template = menuTemplate("win32");
+	expect(template.some((item) => item.label === "OfferFinch")).toBe(false);
+	const file = template.find((item) => item.label === "File");
+	expect(Array.isArray(file?.submenu)).toBe(true);
+	const fileItems = file?.submenu as MenuItemConstructorOptions[];
+	expect(fileItems.some((item) => item.id === "settings")).toBe(true);
+	expect(fileItems.some((item) => item.label === "Quit OfferFinch")).toBe(true);
+	const walk = (
+		items: MenuItemConstructorOptions[],
+	): MenuItemConstructorOptions[] =>
+		items.flatMap((item) => [
+			item,
+			...(Array.isArray(item.submenu) ? walk(item.submenu) : []),
+		]);
+	expect(
+		walk(template).some((item) =>
+			["services", "hide", "hideOthers", "unhide", "appMenu"].includes(
+				item.role ?? "",
+			),
+		),
+	).toBe(false);
+	expect(
+		menuAccelerators(template).every(
+			(item) => !item.accelerator.includes("Command+"),
+		),
+	).toBe(true);
 });

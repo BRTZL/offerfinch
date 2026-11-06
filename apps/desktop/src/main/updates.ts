@@ -1,11 +1,11 @@
 import type { UpdateState } from "../shared/bridge";
 
 /**
- * Over-the-air updates from GitHub Releases (electron-updater, Squirrel.Mac underneath).
- * Checks at launch, every 30 minutes, and when the Mac wakes or the window comes forward (at
+ * Over-the-air updates from GitHub Releases (electron-updater: Squirrel.Mac on macOS, NSIS on Windows).
+ * Checks at launch, every 30 minutes, and when the computer wakes or the window comes forward (at
  * most every 10 minutes), downloads in the background, and installs when the user restarts (or
- * on the next quit). Only a Developer ID–signed, notarized build can install an
- * update: macOS checks that the new app is signed by the same team as the running one.
+ * on the next quit). macOS requires Developer ID signing and notarization, with the same team
+ * as the running app. Windows NSIS builds currently update without Authenticode signing.
  */
 
 /**
@@ -44,7 +44,7 @@ export interface UpdateInfo {
 }
 
 const CHECK_EVERY_MS = 30 * 60 * 1000;
-/** Waking the Mac or bringing the window forward checks again once the last check is this old. */
+/** Waking the computer or bringing the window forward checks again once the last check is this old. */
 const STALE_AFTER_MS = 10 * 60 * 1000;
 
 const ENTITIES: Record<string, string> = {
@@ -161,6 +161,7 @@ export class Updates {
 	private readyWhileSuspended: string | null = null;
 	/** When the last check finished, ms since the epoch (0: never). */
 	private checkedAt = 0;
+	private installing = false;
 
 	constructor(
 		private readonly updater: Updater | null,
@@ -173,6 +174,10 @@ export class Updates {
 			onReady: (version: string) => void;
 			log: (message: string, data?: unknown) => void;
 			now?: () => Date;
+			/** Windows must release child processes before NSIS launches. */
+			beforeWindowsInstall: () => Promise<void>;
+			/** The platform the install path follows (tests pin it). */
+			platform?: NodeJS.Platform;
 		},
 	) {
 		this.state = options.disabledReason
@@ -322,7 +327,7 @@ export class Updates {
 		);
 	}
 
-	/** Out of try-it mode: checks again (now and every 6 hours), and announces a ready update. */
+	/** Out of try-it mode: checks again (now and every 30 minutes), and announces a ready update. */
 	resume() {
 		if (!this.suspended) return;
 		this.suspended = false;
@@ -343,7 +348,7 @@ export class Updates {
 
 	/**
 	 * Checks again if the last check is over 10 minutes old: for waking from sleep, unlocking
-	 * and the window coming forward, so a Mac that sleeps through the timer still hears of a
+	 * and the window coming forward, so a computer that sleeps through the timer still hears of a
 	 * release soon after it is back.
 	 */
 	checkIfStale(): void {
@@ -419,12 +424,31 @@ export class Updates {
 	 * try-it mode runs: the app menu, the menu bar and Settings hide the button then too.
 	 */
 	install(): boolean {
-		if (!this.updater || this.state.status !== "ready") return false;
+		if (!this.updater || this.state.status !== "ready" || this.installing)
+			return false;
 		if (this.suspended) {
 			this.options.log("update install refused: try-it mode runs");
 			return false;
 		}
-		this.updater.quitAndInstall(false, true);
+		if ((this.options.platform ?? process.platform) === "win32") {
+			this.installing = true;
+			void this.options
+				.beforeWindowsInstall()
+				.then(() => {
+					this.updater?.quitAndInstall(true, true);
+				})
+				.catch(() => {
+					this.installing = false;
+					this.options.log("update install refused: shutdown failed");
+					this.set({
+						status: "error",
+						currentVersion: this.current,
+						checkedAt: this.nowIso(),
+						error:
+							"Could not stop background work. Quit OfferFinch and try again.",
+					});
+				});
+		} else this.updater.quitAndInstall(false, true);
 		return true;
 	}
 }

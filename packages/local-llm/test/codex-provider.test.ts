@@ -53,7 +53,11 @@ function provider(
 	});
 }
 
-describe("CodexSubscriptionProvider on a capture server", () => {
+// These suites use Seatbelt, a real Codex CLI, or macOS-only Codex status.
+const mac = describe.skipIf(process.platform !== "darwin");
+const macIt = it.skipIf(process.platform !== "darwin");
+
+mac("CodexSubscriptionProvider on a capture server", () => {
 	it("returns the validated object and reports one model call and its tokens", async () => {
 		const model = await fakeResponses(() => [
 			assistantMessage(
@@ -269,36 +273,42 @@ describe("reading the user's Codex login (read only)", () => {
 		});
 	});
 
-	it("never puts the token in a log line or an error (login refused by a capture server)", async () => {
-		const file = join(dir, "logcheck.json");
-		await writeFile(
-			file,
-			JSON.stringify({ tokens: { access_token: valid, account_id: "acct-1" } }),
-		);
-		const model = await fakeResponses(() => [assistantMessage("{}")]);
-		const logs: string[] = [];
-		const p = new CodexSubscriptionProvider({
-			ownerUserId: "u",
-			authFile: file,
-			breaker: new Breaker(),
-			log: (m, d) => logs.push(`${m} ${JSON.stringify(d)}`),
-			// Never chatgpt.com from a test: the capture server refuses workspace discovery.
-			captureChatgptBaseUrl: model.baseUrl.replace(/\/v1$/, "/backend-api"),
-			parentEnv: { PATH: process.env.PATH },
-			timeoutMs: 30_000,
-		});
-		let error: unknown;
-		try {
-			await p.generateObject({ system: "s", prompt: "p", schema, task: "t" });
-		} catch (e) {
-			error = e;
-		} finally {
-			await model.close();
-		}
-		expect(error).toBeDefined();
-		expect(String(error)).not.toContain(valid);
-		expect(logs.join("\n")).not.toContain(valid);
-	}, 60_000);
+	macIt(
+		"never puts the token in a log line or an error (login refused by a capture server)",
+		async () => {
+			const file = join(dir, "logcheck.json");
+			await writeFile(
+				file,
+				JSON.stringify({
+					tokens: { access_token: valid, account_id: "acct-1" },
+				}),
+			);
+			const model = await fakeResponses(() => [assistantMessage("{}")]);
+			const logs: string[] = [];
+			const p = new CodexSubscriptionProvider({
+				ownerUserId: "u",
+				authFile: file,
+				breaker: new Breaker(),
+				log: (m, d) => logs.push(`${m} ${JSON.stringify(d)}`),
+				// Never chatgpt.com from a test: the capture server refuses workspace discovery.
+				captureChatgptBaseUrl: model.baseUrl.replace(/\/v1$/, "/backend-api"),
+				parentEnv: { PATH: process.env.PATH },
+				timeoutMs: 30_000,
+			});
+			let error: unknown;
+			try {
+				await p.generateObject({ system: "s", prompt: "p", schema, task: "t" });
+			} catch (e) {
+				error = e;
+			} finally {
+				await model.close();
+			}
+			expect(error).toBeDefined();
+			expect(String(error)).not.toContain(valid);
+			expect(logs.join("\n")).not.toContain(valid);
+		},
+		60_000,
+	);
 });
 
 describe("plan usage and credits", () => {
@@ -452,7 +462,7 @@ describe("plan usage and credits", () => {
 	});
 });
 
-describe("payment after a sent call (ChatGPT login, fake turn runner)", () => {
+mac("payment after a sent call (ChatGPT login, fake turn runner)", () => {
 	let dir: string;
 	let authFile: string;
 	beforeAll(async () => {
@@ -703,7 +713,7 @@ describe("payment after a sent call (ChatGPT login, fake turn runner)", () => {
 	});
 });
 
-describe("the second credit read after an aborted turn", () => {
+mac("the second credit read after an aborted turn", () => {
 	let dir: string;
 	let authFile: string;
 	beforeAll(async () => {
@@ -809,7 +819,7 @@ describe("the second credit read after an aborted turn", () => {
 	});
 });
 
-describe("login-shell PATH for a GUI app", () => {
+mac("login-shell PATH for a GUI app", () => {
 	it("returns the PATH the user's login shell sets", async () => {
 		const path = await loginShellPath();
 		expect(path).toMatch(/\/usr\/bin/);
@@ -837,7 +847,7 @@ describe("sandbox profile", () => {
 	});
 });
 
-describe("plan usage reads (ChatGPT login, fake turn runner)", () => {
+mac("plan usage reads (ChatGPT login, fake turn runner)", () => {
 	let dir: string;
 	let authFile: string;
 	beforeAll(async () => {

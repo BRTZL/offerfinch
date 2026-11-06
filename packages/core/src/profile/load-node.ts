@@ -1,6 +1,7 @@
 // Node-only loader. The desktop worker reads the profile snapshot from SQLite instead.
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
+import { normalizeLineEndings } from "../domain/line-endings";
 
 import type { ProfileSnapshot } from "./types";
 
@@ -24,7 +25,7 @@ export async function loadProfileFromDir(
 			continue;
 		files.push({
 			path: relative(dir, absolute).split(sep).join("/"),
-			content: await readFile(absolute, "utf8"),
+			content: normalizeLineEndings(await readFile(absolute, "utf8")),
 		});
 	}
 	files.sort((a, b) => a.path.localeCompare(b.path));

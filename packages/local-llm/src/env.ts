@@ -19,6 +19,27 @@ const PASSED = [
 	"TZ",
 ] as const;
 
+/** Windows startup and login locations must not enter POSIX CLI environments. */
+const WINDOWS_PASSED = [
+	"USERPROFILE",
+	"APPDATA",
+	"LOCALAPPDATA",
+	"SystemRoot",
+	"SystemDrive",
+	"WINDIR",
+	"ComSpec",
+	"PATHEXT",
+	"TEMP",
+	"TMP",
+	"USERNAME",
+	"HOMEDRIVE",
+	"HOMEPATH",
+	"ProgramData",
+	"ProgramFiles",
+	"ProgramFiles(x86)",
+	"CLAUDE_CODE_GIT_BASH_PATH",
+] as const;
+
 /**
  * Where Claude Code keeps its login. Passed through only when set, because it decides which
  * account is found; `llm:status` prints it.
@@ -41,15 +62,55 @@ export interface SubscriptionEnv {
 export function subscriptionEnv(
 	parent: Record<string, string | undefined> = process.env,
 	extra: Record<string, string> = {},
+	platform: NodeJS.Platform = process.platform,
 ): SubscriptionEnv {
 	const env: Record<string, string> = {};
-	for (const key of [...PASSED, CLAUDE_CONFIG_DIR]) {
-		const value = parent[key];
+	for (const key of [
+		...PASSED,
+		...(platform === "win32" ? WINDOWS_PASSED : []),
+		CLAUDE_CONFIG_DIR,
+	]) {
+		const value = envValue(parent, key, platform);
 		if (value) env[key] = value;
 	}
-	Object.assign(env, extra);
+	for (const [key, value] of Object.entries(extra)) {
+		if (platform === "win32") {
+			for (const existing of Object.keys(env)) {
+				if (existing.toUpperCase() === key.toUpperCase()) delete env[existing];
+			}
+		}
+		env[platform === "win32" && key.toUpperCase() === "PATH" ? "PATH" : key] =
+			value;
+	}
+	// A private TMPDIR must also cover Windows APIs that use TEMP or TMP.
+	if (platform === "win32" && env.TMPDIR) {
+		env.TEMP = env.TMPDIR;
+		env.TMP = env.TMPDIR;
+	}
 	const removed = Object.keys(parent)
-		.filter((key) => !(key in env) && CREDENTIAL_PATTERN.test(key))
+		.filter(
+			(key) =>
+				!(key in env) &&
+				CREDENTIAL_PATTERN.test(platform === "win32" ? key.toUpperCase() : key),
+		)
 		.sort();
 	return { env, removed };
+}
+
+/** Windows environment records are case-insensitive, including plain copied objects. */
+export function envValue(
+	parent: Record<string, string | undefined>,
+	key: string,
+	platform: NodeJS.Platform = process.platform,
+): string | undefined {
+	return (
+		parent[key] ??
+		(platform === "win32"
+			? parent[
+					Object.keys(parent).find(
+						(name) => name.toUpperCase() === key.toUpperCase(),
+					) ?? ""
+				]
+			: undefined)
+	);
 }

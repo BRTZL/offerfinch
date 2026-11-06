@@ -3,6 +3,7 @@ import path from "node:path";
 import { app, BrowserWindow } from "electron";
 import { IPC, type UpdateState } from "../shared/bridge";
 import { buildMenu } from "./menu";
+import { shutdownForQuit } from "./quit-shutdown";
 import { log, mainState, TEST_MODE } from "./state";
 import { testHooks } from "./test-hooks";
 import { updateTray } from "./tray";
@@ -10,7 +11,7 @@ import { type Updater, Updates } from "./updates";
 import { FakeUpdater } from "./updates-fake";
 
 /**
- * Only the release workflow's builds can install updates (signed with the Developer ID). It
+ * Only the release workflow's builds can install updates. It
  * stamps `"offerfinchRelease": true` into the packaged package.json; local builds lack it.
  */
 function releaseBuild(): boolean {
@@ -53,6 +54,7 @@ export async function createUpdates(): Promise<Updates> {
 	}
 	return new Updates(updater, {
 		currentVersion: app.getVersion(),
+		beforeWindowsInstall: shutdownForQuit,
 		disabledReason,
 		log,
 		onChange: (state: UpdateState) => {

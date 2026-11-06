@@ -87,7 +87,11 @@ function cliText(
 		? `${does.charAt(0).toUpperCase() + does.slice(1)} once it's back and signed in`
 		: `Needed to ${needFor} with your plan`;
 	if (!cli.path)
-		return { state: "missing", title: `${name} isn't on this Mac`, subtitle };
+		return {
+			state: "missing",
+			title: `${name} isn't on this computer`,
+			subtitle,
+		};
 	if (cli.login.state === "logged_out")
 		return { state: "signed-out", title: `${name} isn't signed in`, subtitle };
 	if (cli.login.state === "not_subscription")
@@ -181,7 +185,7 @@ function summaryOf(roles: RoleState[]): {
 	return {
 		tone: "info",
 		title: "Connect an AI",
-		body: "Claude Code and Codex aren't signed in on this Mac yet. Set them up below to use your plans, or use API keys.",
+		body: "Claude Code and Codex aren't signed in on this computer yet. Set them up below to use your plans, or use API keys.",
 		allSet: false,
 	};
 }
@@ -264,7 +268,7 @@ export function ConnectAi() {
 			<div className="flex flex-col gap-3" data-testid="setup-ai-detecting">
 				{live}
 				<p className="text-muted-foreground text-sm">
-					Looking for Claude Code and Codex on this Mac…
+					Looking for Claude Code and Codex on this computer…
 				</p>
 				<RowsSkeleton rows={2} twoLine />
 			</div>

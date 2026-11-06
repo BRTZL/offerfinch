@@ -24,20 +24,24 @@ class StubUpdater implements Updater {
 	checkForUpdates() {
 		return this.check();
 	}
-	quitAndInstall() {
+	quitAndInstall = vi.fn(() => {
 		this.installs++;
-	}
+	});
 }
 
 const make = (
 	disabledReason: string | null = null,
 	clock = { now: new Date("2026-11-02T12:00:00Z") },
+	beforeWindowsInstall = async () => {},
+	platform: NodeJS.Platform = "darwin",
 ) => {
 	const updater = new StubUpdater();
 	const states: UpdateState[] = [];
 	const ready: string[] = [];
 	const updates = new Updates(updater, {
 		currentVersion: "0.1.0",
+		beforeWindowsInstall,
+		platform,
 		disabledReason,
 		onChange: (s) => states.push(s),
 		onReady: (v) => ready.push(v),
@@ -48,6 +52,85 @@ const make = (
 };
 
 describe("Updates", () => {
+	it("silently installs and restarts on Windows", async () => {
+		{
+			const { updater, updates } = make(null, undefined, undefined, "win32");
+			updater.emit("update-downloaded", { version: "0.2.0" });
+			expect(updates.install()).toBe(true);
+			await vi.waitFor(() =>
+				expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true),
+			);
+		}
+	});
+
+	it("waits for Windows shutdown and refuses a second restart press", async () => {
+		{
+			let finish = () => {};
+			const shutdown = vi.fn(
+				() =>
+					new Promise<void>((resolve) => {
+						finish = resolve;
+					}),
+			);
+			const { updater, updates } = make(null, undefined, shutdown, "win32");
+			updater.emit("update-downloaded", { version: "0.2.0" });
+			expect(updates.install()).toBe(true);
+			expect(updates.install()).toBe(false);
+			expect(shutdown).toHaveBeenCalledTimes(1);
+			expect(updater.quitAndInstall).not.toHaveBeenCalled();
+			finish();
+			await vi.waitFor(() =>
+				expect(updater.quitAndInstall).toHaveBeenCalledExactlyOnceWith(
+					true,
+					true,
+				),
+			);
+		}
+	});
+
+	it("does not launch NSIS when Windows shutdown fails", async () => {
+		{
+			const { updater, updates } = make(
+				null,
+				undefined,
+				async () => {
+					throw new Error("still running");
+				},
+				"win32",
+			);
+			updater.emit("update-downloaded", { version: "0.2.0" });
+			updates.install();
+			await vi.waitFor(() => expect(updates.get().status).toBe("error"));
+			expect(updater.quitAndInstall).not.toHaveBeenCalled();
+		}
+	});
+
+	it("keeps macOS restart immediate without Windows shutdown", () => {
+		{
+			const shutdown = vi.fn(async () => {});
+			const { updater, updates } = make(null, undefined, shutdown, "darwin");
+			updater.emit("update-downloaded", { version: "0.2.0" });
+			expect(updates.install()).toBe(true);
+			expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true);
+			expect(shutdown).not.toHaveBeenCalled();
+		}
+	});
+
+	it("checks at launch and every 30 minutes", async () => {
+		vi.useFakeTimers();
+		const { updater, updates } = make();
+		try {
+			updates.start();
+			await vi.advanceTimersByTimeAsync(30 * 60 * 1000 - 1);
+			expect(updater.check).toHaveBeenCalledTimes(1);
+			await vi.advanceTimersByTimeAsync(1);
+			expect(updater.check).toHaveBeenCalledTimes(2);
+		} finally {
+			updates.stop();
+			vi.useRealTimers();
+		}
+	});
+
 	it("downloads in the background and installs only once ready", async () => {
 		const { updater, updates, ready } = make();
 		expect(updater.autoDownload).toBe(true);

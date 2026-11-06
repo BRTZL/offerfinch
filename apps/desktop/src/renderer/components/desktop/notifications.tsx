@@ -22,10 +22,14 @@ import type {
 	NotificationSound,
 	NotificationState,
 } from "../../../shared/bridge";
+import { IS_MAC } from "../../../shared/platform";
 
 const SOUNDS: { value: NotificationSound; label: string }[] = [
-	{ value: "chirp", label: "Chirp" },
-	{ value: "default", label: "macOS default" },
+	{
+		value: "chirp",
+		label: IS_MAC ? "Chirp" : "System default (saved chirp choice)",
+	},
+	{ value: "default", label: IS_MAC ? "macOS default" : "System default" },
 	{ value: "none", label: "None" },
 ];
 
@@ -113,7 +117,7 @@ export function NotificationStatus() {
 			{status === "blocked" || status === "failed" ? (
 				<Notice
 					tone="warning"
-					title="macOS is not showing OfferFinch's notifications"
+					title="Notifications are not being shown"
 					actions={
 						<>
 							<Button
@@ -127,8 +131,8 @@ export function NotificationStatus() {
 						</>
 					}
 				>
-					Turn on Allow notifications for OfferFinch in System Settings ›
-					Notifications, then send a test.
+					Allow notifications for OfferFinch in your system notification
+					settings, then send a test.
 				</Notice>
 			) : (
 				<Group>
@@ -143,7 +147,7 @@ export function NotificationStatus() {
 						hint={
 							status === "delivered"
 								? `The last one was shown${s?.at ? ` ${new Date(s.at).toLocaleString()}` : ""}.`
-								: "A real notification is sent. On its first one macOS may ask whether to allow OfferFinch."
+								: "A real notification is sent. Your system may ask whether to allow OfferFinch."
 						}
 					>
 						{status === "unsupported" ? null : testButton}
@@ -190,7 +194,7 @@ export function NotificationSettings({
 				error={prefs.error}
 				what="notifications"
 			/>
-			<Section title="On this Mac">
+			<Section title="On this computer">
 				<NotificationStatus />
 			</Section>
 			{prefs.data ? (

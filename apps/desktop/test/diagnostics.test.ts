@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,6 +21,7 @@ import {
 	redactDiagnostics,
 	zipDiagnostics,
 } from "../src/main/diagnostics";
+import { createZipTools } from "../src/main/zip";
 import { personalFields } from "../src/worker/diagnostics";
 
 /**
@@ -50,6 +50,15 @@ const CANARIES: [string, string][] = [
 	["avery-quinlan-example", "linkedin.com/in/avery-quinlan-example/details"],
 	["canaryhome", `opened ${HOME}/Library/Application Support/OfferFinch`],
 	["otheruser", "read /Users/otheruser/Downloads/cv.pdf"],
+	[
+		"windowscanary",
+		String.raw`opened C:\Users\windowscanary\AppData\Roaming\OfferFinch`,
+	],
+	["slashcanary", "opened C:/Users/slashcanary/AppData/Roaming/OfferFinch"],
+	[
+		"escapedcanary",
+		String.raw`{"path":"C:\\Users\\escapedcanary\\AppData\\Roaming\\OfferFinch"}`,
+	],
 	["sk-ant-FAKE0canary0key0", "key sk-ant-FAKE0canary0key0abcdefgh"],
 	["sk-proj-FAKEcanary", "openai sk-proj-FAKEcanary1234567890"],
 	["FAKEbearerTOKEN", "Authorization: Bearer FAKEbearerTOKEN.abc-123"],
@@ -259,13 +268,14 @@ describe("diagnostics size limits", () => {
 	});
 });
 
-describe.skipIf(process.platform !== "darwin")("diagnostics zip", () => {
+describe("diagnostics zip", () => {
 	it("holds exactly the reviewed files, and none of the canaries", async () => {
 		const { files, dirs } = bundleWithCanaries();
 		const zip = path.join(dirs.root, "out.zip");
 		await zipDiagnostics(files, zip);
 		const unzipped = path.join(dirs.root, "unzipped");
-		execFileSync("/usr/bin/ditto", ["-x", "-k", zip, unzipped]);
+		fs.mkdirSync(unzipped);
+		await createZipTools().extract(zip, unzipped);
 		const read = (dir: string, prefix = ""): DiagnosticFile[] =>
 			fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
 				const name = `${prefix}${entry.name}`;
@@ -440,31 +450,137 @@ describe("bounded reads", () => {
 	});
 });
 
-describe.skipIf(process.platform !== "darwin")("saving the zip", () => {
+describe("saving the zip", () => {
 	it("is private to this user and replaces the earlier file", async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "of-diagnostics-"));
 		const target = path.join(dir, "bundle.zip");
 		fs.writeFileSync(target, "older", { mode: 0o644 });
 		await zipDiagnostics([{ name: "system.txt", text: "x" }], target);
-		expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+		if (process.platform !== "win32")
+			expect(fs.statSync(target).mode & 0o777).toBe(0o600);
 		expect(fs.readFileSync(target).subarray(0, 2).toString()).toBe("PK");
 		expect(fs.existsSync(`${target}.partial`)).toBe(false);
 	});
 
-	it("keeps the earlier file and leaves no partial when it fails", async () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "of-diagnostics-"));
-		const target = path.join(dir, "bundle.zip");
-		fs.writeFileSync(target, "older");
-		// A folder this user cannot write to: ditto cannot create the partial file.
-		fs.chmodSync(dir, 0o500);
-		try {
-			await expect(
-				zipDiagnostics([{ name: "system.txt", text: "x" }], target),
-			).rejects.toThrow();
-			expect(fs.readFileSync(target, "utf8")).toBe("older");
-			expect(fs.existsSync(`${target}.partial`)).toBe(false);
-		} finally {
-			fs.chmodSync(dir, 0o700);
-		}
+	it.skipIf(process.platform === "win32")(
+		"keeps the earlier file and leaves no partial when it fails",
+		async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "of-diagnostics-"));
+			const target = path.join(dir, "bundle.zip");
+			fs.writeFileSync(target, "older");
+			// A folder this user cannot write to: ditto cannot create the partial file.
+			fs.chmodSync(dir, 0o500);
+			try {
+				await expect(
+					zipDiagnostics([{ name: "system.txt", text: "x" }], target),
+				).rejects.toThrow();
+				expect(fs.readFileSync(target, "utf8")).toBe("older");
+				expect(fs.existsSync(`${target}.partial`)).toBe(false);
+			} finally {
+				fs.chmodSync(dir, 0o700);
+			}
+		},
+	);
+});
+
+describe("Windows home redaction on every host", () => {
+	it.each(["O'Brien", "John`Smith"])(
+		"redacts punctuation in account %s, including the current home",
+		(account) => {
+			const home = `C:\\Users\\${account}`;
+			const input = `${home}\\Documents\\cv.pdf`;
+			for (const currentHome of [home, String.raw`C:\Users\OtherSample`]) {
+				expect(
+					redactDiagnostics(
+						input,
+						{ names: [], emails: [], phones: [], links: [] },
+						currentHome,
+					),
+				).toBe(String.raw`~\Documents\cv.pdf`);
+			}
+		},
+	);
+	it.each([
+		[
+			"GET https://api.example.com/v1/users/42 failed status 500 retry later",
+			"GET https://api.example.com/v1/users/42 failed status 500 retry later",
+		],
+		[
+			"/Users/alex: permission denied, then retry ok",
+			"~: permission denied, then retry ok",
+		],
+		["/users/alex: permission denied", "/users/alex: permission denied"],
+	])("keeps non-Windows text readable: %s", (input, expected) => {
+		expect(
+			redactDiagnostics(
+				input,
+				{ names: [], emails: [], phones: [], links: [] },
+				HOME,
+			),
+		).toBe(expected);
+	});
+	it("redacts an account whose folder starts with the current account name", () => {
+		expect(
+			redactDiagnostics(
+				String.raw`C:\Users\Alex Sample\Documents\cv.pdf`,
+				{ names: [], emails: [], phones: [], links: [] },
+				String.raw`C:\Users\Alex`,
+			),
+		).toBe(String.raw`~\Documents\cv.pdf`);
+	});
+	it.each([
+		[
+			String.raw`C:\Users\Sample Account\Documents\cv.pdf`,
+			String.raw`~\Documents\cv.pdf`,
+		],
+		[
+			String.raw`\Users\Sample Account\Documents\cv.pdf`,
+			String.raw`~\Documents\cv.pdf`,
+		],
+		[
+			"C%3A%5CUsers%5CSample%20Account%5CDocuments%5Ccv.pdf",
+			"~%5CDocuments%5Ccv.pdf",
+		],
+		['"C:\\Users\\Sample Account"', '"~"'],
+		["C:/Users/Sample Account\nnext line", "~\nnext line"],
+	])("redacts the entire account segment in %s", (input, expected) => {
+		expect(
+			redactDiagnostics(
+				input,
+				{ names: [], emails: [], phones: [], links: [] },
+				String.raw`C:\Users\Alex`,
+			),
+		).toBe(expected);
+	});
+	const empty = { names: [], emails: [], phones: [], links: [] };
+	it.each([
+		[
+			String.raw`C:\Users\Alex\AppData\Roaming\OfferFinch`,
+			String.raw`~\AppData\Roaming\OfferFinch`,
+		],
+		[
+			"c:/users/ALEX/AppData/Roaming/OfferFinch",
+			"~/AppData/Roaming/OfferFinch",
+		],
+		[
+			String.raw`C:\\USERS\\alex\\AppData\\Roaming\\OfferFinch`,
+			String.raw`~\\AppData\\Roaming\\OfferFinch`,
+		],
+		[String.raw`D:\Custom Homes\Alex\Downloads`, String.raw`~\Downloads`],
+	])("redacts %s", (input, expected) => {
+		const home = input.startsWith("D:")
+			? String.raw`D:\Custom Homes\Alex`
+			: String.raw`C:\Users\Alex`;
+		expect(redactDiagnostics(input, empty, home)).toBe(expected);
+	});
+	it("redacts other Windows accounts and keeps JSON valid", () => {
+		const input = JSON.stringify({
+			path: String.raw`C:\Users\OtherSample\AppData\Roaming\OfferFinch`,
+		});
+		const out = redactDiagnostics(input, empty, String.raw`C:\Users\Alex`);
+		expect(JSON.parse(out)).toEqual({
+			path: String.raw`~\AppData\Roaming\OfferFinch`,
+		});
+		expect(out).not.toMatch(/OtherSample|Alex/i);
 	});
 });

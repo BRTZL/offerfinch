@@ -36,7 +36,7 @@ void JobFilterSettings.preload();
 export const STEP_META: Record<SetupStep, { title: string; lead: string }> = {
 	ai: {
 		title: "Connect your AI",
-		lead: "OfferFinch uses AI to read jobs and draft applications. It looks for Claude Code and Codex on this Mac first; API keys work too.",
+		lead: "OfferFinch uses AI to read jobs and draft applications. It looks for Claude Code and Codex on this computer first; API keys work too.",
 	},
 	profile: {
 		title: "Your resume",
@@ -180,7 +180,7 @@ function LoopStep() {
 			<NotificationSettings compact />
 			<Section
 				title="Open at login"
-				description="Optional. OfferFinch starts in the menu bar and keeps looking every hour."
+				description="Optional. OfferFinch starts in the tray and keeps looking every hour."
 			>
 				<Group>
 					<GeneralSettings compact />

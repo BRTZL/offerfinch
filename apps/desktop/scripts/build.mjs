@@ -3,9 +3,10 @@
 // Usage: node scripts/build.mjs [--production] [--watch] [--no-renderer]
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { context, build as esbuild } from "esbuild";
 
-const app = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const out = path.join(app, "out");
 const args = new Set(process.argv.slice(2));
 const production = args.has("--production");

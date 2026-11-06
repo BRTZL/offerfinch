@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizeLineEndings } from "../domain/line-endings";
 
 import type { StructuredProfile } from "./structure";
 import type { ProfileDocument } from "./types";
@@ -361,7 +362,7 @@ const ABOUT_FIELDS: Record<string, keyof AboutData> = {
 
 /** Body of a file without its first `# ` heading and its "From …" provenance line. */
 function body(content: string): { title: string | null; text: string } {
-	const lines = content.split("\n");
+	const lines = normalizeLineEndings(content).split("\n");
 	const at = lines.findIndex((l) => l.trim() !== "");
 	const heading = lines[at]?.match(/^#\s+(.+)$/);
 	const rest = heading ? lines.slice(at + 1) : lines;
@@ -589,7 +590,9 @@ export function missingLines(
 	rendered: readonly ProfileDocument[],
 ): string[] {
 	const kept = new Set(
-		rendered.flatMap((f) => f.content.split("\n").map(comparable)),
+		rendered.flatMap((f) =>
+			normalizeLineEndings(f.content).split("\n").map(comparable),
+		),
 	);
 	return original
 		.filter(
@@ -597,7 +600,7 @@ export function missingLines(
 				!/^(?:profile\/)?sources\//.test(f.path) && f.path !== "answers.md",
 		)
 		.flatMap((f) =>
-			f.content
+			normalizeLineEndings(f.content)
 				.split("\n")
 				.filter(
 					(l) =>

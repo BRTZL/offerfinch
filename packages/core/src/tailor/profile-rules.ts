@@ -1,3 +1,4 @@
+import { normalizeLineEndings } from "../domain/line-endings";
 import {
 	contactValues,
 	type ProfileDocument,
@@ -39,7 +40,14 @@ export function isEvidencePath(path: string): boolean {
 
 /** The profile with raw exports removed. */
 export function evidenceProfile(profile: ProfileSnapshot): ProfileSnapshot {
-	return { files: profile.files.filter((file) => isEvidencePath(file.path)) };
+	return {
+		files: profile.files
+			.filter((file) => isEvidencePath(file.path))
+			.map((file) => ({
+				...file,
+				content: normalizeLineEndings(file.content),
+			})),
+	};
 }
 
 /**
@@ -288,7 +296,7 @@ export function checkQuote(
 		if (clean.length === 0 || clean.length === all.length)
 			return { ok: false, reason: "quote is from a caution line" };
 		const verbatim = normalizeForMatch(
-			doc.content
+			normalizeLineEndings(doc.content)
 				.split("\n")
 				.filter((line) => !QUESTION_LINE.test(line))
 				.map(withoutAsides)
@@ -308,7 +316,7 @@ export function checkQuote(
 	const section = dontClaimSection(doc);
 	const known = contactValues(profile);
 	let refusal: string | null = null;
-	for (const line of doc.content.split("\n")) {
+	for (const line of normalizeLineEndings(doc.content).split("\n")) {
 		// The models see contact details redacted, so a quote may carry "[email]" or "[phone]".
 		let normalized = normalizeForMatch(withoutAsides(line));
 		if (!normalized.includes(needle))
@@ -326,7 +334,7 @@ export function checkQuote(
 	}
 	if (refusal) return { ok: false, reason: refusal };
 	// Quotes may span lines; accept them only when no caution text and no question is inside.
-	const citable = doc.content
+	const citable = normalizeLineEndings(doc.content)
 		.split("\n")
 		.filter((line) => !QUESTION_LINE.test(line))
 		.map(withoutAsides)
@@ -367,7 +375,7 @@ export function citableText(profile: ProfileSnapshot, path: string): string {
 function dontClaimSection(doc: ProfileDocument): Set<string> {
 	const lines = new Set<string>();
 	let inside = false;
-	for (const line of doc.content.split("\n")) {
+	for (const line of normalizeLineEndings(doc.content).split("\n")) {
 		if (/^#{1,6}\s/.test(line)) inside = /don'?t claim/i.test(line);
 		else if (inside) lines.add(line);
 	}
@@ -482,10 +490,11 @@ export function experienceRecords(
 	const records: ExperienceRecord[] = [];
 	for (const doc of profile.files) {
 		if (!doc.path.startsWith("experience/")) continue;
-		const heading = doc.content.match(/^#\s+(.+?)\s+[—–-]\s+(.+)$/m);
+		const content = normalizeLineEndings(doc.content);
+		const heading = content.match(/^#\s+(.+?)\s+[—–-]\s+(.+)$/m);
 		// Within the line only: an empty field must not take the next line (a heading) as its value.
-		const dates = doc.content.match(/^-[ \t]+\*\*Dates:\*\*[ \t]+(.+)$/m)?.[1];
-		const location = doc.content.match(
+		const dates = content.match(/^-[ \t]+\*\*Dates:\*\*[ \t]+(.+)$/m)?.[1];
+		const location = content.match(
 			/^-[ \t]+\*\*Location:\*\*[ \t]+(.+)$/m,
 		)?.[1];
 		if (!heading?.[1] || !heading[2] || !dates) continue;
@@ -546,7 +555,7 @@ export function checkExperienceRecords(
 	records: ExperienceRecord[],
 ): RuleIssue[] {
 	const issues: RuleIssue[] = [];
-	const lines = cv.split("\n");
+	const lines = normalizeLineEndings(cv).split("\n");
 	let inExperience = false;
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i] ?? "";
@@ -706,10 +715,11 @@ export const LETTER_MAX_WORDS = 400;
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Profile rules keep evidence and issue emission in order so each finding retains its source context.
 export function checkDocumentRules(
 	kind: DocumentKind,
-	text: string,
+	input: string,
 	rules: RuleSet,
 	context: DocumentContext,
 ): RuleIssue[] {
+	const text = normalizeLineEndings(input);
 	const issues: RuleIssue[] = [];
 	const placeholder = text.match(PLACEHOLDER);
 	if (placeholder?.index !== undefined)

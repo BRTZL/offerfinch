@@ -78,7 +78,7 @@ function trayMenu() {
 		{ type: "separator" },
 		{
 			label: "Quit OfferFinch",
-			accelerator: "Command+Q",
+			accelerator: "CommandOrControl+Q",
 			click: () => {
 				mainState.quitting = true;
 				app.quit();
@@ -91,6 +91,8 @@ function trayMenu() {
 let trayVariant: "normal" | "attention" | null = null;
 
 function trayImage(variant: "normal" | "attention") {
+	if (process.platform === "win32")
+		return nativeImage.createFromPath(path.join(assets, "trayWindows.png"));
 	const image = nativeImage.createFromPath(
 		path.join(
 			assets,
@@ -118,10 +120,11 @@ export function updateTray() {
 	const review = mainState.lastStatus?.counts.review ?? 0;
 	// Try-it mode says so in the menu bar, next to the finch.
 	const count = review > 0 ? String(review) : "";
-	mainState.tray.setTitle(
-		showsDemo() ? `Demo${count ? ` ${count}` : ""}` : count,
-		{ fontType: "monospacedDigit" },
-	);
+	if (process.platform === "darwin")
+		mainState.tray.setTitle(
+			showsDemo() ? `Demo${count ? ` ${count}` : ""}` : count,
+			{ fontType: "monospacedDigit" },
+		);
 	mainState.tray.setToolTip(
 		showsDemo()
 			? "OfferFinch: demo with sample data"

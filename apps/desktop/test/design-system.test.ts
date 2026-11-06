@@ -124,7 +124,7 @@ function screenFiles(): string[] {
 	};
 	walk(RENDERER);
 	return out
-		.map((f) => path.relative(RENDERER, f))
+		.map((f) => path.relative(RENDERER, f).split(path.sep).join("/"))
 		.filter((f) => !EXEMPT.some((e) => f.startsWith(e)))
 		.sort();
 }

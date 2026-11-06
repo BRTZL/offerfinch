@@ -70,6 +70,7 @@ import { createReadState, readAfterDelay } from "@/lib/read-state";
 import { Link, useParams, useRouter, useSearchParams } from "@/lib/router";
 import { useStoredState } from "@/lib/use-stored-state";
 import { cn } from "@/lib/utils";
+import { primaryModifier } from "../../shared/platform";
 import { keyHint, matches, type ShortcutId } from "../../shared/shortcuts";
 
 type InboxRow = Awaited<ReturnType<typeof client.inbox.page>>[number];
@@ -650,7 +651,7 @@ export default function InboxPage() {
 								// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keep Inbox selection, navigation, and action ordering explicit; splitting state across closures hides dependencies.
 								(item, event) => {
 									const ids = rowsOf(item).map((r) => r.id);
-									if (event?.metaKey) {
+									if (event && primaryModifier(event)) {
 										const base =
 											multi.length > 0
 												? multi

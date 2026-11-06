@@ -190,7 +190,7 @@ function NoScans() {
 			}
 		>
 			A scan searches the sources you turn on in Settings › Sources for the
-			titles in Job search, every hour while the Mac is awake. Each scan is
+			titles in Job search, every hour while the computer is awake. Each scan is
 			listed here with what it found and why it set jobs aside.
 		</EmptyState>
 	);

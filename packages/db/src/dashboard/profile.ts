@@ -1,3 +1,4 @@
+import { normalizeLineEndings } from "@offerfinch/core/domain/line-endings";
 import type { FilterSettings } from "@offerfinch/core/filter/settings";
 import { renderRecords } from "@offerfinch/core/profile/records";
 import { and, desc, eq, sql } from "drizzle-orm";
@@ -24,7 +25,15 @@ export const profileMethods = {
 			})
 			.from(profiles)
 			.where(eq(profiles.userId, userId));
-		return row ?? null;
+		return row
+			? {
+					...row,
+					files: row.files.map((file) => ({
+						...file,
+						content: normalizeLineEndings(file.content),
+					})),
+				}
+			: null;
 	},
 
 	/**

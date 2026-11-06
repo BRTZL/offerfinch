@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import {
 	ApprovalRequiredError,
 	hashDocuments,
@@ -69,8 +70,9 @@ beforeAll(async () => {
 		db,
 		"u1",
 		await loadProfileFromDir(
-			new URL("../../core/test/fixtures/tailor-profile", import.meta.url)
-				.pathname,
+			fileURLToPath(
+				new URL("../../core/test/fixtures/tailor-profile", import.meta.url),
+			),
 		),
 		"test",
 	);

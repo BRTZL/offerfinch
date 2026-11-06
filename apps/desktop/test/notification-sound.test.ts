@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 const shown: Record<string, unknown>[] = [];
 /** macOS shows the last notification (its "show" event). */
 let showLast = () => {};
+let clickLast = () => {};
 vi.mock("electron", () => {
 	class Notification {
 		constructor(options: Record<string, unknown>) {
@@ -14,7 +15,9 @@ vi.mock("electron", () => {
 		static isSupported() {
 			return true;
 		}
-		on() {}
+		on(event: string, handler: () => void) {
+			if (event === "click") clickLast = handler;
+		}
 		once(event: string, handler: () => void) {
 			if (event === "show") showLast = handler;
 		}
@@ -28,50 +31,53 @@ const { CHIRP_COOLDOWN_MS, CHIRP_SOUND, chirpPlayer, Notifier, soundOptions } =
 
 describe("notification sound", () => {
 	it("maps each choice to Electron's options: macOS plays only its own sounds", () => {
-		expect(soundOptions("chirp")).toEqual({ silent: true });
-		expect(soundOptions("default")).toEqual({});
-		expect(soundOptions("none")).toEqual({ silent: true });
+		expect(soundOptions("chirp", "darwin")).toEqual({ silent: true });
+		expect(soundOptions("default", "darwin")).toEqual({});
+		expect(soundOptions("none", "darwin")).toEqual({ silent: true });
 	});
 
-	it("defaults to the chirp, plays it once macOS shows the notification, and keeps the choice", () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "offerfinch-sound-"));
-		const chirp = vi.fn();
-		const notifier = new Notifier(
-			dir,
-			() => {},
-			() => {},
-			false,
-			chirp,
-		);
-		expect(notifier.get().sound).toBe("chirp");
-		void notifier.show({ title: "A", body: "b", path: "/" });
-		expect(shown.at(-1)).toMatchObject({ silent: true });
-		expect(shown.at(-1)).not.toHaveProperty("sound");
-		expect(chirp).not.toHaveBeenCalled();
-		showLast();
-		expect(chirp).toHaveBeenCalledTimes(1);
-
-		notifier.setSound("none");
-		void notifier.show({ title: "B", body: "c", path: "/" });
-		expect(shown.at(-1)).toMatchObject({ silent: true });
-		showLast();
-
-		notifier.setSound("default");
-		void notifier.show({ title: "C", body: "d", path: "/" });
-		expect(shown.at(-1)).not.toHaveProperty("silent");
-		showLast();
-		expect(chirp).toHaveBeenCalledTimes(1);
-		notifier.setSound("none");
-
-		// Remembered across restarts.
-		expect(
-			new Notifier(
+	it.skipIf(process.platform !== "darwin")(
+		"defaults to the chirp, plays it once macOS shows the notification, and keeps the choice",
+		() => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "offerfinch-sound-"));
+			const chirp = vi.fn();
+			const notifier = new Notifier(
 				dir,
 				() => {},
 				() => {},
-			).get().sound,
-		).toBe("none");
-	});
+				false,
+				chirp,
+			);
+			expect(notifier.get().sound).toBe("chirp");
+			void notifier.show({ title: "A", body: "b", path: "/" });
+			expect(shown.at(-1)).toMatchObject({ silent: true });
+			expect(shown.at(-1)).not.toHaveProperty("sound");
+			expect(chirp).not.toHaveBeenCalled();
+			showLast();
+			expect(chirp).toHaveBeenCalledTimes(1);
+
+			notifier.setSound("none");
+			void notifier.show({ title: "B", body: "c", path: "/" });
+			expect(shown.at(-1)).toMatchObject({ silent: true });
+			showLast();
+
+			notifier.setSound("default");
+			void notifier.show({ title: "C", body: "d", path: "/" });
+			expect(shown.at(-1)).not.toHaveProperty("silent");
+			showLast();
+			expect(chirp).toHaveBeenCalledTimes(1);
+			notifier.setSound("none");
+
+			// Remembered across restarts.
+			expect(
+				new Notifier(
+					dir,
+					() => {},
+					() => {},
+				).get().sound,
+			).toBe("none");
+		},
+	);
 
 	it("ships the chirp in the app bundle's Resources", () => {
 		const builder = fs.readFileSync(
@@ -90,6 +96,7 @@ describe("the chirp player", () => {
 		let t = 1_000_000;
 		const finish: Array<(error: Error | null) => void> = [];
 		const play = chirpPlayer("chirp.aiff", () => {}, {
+			platform: "darwin",
 			now: () => t,
 			play: (_file, done) => finish.push(done),
 		});
@@ -137,4 +144,29 @@ describe("the chirp player", () => {
 		p.advance(CHIRP_COOLDOWN_MS);
 		expect(p.play()).toBe(true);
 	});
+});
+
+it("Windows chirp uses the system sound and never starts afplay", () => {
+	expect(soundOptions("chirp", "win32")).toEqual({});
+	expect(soundOptions("default", "win32")).toEqual({});
+	expect(soundOptions("none", "win32")).toEqual({ silent: true });
+	const play = vi.fn();
+	expect(
+		chirpPlayer("missing.aiff", vi.fn(), { platform: "win32", play })(),
+	).toBe(false);
+	expect(play).not.toHaveBeenCalled();
+});
+
+it("clicking the toast body opens its destination without action buttons", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "offerfinch-toast-"));
+	try {
+		const click = vi.fn();
+		const notifier = new Notifier(dir, click, vi.fn());
+		void notifier.show({ title: "Review", body: "Ready", path: "/inbox" });
+		showLast();
+		clickLast();
+		expect(click).toHaveBeenCalledWith("/inbox");
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
 });

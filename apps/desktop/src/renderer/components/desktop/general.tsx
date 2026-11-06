@@ -52,7 +52,7 @@ export function GeneralSettings({ compact = false }: { compact?: boolean }) {
 			hint={
 				login.data?.status === "requires-approval"
 					? "Waiting for your approval in System Settings > General > Login Items."
-					: "Starts in the menu bar when you log in, so hourly scans keep running. No window opens."
+					: "Starts in the tray when you log in, so hourly scans keep running. No window opens."
 			}
 			checked={Boolean(login.data?.openAtLogin)}
 			onChange={(v) => setLogin.mutate(v)}
@@ -64,7 +64,7 @@ export function GeneralSettings({ compact = false }: { compact?: boolean }) {
 		<SettingsPage
 			id="general"
 			title="General"
-			description="OfferFinch lives in the menu bar: closing the window keeps it running and scanning every hour while your Mac is awake."
+			description="OfferFinch lives in the tray: closing the window keeps it running and scanning every hour while your computer is awake."
 		>
 			<Section title="Running">
 				<Group>

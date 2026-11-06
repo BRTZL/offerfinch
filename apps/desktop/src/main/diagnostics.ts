@@ -1,9 +1,8 @@
-import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { redactContact } from "@offerfinch/core/profile/types";
+import { zipTools } from "./zip";
 
 /**
  * Help › Export Diagnostics (issue #54): one zip the user can attach to a bug report themselves.
@@ -135,6 +134,11 @@ const URL_QUERY =
 	/\b((?:https?|wss?|file):\/\/[^\s?#"'<>`\\]*)[?#][^\s"'<>`\\]*/gi;
 /** Any user's home folder, not only this one ("/Users/<name>/…" names the account). */
 const HOME_FOLDER = /\/Users\/[^/\s"'`:]+/g;
+// Includes slash-normalized and JSON-escaped paths, and accounts other than this user's.
+const WINDOWS_HOME_FOLDER =
+	/(?<![\w.%-])(?:[a-z]:[\\/]+|\\+(?:\?\\[a-z]:\\+|[^\\/\s]+\\+)?)Users[\\/]+[^\\/"\r\n:;|=,+*?<>[\]]+/gi;
+const ENCODED_WINDOWS_HOME_FOLDER =
+	/(?<![\w.%-])(?:[a-z]%3a(?:%5c|%2f)+|(?:%5c)+)Users(?:%5c|%2f)+(?:(?!%5c|%2f|%22|%0a|%0d|%3a|%3b|%7c|%3d|%2c|%2b|%2a|%3f|%3c|%3e|%5b|%5d)[^\\/"\r\n:;|=,+*?<>[\]])+/gi;
 const SECRET_KEY = /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}/g;
 const BEARER = /\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 const JWT = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}(?:\.[A-Za-z0-9_-]*)?/g;
@@ -201,8 +205,28 @@ const STAMPS =
 
 function redactAll(text: string, known: KnownPersonal, home: string): string {
 	let out = text.replace(URL_QUERY, "$1");
-	if (home.length > 1) out = out.split(home).join("~");
-	out = out.replace(HOME_FOLDER, "~");
+	if (home.length > 1) {
+		const windows = path.win32.isAbsolute(home);
+		const pattern = windows
+			? home
+					.split(/[\\/]+/)
+					.map(escapeRegExp)
+					.join(String.raw`[\\/]+`)
+			: escapeRegExp(home);
+		out = out.replace(
+			new RegExp(
+				windows
+					? String.raw`(?<![\w.%-])${pattern}(?=[\\/]|$|["\r\n])`
+					: pattern,
+				windows ? "gi" : "g",
+			),
+			"~",
+		);
+	}
+	out = out
+		.replace(ENCODED_WINDOWS_HOME_FOLDER, "~")
+		.replace(WINDOWS_HOME_FOLDER, "~")
+		.replace(HOME_FOLDER, "~");
 	for (const pattern of linkPatterns(known.links))
 		out = out.replace(pattern, "[link]");
 	out = redactContact(out, [...known.emails, ...known.phones]);
@@ -420,7 +444,7 @@ export function previewOf(file: DiagnosticFile): {
 }
 
 /**
- * Writes the files into a private temporary folder and zips it with macOS's ditto (no new
+ * Writes the files into a private temporary folder and zips it with built-in tools (no new
  * dependency), then removes the folder. The zip holds exactly the files the sheet showed. As a
  * backup is (backup.ts), it is written beside the target as `.partial`, made readable by this
  * user only, then renamed over the target: a failed save leaves no half zip and keeps the
@@ -446,14 +470,7 @@ export async function zipDiagnostics(
 		const partial = `${final}.partial`;
 		fs.rmSync(partial, { force: true });
 		try {
-			await promisify(execFile)("/usr/bin/ditto", [
-				"-c",
-				"-k",
-				"--norsrc",
-				"--keepParent",
-				root,
-				partial,
-			]);
+			await zipTools.create(root, partial, true);
 			fs.chmodSync(partial, 0o600);
 			fs.renameSync(partial, final);
 		} catch (error) {

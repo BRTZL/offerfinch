@@ -3,10 +3,11 @@ name: CI
 # Every pull request, and on demand. Not on pushes to main: what lands there was checked in its
 # pull request, and a release runs these checks again (desktop-release.yml).
 #
-# Four jobs side by side; the slowest sets the time. Linux runners start at once and are
+# Five jobs side by side; the slowest sets the time. Linux runners start at once and are
 # plentiful; macOS runners are few and queue, so only what needs macOS runs there: the Codex
 # boundary tests (sandbox-exec) and the desktop app's own tests (its diagnostics zips are
-# macOS-only). "check" gathers the four into the one status the main ruleset requires.
+# macOS-only). Windows builds and launches the packaged app. "check" gathers all five
+# into the one status the main ruleset requires.
 on:
   pull_request:
   workflow_dispatch:
@@ -96,9 +97,51 @@ jobs:
       - name: Browser safety tests
         run: pnpm --filter @offerfinch/core test:browser
 
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install native binaries
+        run: |
+          pnpm --filter @offerfinch/desktop exec node -e "require('child_process').execFileSync(process.execPath, [require.resolve('electron/install.js')], {stdio: 'inherit'})"
+          pnpm rebuild better-sqlite3
+      - name: Unit tests
+        run: pnpm --filter @offerfinch/core --filter @offerfinch/db --filter @offerfinch/runner --filter @offerfinch/local-llm --filter @offerfinch/desktop test
+      - name: Production build
+        run: pnpm --filter @offerfinch/desktop build --production
+      # NSIS also produces win-unpacked, which is launched below.
+      - name: Package x64 and arm64 apps and installers
+        run: pnpm --filter @offerfinch/desktop exec electron-builder --win --x64 --arm64 --publish never
+      - name: Verify update metadata
+        run: ./scripts/check-windows-update.ps1 -Universal
+      - name: Launch packaged app in demo mode
+        env:
+          OFFERFINCH_SMOKE_EXE: ${{ github.workspace }}\apps\desktop\dist\win-unpacked\OfferFinch.exe
+        run: pnpm --filter @offerfinch/desktop exec playwright test -c e2e/playwright.config.ts windows-smoke.spec.ts
+      - name: Upload installer
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-installers
+          path: apps/desktop/dist/*-setup.exe
+          if-no-files-found: error
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-smoke
+          path: apps/desktop/test-results/
+          if-no-files-found: warn
+
   # The one status the main ruleset requires: green only when every job above passed.
   check:
-    needs: [static, unit, unit-mac, browser]
+    needs: [static, unit, unit-mac, browser, windows]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
