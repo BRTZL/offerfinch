@@ -18,8 +18,8 @@ import {
 	attemptCleanup,
 	beginCall,
 	CLEANUP_GRACE_MS,
+	CleanupFileError,
 	CleanupLockBusyError,
-	CleanupStateUnreadableError,
 	type CleanupTarget,
 	cleanupDue,
 	cleanupOverdue,
@@ -640,7 +640,7 @@ describe.skipIf(process.getuid?.() === 0)(
 			);
 			lock(join(target.base, file as string));
 			expect(() => quickly(() => beginCall(target, now))).toThrow(
-				CleanupStateUnreadableError,
+				CleanupFileError,
 			);
 			expect(intents()).toEqual([]);
 			const attempt = quickly(() =>
@@ -656,11 +656,11 @@ describe.skipIf(process.getuid?.() === 0)(
 			const [file] = intents();
 			lock(join(target.base, file as string));
 			expect(() => quickly(() => cleanupDue(target, now))).toThrow(
-				CleanupStateUnreadableError,
+				CleanupFileError,
 			);
 			expect(() =>
 				quickly(() => attemptCleanup(target, { idle: true, now: new Date() })),
-			).toThrow(CleanupStateUnreadableError);
+			).toThrow(CleanupFileError);
 			expect(count("session_v2")).toBe(1);
 			expect(intents()).toHaveLength(1);
 			expect(readPendingCleanup(target)).toBeNull();
@@ -695,11 +695,26 @@ describe.skipIf(process.getuid?.() === 0)(
 			finishCall(target, intent, null, { idle: true, now });
 			lock(target.base);
 			expect(() => quickly(() => beginCall(target, now))).toThrow(
-				CleanupStateUnreadableError,
+				CleanupFileError,
 			);
 			expect(() =>
 				quickly(() => attemptCleanup(target, { idle: true, now: new Date() })),
-			).toThrow(CleanupStateUnreadableError);
+			).toThrow(CleanupFileError);
+		});
+
+		it("OfferFinch's folder, with OpenCode's database gone: fixed words, no path", () => {
+			for (const name of ["opencode.db", "opencode.db-wal", "opencode.db-shm"])
+				rmSync(join(dir, "data", name), { force: true });
+			lock(target.base);
+			const error = (() => {
+				try {
+					attemptCleanup(target, { idle: true, now });
+				} catch (caught) {
+					return caught;
+				}
+			})();
+			expect(error).toBeInstanceOf(CleanupFileError);
+			expect(String(error)).not.toContain(dir);
 		});
 
 		it("the folder of OpenCode's database: its debt is kept, not cleared as if the database were gone", () => {
@@ -713,7 +728,7 @@ describe.skipIf(process.getuid?.() === 0)(
 			lock(join(dir, "data"));
 			expect(() =>
 				quickly(() => attemptCleanup(target, { idle: true, now: new Date() })),
-			).toThrow(CleanupStateUnreadableError);
+			).toThrow(CleanupFileError);
 			chmodSync(join(dir, "data"), 0o700);
 			expect(readPendingCleanup(target)).not.toBeNull();
 		});

@@ -30,8 +30,8 @@ import {
 	type CallIntent,
 	CLEANUP_GRACE_MS,
 	CLEANUP_REFUSAL,
+	CleanupFileError,
 	CleanupLockBusyError,
-	CleanupStateUnreadableError,
 	type CleanupTarget,
 	cleanupDue,
 	cleanupOverdue,
@@ -1003,17 +1003,17 @@ function settleCleanup(
 		pending =
 			first || cleanupDue(ctx.target, now) ? cleanupNow(ctx, now) : null;
 	} catch (error) {
-		if (!(error instanceof CleanupStateUnreadableError)) throw error;
-		warnUnreadable(ctx);
-		return UNREADABLE_REFUSAL;
+		if (!(error instanceof CleanupFileError)) throw error;
+		warnCleanupFile(ctx);
+		return CLEANUP_FILE_REFUSAL;
 	}
 	return cleanupOverdue(pending, now, graceMs) ? CLEANUP_REFUSAL : null;
 }
 
-/** No path or system message: only that the cleanup's files could not be read. */
-function warnUnreadable(ctx: CleanupContext): void {
+/** No path or system message: only that the cleanup's files could not be read or written. */
+function warnCleanupFile(ctx: CleanupContext): void {
 	ctx.log?.(
-		"warning: OfferFinch could not read a file its OpenCode cleanup needs; OpenCode calls are refused",
+		"warning: OfferFinch could not read or write a file its OpenCode cleanup needs; OpenCode calls are refused",
 		{},
 	);
 }
@@ -1049,9 +1049,9 @@ export async function sweepOpenCodeCrashes(input: {
 	try {
 		return cleanupNow(ctx, new Date());
 	} catch (error) {
-		if (!(error instanceof CleanupStateUnreadableError)) throw error;
+		if (!(error instanceof CleanupFileError)) throw error;
 		// Every call refuses until it can be read (settleCleanup reads it again).
-		warnUnreadable(ctx);
+		warnCleanupFile(ctx);
 		return null;
 	}
 }
@@ -1059,8 +1059,8 @@ export async function sweepOpenCodeCrashes(input: {
 const INTENT_REFUSAL =
 	"OfferFinch could not write the note it keeps while an OpenCode call runs (so that a crash cannot leave the prompt in OpenCode's database unnoticed); nothing was sent. Check that OfferFinch's data folder is writable.";
 
-const UNREADABLE_REFUSAL =
-	"OfferFinch could not read a file it keeps to clean up after OpenCode calls (a permission or disk error, not a missing file), so it cannot tell whether an earlier call's prompt is still in OpenCode's database; nothing was sent. Check that OfferFinch's data folder and OpenCode's database are readable.";
+const CLEANUP_FILE_REFUSAL =
+	"OfferFinch could not read or write a file it keeps to clean up after OpenCode calls (a permission or disk error, not a missing file), so it cannot tell whether an earlier call's prompt is still in OpenCode's database; nothing was sent. Check that OfferFinch's data folder and OpenCode's database are readable.";
 
 const LOCK_REFUSAL =
 	"Another OfferFinch process kept OpenCode's cleanup busy for longer than a call waits; nothing was sent. Try again in a moment.";
@@ -1298,8 +1298,8 @@ export async function runOpenCodeCall(
 		result.boundary =
 			error instanceof CleanupLockBusyError
 				? LOCK_REFUSAL
-				: error instanceof CleanupStateUnreadableError
-					? UNREADABLE_REFUSAL
+				: error instanceof CleanupFileError
+					? CLEANUP_FILE_REFUSAL
 					: INTENT_REFUSAL;
 		result.cleanupRefused = true;
 		return result;

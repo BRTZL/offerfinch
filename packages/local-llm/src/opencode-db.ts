@@ -161,12 +161,12 @@ function deleteSessions(db: Database.Database, ids: string[]): number {
 	return after.n - before.n;
 }
 
-/** The `-wal` file's size; 0 when there is none. */
+/** The `-wal` file's size; 0 when there is none, -1 when it cannot be read (so not clean). */
 function walBytes(dbFile: string): number {
 	try {
 		return statSync(`${dbFile}-wal`).size;
-	} catch {
-		return 0;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "ENOENT" ? 0 : -1;
 	}
 }
 

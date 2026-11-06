@@ -491,7 +491,7 @@ describe.skipIf(!tested)("an OpenCode call is a pure model call", () => {
 				const refused = await call(fakeData, fakeHome);
 				expect(refused.cleanupRefused).toBe(true);
 				expect(refused.boundary).toMatch(
-					/could not read a file it keeps to clean up after OpenCode calls/,
+					/could not read or write a file it keeps to clean up after OpenCode calls/,
 				);
 				expect(refused.boundary).not.toContain(root);
 				expect(refused.sent).toBe(false);

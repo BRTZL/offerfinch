@@ -103,6 +103,18 @@ const API_PROVIDERS: ReadonlySet<string> = new Set(
 	} satisfies Record<NonNullable<AccountInfo["apiProvider"]>, 1>),
 );
 
+/**
+ * The plan and token source a log may name (the SDK types both as plain strings: these are the
+ * values seen from the pinned CLI); anything else is "other".
+ */
+const SUBSCRIPTION_TYPES: ReadonlySet<string> = new Set([
+	"pro",
+	"max",
+	"team",
+	"enterprise",
+]);
+const TOKEN_SOURCES: ReadonlySet<string> = new Set(["claude.ai"]);
+
 function counted(n: number, what: string): string {
 	return `${n} ${what}${n === 1 ? "" : "s"}`;
 }
@@ -280,11 +292,15 @@ export function loggableSessionReport(
 	};
 }
 
-/** The login as it may be logged: the protocol's own values; the plan and token source as read. */
+/** The login as it may be logged: known values only, anything else "other". */
 function loggableAuth(auth: AuthReport | null): Record<string, unknown> | null {
+	const named = (value: string | null, known: ReadonlySet<string>) =>
+		value === null ? null : knownName(value, known);
 	return (
 		auth && {
-			...auth,
+			loggedIn: auth.loggedIn,
+			subscriptionType: named(auth.subscriptionType, SUBSCRIPTION_TYPES),
+			tokenSource: named(auth.tokenSource, TOKEN_SOURCES),
 			apiKeySource:
 				auth.apiKeySource === null
 					? null

@@ -137,7 +137,7 @@ From [research/opencode-v2-lockdown.md](research/opencode-v2-lockdown.md) and
    refused; a sweep that cannot take it at once (`timeout` 0), or cannot open its file, only
    checkpoints. A cleanup file that cannot be read for any reason but its absence (permission or
    disk error: the folder, an intent, the use record, the lock, the folder of `opencode.db`) is
-   never taken for missing: the call is refused with fixed words (no path), and nothing is swept,
+   never taken for missing, and one that cannot be written or removed throws the same way: the call is refused with fixed words (no path), and nothing is swept,
    adopted or cleared on its account; an unreadable marker counts as overdue. The cleanup is retried, sweep and
    checkpoint even with no rows left, on a timer with backoff, before each call and at start;
    while another OfferFinch call runs, only the checkpoint (its session is not swept). After a

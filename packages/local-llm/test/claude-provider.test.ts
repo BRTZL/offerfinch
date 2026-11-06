@@ -1544,6 +1544,11 @@ describe("what a Claude session's init names keep", () => {
 
 	it("logs an allowed session's plugins, agents and other fields without their names", async () => {
 		const { outcome, kept, logs } = await run({
+			account: {
+				...SUBSCRIBED,
+				subscriptionType: ID_CANARY,
+				tokenSource: ID_CANARY,
+			},
 			initWith: {
 				claude_code_version: ID_CANARY,
 				model: ID_CANARY,
@@ -1567,6 +1572,7 @@ describe("what a Claude session's init names keep", () => {
 			model: "other",
 			apiKeySource: "none",
 			permissionMode: "dontAsk",
+			auth: { subscriptionType: "other", tokenSource: "other" },
 		});
 		expect(kept).not.toMatch(leaks);
 	});

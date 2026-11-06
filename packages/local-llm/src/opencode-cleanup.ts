@@ -114,14 +114,16 @@ function useFile(target: CleanupTarget): string {
 }
 
 /**
- * A file the cleanup needs could not be read, and not because it is missing (a permission or disk
- * error). Nothing is assumed about it: OpenCode calls are refused until it can be read. No path
- * or system message is kept (a path names the user).
+ * A file the cleanup needs could not be read or written, and not because it is missing (a
+ * permission or disk error). Nothing is assumed about it: OpenCode calls are refused until it
+ * can be. No path or system message is kept (a path names the user).
  */
-export class CleanupStateUnreadableError extends Error {
+export class CleanupFileError extends Error {
 	constructor() {
-		super("a file OfferFinch's OpenCode cleanup needs could not be read");
-		this.name = "CleanupStateUnreadableError";
+		super(
+			"a file OfferFinch's OpenCode cleanup needs could not be read or written",
+		);
+		this.name = "CleanupFileError";
 	}
 }
 
@@ -136,7 +138,7 @@ function exists(file: string): boolean {
 		return true;
 	} catch (error) {
 		if (missing(error)) return false;
-		throw new CleanupStateUnreadableError();
+		throw new CleanupFileError();
 	}
 }
 
@@ -146,7 +148,7 @@ function readOwn(file: string): string | null {
 		return readFileSync(file, "utf8");
 	} catch (error) {
 		if (missing(error)) return null;
-		throw new CleanupStateUnreadableError();
+		throw new CleanupFileError();
 	}
 }
 
@@ -215,21 +217,33 @@ function syncDir(dir: string): void {
 
 /** Writes `file` whole or not at all, and on disk before it returns. */
 function writeDurable(file: string, text: string): void {
-	mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
 	const part = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.part`;
-	const fd = openSync(part, "w", 0o600);
 	try {
-		writeSync(fd, text);
-		fsyncSync(fd);
-	} finally {
-		closeSync(fd);
+		mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+		const fd = openSync(part, "w", 0o600);
+		try {
+			writeSync(fd, text);
+			fsyncSync(fd);
+		} finally {
+			closeSync(fd);
+		}
+		renameSync(part, file);
+	} catch {
+		try {
+			rmSync(part, { force: true });
+		} catch {}
+		throw new CleanupFileError();
 	}
-	renameSync(part, file);
 	syncDir(dirname(file));
 }
 
+/** Removes `file` (a missing one is fine), on disk before it returns. */
 function removeDurable(file: string): void {
-	rmSync(file, { force: true });
+	try {
+		rmSync(file, { force: true });
+	} catch {
+		throw new CleanupFileError();
+	}
 	syncDir(dirname(file));
 }
 
@@ -323,7 +337,7 @@ function readIntents(target: CleanupTarget): IntentRecord[] {
 		names = readdirSync(target.base);
 	} catch (error) {
 		if (missing(error)) return [];
-		throw new CleanupStateUnreadableError();
+		throw new CleanupFileError();
 	}
 	const prefix = intentPrefix(target);
 	const intents: IntentRecord[] = [];
@@ -388,9 +402,7 @@ export function beginCall(target: CleanupTarget, now: Date): CallIntent {
 	// Under the lock: a sweep that checked the intents must finish deleting before this one appears.
 	const lock = acquireLock(target, LOCK_WAIT_MS);
 	if (!lock.ok)
-		throw lock.busy
-			? new CleanupLockBusyError()
-			: new CleanupStateUnreadableError();
+		throw lock.busy ? new CleanupLockBusyError() : new CleanupFileError();
 	activeIntents.add(file);
 	try {
 		recordUse(target, now);
