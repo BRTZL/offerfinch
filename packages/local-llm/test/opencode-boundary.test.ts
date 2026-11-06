@@ -167,6 +167,13 @@ async function call(
 	});
 }
 
+/** The cleanup's files in the state folder but the lock's own (an empty file kept for good). */
+const cleanupFiles = () =>
+	readdirSync(join(root, "state")).filter(
+		(f) =>
+			f.startsWith("cleanup-") && !/^cleanup-lock-[0-9a-f]+\.sqlite$/.test(f),
+	);
+
 let ok: OpenCodeCallResult;
 let okPosts: typeof posts;
 let fakeData: string;
@@ -404,7 +411,7 @@ describe.skipIf(!tested)("an OpenCode call is a pure model call", () => {
 		expect(resumed.failure).toBeNull();
 		expect(resumed.scrub?.clean).toBe(true);
 		expect(posts.length).toBe(1);
-		expect(state().filter((f) => f.startsWith("cleanup-"))).toEqual([]);
+		expect(cleanupFiles()).toEqual([]);
 		expect(dataHomeText(fakeData)).not.toContain(PROMPT_CANARY);
 	}, 180_000);
 
@@ -433,7 +440,9 @@ describe.skipIf(!tested)("an OpenCode call is a pure model call", () => {
 		expect(state().filter((f) => f.startsWith("cleanup-intent-"))).toEqual([]);
 		expect(state().some((f) => f.startsWith("cleanup-pending-"))).toBe(true);
 		expect(
-			readdirSync(join(root, "private")).some((f) => f.startsWith("cleanup-")),
+			readdirSync(join(root, "private")).some((f) =>
+				/^cleanup-(pending|intent)-/.test(f),
+			),
 		).toBe(false);
 		// The rows are gone, the prompt is not: this is what the marker is for.
 		expect(dataHomeText(fakeData)).toContain(PROMPT_CANARY);
@@ -455,10 +464,48 @@ describe.skipIf(!tested)("an OpenCode call is a pure model call", () => {
 		expect(resumed.failure).toBeNull();
 		expect(resumed.scrub?.clean).toBe(true);
 		expect(resumed.cleanupPending).toBe(false);
-		expect(state().filter((f) => f.startsWith("cleanup-"))).toEqual([]);
+		expect(cleanupFiles()).toEqual([]);
 		expect(posts.length).toBe(1);
 		expect(dataHomeText(fakeData)).not.toContain(PROMPT_CANARY);
 	}, 180_000);
+
+	it.skipIf(process.getuid?.() === 0)(
+		"refuses a call, sending nothing, while a cleanup file cannot be read",
+		async () => {
+			const intent = join(
+				root,
+				"state",
+				"cleanup-intent-0000000000000000-1-unreadable.json",
+			);
+			// Named for this database: the intents of another database are not read.
+			const prefix = readdirSync(join(root, "state"))
+				.find((f) => f.startsWith("cleanup-lock-"))
+				?.replace(/^cleanup-lock-([0-9a-f]+)\.sqlite$/, "$1");
+			expect(prefix).toBeTruthy();
+			const file = intent.replace("0000000000000000", prefix as string);
+			await writeFile(file, JSON.stringify({ pid: 1, since: "x" }), {
+				mode: 0o000,
+			});
+			try {
+				posts.length = 0;
+				const refused = await call(fakeData, fakeHome);
+				expect(refused.cleanupRefused).toBe(true);
+				expect(refused.boundary).toMatch(
+					/could not read a file it keeps to clean up after OpenCode calls/,
+				);
+				expect(refused.boundary).not.toContain(root);
+				expect(refused.sent).toBe(false);
+				expect(posts.length).toBe(0);
+			} finally {
+				await rm(file, { force: true });
+			}
+			const resumed = await call(fakeData, fakeHome);
+			expect(resumed.cleanupRefused).toBe(false);
+			expect(resumed.scrub?.clean).toBe(true);
+			expect(cleanupFiles()).toEqual([]);
+		},
+		180_000,
+	);
 
 	it("never uses the user's real data home", () => {
 		const real = join(homedir(), ".local", "share");

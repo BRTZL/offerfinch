@@ -7,6 +7,8 @@
 //   racer <target-json> <session>    a call starting while this test's sweep runs: writes
 //                                     <base>/racer-started, publishes its intent, writes its
 //                                     session, writes <base>/racer-inserted, then exits
+//   hold <target-json>               a sweep that takes the cleanup lock, prints "held" and
+//                                     blocks there until it is killed
 import { registerHooks } from "node:module";
 import { createInterface } from "node:readline";
 
@@ -24,8 +26,24 @@ registerHooks({
 
 const [mode, targetJson, session] = process.argv.slice(2);
 const target = JSON.parse(targetJson);
-const { beginCall, finishCall } = await import("../../src/opencode-cleanup.ts");
+const { attemptCleanup, beginCall, finishCall } = await import(
+	"../../src/opencode-cleanup.ts"
+);
 const { default: Database } = await import("better-sqlite3");
+
+if (mode === "hold") {
+	const { writeSync } = await import("node:fs");
+	attemptCleanup(target, {
+		idle: true,
+		now: new Date(),
+		beforeSweep: () => {
+			writeSync(1, "held\n");
+			// Blocks with the lock held, as a sweep in its critical section would.
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+		},
+	});
+	process.exit(0);
+}
 
 const { writeFileSync } = await import("node:fs");
 const { join } = await import("node:path");

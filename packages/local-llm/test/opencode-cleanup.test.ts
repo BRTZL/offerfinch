@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
+	chmodSync,
 	existsSync,
 	readdirSync,
 	readFileSync,
@@ -19,6 +19,7 @@ import {
 	beginCall,
 	CLEANUP_GRACE_MS,
 	CleanupLockBusyError,
+	CleanupStateUnreadableError,
 	type CleanupTarget,
 	cleanupDue,
 	cleanupOverdue,
@@ -514,8 +515,11 @@ describe("a database OfferFinch has used, with its project row gone", () => {
 describe("a call another process starts while a sweep runs", () => {
 	const wait = (ms: number) =>
 		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-	const lockFiles = () =>
-		readdirSync(target.base).filter((f) => f.startsWith("cleanup-lock-"));
+	/** Anything of the lock but its own file (SQLite's journal, a temporary file). */
+	const lockLeftovers = () =>
+		readdirSync(target.base).filter(
+			(f) => f.startsWith("cleanup-lock-") && !f.endsWith(".sqlite"),
+		);
 
 	it("waits for the sweep: its session is never deleted", async () => {
 		addSession("ses_left");
@@ -551,63 +555,167 @@ describe("a call another process starts while a sweep runs", () => {
 		const ids = db.prepare("SELECT id FROM session_v2").all();
 		db.close();
 		expect(ids).toEqual([{ id: "ses_race" }]);
-		expect(lockFiles()).toEqual([]);
+		expect(lockLeftovers()).toEqual([]);
 	}, 30_000);
 
-	it("only checkpoints while another live process holds the lock, and takes over a dead one's", () => {
+	it("refuses a call while another process holds the lock, only checkpoints, and is free the moment that process dies", async () => {
 		addSession("ses_held");
-		const id = createHash("sha256")
-			.update(target.dbFile)
-			.digest("hex")
-			.slice(0, 16);
-		const lock = join(target.base, `cleanup-lock-${id}`);
+		const holder = spawn(process.execPath, [
+			CHILD,
+			"hold",
+			JSON.stringify(target),
+		]);
+		const exited = new Promise<unknown>((done) => holder.once("exit", done));
+		try {
+			await new Promise<void>((done, fail) => {
+				let out = "";
+				holder.stdout.on("data", (chunk) => {
+					out += String(chunk);
+					if (out.includes("held")) done();
+				});
+				holder.once("exit", (code) => fail(new Error(`holder exited ${code}`)));
+			});
 
-		// A live process (this one's parent) took it a moment ago.
-		writeFileSync(
-			lock,
-			JSON.stringify({
-				pid: process.ppid,
-				since: new Date().toISOString(),
-				token: "theirs",
-			}),
-		);
-		const held = attemptCleanup(target, { idle: true, now: new Date() });
-		expect(held.result?.rows).toBe(0);
-		expect(count("session_v2")).toBe(1);
-		expect(readFileSync(lock, "utf8")).toContain("theirs");
+			// A sweep does not wait for it: only the checkpoint, the session kept.
+			let began = Date.now();
+			const held = attemptCleanup(target, { idle: true, now: new Date() });
+			expect(Date.now() - began).toBeLessThan(1_000);
+			expect(held.result?.rows).toBe(0);
+			expect(count("session_v2")).toBe(1);
 
-		// Its process is gone: the lock is stale, and the sweep runs.
-		const dead = spawnSync(process.execPath, ["-e", ""]).pid;
-		writeFileSync(
-			lock,
-			JSON.stringify({
-				pid: dead,
-				since: new Date().toISOString(),
-				token: "dead",
-			}),
-		);
+			// A call waits its 5 s, then is refused, with no intent published.
+			began = Date.now();
+			expect(() => beginCall(target, now)).toThrow(CleanupLockBusyError);
+			expect(Date.now() - began).toBeGreaterThanOrEqual(4_900);
+			expect(intents()).toEqual([]);
+		} finally {
+			holder.kill("SIGKILL");
+		}
+		await exited;
+
+		// The operating system released it with the process: nothing to take over, no wait.
+		const began = Date.now();
+		const intent = beginCall(target, now);
+		expect(Date.now() - began).toBeLessThan(1_000);
+		finishCall(target, intent, null, { idle: true, now });
 		const swept = attemptCleanup(target, { idle: true, now: new Date() });
 		expect(swept.result?.rows).toBeGreaterThan(0);
 		expect(count("session_v2")).toBe(0);
-		expect(lockFiles()).toEqual([]);
-	});
-
-	it("refuses a call once another live process has held the lock past its wait, and publishes no intent", () => {
-		const id = createHash("sha256")
-			.update(target.dbFile)
-			.digest("hex")
-			.slice(0, 16);
-		writeFileSync(
-			join(target.base, `cleanup-lock-${id}`),
-			JSON.stringify({
-				pid: process.ppid,
-				since: new Date().toISOString(),
-				token: "theirs",
-			}),
-		);
-		const began = Date.now();
-		expect(() => beginCall(target, now)).toThrow(CleanupLockBusyError);
-		expect(Date.now() - began).toBeGreaterThanOrEqual(4_900);
-		expect(intents()).toEqual([]);
+		expect(lockLeftovers()).toEqual([]);
 	}, 30_000);
 });
+
+/**
+ * Finding: a file the cleanup could not read was taken for missing (or, for the lock, spun on
+ * synchronously with no deadline). Only a missing file is missing: anything else refuses the
+ * call at once, and nothing is swept, adopted or cleared on its account.
+ */
+describe.skipIf(process.getuid?.() === 0)(
+	"a cleanup file that cannot be read",
+	() => {
+		const locked: string[] = [];
+		const lock = (path: string) => {
+			chmodSync(path, 0o000);
+			locked.push(path);
+		};
+		afterEach(() => {
+			for (const path of locked.splice(0))
+				if (existsSync(path)) chmodSync(path, 0o700);
+		});
+		const quickly = <T>(run: () => T): T => {
+			const began = Date.now();
+			try {
+				return run();
+			} finally {
+				expect(Date.now() - began).toBeLessThan(1_000);
+			}
+		};
+
+		it("the lock's file: the call is refused at once, the sweep only checkpoints", () => {
+			addSession("ses_kept");
+			// Takes and gives back the lock once, so its file is there.
+			finishCall(target, beginCall(target, now), null, { idle: true, now });
+			const [file] = readdirSync(target.base).filter((f) =>
+				f.startsWith("cleanup-lock-"),
+			);
+			lock(join(target.base, file as string));
+			expect(() => quickly(() => beginCall(target, now))).toThrow(
+				CleanupStateUnreadableError,
+			);
+			expect(intents()).toEqual([]);
+			const attempt = quickly(() =>
+				attemptCleanup(target, { idle: true, now: new Date() }),
+			);
+			expect(attempt.result?.rows).toBe(0);
+			expect(count("session_v2")).toBe(1);
+		});
+
+		it("an intent: never adopted, removed or swept past; calls refused", () => {
+			addSession("ses_running");
+			const intent = beginCall(target, now);
+			const [file] = intents();
+			lock(join(target.base, file as string));
+			expect(() => quickly(() => cleanupDue(target, now))).toThrow(
+				CleanupStateUnreadableError,
+			);
+			expect(() =>
+				quickly(() => attemptCleanup(target, { idle: true, now: new Date() })),
+			).toThrow(CleanupStateUnreadableError);
+			expect(count("session_v2")).toBe(1);
+			expect(intents()).toHaveLength(1);
+			expect(readPendingCleanup(target)).toBeNull();
+			chmodSync(join(target.base, file as string), 0o600);
+			finishCall(target, intent, null, { idle: true, now });
+		});
+
+		it("the marker: counts as overdue, and stays while the checkpoint cannot finish", () => {
+			const reader = holdReader();
+			try {
+				addSession("ses_left");
+				const scrub = scrubOpenCodeSessions(target.dbFile, ["ses_left"], {
+					busyTimeoutMs: 50,
+				});
+				afterScrub(target, { result: scrub, error: null }, { idle: true, now });
+				const marker = readdirSync(target.base).find((f) =>
+					f.startsWith("cleanup-pending-"),
+				) as string;
+				lock(join(target.base, marker));
+				expect(cleanupOverdue(readPendingCleanup(target), now)).toBe(true);
+				expect(cleanupDue(target, now)).toBe(true);
+				const retry = attemptCleanup(target, { idle: true, now });
+				expect(cleanupOverdue(retry.pending, now)).toBe(true);
+			} finally {
+				reader.prepare("COMMIT").run();
+				reader.close();
+			}
+		});
+
+		it("OfferFinch's folder: the call is refused at once, and the sweep finds nothing to clear", () => {
+			const intent = beginCall(target, now);
+			finishCall(target, intent, null, { idle: true, now });
+			lock(target.base);
+			expect(() => quickly(() => beginCall(target, now))).toThrow(
+				CleanupStateUnreadableError,
+			);
+			expect(() =>
+				quickly(() => attemptCleanup(target, { idle: true, now: new Date() })),
+			).toThrow(CleanupStateUnreadableError);
+		});
+
+		it("the folder of OpenCode's database: its debt is kept, not cleared as if the database were gone", () => {
+			// A call's scrub failed: a marker is due.
+			afterScrub(
+				target,
+				{ result: null, error: "database is locked" },
+				{ idle: true, now },
+			);
+			expect(readPendingCleanup(target)).not.toBeNull();
+			lock(join(dir, "data"));
+			expect(() =>
+				quickly(() => attemptCleanup(target, { idle: true, now: new Date() })),
+			).toThrow(CleanupStateUnreadableError);
+			chmodSync(join(dir, "data"), 0o700);
+			expect(readPendingCleanup(target)).not.toBeNull();
+		});
+	},
+);

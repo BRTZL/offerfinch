@@ -1,9 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
 	closeSync,
-	existsSync,
 	fsyncSync,
-	linkSync,
 	mkdirSync,
 	openSync,
 	readdirSync,
@@ -14,6 +12,7 @@ import {
 	writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import Database from "better-sqlite3";
 import {
 	checkpointOpenCodeDb,
 	type ScrubResult,
@@ -53,11 +52,14 @@ import {
  *
  * Another OfferFinch process (the desktop holds a single-instance lock, but a restarted worker
  * can overlap the one it replaces) could publish its intent and create its session between a
- * sweep's intent check and its deletion. So one lock file per database (created exclusively,
- * holding a pid and a token) is held across a call's intent publication and across a sweep's
- * intent check and deletion: a call waits for it (briefly, then is refused); a sweep that cannot
- * take it at once only checkpoints. A lock whose process is gone (or that is older than any held
- * lock can be) is taken over.
+ * sweep's intent check and its deletion. So one lock per database is held across a call's intent
+ * publication and across a sweep's intent check and deletion: an exclusive transaction on a small
+ * SQLite file of OfferFinch's own, i.e. the operating system's file lock, which nobody else can
+ * take over and which goes when its process dies. A call waits for it (SQLite's busy timeout,
+ * 5 s, then is refused); a sweep that cannot take it at once only checkpoints.
+ *
+ * A file the cleanup needs that cannot be read for any reason but its absence (a permission or
+ * disk error) is never taken for missing: OpenCode calls are refused until it can be read.
  */
 
 /** How long OpenCode calls go on while a cleanup is unfinished, before they are refused. */
@@ -111,9 +113,46 @@ function useFile(target: CleanupTarget): string {
 	return join(target.base, `opencode-used-${dbId(target)}.json`);
 }
 
+/**
+ * A file the cleanup needs could not be read, and not because it is missing (a permission or disk
+ * error). Nothing is assumed about it: OpenCode calls are refused until it can be read. No path
+ * or system message is kept (a path names the user).
+ */
+export class CleanupStateUnreadableError extends Error {
+	constructor() {
+		super("a file OfferFinch's OpenCode cleanup needs could not be read");
+		this.name = "CleanupStateUnreadableError";
+	}
+}
+
+function missing(error: unknown): boolean {
+	return (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+/** The file exists; false only when it does not (any other failure throws). */
+function exists(file: string): boolean {
+	try {
+		statSync(file);
+		return true;
+	} catch (error) {
+		if (missing(error)) return false;
+		throw new CleanupStateUnreadableError();
+	}
+}
+
+/** The file's text; null only when it does not exist (any other failure throws). */
+function readOwn(file: string): string | null {
+	try {
+		return readFileSync(file, "utf8");
+	} catch (error) {
+		if (missing(error)) return null;
+		throw new CleanupStateUnreadableError();
+	}
+}
+
 /** OfferFinch has run (or started) an OpenCode call on this database. */
 function everUsed(target: CleanupTarget): boolean {
-	return existsSync(useFile(target));
+	return exists(useFile(target));
 }
 
 /** The use record, on disk; written once, never removed. */
@@ -122,14 +161,22 @@ function recordUse(target: CleanupTarget, now: Date): void {
 		writeDurable(useFile(target), JSON.stringify({ since: now.toISOString() }));
 }
 
-/** The unfinished cleanup, or null. An unreadable marker counts as overdue. */
+/**
+ * The unfinished cleanup, or null when there is no marker. A marker that cannot be read or parsed
+ * counts as overdue (rows possibly left): only a finished sweep removes it.
+ */
 export function readPendingCleanup(
 	target: CleanupTarget,
 ): PendingCleanup | null {
-	const file = markerFile(target);
-	if (!existsSync(file)) return null;
+	let text: string | null;
 	try {
-		const raw = JSON.parse(readFileSync(file, "utf8")) as Partial<
+		text = readOwn(markerFile(target));
+	} catch {
+		return OVERDUE;
+	}
+	if (text === null) return null;
+	try {
+		const raw = JSON.parse(text) as Partial<
 			Record<keyof PendingCleanup, unknown>
 		>;
 		if (
@@ -144,8 +191,14 @@ export function readPendingCleanup(
 				rowsLeft: raw.rowsLeft,
 			};
 	} catch {}
-	return { since: new Date(0).toISOString(), attempts: 1, rowsLeft: true };
+	return OVERDUE;
 }
+
+const OVERDUE: PendingCleanup = Object.freeze({
+	since: new Date(0).toISOString(),
+	attempts: 1,
+	rowsLeft: true,
+});
 
 /** Makes a rename or removal in `dir` survive a crash. */
 function syncDir(dir: string): void {
@@ -186,123 +239,44 @@ function removeDurable(file: string): void {
 /** How long a call waits for the lock before it is refused (a sweep holds it about a second). */
 const LOCK_WAIT_MS = 5_000;
 
-/** A lock older than this is stale whoever holds it: no section holds it for this long. */
-const LOCK_STALE_MS = 60_000;
-
-const LOCK_POLL_MS = 20;
-
-interface HeldLock {
-	file: string;
-	token: string;
-}
-
+/**
+ * The lock is an exclusive transaction on a small SQLite file of OfferFinch's own (no data, never
+ * written): the operating system's file lock, which only its holder releases and which goes when
+ * the holder's process dies. So no lock is ever taken over, and none is left by a crash.
+ */
 function lockFile(target: CleanupTarget): string {
-	return join(target.base, `cleanup-lock-${dbId(target)}`);
+	return join(target.base, `cleanup-lock-${dbId(target)}.sqlite`);
 }
 
-function sleepSync(ms: number): void {
-	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function readText(file: string): string | null {
+/** Takes the lock, waiting up to `waitMs` (SQLite's busy timeout, which sleeps). */
+function acquireLock(
+	target: CleanupTarget,
+	waitMs: number,
+): { ok: true; db: Database.Database } | { ok: false; busy: boolean } {
+	let db: Database.Database | null = null;
 	try {
-		return readFileSync(file, "utf8");
-	} catch {
-		return null;
+		mkdirSync(target.base, { recursive: true, mode: 0o700 });
+		const file = lockFile(target);
+		// Created private before SQLite opens it (SQLite would use the umask).
+		closeSync(openSync(file, "a", 0o600));
+		db = new Database(file, { timeout: waitMs });
+		db.exec("BEGIN EXCLUSIVE");
+		return { ok: true, db };
+	} catch (error) {
+		db?.close();
+		return {
+			ok: false,
+			busy: (error as { code?: unknown }).code === "SQLITE_BUSY",
+		};
 	}
 }
 
-/**
- * The lock's holder can no longer be in its section: its process is gone, it is this process
- * (every section is synchronous, so a lock of this pid was left by an earlier instance or a throw
- * that skipped its release), or it is older than any section. An unreadable lock (being written)
- * is stale only when old.
- */
-function lockStale(file: string, text: string, now: number): boolean {
-	let held: { pid?: unknown; since?: unknown } | null = null;
+function releaseLock(db: Database.Database): void {
 	try {
-		held = JSON.parse(text);
-	} catch {}
-	const since =
-		typeof held?.since === "string" ? Date.parse(held.since) : Number.NaN;
-	if (typeof held?.pid !== "number" || Number.isNaN(since)) {
-		try {
-			return now - statSync(file).mtimeMs >= LOCK_STALE_MS;
-		} catch {
-			return true;
-		}
+		db.exec("ROLLBACK");
+	} finally {
+		db.close();
 	}
-	return (
-		held.pid === process.pid ||
-		now - since >= LOCK_STALE_MS ||
-		!processRuns(held.pid)
-	);
-}
-
-/**
- * Removes the lock when it is stale; true when the lock may be free now. Moved aside first and
- * read again, so a fresh lock another process took in the meantime is put back, never deleted.
- */
-function takeOverStale(file: string): boolean {
-	const text = readText(file);
-	if (text === null) return true;
-	if (!lockStale(file, text, Date.now())) return false;
-	const aside = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.stale`;
-	try {
-		renameSync(file, aside);
-	} catch {
-		return true;
-	}
-	if (readText(aside) !== text)
-		try {
-			// Not the stale lock: back in place, unless yet another one was taken meanwhile.
-			linkSync(aside, file);
-		} catch {}
-	rmSync(aside, { force: true });
-	return true;
-}
-
-/** Takes the lock, waiting up to `waitMs`; null when another process still holds it. */
-function acquireLock(target: CleanupTarget, waitMs: number): HeldLock | null {
-	const file = lockFile(target);
-	mkdirSync(target.base, { recursive: true, mode: 0o700 });
-	const token = randomBytes(8).toString("hex");
-	const deadline = Date.now() + waitMs;
-	for (;;) {
-		let fd: number | null = null;
-		try {
-			fd = openSync(file, "wx", 0o600);
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-		}
-		if (fd !== null) {
-			try {
-				writeSync(
-					fd,
-					JSON.stringify({
-						pid: process.pid,
-						since: new Date().toISOString(),
-						token,
-					}),
-				);
-			} finally {
-				closeSync(fd);
-			}
-			return { file, token };
-		}
-		if (takeOverStale(file)) continue;
-		if (Date.now() >= deadline) return null;
-		sleepSync(LOCK_POLL_MS);
-	}
-}
-
-/** Gives the lock back, only if it is still this holder's. */
-function releaseLock(lock: HeldLock): void {
-	const text = readText(lock.file);
-	try {
-		if (text !== null && JSON.parse(text).token === lock.token)
-			rmSync(lock.file, { force: true });
-	} catch {}
 }
 
 function writePending(target: CleanupTarget, pending: PendingCleanup): void {
@@ -310,7 +284,7 @@ function writePending(target: CleanupTarget, pending: PendingCleanup): void {
 }
 
 function clearPending(target: CleanupTarget): void {
-	if (existsSync(markerFile(target))) removeDurable(markerFile(target));
+	removeDurable(markerFile(target));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -339,36 +313,40 @@ function intentPrefix(target: CleanupTarget): string {
 	return `cleanup-intent-${dbId(target)}-`;
 }
 
+/**
+ * The intents on disk. One that cannot be read (not missing) throws: it may be a running call's
+ * or a crashed one's, so neither a sweep nor a call may go on as if it were not there.
+ */
 function readIntents(target: CleanupTarget): IntentRecord[] {
 	let names: string[];
 	try {
 		names = readdirSync(target.base);
-	} catch {
-		return [];
+	} catch (error) {
+		if (missing(error)) return [];
+		throw new CleanupStateUnreadableError();
 	}
 	const prefix = intentPrefix(target);
-	return names
-		.filter((name) => name.startsWith(prefix) && name.endsWith(".json"))
-		.map((name) => {
-			const file = join(target.base, name);
-			try {
-				const raw = JSON.parse(readFileSync(file, "utf8")) as {
-					pid?: unknown;
-					since?: unknown;
-				};
-				return {
-					file,
-					pid: typeof raw.pid === "number" ? raw.pid : null,
-					since:
-						typeof raw.since === "string" &&
-						!Number.isNaN(Date.parse(raw.since))
-							? raw.since
-							: null,
-				};
-			} catch {
-				return { file, pid: null, since: null };
-			}
+	const intents: IntentRecord[] = [];
+	for (const name of names) {
+		if (!name.startsWith(prefix) || !name.endsWith(".json")) continue;
+		const file = join(target.base, name);
+		// Missing: its call removed it after the listing.
+		const text = readOwn(file);
+		if (text === null) continue;
+		let raw: { pid?: unknown; since?: unknown } = {};
+		try {
+			raw = JSON.parse(text);
+		} catch {}
+		intents.push({
+			file,
+			pid: typeof raw?.pid === "number" ? raw.pid : null,
+			since:
+				typeof raw?.since === "string" && !Number.isNaN(Date.parse(raw.since))
+					? raw.since
+					: null,
 		});
+	}
+	return intents;
 }
 
 function processRuns(pid: number): boolean {
@@ -409,7 +387,10 @@ export function beginCall(target: CleanupTarget, now: Date): CallIntent {
 	);
 	// Under the lock: a sweep that checked the intents must finish deleting before this one appears.
 	const lock = acquireLock(target, LOCK_WAIT_MS);
-	if (!lock) throw new CleanupLockBusyError();
+	if (!lock.ok)
+		throw lock.busy
+			? new CleanupLockBusyError()
+			: new CleanupStateUnreadableError();
 	activeIntents.add(file);
 	try {
 		recordUse(target, now);
@@ -421,7 +402,7 @@ export function beginCall(target: CleanupTarget, now: Date): CallIntent {
 		activeIntents.delete(file);
 		throw error;
 	} finally {
-		releaseLock(lock);
+		releaseLock(lock.db);
 	}
 	return { file };
 }
@@ -500,8 +481,10 @@ function sweepOrCheckpoint(
 	target: CleanupTarget,
 	options: { idle: boolean; now: Date; beforeSweep?: () => void },
 ): SweepOutcome {
-	// Never waited for: a call holds it only while it publishes its intent.
-	const lock = options.idle ? acquireLock(target, 0) : null;
+	// Never waited for: a call holds it only while it publishes its intent. Not taken (held, or
+	// the file cannot be opened): only the checkpoint.
+	const taken = options.idle ? acquireLock(target, 0) : null;
+	const lock = taken?.ok ? taken.db : null;
 	const outcome: SweepOutcome = {
 		idle: false,
 		was: null,
@@ -549,7 +532,7 @@ export function attemptCleanup(
 		beforeSweep?: () => void;
 	},
 ): CleanupAttempt {
-	if (!existsSync(target.dbFile)) {
+	if (!exists(target.dbFile)) {
 		clearPending(target);
 		for (const intent of readIntents(target))
 			if (!intentLive(intent, options.now)) removeDurable(intent.file);

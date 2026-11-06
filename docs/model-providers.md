@@ -122,13 +122,18 @@ From [research/opencode-v2-lockdown.md](research/opencode-v2-lockdown.md) and
    finish with no marker or intent is marked when that record exists, or when OfferFinch's own
    project is in the database (builds that ran calls before the record; the record is then
    written); with neither, OfferFinch never ran a call on this database, so the user's busy
-   OpenCode alone never stops calls. One lock file per database (`cleanup-lock-<db>`, created
-   exclusively, holding a pid, start time and token) is held while a call publishes its intent
-   and while a sweep checks the intents and deletes, so another process (the desktop holds a
-   single-instance lock, but a restarted worker can overlap the one it replaces) cannot start a
-   call between the two. A call waits up to 5 s for it, then is refused; a sweep that cannot take
-   it at once only checkpoints. A lock whose process is gone, of this process's own id, or older
-   than a minute is taken over (moved aside and read again, so a fresh one is put back). The cleanup is retried, sweep and
+   OpenCode alone never stops calls. One lock per database is held while a call publishes its
+   intent and while a sweep checks the intents and deletes, so another process (the desktop holds
+   a single-instance lock, but a restarted worker can overlap the one it replaces) cannot start a
+   call between the two: an exclusive transaction (`BEGIN EXCLUSIVE`) on an empty SQLite file of
+   OfferFinch's own (`cleanup-lock-<db>.sqlite`, mode 0600, never written), i.e. the operating
+   system's file lock. Nobody can take it over, and it goes when its process dies, so there is no
+   stale-lock logic. A call waits for it with SQLite's busy timeout (5 s, sleeping), then is
+   refused; a sweep that cannot take it at once (`timeout` 0), or cannot open its file, only
+   checkpoints. A cleanup file that cannot be read for any reason but its absence (permission or
+   disk error: the folder, an intent, the use record, the lock, the folder of `opencode.db`) is
+   never taken for missing: the call is refused with fixed words (no path), and nothing is swept,
+   adopted or cleared on its account; an unreadable marker counts as overdue. The cleanup is retried, sweep and
    checkpoint even with no rows left, on a timer with backoff, before each call and at start;
    while another OfferFinch call runs, only the checkpoint (its session is not swept). After a
    2-minute grace period OpenCode calls are refused (a local `boundary` refusal that does not trip
