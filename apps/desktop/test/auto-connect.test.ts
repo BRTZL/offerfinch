@@ -2,161 +2,131 @@ import { describe, expect, it } from "vitest";
 import {
 	type AiChoice,
 	autoFill,
+	providerOfRef,
 	readyNow,
-	unavailable,
 } from "../src/shared/auto-connect";
+import {
+	FAKE_MODEL_REF,
+	formatModelRef,
+	type ModelInfo,
+	type ProviderId,
+} from "../src/shared/providers";
+
+const model = (
+	provider: ProviderId,
+	id: string,
+	billing: ModelInfo["billing"] = "subscription",
+): ModelInfo => ({
+	ref: formatModelRef(provider, id),
+	name: id,
+	provider,
+	billing,
+	efforts: [],
+});
+const CLAUDE = [model("claude", "claude-opus-5-5")];
+const CODEX = [model("codex", ""), model("codex", "gpt-6.1-sol")];
 
 const fresh: AiChoice = {
-	scoring: { mode: "api" },
-	tailoring: { mode: "api" },
-	claims: { mode: "api" },
+	scoring: { model: null },
+	tailoring: { model: null },
+	claims: { model: null },
 };
-const noKeys = { anthropic: false, openai: false };
 
-describe("Connect AI picks Claude Code and Codex", () => {
-	it("both signed in: Claude finds matches and drafts, Codex checks", () => {
+const CLAUDE_ALL: AiChoice = {
+	scoring: { model: "claude:claude-opus-5-5" },
+	tailoring: { model: "claude:claude-sonnet-5-5" },
+	claims: { model: "claude:claude-opus-5-5" },
+};
+const CODEX_ALL: AiChoice = {
+	scoring: { model: "codex:" },
+	tailoring: { model: "codex:" },
+	claims: { model: "codex:" },
+};
+
+describe("Connect AI fills the steps without a model", () => {
+	it("Claude signed in: Claude does all three, Codex or not", () => {
+		for (const codex of [true, false]) {
+			const r = autoFill({
+				settings: fresh,
+				available: { claude: CLAUDE, ...(codex ? { codex: CODEX } : {}) },
+			});
+			expect(r.filled).toEqual(["scoring", "tailoring", "claims"]);
+			expect(r.settings).toEqual(CLAUDE_ALL);
+		}
+	});
+
+	it("Codex only: Codex does all three, on the account's default model", () => {
 		const r = autoFill({
 			settings: fresh,
-			claude: true,
-			codex: true,
-			keys: noKeys,
+			available: { codex: CODEX },
 		});
 		expect(r.filled).toEqual(["scoring", "tailoring", "claims"]);
-		expect(r.settings).toEqual({
-			scoring: { mode: "claude-subscription" },
-			tailoring: { mode: "claude-subscription" },
-			claims: { mode: "codex-subscription" },
-		});
+		expect(r.settings).toEqual(CODEX_ALL);
 	});
 
-	it("Claude only: drafting and scoring set, the checker stays open", () => {
+	it("no Claude or Codex: the first plan model, never a pay-per-use one", () => {
+		const paid = model("opencode", "openrouter/minimax-m2.7", "api");
+		const plan = model("opencode", "opencode-go/glm-5.1");
+		const gemini = model("antigravity", "gemini-3.8-flash");
+		expect(
+			autoFill({
+				settings: fresh,
+				available: { opencode: [paid, plan], antigravity: [gemini] },
+			}).settings.scoring,
+		).toEqual({ model: plan.ref });
 		const r = autoFill({
 			settings: fresh,
-			claude: true,
-			codex: false,
-			keys: noKeys,
+			available: { opencode: [paid], antigravity: [gemini] },
 		});
-		expect(r.filled).toEqual(["scoring", "tailoring"]);
-		expect(r.settings.claims).toEqual({ mode: "api" });
+		expect(r.settings.claims).toEqual({ model: gemini.ref });
+		expect(
+			autoFill({ settings: fresh, available: { opencode: [paid] } }).filled,
+		).toEqual([]);
 	});
 
-	it("Codex only: the checker set, drafting stays open", () => {
+	it("fills only the steps asked for", () => {
 		const r = autoFill({
 			settings: fresh,
-			claude: false,
-			codex: true,
-			keys: noKeys,
+			available: { codex: CODEX },
+			only: ["claims"],
 		});
 		expect(r.filled).toEqual(["claims"]);
-		expect(r.settings.scoring).toEqual({ mode: "api" });
-		expect(r.settings.tailoring).toEqual({ mode: "api" });
+		expect(r.settings.scoring).toEqual({ model: null });
 	});
 
 	it("neither: nothing changes", () => {
-		const r = autoFill({
-			settings: fresh,
-			claude: false,
-			codex: false,
-			keys: noKeys,
-		});
+		const r = autoFill({ settings: fresh, available: {} });
 		expect(r.filled).toEqual([]);
 		expect(r.settings).toEqual(fresh);
 	});
 
-	it("never changes a choice already made", () => {
+	it("never changes a choice already made, and fills only the steps left", () => {
 		const made: AiChoice = {
-			scoring: { mode: "fake" },
-			tailoring: { mode: "api", model: "claude-sonnet-5-5" },
-			claims: { mode: "codex-subscription", model: "gpt-6.1-terra" },
+			scoring: { model: FAKE_MODEL_REF },
+			tailoring: { model: "codex:gpt-6.1-terra", effort: "high" },
+			claims: { model: null },
 		};
-		// A stored Anthropic key: the API choice for tailoring is the user's.
 		const r = autoFill({
 			settings: made,
-			claude: true,
-			codex: true,
-			keys: { anthropic: true, openai: false },
+			available: { claude: CLAUDE, codex: CODEX },
 		});
-		expect(r.filled).toEqual([]);
-		expect(r.settings).toEqual(made);
-	});
-
-	it("an OpenAI key keeps the checker on the API; Claude still fills drafting", () => {
-		const r = autoFill({
-			settings: fresh,
-			claude: true,
-			codex: true,
-			keys: { anthropic: false, openai: true },
+		expect(r.filled).toEqual(["claims"]);
+		expect(r.settings).toEqual({
+			...made,
+			claims: { model: "claude:claude-opus-5-5" },
 		});
-		expect(r.filled).toEqual(["scoring", "tailoring"]);
-		expect(r.settings.claims).toEqual({ mode: "api" });
-	});
-
-	it("respects unavailable(): a draft is never checked by the company that wrote it", () => {
-		const claude: AiChoice = {
-			scoring: { mode: "claude-subscription" },
-			tailoring: { mode: "claude-subscription" },
-			claims: { mode: "codex-subscription" },
-		};
-		expect(unavailable("claims", "claude-subscription", claude)).toMatch(
-			/written by Claude/,
-		);
-		expect(unavailable("claims", "codex-subscription", claude)).toBeNull();
-		expect(unavailable("claims", "api", claude)).toBeNull();
-		// Codex may find matches; it may draft only once the checker is not Codex.
-		expect(unavailable("scoring", "codex-subscription", claude)).toBeNull();
-		expect(unavailable("tailoring", "codex-subscription", claude)).toMatch(
-			/checked by OpenAI/,
-		);
-		const codex: AiChoice = {
-			scoring: { mode: "codex-subscription" },
-			tailoring: { mode: "codex-subscription" },
-			claims: { mode: "claude-subscription" },
-		};
-		expect(unavailable("claims", "codex-subscription", codex)).toMatch(
-			/written by OpenAI/,
-		);
-		expect(unavailable("claims", "claude-subscription", codex)).toBeNull();
-		// An API-key checker follows drafting to the other company's key.
-		expect(unavailable("claims", "api", codex)).toBeNull();
-		expect(
-			unavailable("tailoring", "codex-subscription", {
-				...claude,
-				claims: { mode: "api" },
-			}),
-		).toBeNull();
-		for (const claudeIn of [true, false])
-			for (const codexIn of [true, false]) {
-				const { settings } = autoFill({
-					settings: fresh,
-					claude: claudeIn,
-					codex: codexIn,
-					keys: noKeys,
-				});
-				for (const role of ["scoring", "tailoring", "claims"] as const)
-					expect(unavailable(role, settings[role].mode, settings)).toBeNull();
-			}
-	});
-
-	it("never fills the checker with the drafting company", () => {
-		const r = autoFill({
-			settings: {
-				scoring: { mode: "codex-subscription" },
-				tailoring: { mode: "codex-subscription" },
-				claims: { mode: "api" },
-			},
-			claude: false,
-			codex: true,
-			keys: noKeys,
-		});
-		expect(r.filled).toEqual([]);
 	});
 });
 
-describe("a role is ready only while its plan's CLI is signed in", () => {
+describe("a step is ready only while its provider is signed in", () => {
 	const roles = [
-		{ role: "scoring" as const, mode: "claude-subscription", ready: true },
-		{ role: "tailoring" as const, mode: "claude-subscription", ready: true },
-		{ role: "claims" as const, mode: "codex-subscription", ready: true },
+		{ role: "scoring" as const, model: "claude:claude-opus-5-5", ready: true },
+		{
+			role: "tailoring" as const,
+			model: "claude:claude-sonnet-5-5",
+			ready: true,
+		},
+		{ role: "claims" as const, model: "codex:", ready: true },
 	];
 
 	it("both signed in: all ready", () => {
@@ -165,9 +135,9 @@ describe("a role is ready only while its plan's CLI is signed in", () => {
 		).toEqual([true, true, true]);
 	});
 
-	it("Claude signed out: its roles keep the choice but are not ready", () => {
+	it("Claude signed out: its steps keep the choice but are not ready", () => {
 		const now = readyNow(roles, { claude: false, codex: true });
-		expect(now.map((r) => r.mode)).toEqual(roles.map((r) => r.mode));
+		expect(now.map((r) => r.model)).toEqual(roles.map((r) => r.model));
 		expect(now.map((r) => r.ready)).toEqual([false, false, true]);
 	});
 
@@ -177,14 +147,28 @@ describe("a role is ready only while its plan's CLI is signed in", () => {
 		).toEqual([true, true, false]);
 	});
 
-	it("API keys and test models do not depend on the CLIs", () => {
+	it("test models need no sign-in; no model is never ready", () => {
 		const other = [
-			{ role: "scoring" as const, mode: "api", ready: true },
-			{ role: "tailoring" as const, mode: "fake", ready: true },
-			{ role: "claims" as const, mode: "api", ready: false },
+			{ role: "scoring" as const, model: FAKE_MODEL_REF, ready: true },
+			{ role: "tailoring" as const, model: null, ready: false },
+			{
+				role: "claims" as const,
+				model: "opencode:opencode-go/glm-5.1",
+				ready: true,
+			},
 		];
-		expect(
-			readyNow(other, { claude: false, codex: false }).map((r) => r.ready),
-		).toEqual([true, true, false]);
+		expect(readyNow(other, {}).map((r) => r.ready)).toEqual([
+			true,
+			false,
+			false,
+		]);
+	});
+
+	it("names the provider of a reference; none for the test models or no choice", () => {
+		expect(providerOfRef("claude:claude-opus-5-5")).toBe("claude");
+		expect(providerOfRef("codex:")).toBe("codex");
+		expect(providerOfRef(FAKE_MODEL_REF)).toBeNull();
+		expect(providerOfRef(null)).toBeNull();
+		expect(providerOfRef("nonsense")).toBeNull();
 	});
 });

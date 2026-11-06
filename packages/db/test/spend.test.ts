@@ -393,4 +393,32 @@ describe("a paid call pauses its own vendor only", () => {
 		await store.resumeSubscription("u1", "anthropic");
 		await store.resumeSubscription("u1", "openai");
 	});
+
+	it("stops only Gemini on a paid Gemini call, never Claude or its confirmation", async () => {
+		await execute(db, sql`delete from llm_usage`);
+		const store = new DrizzleSpendStore(db);
+		await store.setSubscriptionDailyCalls("u1", 100);
+		await store.confirmExtraUsageOff("u1", true);
+		const reserve = (provider: string) =>
+			store.reserveSpend({
+				userId: "u1",
+				applicationId: null,
+				task: "claims-check",
+				provider,
+				estimateMicros: 100_000,
+				billing: "subscription",
+				modelCalls: 1,
+			});
+		await store.recordPaidStop("u1", "google");
+		expect(await reserve("antigravity:gemini-3.8-flash")).toMatchObject({
+			ok: false,
+			reason: "vendor_stopped",
+		});
+		expect(await store.extraUsageOffConfirmedAt("u1")).not.toBeNull();
+		expect((await reserve("claude-subscription:claude-sonnet-5-5")).ok).toBe(
+			true,
+		);
+		await store.resumeSubscription("u1", "google");
+		expect((await reserve("antigravity:gemini-3.8-flash")).ok).toBe(true);
+	});
 });

@@ -15,8 +15,9 @@ Everything lives in `~/Library/Application Support/OfferFinch/`:
   screenshots.
 - **Backups** (`backups/`): a copy of the database before each update changes its structure, and
   a full backup before each restore.
-- **API keys** (`secrets.json`): encrypted with a key that macOS keeps in your Keychain. The
-  plain key is never written to disk, a log or the app's window.
+- **Gemini sign-in** (`antigravity/`): Google's Antigravity server that OfferFinch downloads, and
+  the Google sign-in it keeps for it, only if you set up Gemini. API keys from earlier versions
+  are deleted on the first start; OfferFinch no longer stores any.
 - **Site sign-ins**: LinkedIn, Indeed and Glassdoor sessions (cookies), each in its own browser
   session inside the app, like a browser profile. OfferFinch never stores your passwords: you
   sign in on the site's own page.
@@ -27,38 +28,43 @@ Logs are in `~/Library/Logs/OfferFinch/`. Documents you open in another app are 
 temporary folder first.
 
 **Export backup** (Settings › Your data) saves the database and files as one .zip, to keep or to
-restore on another Mac. API keys and site sign-ins are never in it. **Download everything** saves
+restore on another Mac. Sign-ins are never in it. **Download everything** saves
 the same data as one JSON file to read.
 
 ## What leaves this Mac, and to whom
 
-### The model vendors you chose
+### The model providers you chose
 
-Settings › Models sets who does each job, with an API key or through the Claude Code or Codex
-app you have installed:
+Settings › Models sets which model does each job, from the AI plans you are signed in to on this
+Mac: Claude (Claude Code), Codex (ChatGPT, macOS only), OpenCode (your OpenCode login: its plans,
+free models, and pay-per-use sources) and Gemini (Google's Antigravity). Any model can do any job.
 
-- **Finding matches and drafting** go to **Anthropic** (an Anthropic API key, or your Claude
-  subscription through Claude Code).
-  - Fit scoring: your profile and the job posting.
-  - Drafting: your profile, the posting, the fit assessment and your answers, to write the CV,
-    letter and answers.
-  - Chat, importing a resume, the daily search plan and reading a posting page that has no job
-    data: the profile, resume or page text that task needs.
-- **Checking drafts** goes to **OpenAI** (an OpenAI API key, or your ChatGPT subscription through
-  Codex): your profile and the drafted documents, to check every claim against your profile. It
-  is always another company than the one that drafted.
+- **Finding matches**: your profile and the job posting, to score the fit.
+- **Drafting**: your profile, the posting, the fit assessment and your answers, to write the CV,
+  letter and answers.
+- **Checking drafts**: your profile and the drafted documents, to check every claim against your
+  profile. It may be the same model that drafted, if you choose so.
+- Chat, importing a resume, the daily search plan and reading a posting page that has no job
+  data use the finding-matches model, with the profile, resume or page text that task needs.
+
+OpenCode sends to the company behind the model you pick (OpenCode itself for its Zen, Go and free
+models, or the source you signed in to). Gemini sends to Google; Google's notice for its free
+tier says people may review prompts, and whether that differs on your plan is not confirmed.
 
 Before anything is sent, your email address and phone number (and anything shaped like one) are
 replaced with placeholders. Your name and the rest of your profile are sent as written. What the
 vendor does with it is set by your agreement with them (their API terms, or your subscription's
 terms); OfferFinch sends nothing to them that you did not set up.
 
-**Subscriptions.** Using a Claude or ChatGPT subscription through Claude Code or Codex is opt-in
-and never the default. Anthropic and OpenAI recommend API keys for programs like this one, and
-their terms do not clearly allow it: personal use on your own Mac is not clearly allowed, and use
-in a product for other people is not allowed. You decide whether your use is within their terms.
-OfferFinch checks before each call that it cannot be billed as extra usage or credits, and pauses
-if it could. Calls run with the apps' telemetry, tools and history turned off. Settings › Models
+**Plans.** OfferFinch runs only on your own plans, through the providers' own apps. Their terms
+do not clearly allow it: personal use on your own Mac is not clearly allowed, and use in a product
+for other people is not allowed. You decide whether your use is within their terms. OfferFinch
+checks before each call that it cannot be billed as extra usage or credits where the provider
+reports it, and pauses if it could; pay-per-use OpenCode models count toward your spending limit.
+Calls run with the apps' tools, instructions and history turned off. OpenCode runs on your own
+OpenCode login, so each call briefly creates a session in OpenCode's database on this Mac;
+OfferFinch deletes it and its traces right after the call, and stops calling OpenCode until that
+cleanup has finished. Settings › Models
 › Plan usage shows what each plan has used of its windows, as the vendor reports it, and
 OfferFinch's share of that; the reads are the same sign-in checks the calls make, with no prompt,
 and the result is stored on this Mac only.

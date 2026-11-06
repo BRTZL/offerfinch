@@ -150,9 +150,9 @@ describe("WorkerHost.stop", () => {
 		const started = h.restart(1_000);
 		child(1).ready();
 		await started;
-		h.postTo(generation, { type: "secrets", secrets: { openai: "real" } });
-		expect(child(1).posted.some((m) => m.type === "secrets")).toBe(false);
-		h.postTo(h.currentGeneration, { type: "secrets", secrets: {} });
-		expect(child(1).posted.some((m) => m.type === "secrets")).toBe(true);
+		h.postTo(generation, { type: "wake", reason: "old" });
+		expect(child(1).posted.some((m) => m.type === "wake")).toBe(false);
+		h.postTo(h.currentGeneration, { type: "wake", reason: "new" });
+		expect(child(1).posted.some((m) => m.type === "wake")).toBe(true);
 	});
 });

@@ -127,7 +127,7 @@ test("onboarding: centred, steady footer, keyboard and drag and drop on the resu
 		// Back and the primary action stay where they are from step to step.
 		const back1 = await boxOf(page, "step-back");
 		const primary1 = await boxOf(page, "step-continue");
-		await page.getByTestId("step-skip").click();
+		await page.getByTestId("step-continue").click();
 		await expect(page.getByTestId("step-count")).toContainText("Step 2 of 5");
 		// The finch stands over the current step. Under reduced motion it moves without a hop.
 		const finch = page.getByTestId("setup-finch");

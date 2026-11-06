@@ -7,6 +7,7 @@ import type {
 import { fitAssessmentSchema } from "@offerfinch/core/scoring/fit";
 import { SubscriptionUnavailableError } from "@offerfinch/core/scoring/llm";
 import {
+	MeteredLlm,
 	meteredFor,
 	type SpendStore,
 	SUBSCRIPTION_BASIS,
@@ -21,6 +22,7 @@ import {
 	resumeClaudeCalls,
 	USAGE_PROBE_SYSTEM,
 } from "../src/claude";
+import { SpendRecorder } from "./spend-recorder";
 
 /**
  * The provider's decisions, against a scripted stand-in for the SDK's `query`: what it starts
@@ -32,6 +34,8 @@ interface Script {
 	/** Messages after the prompt was sent, one list per run. */
 	runs?: SDKMessage[][];
 	initTools?: string[];
+	/** Fields of the session's init message to replace (MCP servers, skills, plugins, …). */
+	initWith?: Record<string, unknown>;
 	/** The plan's usage report; default: extra usage off. `"throw"`: the control fails. */
 	usage?: Record<string, unknown> | "throw";
 	/** After its messages, the session neither ends nor emits anything more. */
@@ -42,6 +46,10 @@ interface Script {
 	loseWith?: string;
 	/** Emitted before the prompt is read (a result here answers nothing that was sent). */
 	early?: SDKMessage[];
+	/** The CLI's initialize answer fails with this message (the CLI did not start). */
+	initFails?: string;
+	/** The name of the errors `lose` and `initFails` throw (default `Error`). */
+	errorName?: string;
 }
 
 const EXTRA_OFF = {
@@ -64,7 +72,11 @@ const SUBSCRIBED = {
 	apiProvider: "firstParty",
 };
 
-function init(tools = ["StructuredOutput"], cwd = ""): SDKMessage {
+function init(
+	tools = ["StructuredOutput"],
+	cwd = "",
+	extra: Record<string, unknown> = {},
+): SDKMessage {
 	return {
 		type: "system",
 		subtype: "init",
@@ -81,6 +93,7 @@ function init(tools = ["StructuredOutput"], cwd = ""): SDKMessage {
 		plugins: [],
 		uuid: "u",
 		session_id: "s",
+		...extra,
 	} as unknown as SDKMessage;
 }
 
@@ -128,7 +141,12 @@ function scripted(script: Script) {
 		const record = { options: params.options, prompts: [] as string[] };
 		seen.push(record);
 		const messages = script.runs?.[run++] ?? [];
-		const lost = new Error(script.loseWith || "lost response");
+		const named = (message: string) => {
+			const error = new Error(message);
+			if (script.errorName) error.name = script.errorName;
+			return error;
+		};
+		const lost = named(script.loseWith || "lost response");
 		const ready = Promise.resolve({ account: script.account ?? SUBSCRIBED });
 		// Like the isolated session: an abort closes it at once, and it ends as if cleanly.
 		const aborted = () => params.options.abortController?.signal.aborted;
@@ -136,7 +154,7 @@ function scripted(script: Script) {
 			for (const m of script.early ?? []) yield m;
 			for await (const user of params.prompt) {
 				record.prompts.push(String(user.message.content));
-				yield init(script.initTools, params.options.cwd ?? "");
+				yield init(script.initTools, params.options.cwd ?? "", script.initWith);
 				for (const m of messages) {
 					if (aborted()) return;
 					yield m;
@@ -148,7 +166,8 @@ function scripted(script: Script) {
 			}
 		}
 		return Object.assign(stream(), {
-			initializationResult: () => ready,
+			initializationResult: () =>
+				script.initFails ? Promise.reject(named(script.initFails)) : ready,
 			usage: async () => {
 				if (script.usage === "throw") throw new Error("usage endpoint failed");
 				return script.usage ?? EXTRA_OFF;
@@ -377,7 +396,7 @@ describe("ClaudeSubscriptionProvider", () => {
 		});
 		const error = await claude.generateObject(request()).catch((e) => e);
 		expect(error.kind).toBe("boundary");
-		expect(error.message).toMatch(/tools Bash/);
+		expect(error.message).toMatch(/1 unexpected tool\b/);
 	});
 
 	it("sends one prompt for a bad answer, reports its tokens, and fails without a repair", async () => {
@@ -391,7 +410,7 @@ describe("ClaudeSubscriptionProvider", () => {
 				...request((u) => usage.push(u as never)),
 				onModelCall: () => sent.push(1),
 			}),
-		).rejects.toBeInstanceOf(z.ZodError);
+		).rejects.toThrow(/did not match the schema \(greeting: invalid_type/);
 		// Exactly the request the caller reserved for: one run, the prompt unchanged.
 		expect(seen).toHaveLength(1);
 		expect(seen[0]?.prompts).toHaveLength(1);
@@ -549,7 +568,9 @@ describe("what the real CLI emits", () => {
 		});
 		await expect(
 			claude.generateObject(request((u) => usage.push(u as never))),
-		).rejects.toThrow(/must have required property 'greeting'/);
+		).rejects.toThrow(
+			/the CLI's schema check refused the answer \(1 error; missing greeting; the answer is not kept\)/,
+		);
 		expect(seen).toHaveLength(1);
 		expect(usage.map((u) => u.outputTokens)).toEqual([5]);
 	});
@@ -731,9 +752,11 @@ describe("what the real CLI emits", () => {
 				lose: true,
 				loseWith: "socket hang up",
 			});
-			await expect(claude.generateObject(request())).rejects.toThrow(
-				/socket hang up/,
+			const lost = await claude.generateObject(request()).catch((e) => e);
+			expect(lost.message).toMatch(
+				/stream failed \(Error; its text is not kept\)/,
 			);
+			expect(lost.message).not.toMatch(/socket hang up/);
 			expect(seen[0]?.prompts).toHaveLength(1);
 			expect(warnings).toEqual([
 				"warning: claude subscription call got no answer after its prompt was sent; settled on the plan",
@@ -1220,5 +1243,349 @@ describe("plan usage baseline", () => {
 		stale = true;
 		await claude.generateObject(request());
 		expect(probes).toHaveLength(2);
+	});
+});
+
+/**
+ * Finding: the provider's error text (a result's text, its errors, the SDK's stream error, the
+ * CLI's start error) reached the thrown message, which the spending ledger keeps. None of it may.
+ */
+describe("what a failed Claude call keeps", () => {
+	const CANARY = "ANSWER_CANARY_CL_7c3e my CV says";
+	const ID_CANARY = "PRIVATE_CV_CANARY";
+	const LOWER_CANARY = "privatecanary";
+	const usage = {
+		"claude-sonnet-5-5": {
+			inputTokens: 10,
+			outputTokens: 5,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+		},
+	};
+	const scenarios: [string, Script, RegExp][] = [
+		[
+			"an error result's text",
+			{
+				runs: [
+					[
+						{
+							type: "result",
+							subtype: "success",
+							is_error: true,
+							result: CANARY,
+							modelUsage: usage,
+						} as unknown as SDKMessage,
+					],
+				],
+			},
+			/returned no answer: an error result of \d+ characters, not kept/,
+		],
+		[
+			"an error result's errors",
+			{
+				runs: [
+					[
+						{
+							type: "result",
+							subtype: "error_during_execution",
+							is_error: true,
+							errors: [CANARY],
+							modelUsage: usage,
+						} as unknown as SDKMessage,
+					],
+				],
+			},
+			/returned no answer: error_during_execution \(1 errors, not kept\)/,
+		],
+		[
+			"the CLI's schema check errors",
+			{
+				runs: [
+					[
+						{
+							type: "result",
+							subtype: "error_max_structured_output_retries",
+							is_error: true,
+							errors: [
+								`Output does not match: root: must have required property 'greeting'; got ${CANARY}`,
+								`must have required property '${CANARY}'`,
+							],
+							modelUsage: usage,
+						} as unknown as SDKMessage,
+					],
+				],
+			},
+			/schema check refused the answer \(2 errors; missing greeting; the answer is not kept\)/,
+		],
+		[
+			"an answer that fails zod",
+			{ runs: [[result({ greeting: { [CANARY]: CANARY } })]] },
+			/did not match the schema \(greeting: invalid_type; the answer is not kept\)/,
+		],
+		[
+			"a lost stream",
+			{ runs: [[]], lose: true, loseWith: CANARY },
+			/stream failed \(Error; its text is not kept\)/,
+		],
+		[
+			"the SDK's echo of an error result with no result read",
+			{
+				runs: [[]],
+				lose: true,
+				loseWith: `Claude Code returned an error result: ${CANARY}`,
+			},
+			/ended with an error result \(its text is not kept\)/,
+		],
+		[
+			"a request the CLI would retry",
+			{
+				runs: [
+					[
+						{
+							type: "system",
+							subtype: "api_retry",
+							error: CANARY,
+							error_status: 500,
+						} as unknown as SDKMessage,
+					],
+				],
+			},
+			/request failed \(other, HTTP 500\)/,
+		],
+		[
+			"a CLI that did not start",
+			{ runs: [[]], initFails: `spawn failed: ${CANARY}` },
+			/did not start \(Error\)/,
+		],
+		// Identifiers that are not the protocol's: the shape of a name, the content of the user's.
+		[
+			"an api_retry error that is not a known kind",
+			{
+				runs: [
+					[
+						{
+							type: "system",
+							subtype: "api_retry",
+							error: ID_CANARY,
+							error_status: 500,
+						} as unknown as SDKMessage,
+					],
+				],
+			},
+			/request failed \(other, HTTP 500\)/,
+		],
+		[
+			"an error result whose subtype is not a known one",
+			{
+				runs: [
+					[
+						{
+							type: "result",
+							subtype: LOWER_CANARY,
+							is_error: true,
+							errors: [ID_CANARY],
+							modelUsage: usage,
+						} as unknown as SDKMessage,
+					],
+				],
+			},
+			/returned no answer: other \(1 errors, not kept\)/,
+		],
+		[
+			"a lost stream whose error has a name that is not a known one",
+			{ runs: [[]], lose: true, loseWith: ID_CANARY, errorName: ID_CANARY },
+			/stream failed \(other; its text is not kept\)/,
+		],
+		[
+			"a CLI that did not start with an error named by the user's text",
+			{
+				runs: [[]],
+				initFails: LOWER_CANARY,
+				errorName: LOWER_CANARY,
+			},
+			/did not start \(other\)/,
+		],
+		[
+			"a usage limit whose type is not a known one",
+			{
+				runs: [
+					[
+						{
+							type: "rate_limit_event",
+							rate_limit_info: {
+								status: "rejected",
+								rateLimitType: ID_CANARY,
+							},
+						} as unknown as SDKMessage,
+					],
+				],
+			},
+			/plan's other limit is reached/,
+		],
+	];
+	for (const [name, script, says] of scenarios)
+		it(`keeps none of ${name}`, async () => {
+			const logs: string[] = [];
+			const { query } = scripted(script);
+			const store = new SpendRecorder();
+			const metered = new MeteredLlm(
+				new ClaudeSubscriptionProvider({
+					model: "claude-sonnet-5-5",
+					ownerUserId: "u1",
+					parentEnv: { PATH: "/usr/bin" },
+					query,
+					breaker: new Breaker(),
+					drainMs: 50,
+					log: (message, data) => logs.push(message, JSON.stringify(data)),
+				}),
+				store,
+				{ userId: "u1", applicationId: null },
+			);
+			const error = await metered.generateObject(request()).catch((e) => e);
+			expect(String(error)).toMatch(says);
+			const kept = [
+				String(error),
+				JSON.stringify(error),
+				...store.rows,
+				...logs,
+			].join("\n");
+			expect(store.rows.some((r) => /^(settle|refusal|hold) /.test(r))).toBe(
+				true,
+			);
+			expect(kept).not.toContain("ANSWER_CANARY");
+			expect(kept).not.toMatch(/private_?cv_?canary|privatecanary/i);
+		});
+});
+
+/**
+ * Finding: the names a session's init message lists (tools, MCP servers, skills, plugins, agents)
+ * reached the boundary error, so the spending ledger, and the session log as they were. They come
+ * from the CLI's output: only the allowlisted ones may be kept, the rest counted.
+ */
+describe("what a Claude session's init names keep", () => {
+	const ID_CANARY = "PRIVATE_CV_CANARY";
+	const leaks = /private_?cv_?canary/i;
+	async function run(script: Script) {
+		const logs: string[] = [];
+		const { query } = scripted({
+			runs: [[result({ greeting: "hi" })]],
+			...script,
+		});
+		const store = new SpendRecorder();
+		const metered = new MeteredLlm(
+			new ClaudeSubscriptionProvider({
+				model: "claude-sonnet-5-5",
+				ownerUserId: "u1",
+				parentEnv: { PATH: "/usr/bin" },
+				query,
+				breaker: new Breaker(),
+				drainMs: 50,
+				log: (message, data) => logs.push(message, JSON.stringify(data)),
+			}),
+			store,
+			{ userId: "u1", applicationId: null },
+		);
+		const outcome = await metered.generateObject(request()).catch((e) => e);
+		const kept = [
+			String(outcome),
+			JSON.stringify(outcome),
+			...store.rows,
+			...logs,
+		].join("\n");
+		return { outcome, kept, store, logs };
+	}
+
+	const refused: [string, Script, RegExp][] = [
+		[
+			"an unexpected tool",
+			{ initTools: ["StructuredOutput", ID_CANARY] },
+			/\(1 unexpected tool\)/,
+		],
+		[
+			"MCP servers",
+			{
+				initWith: {
+					mcp_servers: [
+						{ name: ID_CANARY, status: "connected" },
+						{ name: `${ID_CANARY}_2`, status: "failed" },
+					],
+				},
+			},
+			/\(2 MCP servers\)/,
+		],
+		[
+			"a skill of the user's",
+			{ initWith: { skills: ["doctor", ID_CANARY] } },
+			/\(1 unexpected skill\)/,
+		],
+		[
+			"a plugin of the user's",
+			{ initWith: { plugins: [{ name: ID_CANARY, path: `/x/${ID_CANARY}` }] } },
+			/\(1 unexpected plugin\)/,
+		],
+		[
+			"an unknown permission mode and another working directory",
+			{ initWith: { permissionMode: ID_CANARY, cwd: `/Users/${ID_CANARY}` } },
+			/permission mode other; a working directory other than the call's own/,
+		],
+	];
+	for (const [name, script, says] of refused)
+		it(`refuses ${name}, naming none of it`, async () => {
+			const { outcome, kept, store, logs } = await run(script);
+			expect(outcome.kind).toBe("boundary");
+			// The session log counts what it does not name.
+			expect(logs).toContain("claude subscription session");
+			expect(String(outcome)).toMatch(says);
+			expect(store.rows.some((r) => /^(settle|refusal|hold) /.test(r))).toBe(
+				true,
+			);
+			expect(kept).not.toMatch(leaks);
+		});
+
+	it("logs an allowed session's plugins, agents and other fields without their names", async () => {
+		const { outcome, kept, logs } = await run({
+			account: {
+				...SUBSCRIBED,
+				subscriptionType: ID_CANARY,
+				tokenSource: ID_CANARY,
+			},
+			initWith: {
+				claude_code_version: ID_CANARY,
+				model: ID_CANARY,
+				apiKeySource: "none",
+				skills: ["doctor"],
+				plugins: [{ name: `cc-plugin-${ID_CANARY}`, path: "/x" }],
+				agents: [ID_CANARY, "general-purpose"],
+			},
+		});
+		expect(outcome).toEqual({ greeting: "hi" });
+		const session = logs[logs.indexOf("claude subscription session") + 1];
+		expect(JSON.parse(session as string)).toMatchObject({
+			claudeCodeVersion: "other",
+			tools: ["StructuredOutput"],
+			otherTools: 0,
+			skills: ["doctor"],
+			otherSkills: 0,
+			plugins: 1,
+			agents: 2,
+			mcpServers: 0,
+			model: "other",
+			apiKeySource: "none",
+			permissionMode: "dontAsk",
+			auth: { subscriptionType: "other", tokenSource: "other" },
+		});
+		expect(kept).not.toMatch(leaks);
+	});
+
+	it("names an API key source or provider only by the protocol's values", async () => {
+		for (const account of [
+			{ ...SUBSCRIBED, apiKeySource: ID_CANARY },
+			{ ...SUBSCRIBED, apiKeySource: "none", apiProvider: ID_CANARY },
+		]) {
+			const { outcome, kept } = await run({ account });
+			expect(outcome.kind).toBe("not_subscription");
+			expect(String(outcome)).toMatch(/\(other\)|set to other/);
+			expect(kept).not.toMatch(leaks);
+		}
 	});
 });

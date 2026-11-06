@@ -16,15 +16,16 @@ import { isAutomated } from "./automation";
 import { recoverInterruptedRestore } from "./backup";
 import { moveDatabaseOnce } from "./database-file";
 import { demoFolder, eraseLeftoverDemo } from "./demo";
+import { openSignInPage } from "./external-links";
 import { registerIpc } from "./ipc";
 import { buildMenu } from "./menu";
 import { noticeActionDeps } from "./notice-action-deps";
 import { runNoticeAction } from "./notice-actions";
 import { showNotice } from "./notices";
 import { CHIRP_SOUND, chirpPlayer, Notifier } from "./notifications";
+import { forgetOldKeys } from "./old-keys";
 import { registerAppScheme } from "./protocol";
 import { shutdownForQuit } from "./quit-shutdown";
-import { SecretStore } from "./secrets";
 import { SiteBrowser } from "./site-browser";
 import { connectSiteTabs } from "./site-wiring";
 import { BACKGROUND, log, mainState, outDir, TEST_MODE } from "./state";
@@ -113,7 +114,6 @@ async function workerInit(): Promise<WorkerInit> {
 		claudeHost: path
 			.join(outDir, "worker", "claude-host.mjs")
 			.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`),
-		secrets: demo ? {} : await mainState.secrets.all(),
 		...(demo ? { demo: true } : {}),
 		test,
 	};
@@ -142,10 +142,12 @@ async function main() {
 		open: (file, readonly) => new Database(file, { readonly }),
 		log,
 	});
-	mainState.secrets = new SecretStore(app.getPath("userData"));
-	// The Brave Search key of earlier versions: job-board search uses DuckDuckGo now.
-	const retired = mainState.secrets.forgetRetired();
-	if (retired.length) log("retired keys removed", { keys: retired });
+	// The API keys of earlier versions: every model runs on the user's own sign-in now.
+	try {
+		if (forgetOldKeys(app.getPath("userData"))) log("old API keys removed");
+	} catch (error) {
+		log("old API keys not removed", { error: String(error) });
+	}
 	mainState.notifier = new Notifier(
 		app.getPath("userData"),
 		(p) => showWindow(p),
@@ -190,6 +192,7 @@ async function main() {
 			mainState.lastStatus = message.status;
 			updateTray();
 		} else if (message.type === "notify") void showNotice(message.notice);
+		else if (message.type === "openSignIn") void openSignInPage(message.url);
 		else if (message.type === "log")
 			log(`worker ${message.level}: ${message.message}`, message.data);
 		else if (message.type === "fatal") {

@@ -21,6 +21,12 @@ import {
 import { toStrictJsonSchema } from "@offerfinch/core/scoring/openai";
 import type { PlanUsageSink } from "@offerfinch/core/scoring/plan-usage";
 import type { z } from "zod";
+import {
+	ERROR_NAMES,
+	knownName,
+	parseAnswer,
+	unreadableAnswer,
+} from "./answer";
 import { Breaker } from "./breaker";
 import { findCliOnPath } from "./cli-path";
 import {
@@ -121,6 +127,153 @@ export const CODEX_EXPECTED_TOOLS: readonly string[] = [
 	"collaboration.spawn_agent",
 	"collaboration.wait_agent",
 ];
+
+/**
+ * Tool names a log or a tool attempt may name: the tested list (whole, and the function's own
+ * name a call carries) and Codex's built-in tools. Any other is "other".
+ */
+const CODEX_TOOL_NAMES: ReadonlySet<string> = new Set([
+	...CODEX_EXPECTED_TOOLS,
+	...CODEX_EXPECTED_TOOLS.map((name) => name.slice(name.indexOf(".") + 1)),
+	"shell",
+	"local_shell",
+	"exec_command",
+	"write_stdin",
+	"apply_patch",
+	"update_plan",
+	"view_image",
+	"web_search",
+	"image_generation",
+	"tool_search",
+]);
+
+/**
+ * The values Codex's app-server protocol defines (`codex app-server generate-ts`, Codex
+ * 0.166.0, `CODEX_TESTED_VERSION`) for the fields an error, a pause or the session log may name. Anything
+ * else is kept as "other": these fields come from Codex's output, and a value that is not the
+ * protocol's (even a bare identifier) may be the provider's answer or the user's text.
+ */
+const CODEX_ERROR_KINDS: ReadonlySet<string> = new Set([
+	"contextWindowExceeded",
+	"sessionBudgetExceeded",
+	"usageLimitExceeded",
+	"rateLimitExceeded",
+	"flexUnavailable",
+	"serverOverloaded",
+	"modelNotFound",
+	"policyCapacityUnavailable",
+	"cyberPolicy",
+	"misalignmentPolicyViolation",
+	"tooManyDenials",
+	"httpConnectionFailed",
+	"responseStreamConnectionFailed",
+	"internalServerError",
+	"unauthorized",
+	"badRequest",
+	"threadRollbackFailed",
+	"sandboxError",
+	"responseStreamDisconnected",
+	"responseTooManyFailedAttempts",
+	"activeTurnNotSteerable",
+	"other",
+	// This side's own kinds (`runSandboxedCodexTurn`): a failed request, a call that timed out.
+	"client",
+	"timeout",
+]);
+/** `ServerRequest`'s methods. */
+const CODEX_SERVER_REQUESTS: ReadonlySet<string> = new Set([
+	"item/commandExecution/requestApproval",
+	"item/fileChange/requestApproval",
+	"item/tool/requestUserInput",
+	"mcpServer/elicitation/request",
+	"item/permissions/requestApproval",
+	"item/tool/call",
+	"account/chatgptAuthTokens/refresh",
+	"attestation/generate",
+	"applyPatchApproval",
+	"execCommandApproval",
+]);
+/** `ServerNotification`'s methods a turn's thread can send (realtime, fs and app-wide ones are "other"). */
+const CODEX_THREAD_EVENTS: ReadonlySet<string> = new Set([
+	"error",
+	"thread/started",
+	"thread/status/changed",
+	"thread/name/updated",
+	"thread/tokenUsage/updated",
+	"thread/compacted",
+	"turn/started",
+	"turn/completed",
+	"turn/diff/updated",
+	"turn/plan/updated",
+	"turn/moderationMetadata",
+	"item/started",
+	"item/completed",
+	"rawResponseItem/completed",
+	"rawResponse/completed",
+	"item/agentMessage/delta",
+	"item/plan/delta",
+	"item/reasoning/summaryTextDelta",
+	"item/reasoning/summaryPartAdded",
+	"item/reasoning/textDelta",
+	"item/commandExecution/outputDelta",
+	"item/fileChange/outputDelta",
+	"item/mcpToolCall/progress",
+	"hook/started",
+	"hook/completed",
+	"serverRequest/resolved",
+	"model/rerouted",
+	"warning",
+]);
+/** `ThreadItem`'s types. */
+const CODEX_ITEM_TYPES: ReadonlySet<string> = new Set([
+	"agentMessage",
+	"collabAgentToolCall",
+	"commandExecution",
+	"contextCompaction",
+	"dynamicToolCall",
+	"enteredReviewMode",
+	"exitedReviewMode",
+	"fileChange",
+	"functionCallOutput",
+	"hookPrompt",
+	"imageGeneration",
+	"imageView",
+	"mcpToolCall",
+	"plan",
+	"reasoning",
+	"sleep",
+	"subAgentActivity",
+	"userMessage",
+	"webSearch",
+]);
+/** `ResponseItem`'s types. */
+const CODEX_RAW_TYPES: ReadonlySet<string> = new Set([
+	"additional_tools",
+	"agent_message",
+	"compaction",
+	"compaction_trigger",
+	"configuration_update",
+	"context_compaction",
+	"custom_tool_call",
+	"custom_tool_call_output",
+	"function_call",
+	"function_call_output",
+	"image_generation_call",
+	"local_shell_call",
+	"message",
+	"other",
+	"reasoning",
+	"tool_search_call",
+	"tool_search_output",
+	"web_search_call",
+]);
+/** `TurnStatus`. */
+const CODEX_TURN_STATUSES: ReadonlySet<string> = new Set([
+	"completed",
+	"interrupted",
+	"failed",
+	"inProgress",
+]);
 
 /** Raw response items a pure model call produces; anything else is a tool attempt. */
 const SAFE_RAW_ITEMS = new Set(["message", "reasoning", "additional_tools"]);
@@ -569,6 +722,7 @@ export interface CodexTurnResult {
 	rateLimitsBefore: CodexRateLimits | null;
 	rateLimitsAfter: CodexRateLimits | null;
 	/** A turn error Codex reported, with its classification. */
+	/** `message` is fixed words with bounded facts (kind, HTTP status, RPC code), never Codex's text. */
 	turnError: { message: string; info: unknown } | null;
 	status: string | null;
 	sent: boolean;
@@ -578,8 +732,71 @@ export interface CodexTurnResult {
 	removedEnv: string[];
 }
 
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+/**
+ * Codex's error, as it may be kept: its kind (`codexErrorInfo`'s tag, such as
+ * `usageLimitExceeded`) and HTTP status. Never its message, which can quote the provider's answer.
+ */
+function codexErrorFacts(info: unknown): string {
+	const tag =
+		typeof info === "string"
+			? info
+			: info && typeof info === "object"
+				? Object.keys(info)[0]
+				: undefined;
+	const detail =
+		tag && info && typeof info === "object"
+			? (info as Record<string, unknown>)[tag]
+			: undefined;
+	const status =
+		detail && typeof detail === "object"
+			? (detail as { httpStatusCode?: unknown }).httpStatusCode
+			: undefined;
+	return [
+		tag ? knownName(tag, CODEX_ERROR_KINDS) : "no kind",
+		typeof status === "number" ? `HTTP ${status}` : null,
+	]
+		.filter(Boolean)
+		.join(", ");
+}
+
+/** The system error codes a failed request to the app-server may be kept by. */
+const SYSTEM_ERROR_CODES: ReadonlySet<string> = new Set([
+	"ECONNRESET",
+	"EPIPE",
+	"ENOENT",
+	"EACCES",
+	"EPERM",
+	"ETIMEDOUT",
+	"EAGAIN",
+	"ENOMEM",
+	"ERR_STREAM_DESTROYED",
+	"ERR_STREAM_WRITE_AFTER_END",
+]);
+
+/** This side's own messages for a server that ended (codex-rpc.ts, `runSandboxedCodexTurn`). */
+const SERVER_ENDED =
+	/^codex app-server (exited \((-?\d+|SIG[A-Z0-9]{2,8}|\?)\)|did not start \(it ended before answering; \d+ characters on stderr, not kept\))$/;
+
+/**
+ * A request to the app-server that failed, as it may be kept: a JSON-RPC error by its code (its
+ * message can quote the provider), the server exiting, or the error's name and system code.
+ */
+function clientFailure(error: unknown): string {
+	const code = (error as { code?: unknown } | null)?.code;
+	if (typeof code === "number" && Number.isInteger(code))
+		return `the app-server answered error ${code}`;
+	if (
+		error instanceof Error &&
+		// A JSON-RPC error always carries `code` (codex-rpc.ts), even one the server left out.
+		!("code" in error) &&
+		SERVER_ENDED.test(error.message)
+	)
+		return error.message;
+	const name = knownName(
+		error instanceof Error ? error.name : null,
+		ERROR_NAMES,
+	);
+	return `the app-server request failed (${name}${code === undefined ? "" : ` ${knownName(code, SYSTEM_ERROR_CODES)}`})`;
 }
 
 function emptyTurnResult(removedEnv: string[]): CodexTurnResult {
@@ -728,8 +945,9 @@ async function runSandboxedCodexTurn(
 				},
 			};
 		}
-		if (layers.approvalAndAbort) abort(`server request ${method}`);
-		else result.toolAttempt ??= `server request ${method}`;
+		const request = `server request ${knownName(method, CODEX_SERVER_REQUESTS)}`;
+		if (layers.approvalAndAbort) abort(request);
+		else result.toolAttempt ??= request;
 		if (/requestApproval$/.test(method))
 			return { result: { decision: "decline" } };
 		if (method === "execCommandApproval" || method === "applyPatchApproval")
@@ -748,27 +966,27 @@ async function runSandboxedCodexTurn(
 		if (method === "rawResponseItem/completed") {
 			const item = params.item ?? {};
 			const type = String(item.type ?? "?");
-			result.rawTypes.push(type);
+			result.rawTypes.push(knownName(type, CODEX_RAW_TYPES));
 			if (type === "additional_tools") {
 				const names: string[] = (item.tools ?? []).flatMap(
 					(ns: { name?: string; tools?: { name?: string }[] }) =>
 						(ns.tools ?? []).map((t) => `${ns.name}.${t.name}`),
 				);
-				result.toolNames = names;
+				result.toolNames = names.map((n) => knownName(n, CODEX_TOOL_NAMES));
 				const unexpected = names.filter(
 					(n) => !CODEX_EXPECTED_TOOLS.includes(n),
 				);
 				if (layers.lockdown && unexpected.length)
+					// How many only: a name outside the tested list is not a known value.
 					failBoundary(
-						`Codex offered tools outside the tested list: ${unexpected.join(", ")}`,
+						`Codex offered ${unexpected.length} ${unexpected.length === 1 ? "tool" : "tools"} outside the tested list`,
 					);
 			} else if (!SAFE_RAW_ITEMS.has(type) || fromOtherThread) {
+				// The item's type and the tool name the model chose, as names only.
+				const what = `raw ${knownName(type, CODEX_RAW_TYPES)}${item.name ? ` ${knownName(item.name, CODEX_TOOL_NAMES)}` : ""}`;
 				if (layers.approvalAndAbort)
-					abort(
-						`raw ${type}${item.name ? ` ${item.name}` : ""}${fromOtherThread ? " (another thread)" : ""}`,
-					);
-				else
-					result.toolAttempt ??= `raw ${type}${item.name ? ` ${item.name}` : ""}`;
+					abort(`${what}${fromOtherThread ? " (another thread)" : ""}`);
+				else result.toolAttempt ??= what;
 			}
 			return;
 		}
@@ -776,8 +994,9 @@ async function runSandboxedCodexTurn(
 			const item = params.item ?? {};
 			const type = String(item.type ?? "?");
 			if (!SAFE_ITEMS.has(type) || fromOtherThread) {
-				if (layers.approvalAndAbort) abort(`item ${type}`);
-				else result.toolAttempt ??= `item ${type}`;
+				const what = `item ${knownName(type, CODEX_ITEM_TYPES)}`;
+				if (layers.approvalAndAbort) abort(what);
+				else result.toolAttempt ??= what;
 				return;
 			}
 			if (method === "item/completed" && type === "agentMessage")
@@ -786,7 +1005,9 @@ async function runSandboxedCodexTurn(
 		}
 		if (fromOtherThread) {
 			if (layers.approvalAndAbort)
-				abort(`event from another thread (${method})`);
+				abort(
+					`event from another thread (${knownName(method, CODEX_THREAD_EVENTS)})`,
+				);
 			return;
 		}
 		if (method === "thread/tokenUsage/updated") {
@@ -808,21 +1029,21 @@ async function runSandboxedCodexTurn(
 			// prompt nobody reserved: stop the turn before more go out.
 			if (params.willRetry) {
 				failBoundary(
-					`Codex retried a request inside the turn (${String(params.error?.message ?? "error").slice(0, 100)}), although its retries are off`,
+					`Codex retried a request inside the turn (${codexErrorFacts(params.error?.codexErrorInfo)}), although its retries are off`,
 				);
 				return;
 			}
 			result.turnError = {
-				message: String(params.error?.message ?? "Codex error"),
+				message: `Codex reported an error (${codexErrorFacts(params.error?.codexErrorInfo)})`,
 				info: params.error?.codexErrorInfo ?? null,
 			};
 			return;
 		}
 		if (method === "turn/completed") {
-			result.status = String(params.turn?.status ?? "?");
+			result.status = knownName(params.turn?.status, CODEX_TURN_STATUSES);
 			if (params.turn?.error && !result.turnError)
 				result.turnError = {
-					message: String(params.turn.error.message ?? "turn failed"),
+					message: `the turn failed (${codexErrorFacts(params.turn.error.codexErrorInfo)})`,
 					info: params.turn.error.codexErrorInfo ?? null,
 				};
 			finished();
@@ -859,8 +1080,9 @@ async function runSandboxedCodexTurn(
 			done.then(() => null),
 		]);
 		if (!init)
+			// Its stderr is not kept: it can quote a config file or a provider's answer.
 			throw new Error(
-				`codex app-server did not start: ${server.stderrTail().slice(-300)}`,
+				`codex app-server did not start (it ended before answering; ${server.stderrTail().length} characters on stderr, not kept)`,
 			);
 		result.codexVersion =
 			/(\d+\.\d+\.\d+)/.exec(init.userAgent ?? "")?.[1] ?? null;
@@ -942,7 +1164,7 @@ async function runSandboxedCodexTurn(
 		}
 	} catch (error) {
 		if (!result.toolAttempt && !result.boundary && !result.turnError)
-			result.turnError = { message: errorMessage(error), info: "client" };
+			result.turnError = { message: clientFailure(error), info: "client" };
 	} finally {
 		clearTimeout(timer);
 		await server?.close(2000);
@@ -1251,8 +1473,9 @@ export class CodexSubscriptionProvider implements LlmProvider {
 					"logged_out",
 					`ChatGPT refused Codex's login. ${LOGIN_HOWTO}`,
 				);
+			// Fixed words and Codex's error kind only: never a message (see `codexErrorFacts`).
 			throw new Error(
-				`${this.name}: ${request.task} failed: ${result.turnError.message.slice(0, 300)}`,
+				`${this.name}: ${request.task} failed (${codexErrorFacts(result.turnError.info)}); the error's text is not kept`,
 			);
 		}
 		if (result.status !== "completed" || result.text === null)
@@ -1263,11 +1486,9 @@ export class CodexSubscriptionProvider implements LlmProvider {
 		try {
 			parsed = JSON.parse(result.text);
 		} catch {
-			throw new Error(
-				`${this.name}: no valid structured output for ${request.task}: ${result.text.slice(0, 300)}`,
-			);
+			throw unreadableAnswer(this.name, request.task, result.text);
 		}
-		return request.schema.parse(parsed);
+		return parseAnswer(request.schema, parsed, this.name, request.task);
 	}
 }
 

@@ -193,10 +193,10 @@ test("diagnostics: reviewed, redacted and saved; What's new: once per version", 
 			const settings = JSON.parse(
 				bundle.find((f) => f.name.endsWith("settings.json"))?.text ?? "{}",
 			);
-			expect(settings.models.map((m: { kind: string }) => m.kind)).toEqual([
-				"fake",
-				"fake",
-				"fake",
+			expect(settings.models.map((m: { model: string }) => m.model)).toEqual([
+				"fake:test",
+				"fake:test",
+				"fake:test",
 			]);
 
 			// Settings › General opens it too; Cancel leaves nothing behind.

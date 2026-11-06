@@ -2,6 +2,17 @@ import type { Database } from "@offerfinch/db";
 import { appSettings } from "@offerfinch/db/schema/jobs";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import {
+	CLAUDE_DEFAULTS,
+	EFFORTS,
+	FAKE_MODEL_REF,
+	formatModelRef,
+	isEffort,
+	isModelRef,
+	type ModelRef,
+	ROLES,
+	type Role,
+} from "../shared/providers";
 import { STORED_STEPS, type StoredStep } from "../shared/setup-steps";
 
 /** The one local user every row belongs to (PLAN rule 6 keeps user_id columns). */
@@ -9,22 +20,16 @@ export const LOCAL_USER_ID = "local";
 export const LOCAL_USER_EMAIL = "local@localhost.invalid";
 
 /**
- * How a model role is paid for. `api`: the vendor's API key (Anthropic for scoring and
- * tailoring, OpenAI for the claims check). Subscriptions are placeholders until the T3 provider
- * research lands (docs/t3-provider-research.md); they cannot be chosen yet. `fake`: the
- * deterministic test models, offered only in test runs.
+ * A step's model: a model reference (`shared/providers.ts`), or null while the user has not
+ * chosen one (the step pauses until they do). Effort is the model's level, when it has levels.
  */
-const ROLE_MODES = [
-	"api",
-	"claude-subscription",
-	"codex-subscription",
-	"fake",
-] as const;
-
 const roleSchema = z.object({
-	mode: z.enum(ROLE_MODES),
-	model: z.string().trim().max(100).optional(),
-	effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
+	model: z
+		.string()
+		.refine(isModelRef, "Not a model reference (<provider>:<model>)")
+		.transform((ref) => ref as ModelRef)
+		.nullable(),
+	effort: z.enum(EFFORTS).optional(),
 });
 
 export const aiSettingsSchema = z.object({
@@ -35,10 +40,66 @@ export const aiSettingsSchema = z.object({
 export type AiSettings = z.infer<typeof aiSettingsSchema>;
 
 export const DEFAULT_AI: AiSettings = {
-	scoring: { mode: "api" },
-	tailoring: { mode: "api" },
-	claims: { mode: "api" },
+	scoring: { model: null },
+	tailoring: { model: null },
+	claims: { model: null },
 };
+
+/**
+ * One step's choice as earlier versions stored it (`{ mode, model?, effort? }`), in the new
+ * shape: a plan becomes its provider's reference (a model stored for the other company, which
+ * those versions never sent, gives way to the default), an API key becomes no choice (keys are
+ * gone; the step asks for a model), the test models stay the test models. Anything else is left
+ * for the schema to judge.
+ */
+function migrateRole(role: Role, value: unknown): unknown {
+	if (!value || typeof value !== "object" || !("mode" in value)) return value;
+	const old = value as { mode?: unknown; model?: unknown; effort?: unknown };
+	const model = typeof old.model === "string" ? old.model.trim() : "";
+	const effort = isEffort(old.effort) ? { effort: old.effort } : {};
+	const claude = model.startsWith("claude");
+	switch (old.mode) {
+		case "claude-subscription":
+			return {
+				model: formatModelRef(
+					"claude",
+					claude && isModelRef(`claude:${model}`)
+						? model
+						: CLAUDE_DEFAULTS[role],
+				),
+				...effort,
+			};
+		case "codex-subscription":
+			return {
+				model: formatModelRef(
+					"codex",
+					!claude && isModelRef(`codex:${model}`) ? model : "",
+				),
+				...effort,
+			};
+		case "fake":
+			return { model: FAKE_MODEL_REF };
+		case "api":
+			return { model: null };
+		default:
+			return value;
+	}
+}
+
+/** The stored `ai` setting, older shapes read as the new one, each step on its own. */
+function migrateAi(value: unknown): unknown {
+	if (!value || typeof value !== "object") return value;
+	const stored = value as Record<string, unknown>;
+	const out: Record<string, unknown> = { ...stored };
+	for (const role of ROLES) {
+		const read = roleSchema.safeParse(migrateRole(role, stored[role]));
+		// A step that does not read is unset; the other steps keep their choices.
+		out[role] = read.success ? read.data : DEFAULT_AI[role];
+	}
+	return out;
+}
+
+const storedAiSchema = z.preprocess(migrateAi, aiSettingsSchema);
 
 export const notificationSettingsSchema = z.object({
 	match: z.boolean(),
@@ -80,7 +141,13 @@ const DEFAULT_ONBOARDING: Onboarding = {
 };
 
 const KEYS = {
-	ai: { key: "ai", schema: aiSettingsSchema, fallback: DEFAULT_AI },
+	/** Read: earlier shapes moved to today's. Written: today's shape only. */
+	ai: {
+		key: "ai",
+		schema: storedAiSchema,
+		write: aiSettingsSchema,
+		fallback: DEFAULT_AI,
+	},
 	notifications: {
 		key: "notifications",
 		schema: notificationSettingsSchema,
@@ -155,6 +222,20 @@ const KEYS = {
 		schema: z.string().max(40),
 		fallback: "",
 	},
+	/**
+	 * API keys were removed (docs/model-providers.md): the steps an earlier version ran on a key,
+	 * for Settings › Models' one-time notice, until the user dismisses it. Null: nothing to say.
+	 */
+	keysRemoved: {
+		key: "keysRemoved",
+		schema: z
+			.object({
+				steps: z.array(z.enum(ROLES as [Role, ...Role[]])),
+				dismissed: z.boolean(),
+			})
+			.nullable(),
+		fallback: null as { steps: Role[]; dismissed: boolean } | null,
+	},
 	/** Notification watermark: transitions after this time have not been announced. */
 	noticeWatermark: {
 		key: "noticeWatermark",
@@ -181,12 +262,21 @@ export class SettingsStore {
 		>;
 	}
 
+	/** A setting's row as stored, before any move to today's shape; undefined when unset. */
+	async raw(name: keyof Keys): Promise<unknown> {
+		const [row] = await this.db
+			.select({ value: appSettings.value })
+			.from(appSettings)
+			.where(eq(appSettings.key, KEYS[name].key));
+		return row?.value;
+	}
+
 	async set<K extends keyof Keys>(
 		name: K,
 		value: z.infer<Keys[K]["schema"]>,
 	): Promise<void> {
 		const spec = KEYS[name];
-		const parsed = spec.schema.parse(value);
+		const parsed = ("write" in spec ? spec.write : spec.schema).parse(value);
 		// Null means unset (every nullable setting falls back to null): the row goes, since the
 		// column holds no NULL. Writing null failed the worker's start on databases that had one.
 		if (parsed === null) {

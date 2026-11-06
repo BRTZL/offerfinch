@@ -26,13 +26,12 @@ import {
 	tailorApplication,
 } from "@offerfinch/core/tailor/tailor";
 import {
-	CLAUDE_SUBSCRIPTION,
 	ClaudeSubscriptionProvider,
-	CODEX_SUBSCRIPTION,
 	CodexSubscriptionProvider,
 	claudeLogin,
 } from "@offerfinch/local-llm";
 import { it } from "vitest";
+import { CLAUDE_DEFAULTS, formatModelRef } from "../src/shared/providers";
 import {
 	createClaimsLlm,
 	createLlm,
@@ -134,14 +133,14 @@ class Recorder implements LlmProvider {
 
 /** The desktop's subscription factory (`worker/subscriptions.ts`) without Electron. */
 const local: LocalLlmFactory = ({ provider, model, effort, ownerUserId }) => {
-	if (provider === CLAUDE_SUBSCRIPTION)
+	if (provider === "claude")
 		return new ClaudeSubscriptionProvider({
 			model,
 			effort,
 			ownerUserId,
 			parentEnv: process.env,
 		});
-	if (provider === CODEX_SUBSCRIPTION) {
+	if (provider === "codex") {
 		const binary = fs.realpathSync(
 			execFileSync("/usr/bin/which", ["codex"], { encoding: "utf8" }).trim(),
 		);
@@ -159,14 +158,15 @@ const local: LocalLlmFactory = ({ provider, model, effort, ownerUserId }) => {
 /** Settings › Models with Claude for scoring and tailoring and Codex for the check, defaults otherwise. */
 function models() {
 	const env: ModelConfig = {
-		scoringProvider: "claude-subscription",
-		tailoringProvider: "claude-subscription",
-		claimsProvider: "codex-subscription",
+		scoring: { model: formatModelRef("claude", CLAUDE_DEFAULTS.scoring) },
+		tailoring: { model: formatModelRef("claude", CLAUDE_DEFAULTS.tailoring) },
+		// The account's default Codex model.
+		claims: { model: formatModelRef("codex", "") },
 		ownerUserId: OWNER,
 	};
 	const llm = createLlm(env, { local });
 	const tailor = createTailorLlm(env, llm, { local });
-	const claims = createClaimsLlm(env, { tailoring: tailor, local });
+	const claims = createClaimsLlm(env, { local });
 	return { tailor, claims };
 }
 

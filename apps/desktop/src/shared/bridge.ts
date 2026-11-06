@@ -24,15 +24,6 @@ export interface LoginItemState {
 		| "unknown";
 }
 
-/** Every key the app keeps in the Keychain; main, the bridge and the store all check against it. */
-export const SECRET_NAMES = ["anthropic", "openai"] as const;
-/** Keys earlier versions stored and nothing reads any more (Brave Search): removed at start. */
-export const RETIRED_SECRETS = ["brave"] as const;
-export type SecretName = (typeof SECRET_NAMES)[number];
-export const isSecretName = (name: unknown): name is SecretName =>
-	typeof name === "string" &&
-	(SECRET_NAMES as readonly string[]).includes(name);
-
 /**
  * Items a right-click menu may show (a fixed set, checked in main). There is no approve item:
  * an accidental click must not approve.
@@ -277,20 +268,6 @@ export interface DesktopBridge {
 	};
 	/** The version running and the release notes bundled with it (What's new). */
 	releaseNotes(): Promise<ReleaseNotesSource>;
-	secrets: {
-		/** Encrypted with macOS Keychain (safeStorage) and given to the worker in memory only. */
-		set(name: SecretName, value: string): Promise<void>;
-		remove(name: SecretName): Promise<void>;
-		/** Which keys are stored; never the values. */
-		status(): Promise<Record<SecretName, boolean>>;
-		/** False when Keychain encryption is unavailable (keys are then refused, never stored plain). */
-		available(): Promise<boolean>;
-		/**
-		 * Keys stored but no longer readable: encrypted under another Keychain item (a
-		 * differently signed build's). They must be entered again.
-		 */
-		unreadable(): Promise<SecretName[]>;
-	};
 	/** Opens System Settings › General › Login Items. */
 	openLoginItems(): Promise<void>;
 	loginItem: {
@@ -383,11 +360,6 @@ export const IPC = {
 	diagnosticsSave: "diagnostics:save",
 	diagnosticsDiscard: "diagnostics:discard",
 	releaseNotes: "app:release-notes",
-	secretSet: "secrets:set",
-	secretRemove: "secrets:remove",
-	secretStatus: "secrets:status",
-	secretAvailable: "secrets:available",
-	secretUnreadable: "secrets:unreadable",
 	openLoginItems: "app:open-login-items",
 	loginGet: "login:get",
 	loginSet: "login:set",

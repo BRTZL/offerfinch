@@ -117,8 +117,12 @@ export interface CostEstimate {
 	basis: string;
 }
 
-export function estimateCost(usage: LlmUsage): CostEstimate {
-	const known = priceOf(usage.model);
+/**
+ * The call's cost at its model's price. `own`: the provider's own price for a model the table
+ * does not have (OpenCode's sources); it wins over the table.
+ */
+export function estimateCost(usage: LlmUsage, own?: ModelPrice): CostEstimate {
+	const known = own ?? priceOf(usage.model);
 	const totalInput =
 		usage.inputTokens + usage.cachedInputTokens + usage.cacheWriteTokens;
 	const outOfRange =
@@ -189,9 +193,16 @@ export function worstCaseMicros(
 	model: string,
 	inputTokens: number,
 	maxTokens: number,
+	/** The provider's own price, when the model is not in the table: reserved at least at it. */
+	own?: ModelPrice,
 ): number {
 	const known = priceOf(model);
-	if (known && known.input === 0 && known.output === 0) return 0;
+	if (!own && known && known.input === 0 && known.output === 0) return 0;
 	const rates = highestRates();
-	return Math.ceil(inputTokens * rates.input + maxTokens * rates.output);
+	const table = inputTokens * rates.input + maxTokens * rates.output;
+	const ownRate = own
+		? inputTokens * Math.max(own.input, own.cachedInput) * CACHE_WRITE_FACTOR +
+			maxTokens * own.output
+		: 0;
+	return Math.ceil(Math.max(table, ownRate));
 }

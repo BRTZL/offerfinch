@@ -31,7 +31,7 @@ test("shows each plan's windows and attributes the app's own calls", async () =>
 	try {
 		// Setup's Connect AI finds both CLIs (stand-ins) and gives every role to them.
 		await page.getByTestId("welcome-start").click({ timeout: 30_000 });
-		await expect(page.getByTestId("setup-ai-summary")).toHaveAttribute(
+		await expect(page.getByTestId("setup-ai")).toHaveAttribute(
 			"data-all-set",
 			"true",
 			{ timeout: 30_000 },

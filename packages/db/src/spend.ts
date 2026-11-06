@@ -24,26 +24,43 @@ export const MAX_SPENDING_CAP_MICROS = 2_000_000_000;
 
 type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
-export type SubscriptionVendor = "anthropic" | "openai";
+/** A plan's vendor: Claude, Codex, Gemini (Antigravity), or one OpenCode source (`opencode:opencode-go`). */
+export type SubscriptionVendor =
+	| "anthropic"
+	| "openai"
+	| "google"
+	| `opencode:${string}`;
+
+const isOpenCode = (vendor: string): vendor is `opencode:${string}` =>
+	vendor.startsWith("opencode:") && vendor.length > "opencode:".length;
 
 /** The subscription providers' name prefixes, per vendor. */
-export const SUBSCRIPTION_PREFIX: Record<SubscriptionVendor, string> = {
-	anthropic: "claude-subscription:",
-	openai: "codex-subscription:",
-};
+export function subscriptionPrefix(vendor: SubscriptionVendor): string {
+	if (vendor === "anthropic") return "claude-subscription:";
+	if (vendor === "openai") return "codex-subscription:";
+	if (vendor === "google") return "antigravity:";
+	return `${vendor}/`;
+}
 
-export const VENDOR_LABEL: Record<SubscriptionVendor, string> = {
-	anthropic: "Claude",
-	openai: "Codex",
-};
+export function vendorLabel(vendor: SubscriptionVendor): string {
+	if (vendor === "anthropic") return "Claude";
+	if (vendor === "openai") return "Codex";
+	if (vendor === "google") return "Gemini";
+	return `OpenCode (${vendor.slice("opencode:".length)})`;
+}
 
-/** The vendor of a subscription provider (`claude-subscription:…`, `codex-subscription:…`). */
+/**
+ * The vendor of a subscription provider (`claude-subscription:…`, `codex-subscription:…`,
+ * `antigravity:<model>`, `opencode:<source>/<model>`).
+ */
 export function subscriptionVendor(
 	provider: string,
 ): SubscriptionVendor | null {
-	for (const [vendor, prefix] of Object.entries(SUBSCRIPTION_PREFIX))
-		if (provider.startsWith(prefix)) return vendor as SubscriptionVendor;
-	return null;
+	if (provider.startsWith("claude-subscription:")) return "anthropic";
+	if (provider.startsWith("codex-subscription:")) return "openai";
+	if (/^antigravity(-subscription)?:/.test(provider)) return "google";
+	const opencode = /^opencode:([^/]+)\//.exec(provider);
+	return opencode ? `opencode:${opencode[1]}` : null;
 }
 
 /** The first instant of the current calendar month, UTC. */
@@ -160,7 +177,7 @@ export class DrizzleSpendStore implements SpendStore {
 				and(
 					eq(llmUsage.userId, userId),
 					gte(llmUsage.createdAt, since),
-					sql`${llmUsage.provider} like ${`${SUBSCRIPTION_PREFIX[vendor]}%`}`,
+					sql`${llmUsage.provider} like ${`${subscriptionPrefix(vendor)}%`}`,
 				),
 			);
 		return {
@@ -322,7 +339,17 @@ export class DrizzleSpendStore implements SpendStore {
 			.where(eq(subscriptionPauses.userId, userId));
 		const at = (vendor: SubscriptionVendor) =>
 			pauses.find((p) => p.vendor === vendor)?.pausedAt ?? null;
-		return { anthropic: at("anthropic"), openai: at("openai") };
+		const opencode = Object.fromEntries(
+			pauses
+				.filter((p) => isOpenCode(p.vendor))
+				.map((p) => [p.vendor, p.pausedAt]),
+		);
+		return {
+			...opencode,
+			anthropic: at("anthropic"),
+			openai: at("openai"),
+			google: at("google"),
+		};
 	}
 
 	/**
@@ -366,14 +393,16 @@ export class DrizzleSpendStore implements SpendStore {
 	 * confirmation, are never touched.
 	 */
 	async recordPaidStop(userId: string, vendor: string): Promise<void> {
-		const v: SubscriptionVendor = vendor === "openai" ? "openai" : "anthropic";
+		// Kept as the vendor it is: mapping an unknown vendor onto Claude would stop Claude and
+		// withdraw its extra-usage confirmation for another company's paid call.
+		const v = vendor as SubscriptionVendor;
 		await this.db
 			.insert(subscriptionPauses)
 			.values({
 				userId,
 				vendor: v,
 				pausedAt: this.now(),
-				reason: PAID_STOP_REASON[v],
+				reason: paidStopReason(v),
 			})
 			.onConflictDoNothing();
 		if (v !== "anthropic") return;
@@ -457,14 +486,17 @@ export class DrizzleSpendStore implements SpendStore {
 	}
 }
 
-const PAID_STOP_REASON: Record<SubscriptionVendor, string> = {
-	anthropic: "a call used paid extra usage",
-	openai: "a call used paid ChatGPT credits",
-};
+function paidWhat(vendor: SubscriptionVendor): string {
+	if (vendor === "anthropic") return "paid extra usage";
+	if (vendor === "openai") return "paid ChatGPT credits";
+	return "its paid balance";
+}
+
+function paidStopReason(vendor: SubscriptionVendor): string {
+	return `a call used ${paidWhat(vendor)}`;
+}
 
 /** What a paid stop says, wherever it shows: "Claude used paid extra usage on <date>. …" */
 export function paidStopText(vendor: SubscriptionVendor, at: Date): string {
-	const what =
-		vendor === "anthropic" ? "paid extra usage" : "paid ChatGPT credits";
-	return `${VENDOR_LABEL[vendor]} used ${what} on ${at.toISOString().slice(0, 10)}. Calls are stopped. Resume ${VENDOR_LABEL[vendor]} in Settings > Models.`;
+	return `${vendorLabel(vendor)} used ${paidWhat(vendor)} on ${at.toISOString().slice(0, 10)}. Calls are stopped. Resume ${vendorLabel(vendor)} in Settings > Models.`;
 }

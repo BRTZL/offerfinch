@@ -29,3 +29,112 @@ describe("app settings", () => {
 		expect(await settings.get("movedSearches")).toBeNull();
 	});
 });
+
+describe("model settings of earlier versions", () => {
+	/** Writes `ai` as an earlier version stored it, around the schema. */
+	async function storedAi(value: unknown) {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "offerfinch-settings-"));
+		const db: Database = openSqlite(path.join(dir, "test.sqlite"));
+		await migrate(db);
+		db.$client
+			.prepare(
+				"insert into app_settings (key, value, updated_at) values ('ai', ?, ?)",
+			)
+			.run(JSON.stringify(value), Date.now());
+		return new SettingsStore(db).get("ai");
+	}
+
+	it("reads each plan as its provider's model, keys as no model, the test models as themselves", async () => {
+		expect(
+			await storedAi({
+				scoring: { mode: "claude-subscription", effort: "high" },
+				tailoring: { mode: "claude-subscription" },
+				claims: { mode: "claude-subscription", model: "claude-haiku-5-5" },
+			}),
+		).toEqual({
+			// No model stored: the step's default then and now.
+			scoring: { model: "claude:claude-opus-5-5", effort: "high" },
+			tailoring: { model: "claude:claude-sonnet-5-5" },
+			claims: { model: "claude:claude-haiku-5-5" },
+		});
+		expect(
+			await storedAi({
+				scoring: { mode: "codex-subscription" },
+				tailoring: { mode: "codex-subscription", model: "gpt-6.1-sol" },
+				claims: { mode: "codex-subscription", effort: "low" },
+			}),
+		).toEqual({
+			// No model: the account's default Codex model.
+			scoring: { model: "codex:" },
+			tailoring: { model: "codex:gpt-6.1-sol" },
+			claims: { model: "codex:", effort: "low" },
+		});
+		expect(
+			await storedAi({
+				scoring: { mode: "api", model: "claude-opus-5" },
+				tailoring: { mode: "api", effort: "max" },
+				claims: { mode: "fake" },
+			}),
+		).toEqual({
+			scoring: { model: null },
+			tailoring: { model: null },
+			claims: { model: "fake:test" },
+		});
+	});
+
+	it("never sends one company's stored model to the other's plan", async () => {
+		expect(
+			await storedAi({
+				scoring: { mode: "claude-subscription", model: "gpt-6.1-terra" },
+				tailoring: { mode: "codex-subscription", model: "claude-opus-5-5" },
+				claims: { mode: "codex-subscription", model: " gpt-6.1-terra " },
+			}),
+		).toEqual({
+			scoring: { model: "claude:claude-opus-5-5" },
+			tailoring: { model: "codex:" },
+			claims: { model: "codex:gpt-6.1-terra" },
+		});
+	});
+
+	it("keeps the steps that read when one does not, and the new shape as it is", async () => {
+		expect(
+			await storedAi({
+				scoring: { mode: "claude-subscription" },
+				tailoring: { mode: "someday" },
+				claims: { model: "codex:gpt-6.1-sol", effort: "xhigh" },
+			}),
+		).toEqual({
+			scoring: { model: "claude:claude-opus-5-5" },
+			tailoring: { model: null },
+			claims: { model: "codex:gpt-6.1-sol", effort: "xhigh" },
+		});
+		expect(await storedAi("nonsense")).toEqual({
+			scoring: { model: null },
+			tailoring: { model: null },
+			claims: { model: null },
+		});
+	});
+
+	it("reads what it writes, and refuses a reference that is not one", async () => {
+		const settings = await store();
+		const ai = {
+			scoring: {
+				model: "claude:claude-opus-5-5" as const,
+				effort: "low" as const,
+			},
+			tailoring: { model: "codex:" as const },
+			claims: { model: null },
+		};
+		await settings.set("ai", ai);
+		expect(await settings.get("ai")).toEqual(ai);
+		await expect(
+			settings.set("ai", { ...ai, claims: { model: "gpt-6:x" as never } }),
+		).rejects.toThrow(/model reference/);
+		await expect(
+			settings.set("ai", {
+				...ai,
+				claims: { model: "opencode:no-source" as never },
+			}),
+		).rejects.toThrow(/model reference/);
+	});
+});

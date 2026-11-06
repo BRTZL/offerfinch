@@ -271,9 +271,11 @@ export default function OnboardingPage() {
 				busy: saving,
 				testId: "step-continue",
 			});
-	// The resume step can be skipped once there is a profile; the first search never.
+	// The resume step can be skipped once there is a profile; Connect AI (it needs a model) and
+	// the first search never.
 	const canSkip =
 		!showWelcome &&
+		step !== "ai" &&
 		step !== "scan" &&
 		(step !== "profile" || state.data.hasProfile);
 

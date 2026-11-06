@@ -1,6 +1,7 @@
 import type { z } from "zod";
 
 import { redactContact } from "../profile/types";
+import type { ModelPrice } from "./pricing";
 
 export interface GenerateObjectRequest<T> {
 	system: string;
@@ -30,6 +31,12 @@ export interface GenerateObjectRequest<T> {
 	 */
 	onModelCall?: () => void;
 }
+
+/**
+ * The output limit of a request without `maxTokens`: what the spending cap reserves for, and what
+ * a provider that can bill per token must hold the answer to.
+ */
+export const DEFAULT_MAX_OUTPUT_TOKENS = 16_000;
 
 /** Tokens one call used, as the provider reported them. */
 export interface LlmUsage {
@@ -87,10 +94,20 @@ export interface LlmProvider {
 	readonly name: string;
 	/** Unset means `api`. */
 	readonly billing?: LlmBilling;
-	/** The vendor behind the model, for keeping the claims check on another vendor. Unset: the name's prefix. */
+	/** The vendor behind the model (plan pauses and usage are kept per vendor). Unset: the name's prefix. */
 	readonly vendor?: string;
 	/** Subscription providers: the one user whose plan this is; calls for anyone else are refused. */
 	readonly ownerUserId?: string;
+	/**
+	 * Pay-per-use providers whose models are not in the price table (OpenCode's sources): the
+	 * model's own price, read from the provider. The cap reserves at least this and settles at it.
+	 */
+	readonly price?: ModelPrice;
+	/**
+	 * Pay-per-use providers that call `onModelCall` when their request goes out: a call that
+	 * failed before it did was not billed, and its reservation is released.
+	 */
+	readonly reportsModelCalls?: boolean;
 	generateObject<T>(request: GenerateObjectRequest<T>): Promise<T>;
 }
 
@@ -101,25 +118,6 @@ export function billingOf(provider: LlmProvider): LlmBilling {
 /** "anthropic", "openai", "fake": the company whose model answers. */
 export function vendorOf(provider: LlmProvider): string {
 	return provider.vendor ?? provider.name.split(":")[0] ?? provider.name;
-}
-
-/** A model company: Anthropic (an API key, Claude plans) or OpenAI (an API key, Codex plans). */
-export type Company = "anthropic" | "openai";
-
-const COMPANY_PREFIXES: Record<string, Company> = {
-	anthropic: "anthropic",
-	"claude-subscription": "anthropic",
-	openai: "openai",
-	"codex-subscription": "openai",
-};
-
-/**
- * The company behind a provider name or vendor (`anthropic:…`, `claude-subscription:…` →
- * "anthropic"; `openai:…`, `codex-subscription:…` → "openai"); null for fakes and anything
- * else.
- */
-export function companyOf(nameOrVendor: string): Company | null {
-	return COMPANY_PREFIXES[nameOrVendor.split(":")[0] ?? ""] ?? null;
 }
 
 /**
@@ -161,6 +159,7 @@ export const SUBSCRIPTION_PAUSE_PREFIX = "Subscription paused";
  * instead: the message says what happened and how preparation resumes.
  */
 export class SubscriptionUnavailableError extends LlmPausedError {
+	// biome-ignore lint/complexity/useMaxParams: Positional, so every existing pause keeps its call unchanged; the last two are optional flags.
 	constructor(
 		readonly kind: SubscriptionPauseKind,
 		readonly provider: string,
@@ -173,6 +172,11 @@ export class SubscriptionUnavailableError extends LlmPausedError {
 		 * the cap, and that vendor's calls stop until the user resumes them.
 		 */
 		readonly paid: boolean = false,
+		/**
+		 * `true`: nothing was billed (nothing sent, or the vendor refused the request before
+		 * processing it), so a pay-per-use reservation is released.
+		 */
+		readonly notBilled: boolean = false,
 	) {
 		super(`${SUBSCRIPTION_PAUSE_PREFIX} (${kind}, ${provider}): ${detail}`);
 		this.name = "SubscriptionUnavailableError";

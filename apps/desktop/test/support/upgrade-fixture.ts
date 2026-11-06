@@ -29,6 +29,25 @@ const iso = (days: number) => new Date(at(days)).toISOString();
 const j = (value: unknown) => JSON.stringify(value);
 
 /**
+ * The model choices as versions before model references stored them (`{ mode, model, effort }`):
+ * written as they are, around the schema, and read as `settingsFor(...).ai` (each plan its
+ * provider's model, an API key no model, a stored model of the other company dropped).
+ */
+export const OLD_AI = {
+	scoring: {
+		mode: "claude-subscription",
+		model: "claude-sonnet-5-5",
+		effort: "medium",
+	},
+	tailoring: {
+		mode: "codex-subscription",
+		model: "gpt-5.5",
+		effort: "high",
+	},
+	claims: { mode: "api", model: "gpt-5.5-mini" },
+};
+
+/**
  * Every app setting (`SettingsStore` KEYS) at a value other than its default, the nullable ones
  * set too. Typed by the store's names: a new key does not compile until it is added here.
  * `linkedinEnabled` is the earlier versions' LinkedIn switch that the start moves and clears.
@@ -37,16 +56,14 @@ export function settingsFor(latest: boolean) {
 	return {
 		ai: {
 			scoring: {
-				mode: "claude-subscription",
-				model: "claude-sonnet-5-5",
+				model: "claude:claude-sonnet-5-5",
 				effort: "medium",
 			},
 			tailoring: {
-				mode: "codex-subscription",
-				model: "gpt-5.5",
+				model: "codex:gpt-5.5",
 				effort: "high",
 			},
-			claims: { mode: "api", model: "gpt-5.5-mini" },
+			claims: { model: null },
 		},
 		notifications: {
 			match: false,
@@ -74,6 +91,8 @@ export function settingsFor(latest: boolean) {
 		// Older databases were filtered with version 0 (the start re-filters them once).
 		jobSearchVersion: latest ? 2 : 0,
 		noticeWatermark: at(5),
+		// Set already: the start notes removed keys only once, and never undoes a dismissal.
+		keysRemoved: { steps: ["claims"], dismissed: true },
 		whatsNewSeen: "0.0.9",
 	} as const satisfies Record<SettingName, unknown>;
 }
@@ -1506,5 +1525,9 @@ export async function buildDatabaseAt(
 	const latest = end === MIGRATIONS.length - 1;
 	for (const [name, value] of Object.entries(settingsFor(latest)))
 		await store.set(name as SettingName, value as never);
+	// The model choices as the versions before model references stored them.
+	db.$client
+		.prepare("update app_settings set value = ? where key = 'ai'")
+		.run(JSON.stringify(OLD_AI));
 	db.$close();
 }

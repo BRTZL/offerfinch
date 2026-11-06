@@ -292,6 +292,9 @@ importers:
       '@offerfinch/core':
         specifier: workspace:*
         version: link:../core
+      better-sqlite3:
+        specifier: 13.0.3
+        version: 13.0.3
       zod:
         specifier: 'catalog:'
         version: 4.6.7
@@ -299,6 +302,9 @@ importers:
       '@offerfinch/config':
         specifier: workspace:*
         version: link:../config
+      '@types/better-sqlite3':
+        specifier: 9.6.0
+        version: 9.6.0
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.6

@@ -46,7 +46,8 @@ import {
 	startManualScan,
 } from "@offerfinch/runner";
 import { and, desc, eq, gt, inArray, isNotNull } from "drizzle-orm";
-import type { SecretName, SiteTabId } from "../shared/bridge";
+import type { SiteTabId } from "../shared/bridge";
+import type { Role } from "../shared/providers";
 import {
 	type NativeNotice,
 	type NoticeOutcome,
@@ -55,6 +56,7 @@ import {
 	type WorkerInit,
 } from "../shared/worker-protocol";
 import { cleanStoredPostings, readPostingForJob } from "./add-job";
+import { antigravityService } from "./antigravity";
 import { localChromeProvider } from "./browser";
 import type { CheckStop, SiteTabHost } from "./checks";
 import { DEMO_SITE_REFUSAL, demoSubscriptions, seedDemo } from "./demo";
@@ -67,6 +69,7 @@ import {
 } from "./follow-ups";
 import { movedSearchesNote, upgradeJobSearch } from "./job-search";
 import { linkedinScanDeps } from "./linkedin";
+import { fillKeySteps, noteRemovedKeys } from "./model-choice";
 import { NoticeBatcher } from "./notices";
 import { buildPipeline, type RoleState } from "./pipeline";
 import { scanLogFor, scanRunRepo } from "./scan-history";
@@ -93,6 +96,8 @@ export interface WorkerHooks {
 	notify: (notice: NativeNotice) => void;
 	/** One operation on a site's hidden tab, answered by main. */
 	site: SiteCaller;
+	/** Opens Google's sign-in page for Gemini (Antigravity) in the browser (main checks it). */
+	openSignIn?: (url: string) => void;
 	log: (
 		level: "info" | "warn" | "error",
 		message: string,
@@ -127,15 +132,6 @@ export class WorkerApp {
 	readonly runner: FlowRunner;
 	deps!: PipelineDeps;
 	roles: RoleState[] = [];
-	private secrets: Partial<Record<SecretName, string>>;
-	/** Whether a key is stored (never the key itself). */
-	hasSecret(name: SecretName): boolean {
-		return Boolean(this.secrets[name]);
-	}
-	/** The stored keys, for building a provider in this process. */
-	secretValues(): Partial<Record<SecretName, string>> {
-		return this.secrets;
-	}
 	private notifications!: NotificationSettings;
 	private readonly batcher: NoticeBatcher;
 	private readonly followUpDelivery: FollowUpDelivery;
@@ -154,8 +150,6 @@ export class WorkerApp {
 		db: Database,
 	) {
 		this.db = db;
-		// Try-it mode never holds a key, whatever main sends (setSecrets refuses them too).
-		this.secrets = init.demo ? {} : init.secrets;
 		this.settings = new SettingsStore(db);
 		this.planUsage = new PlanUsageTracker({
 			userId: LOCAL_USER_ID,
@@ -180,10 +174,28 @@ export class WorkerApp {
 		// Main sets `fakeClis` only for an unpackaged build, so a shipped app never reads it.
 		if (init.demo) this.subscriptions = demoSubscriptions();
 		else {
+			const log = (message: string, data?: Record<string, unknown>) =>
+				hooks.log("info", message, data);
+			// Test runs never build the real Antigravity: it would look in the data folder and
+			// could start Google's server.
 			const local = subscriptions({
 				hostScript: init.claudeHost,
-				log: (message, data) => hooks.log("info", message, data),
+				// Test runs never touch the user's OpenCode database.
+				opencodeSweep: !init.test,
+				// The cleanup OfferFinch owes OpenCode's database must survive a restart: the data
+				// folder, not the temp folder (the root stays there: its path is shown to the model).
+				opencodeStateDir: path.join(init.userData, "opencode"),
+				log,
 				planUsage,
+				managed: init.test?.fakeClis
+					? {}
+					: {
+							antigravity: antigravityService({
+								userData: init.userData,
+								openSignIn: (url) => hooks.openSignIn?.(url),
+								log,
+							}),
+						},
 			});
 			this.subscriptions = init.test?.fakeClis
 				? fakeSubscriptions(init.userData, local, planUsage)
@@ -282,6 +294,13 @@ export class WorkerApp {
 		await app.ensureLocalUser();
 		await app.planUsage.load();
 		await app.retirePerSourceSettings();
+		// Steps an earlier version ran on an API key: noted for Settings › Models, before
+		// anything writes the choice again (their models are filled once the CLIs are found).
+		app.keySteps = await noteRemovedKeys(app.settings);
+		if (app.keySteps.length)
+			hooks.log("info", "API key steps need a model", {
+				steps: app.keySteps,
+			});
 		app.notifications = await app.settings.get("notifications");
 		// Last start's login-shell PATH, so `claude` and `codex` are found without waiting for
 		// the shell (seconds); start() reads it again in the background.
@@ -340,12 +359,12 @@ export class WorkerApp {
 		await this.rebuild();
 	}
 
-	/** (Re)builds the pipeline after a settings or key change. Running steps keep their deps. */
+	/** (Re)builds the pipeline after a settings change. Running steps keep their deps. */
 	async rebuild(): Promise<void> {
 		const built = buildPipeline({
 			local: this.init.test?.fakeCodex
 				? (input) =>
-						input.provider === "codex-subscription"
+						input.provider === "codex"
 							? new FakeCodexSubscription(input.ownerUserId, this.init.userData)
 							: this.subscriptions.factory(input)
 				: this.subscriptions.factory,
@@ -355,7 +374,6 @@ export class WorkerApp {
 			test: Boolean(this.init.test),
 			db: this.db,
 			ai: await this.settings.get("ai"),
-			secrets: this.secrets,
 			workflows: this.starter,
 			browser: localChromeProvider((open) => {
 				this.browsersOpen = open;
@@ -382,20 +400,6 @@ export class WorkerApp {
 				: { closedPostings: new DrizzleClosedPostingStore(this.db) }),
 		};
 		this.roles = built.roles;
-	}
-
-	async setSecrets(secrets: Partial<Record<SecretName, string>>) {
-		// Try-it mode's worker takes no key: main sends none, and one that arrives is dropped.
-		if (this.init.demo) {
-			this.hooks.log("warn", "keys refused: sample data", {
-				names: Object.keys(secrets),
-			});
-			return;
-		}
-		this.secrets = secrets;
-		await this.rebuild();
-		// Work paused for want of a model can go on now.
-		this.runner.poke();
 	}
 
 	async setNotifications(value: NotificationSettings) {
@@ -546,15 +550,31 @@ export class WorkerApp {
 	/** The queue's delayed start (see start()). */
 	background: Promise<void> = Promise.resolve();
 
-	/** The background PATH refresh started by start(). */
+	/**
+	 * Steps an earlier version ran on an API key, as found at open; start() fills them after the
+	 * PATH refresh, so `ai.get` waits for it while any is pending.
+	 */
+	keySteps: Role[] = [];
+
+	/** The background PATH refresh started by start(), then the key steps' fill. */
 	pathRefresh: Promise<void> = Promise.resolve();
 
 	async start(): Promise<void> {
 		// Try-it mode starts no login shell: no CLI is looked for.
 		if (!this.init.demo)
-			this.pathRefresh = this.refreshClis().catch((error) =>
-				this.hooks.log("warn", "login shell PATH not read", String(error)),
-			);
+			this.pathRefresh = this.refreshClis()
+				.catch((error) =>
+					this.hooks.log("warn", "login shell PATH not read", String(error)),
+				)
+				// Steps that ran on an API key get a model from what is signed in now.
+				.then(() => fillKeySteps(this))
+				.then((filled) => {
+					if (filled.length)
+						this.hooks.log("info", "API key steps filled", { steps: filled });
+				})
+				.catch((error) =>
+					this.hooks.log("warn", "API key steps not filled", String(error)),
+				);
 		// The window's first queries go first: the queue (recovery, replays, the hourly scan)
 		// starts a moment later, so a busy queue does not hold the first screen back.
 		this.background = new Promise<void>((resolve) => {

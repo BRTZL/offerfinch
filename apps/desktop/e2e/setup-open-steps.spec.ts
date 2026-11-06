@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 import { launchApp, skipRestOfSetup, tempUserData } from "./launch";
 
 /**
- * Setup with steps skipped and no AI: the resume step says to connect the AI before anything is
+ * Setup with steps left open and no AI: the resume step says to connect the AI before anything is
  * pasted (Start from scratch still works), a First search that cannot run leads to what it needs
  * and is never marked done, Stay in the loop never waits for a test notification, and Home names
  * what is still open and opens the first of it. Claude Code and Codex read as not installed.
@@ -13,7 +13,9 @@ test("skipped steps stay open: no AI on the resume step, a blocked first search,
 	try {
 		await page.getByTestId("welcome-start").click({ timeout: 30_000 });
 		await expect(page.getByTestId("step-count")).toContainText("Step 1 of 5");
-		await page.getByTestId("step-skip").click();
+		// Connect AI has no Skip (it needs a model to continue): on through the trail, left open.
+		await expect(page.getByTestId("step-skip")).toBeHidden();
+		await page.getByTestId("step-profile").click();
 
 		// 2. The resume step, with no model to draft: the notice, Upload and Paste off.
 		await expect(page.getByTestId("step-count")).toContainText("Step 2 of 5");

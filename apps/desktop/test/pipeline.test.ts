@@ -1,35 +1,28 @@
 import type { BlobStore } from "@offerfinch/core/export/export";
-import {
-	companyOf,
-	type LlmProvider,
-	vendorOf,
-} from "@offerfinch/core/scoring/llm";
+import type { LlmProvider } from "@offerfinch/core/scoring/llm";
 import type { BrowserProvider } from "@offerfinch/core/scrape/browser";
 import { describe, expect, it } from "vitest";
 
-import {
-	buildPipeline,
-	sharedDuckDuckGoStops,
-	VENDOR_RULE,
-} from "../src/worker/pipeline";
+import { FAKE_MODEL_REF } from "../src/shared/providers";
+import { buildPipeline, sharedDuckDuckGoStops } from "../src/worker/pipeline";
 import { type AiSettings, DEFAULT_AI } from "../src/worker/settings";
 
-/** Subscription providers stand-ins: named like the real ones, never called. */
+/** Stand-ins for the models on the user's sign-ins: named like the real ones, never called. */
 const local = ({ provider, model }: { provider: string; model: string }) =>
 	({
-		name: `${provider}:${model || "default"}`,
+		name: `${provider}-subscription:${model || "default"}`,
 		billing: "subscription",
-		vendor: provider.startsWith("codex") ? "openai" : "anthropic",
+		vendor: provider === "codex" ? "openai" : "anthropic",
 		generateObject: async () => {
 			throw new Error("not in tests");
 		},
 	}) as LlmProvider;
 
-function build(ai: AiSettings, secrets = {}) {
+function build(ai: AiSettings, platform = "darwin") {
 	return buildPipeline({
 		db: {} as never,
 		ai,
-		secrets,
+		platform,
 		workflows: { runtime: "local" } as never,
 		browser: {} as BrowserProvider,
 		blobs: {} as BlobStore,
@@ -50,132 +43,84 @@ function build(ai: AiSettings, secrets = {}) {
 }
 
 describe("model roles", () => {
-	it("runs scoring and tailoring on Claude and the claims check on Codex", () => {
+	it("runs each step on the model it names, the same model for all three included", () => {
 		const { roles, deps } = build({
-			scoring: { mode: "claude-subscription" },
-			tailoring: { mode: "claude-subscription" },
-			claims: { mode: "codex-subscription" },
+			scoring: { model: "claude:claude-opus-5-5" },
+			tailoring: { model: "claude:claude-opus-5-5" },
+			claims: { model: "claude:claude-opus-5-5" },
 		});
 		expect(roles.map((r) => [r.role, r.provider, r.billing, r.ready])).toEqual([
 			["scoring", "claude-subscription:claude-opus-5-5", "subscription", true],
 			[
 				"tailoring",
-				"claude-subscription:claude-sonnet-5-5",
+				"claude-subscription:claude-opus-5-5",
 				"subscription",
 				true,
 			],
-			["claims", "codex-subscription:default", "subscription", true],
+			["claims", "claude-subscription:claude-opus-5-5", "subscription", true],
 		]);
-		expect(deps.claimsLlm?.name).toBe("codex-subscription:default");
-	});
-
-	it("never checks a draft on the company that wrote it", () => {
-		// Drafts by Claude: Claude can't check them.
-		const claude = build(
-			{
-				scoring: { mode: "api" },
-				tailoring: { mode: "api" },
-				claims: { mode: "claude-subscription" },
-			},
-			{ anthropic: "sk-ant-test" },
-		);
-		expect(claude.roles[2]?.problem).toContain(VENDOR_RULE);
-		expect(claude.roles[2]?.ready).toBe(false);
-		// Drafts by Codex: Codex can't check them.
-		const codex = build({
-			scoring: { mode: "codex-subscription" },
-			tailoring: { mode: "codex-subscription" },
-			claims: { mode: "codex-subscription" },
-		});
-		expect(codex.roles[2]?.problem).toMatch(/OpenAI writes the drafts/);
-		expect(codex.roles.slice(0, 2).every((r) => r.ready)).toBe(true);
-	});
-
-	it("runs finding matches and drafting on Codex and the check on Claude", () => {
-		const { roles, deps } = build({
-			scoring: { mode: "codex-subscription" },
-			tailoring: { mode: "codex-subscription" },
-			claims: { mode: "claude-subscription" },
-		});
-		expect(roles.map((r) => [r.role, r.provider, r.ready])).toEqual([
-			["scoring", "codex-subscription:default", true],
-			["tailoring", "codex-subscription:default", true],
-			["claims", "claude-subscription:claude-opus-5-5", true],
-		]);
+		expect(roles.every((r) => r.problem === null)).toBe(true);
 		expect(deps.claimsLlm?.name).toBe("claude-subscription:claude-opus-5-5");
 	});
 
-	it("names the company of every checker it builds, so a saved draft's author can be refused", () => {
-		// The review refuses a checker of the draft's own company (core `reviewStep`): the desktop's
-		// checkers must say which company they are.
-		const company = (ai: AiSettings, secrets = {}) => {
-			const claims = build(ai, secrets).deps.claimsLlm;
-			return claims && companyOf(vendorOf(claims));
-		};
-		const codexDrafts = {
-			scoring: { mode: "codex-subscription" },
-			tailoring: { mode: "codex-subscription" },
-		} as const;
-		expect(
-			company({ ...codexDrafts, claims: { mode: "claude-subscription" } }),
-		).toBe("anthropic");
-		expect(
-			company(
-				{ ...codexDrafts, claims: { mode: "api" } },
-				{ anthropic: "sk-a" },
-			),
-		).toBe("anthropic");
-		expect(
-			company(
-				{
-					scoring: { mode: "api" },
-					tailoring: { mode: "api" },
-					claims: { mode: "api", model: "gpt-6.1-terra" },
-				},
-				{ anthropic: "sk-a", openai: "sk-o" },
-			),
-		).toBe("openai");
+	it("mixes providers in any order, Codex on the account's default model", () => {
+		const { roles } = build({
+			scoring: { model: "codex:" },
+			tailoring: { model: "codex:gpt-6.1-sol" },
+			claims: { model: "codex:" },
+		});
+		expect(roles.map((r) => [r.provider, r.model, r.ready])).toEqual([
+			["codex-subscription:default", "codex:", true],
+			["codex-subscription:gpt-6.1-sol", "codex:gpt-6.1-sol", true],
+			["codex-subscription:default", "codex:", true],
+		]);
 	});
 
-	it("an API-key checker takes the other company's key, and never the other company's model", () => {
-		const ai: AiSettings = {
-			scoring: { mode: "codex-subscription" },
-			tailoring: { mode: "codex-subscription" },
-			// An OpenAI model stored from when drafting was on Claude.
-			claims: { mode: "api", model: "gpt-6.1-terra" },
-		};
-		const noKey = build(ai, { openai: "sk-o" });
-		expect(noKey.roles[2]?.problem).toMatch(/Anthropic API key/);
-		const { roles } = build(ai, { anthropic: "sk-ant-test" });
-		expect(roles[2]).toMatchObject({
-			provider: "anthropic:claude-opus-5-5",
-			ready: true,
-		});
-		// A Claude model stored for scoring never reaches Codex.
-		const codex = build({
-			scoring: { mode: "codex-subscription", model: "claude-opus-5-5" },
-			tailoring: { mode: "codex-subscription" },
-			claims: { mode: "claude-subscription" },
-		});
-		expect(codex.roles[0]?.provider).toBe("codex-subscription:default");
-	});
-
-	it("pauses roles without keys instead of failing, and mixes keys with a subscription", () => {
+	it("pauses steps without a model instead of failing", () => {
 		const none = build(DEFAULT_AI);
 		expect(none.roles.map((r) => r.ready)).toEqual([false, false, false]);
-		const mixed = build(
-			{
-				scoring: { mode: "api" },
-				tailoring: { mode: "api" },
-				claims: { mode: "codex-subscription", model: "gpt-6.1-terra" },
-			},
-			{ anthropic: "sk-ant-test" },
+		expect(none.roles[0]?.problem).toBe(
+			"Choose a model for Finding matches in Settings > Models.",
 		);
-		expect(mixed.roles.map((r) => [r.provider, r.billing])).toEqual([
-			["anthropic:claude-opus-5-5", "api"],
-			["anthropic:claude-sonnet-5-5", "api"],
-			["codex-subscription:gpt-6.1-terra", "subscription"],
-		]);
+		expect(none.roles[0]?.provider).toBe("not-connected:scoring");
+	});
+
+	it("pauses a provider this version or platform can't run, and the test models outside test runs", () => {
+		const later = build({
+			scoring: { model: "opencode:opencode-go/glm-5.1" },
+			tailoring: { model: "antigravity:gemini-3.8-flash" },
+			claims: { model: FAKE_MODEL_REF },
+		});
+		expect(later.roles.map((r) => r.ready)).toEqual([true, true, false]);
+		expect(later.roles[0]?.problem).toBeNull();
+		expect(later.roles[1]?.provider).toBe(
+			"antigravity-subscription:gemini-3.8-flash",
+		);
+		expect(later.roles[2]?.problem).toMatch(/only available in test runs/);
+		const windowsGemini = build(
+			{
+				scoring: { model: "antigravity:gemini-3.8-flash" },
+				tailoring: { model: "claude:claude-opus-5-5" },
+				claims: { model: "claude:claude-opus-5-5" },
+			},
+			"win32",
+		);
+		expect(windowsGemini.roles[0]?.problem).toMatch(
+			/Antigravity\) is not available on Windows/,
+		);
+		const windows = build(
+			{
+				scoring: { model: "claude:claude-opus-5-5" },
+				tailoring: { model: "codex:" },
+				claims: { model: "opencode:opencode/deepseek-v4.1-flash-free" },
+			},
+			"win32",
+		);
+		expect(windows.roles.map((r) => r.ready)).toEqual([true, false, false]);
+		expect(windows.roles[1]?.problem).toMatch(/Codex runs only on macOS/);
+		expect(windows.roles[2]?.problem).toMatch(
+			/OpenCode is not available on Windows/,
+		);
 	});
 });
 

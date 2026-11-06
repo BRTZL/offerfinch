@@ -8,11 +8,7 @@ import { reviewStep } from "../src/pipeline/prepare";
 import { runScanFlow } from "../src/pipeline/scan-flow";
 import { loadProfileFromDir } from "../src/profile/load-node";
 import { FakeLlmProvider } from "../src/scoring/fake";
-import {
-	companyOf,
-	type GenerateObjectRequest,
-	type LlmProvider,
-} from "../src/scoring/llm";
+import type { GenerateObjectRequest, LlmProvider } from "../src/scoring/llm";
 import { FIXTURES, fakeExporter } from "./helpers";
 import { MemoryRepo } from "./memory-repo";
 
@@ -76,19 +72,7 @@ async function drafted(tailorLlm: LlmProvider, claimsLlm: LlmProvider) {
 	return { repo, deps, app };
 }
 
-describe("companyOf", () => {
-	it("maps plans, API keys and vendors to their company; fakes to none", () => {
-		expect(companyOf("claude-subscription:opus")).toBe("anthropic");
-		expect(companyOf("anthropic:claude-sonnet")).toBe("anthropic");
-		expect(companyOf("anthropic")).toBe("anthropic");
-		expect(companyOf("codex-subscription:default")).toBe("openai");
-		expect(companyOf("openai:gpt-5")).toBe("openai");
-		expect(companyOf("fake")).toBeNull();
-		expect(companyOf("fake-subscription:fake")).toBeNull();
-	});
-});
-
-describe("a saved draft is never checked by the company that wrote it", () => {
+describe("any model may check any draft, its own company's included", () => {
 	it("records the drafting model as the author and lets OpenAI check Claude's draft", async () => {
 		const checker = openaiKey();
 		const { repo, app } = await drafted(claudePlan(), checker);
@@ -98,73 +82,31 @@ describe("a saved draft is never checked by the company that wrote it", () => {
 		expect(cv?.authorProvider).toBe("claude-subscription:test");
 	});
 
-	it("refuses to check Claude's draft with Claude, without calling the checker", async () => {
+	it("lets Claude check Claude's draft (the same model for every step)", async () => {
 		const checker = claudePlan();
 		const { repo, app } = await drafted(claudePlan(), checker);
-		expect(checker.calls).toEqual([]);
-		expect(app.state).toBe("preparing");
-		expect(repo.reviews).toHaveLength(0);
-	});
-
-	it("refuses an Anthropic key after Drafting moved to Codex, and an edit keeps the author", async () => {
-		// Drafted by Claude and checked by OpenAI; then the user edits the CV and switches Drafting
-		// to Codex, which moves the checker to Anthropic.
-		const { repo, deps, app } = await drafted(claudePlan(), openaiKey());
 		expect(app.state).toBe("ready_for_review");
-		const cv = repo.documents.filter((d) => d.kind === "cv").at(-1);
-		repo.addVersion("u1", app.id, "cv", `${cv?.content}\nEdited.`);
-		expect(repo.documents.filter((d) => d.kind === "cv").at(-1)).toMatchObject({
-			createdBy: "user",
-			authorProvider: "claude-subscription:test",
-		});
-		const checker = anthropicKey();
-		const outcome = await reviewStep(
-			{
-				...deps,
-				tailorLlm: new Named("codex-subscription:test", "openai"),
-				claimsLlm: checker,
-			},
-			"u1",
-			app.jobId,
-		);
-		expect(outcome).toEqual({
-			outcome: "capped",
-			reason:
-				"Claude wrote this draft, so Claude can't check it. Redraft it, or set Drafting back to Claude in Settings > Models so OpenAI checks it.",
-		});
-		expect(checker.calls).toEqual([]);
-
-		// OpenAI may still check the edited Claude draft.
-		const other = openaiKey();
-		const checked = await reviewStep(
-			{ ...deps, claimsLlm: other },
-			"u1",
-			app.jobId,
-		);
-		expect(checked.outcome).toBe("reviewed");
-		expect(other.calls).toContain("claims-check");
+		expect(checker.calls).toContain("claims-check");
+		expect(repo.reviews).toHaveLength(1);
 	});
 
-	it("reads a draft saved before authors were recorded as Anthropic's", async () => {
+	it("checks an edited draft and one saved before authors were recorded on its own company", async () => {
 		const { repo, deps, app } = await drafted(claudePlan(), openaiKey());
 		for (const d of repo.documents) d.authorProvider = null;
 		const cv = repo.documents.filter((d) => d.kind === "cv").at(-1);
 		repo.addVersion("u1", app.id, "cv", `${cv?.content}\nEdited.`);
-		const claude = claudePlan();
-		expect(
-			(await reviewStep({ ...deps, claimsLlm: claude }, "u1", app.jobId))
-				.outcome,
-		).toBe("capped");
-		expect(claude.calls).toEqual([]);
-		const openai = openaiKey();
-		expect(
-			(await reviewStep({ ...deps, claimsLlm: openai }, "u1", app.jobId))
-				.outcome,
-		).toBe("reviewed");
+		const claude = anthropicKey();
+		const outcome = await reviewStep(
+			{ ...deps, claimsLlm: claude },
+			"u1",
+			app.jobId,
+		);
+		expect(outcome.outcome).toBe("reviewed");
+		expect(claude.calls).toContain("claims-check");
 	});
 
-	it("lets Claude check a Codex draft", async () => {
-		const checker = anthropicKey();
+	it("lets Codex check a Codex draft", async () => {
+		const checker = new Named("codex-subscription:check", "openai");
 		const { app } = await drafted(
 			new Named("codex-subscription:test", "openai"),
 			checker,

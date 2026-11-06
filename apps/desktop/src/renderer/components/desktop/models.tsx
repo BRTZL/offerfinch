@@ -1,298 +1,34 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Copy } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { useDemoMode } from "@/components/desktop/demo";
 import { PlanUsage } from "@/components/desktop/plan-usage";
+import {
+	ACCOUNT_NAME,
+	PROVIDER_HINT,
+	ProviderFix,
+	type ProviderView,
+	providerStatus,
+	STEPS,
+	StepPicker,
+	signedInLine,
+	useProviders,
+} from "@/components/desktop/step-picker";
 import {
 	QueryState,
 	SettingsPage,
 } from "@/components/pipeline/settings/shared";
-import { Badge, Notice, type Tone } from "@/components/system/bits";
+import { Notice, StatusDot } from "@/components/system/bits";
 import { Group, Section } from "@/components/system/layout";
 import { Disclosure } from "@/components/system/pane";
-import { FormRow } from "@/components/system/rows";
+import { ProviderTile } from "@/components/system/provider-mark";
+import { FormRow, Row } from "@/components/system/rows";
 import { RowsSkeleton } from "@/components/system/skeletons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
 import { desktop } from "@/lib/desktop";
 import { client, orpc } from "@/lib/orpc";
-import {
-	type AiChoice,
-	draftingVendor,
-	type Mode,
-	type Role,
-	unavailable,
-	vendorOf,
-} from "../../../shared/auto-connect";
-
-const ROLES: { role: Role; label: string; hint: string }[] = [
-	{
-		role: "scoring",
-		label: "Finding matches",
-		hint: "Scores how well each job a search finds fits you.",
-	},
-	{
-		role: "tailoring",
-		label: "Drafting",
-		hint: "Writes the CV, letter and answers when you press Prepare.",
-	},
-	{
-		role: "claims",
-		label: "Checking drafts",
-		hint: "The other company's AI checks each line against your profile.",
-	},
-];
-
-const MODE_LABEL: Record<Mode, string> = {
-	api: "API key",
-	"claude-subscription": "Claude subscription",
-	"codex-subscription": "Codex subscription",
-	fake: "Test models",
-};
-
-/** "Anthropic API key" or "OpenAI API key": checking drafts takes the other company's key. */
-function modeLabel(role: Role, mode: Mode, settings: AiChoice): string {
-	if (mode !== "api") return MODE_LABEL[mode];
-	return vendorOf(role, mode, draftingVendor(settings)) === "openai"
-		? "OpenAI API key"
-		: "Anthropic API key";
-}
-
-function useKeys() {
-	return useQuery({
-		queryKey: ["desktop", "secrets"],
-		queryFn: () => desktop.secrets.status(),
-	});
-}
-
-/** One API key: stored encrypted in the computer’s encrypted storage; never shown again. */
-export function KeyField({
-	name,
-	label,
-	placeholder,
-}: {
-	name: "anthropic" | "openai";
-	label: string;
-	placeholder: string;
-}) {
-	const queryClient = useQueryClient();
-	const keys = useKeys();
-	const [value, setValue] = useState("");
-	const refresh = () =>
-		Promise.all([
-			queryClient.invalidateQueries({ queryKey: ["desktop", "secrets"] }),
-			queryClient.invalidateQueries({ queryKey: orpc.ai.key() }),
-			queryClient.invalidateQueries({ queryKey: orpc.desktop.key() }),
-			queryClient.invalidateQueries({ queryKey: orpc.sources.key() }),
-		]);
-	const save = useMutation({
-		mutationFn: () => desktop.secrets.set(name, value),
-		onSuccess: async () => {
-			setValue("");
-			toast.success(`${label} saved in encrypted storage.`);
-			await refresh();
-		},
-		onError: (e) => toast.error(e.message),
-	});
-	const remove = useMutation({
-		mutationFn: () => desktop.secrets.remove(name),
-		onSuccess: refresh,
-		onError: (e) => toast.error(e.message),
-	});
-	const stored = keys.data?.[name];
-	// Saved, but encrypted under another Keychain item (a differently signed build's).
-	const unreadable = useQuery({
-		queryKey: ["desktop", "secrets", "unreadable"],
-		queryFn: () => desktop.secrets.unreadable(),
-	});
-	const locked = !stored && Boolean(unreadable.data?.includes(name));
-	const [editing, setEditing] = useState(false);
-	const showField = !stored || editing;
-	return (
-		<FormRow
-			label={label}
-			htmlFor={`key-${name}`}
-			hint={
-				locked ? (
-					<span className="text-warning" data-testid={`key-${name}-locked`}>
-						Enter it again: this copy of the app can't read the stored key
-					</span>
-				) : stored ? (
-					"Stored in your computer’s encrypted storage"
-				) : (
-					"Not set"
-				)
-			}
-		>
-			{showField ? (
-				<form
-					className="flex items-center gap-2"
-					onSubmit={(e) => {
-						e.preventDefault();
-						if (value.trim())
-							save.mutate(undefined, { onSuccess: () => setEditing(false) });
-					}}
-				>
-					<Input
-						id={`key-${name}`}
-						type="password"
-						autoComplete="off"
-						spellCheck={false}
-						className="w-56 font-mono"
-						placeholder={stored ? "New key" : placeholder}
-						value={value}
-						onChange={(e) => setValue(e.target.value)}
-						data-testid={`key-${name}`}
-					/>
-					<Button type="submit" disabled={!value.trim() || save.isPending}>
-						Save
-					</Button>
-					{editing ? (
-						<Button
-							type="button"
-							variant="ghost"
-							onClick={() => setEditing(false)}
-						>
-							Cancel
-						</Button>
-					) : null}
-				</form>
-			) : (
-				<>
-					<Button variant="outline" onClick={() => setEditing(true)}>
-						Change…
-					</Button>
-					<Button
-						variant="ghost"
-						onClick={() => remove.mutate()}
-						disabled={remove.isPending}
-					>
-						Remove
-					</Button>
-				</>
-			)}
-		</FormRow>
-	);
-}
-
-const LOGIN_TONE: Record<string, Tone> = {
-	logged_in: "brand",
-	logged_out: "destructive",
-	not_subscription: "destructive",
-	refused: "quiet",
-	unknown: "warning",
-};
-
-function _ExternalLink({
-	href,
-	children,
-}: {
-	href: string;
-	children: React.ReactNode;
-}) {
-	// Try-it mode opens no link (the default browser holds the real sessions).
-	const demo = useDemoMode();
-	if (demo) return <span>{children}</span>;
-	return (
-		<a
-			href={href}
-			target="_blank"
-			rel="noreferrer"
-			className="text-primary hover:underline"
-		>
-			{children}
-		</a>
-	);
-}
-
-interface CliStateView {
-	path: string | null;
-	version: string | null;
-	tested: string;
-	login: { state: string; detail: string; extraUsage?: string };
-	command: string | null;
-}
-
-/** One CLI's state: found where, which version, logged in, and what to run if not. */
-function CliRow({
-	id,
-	name,
-	state,
-}: {
-	id: string;
-	name: string;
-	state: CliStateView;
-}) {
-	return (
-		<FormRow
-			data-testid={`cli-${id}`}
-			label={name}
-			hint={
-				<span className="flex flex-col gap-1">
-					<span className="break-all">
-						{state.path
-							? `${state.path} · ${state.version ?? "version unknown"} (tested with ${state.tested})`
-							: "Not found on your login shell's PATH."}
-					</span>
-					<span>{state.login.detail}</span>
-					{state.command ? (
-						<span className="text-foreground">
-							In Terminal, run{" "}
-							<code
-								className="bg-muted rounded-sm px-1 font-mono"
-								data-testid={`cli-${id}-command`}
-							>
-								{state.command}
-							</code>
-							, then reopen this page.
-						</span>
-					) : null}
-				</span>
-			}
-		>
-			<Badge
-				tone={LOGIN_TONE[state.login.state] ?? "quiet"}
-				data-testid={`cli-${id}-state`}
-			>
-				{state.login.state.replace("_", " ")}
-			</Badge>
-		</FormRow>
-	);
-}
-
-/** Claude Code and Codex: login, guards, budget, and the terms, read before turning either on. */
-function SubscriptionSection() {
-	const subs = useQuery({
-		...orpc.ai.subscriptions.queryOptions(),
-		staleTime: 30_000,
-		meta: { quiet: true },
-	});
-	const d = subs.data;
-	return (
-		<div className="flex flex-col gap-3" data-testid="subscriptions">
-			{subs.isLoading ? <RowsSkeleton rows={2} twoLine /> : null}
-			{d ? (
-				<Group>
-					<CliRow id="claude" name="Claude Code" state={d.claude} />
-					<CliRow id="codex" name="Codex" state={d.codex} />
-				</Group>
-			) : null}
-			<SubscriptionTerms />
-			{d ? (
-				<Disclosure title="Advanced" data-testid="models-advanced">
-					<PlanLimits />
-				</Disclosure>
-			) : null}
-		</div>
-	);
-}
+import type { Role } from "../../../shared/providers";
 
 /** The plans' usage, for the CLIs that are signed in (or were read before). */
 function PlanUsageSection() {
@@ -320,10 +56,10 @@ export function SubscriptionTerms() {
 			className="text-muted-foreground text-xs"
 			data-testid="subscription-terms"
 		>
-			Your Claude and ChatGPT plans fall under Anthropic's and OpenAI's terms.
-			Before each call, OfferFinch checks that it can't be paid for with extra
-			usage or credits. If a call is paid anyway, that plan stops until you
-			resume it.
+			Your plans fall under their providers' terms (Anthropic, OpenAI, OpenCode,
+			Google). Before each call, OfferFinch checks that it can't be paid for
+			with extra usage or credits where the provider reports it. If a call is
+			paid anyway, that plan stops until you resume it.
 		</p>
 	);
 }
@@ -406,8 +142,7 @@ function PaidStops() {
 		refetchInterval: 15_000,
 	});
 	const resume = useMutation({
-		mutationFn: (vendor: "anthropic" | "openai") =>
-			client.paidStops.resume({ vendor }),
+		mutationFn: (vendor: string) => client.paidStops.resume({ vendor }),
 		onSuccess: (_r, vendor) => {
 			toast.success(
 				`${vendor === "anthropic" ? "Claude" : "Codex"} calls run again.`,
@@ -458,26 +193,174 @@ function PaidStops() {
 	);
 }
 
-/**
- * Which model each role uses and how it is paid for. API keys live in the computer’s encrypted storage; the
- * pipeline gets them in memory only. Each role can be tested live with one small call.
- */
-export function ModelSettings({
-	compact = false,
-	subscriptions = true,
-}: {
-	compact?: boolean;
-	/** The Subscriptions section; setup shows its own (Connect AI). */
-	subscriptions?: boolean;
-}) {
+type Ai = Awaited<ReturnType<typeof client.ai.get>>;
+
+const STEP_LABEL: Record<Role, string> = {
+	scoring: "Finding matches",
+	tailoring: "Drafting",
+	claims: "Checking drafts",
+};
+
+/** Once, after an upgrade: API keys are gone, and which steps had one. */
+function KeysRemovedNotice({ steps }: { steps: Role[] }) {
 	const queryClient = useQueryClient();
-	const ai = useQuery(orpc.ai.get.queryOptions());
+	const dismiss = useMutation({
+		mutationFn: () => client.ai.dismissKeysNotice(),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: orpc.ai.key() }),
+		onError: (e) => toast.error(e.message),
+	});
+	const names = steps.map((r) => STEP_LABEL[r]);
+	const list =
+		names.length > 1
+			? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`
+			: (names[0] ?? "");
+	return (
+		<Notice
+			tone="info"
+			title="API keys were removed"
+			data-testid="keys-removed"
+			actions={
+				<Button
+					variant="outline"
+					size="sm"
+					pending={dismiss.isPending}
+					onClick={() => dismiss.mutate()}
+					data-testid="keys-removed-dismiss"
+				>
+					Got it
+				</Button>
+			}
+		>
+			OfferFinch now runs only on accounts you sign in to; the keys you saved
+			were deleted without being read. {list} used a key: each got a model from
+			your accounts, or waits until you pick one below.
+		</Notice>
+	);
+}
+
+/** A copyable Terminal command. */
+function CommandLine({ id, command }: { id: string; command: string }) {
+	return (
+		<span className="mt-1 flex items-center gap-2">
+			<code
+				className="bg-muted text-foreground rounded-sm px-1.5 py-0.5 font-mono text-xs break-all"
+				data-testid={`account-${id}-command`}
+			>
+				{command}
+			</code>
+			<Button
+				variant="ghost"
+				size="xs"
+				aria-label={`Copy ${command}`}
+				onClick={() =>
+					void desktop
+						.copyText(command)
+						.then(() => toast.success("Copied. Paste it in Terminal."))
+				}
+			>
+				<Copy />
+				Copy
+			</Button>
+		</span>
+	);
+}
+
+const STATUS_TONE = {
+	"signed-in": "brand",
+	"signed-out": "warning",
+	missing: "busy",
+	off: "busy",
+} as const;
+
+/** A provider's state in a word, with its light. */
+export function ProviderState({ view }: { view: ProviderView }) {
+	const status = providerStatus(view);
+	return (
+		<span
+			className="text-foreground flex items-center gap-2 text-sm whitespace-nowrap"
+			data-testid={`account-${view.provider}-state`}
+			data-state={status.kind}
+		>
+			<StatusDot tone={STATUS_TONE[status.kind]} />
+			{status.label}
+		</span>
+	);
+}
+
+/** One account: mark, name, plan or what is missing, its state and its fix. */
+function AccountRow({ view }: { view: ProviderView }) {
+	const status = providerStatus(view);
+	const fix = view.state.fix;
+	const inApp = view.inApp[status.kind === "missing" ? "install" : "signIn"];
+	return (
+		<Row
+			data-testid={`account-${view.provider}`}
+			data-state={status.kind}
+			leading={<ProviderTile provider={view.provider} />}
+			title={
+				<span className="flex items-center gap-2">
+					{ACCOUNT_NAME[view.provider]}
+					{PROVIDER_HINT[view.provider] ? (
+						<span className="text-muted-foreground text-xs">
+							{PROVIDER_HINT[view.provider]}
+						</span>
+					) : null}
+				</span>
+			}
+			subtitle={
+				<span title={view.state.login.detail}>
+					{status.kind === "off"
+						? view.off
+						: status.kind === "signed-in"
+							? signedInLine(view)
+							: view.state.login.detail}
+				</span>
+			}
+			detail={
+				fix && !inApp && status.kind !== "signed-in" ? (
+					<span className="flex flex-col gap-1">
+						<CommandLine id={view.provider} command={fix.command} />
+						{fix.after ? <span>{fix.after}</span> : null}
+					</span>
+				) : undefined
+			}
+			trailing={
+				<>
+					{inApp ? <ProviderFix view={view} size="sm" /> : null}
+					<ProviderState view={view} />
+				</>
+			}
+		/>
+	);
+}
+
+/** Every provider on this computer, signed in or not, and how to fix it. */
+function AccountsSection() {
+	const models = useProviders();
+	return (
+		<Section title="Accounts" data-testid="accounts">
+			{models.data ? (
+				<Group>
+					{models.data.providers.map((view) => (
+						<AccountRow key={view.provider} view={view} />
+					))}
+				</Group>
+			) : (
+				<RowsSkeleton rows={4} twoLine />
+			)}
+		</Section>
+	);
+}
+
+/** One picker per step, any model for any step; each step can be tested with one small call. */
+function StepsSection({ ai }: { ai: Ai }) {
+	const queryClient = useQueryClient();
+	const models = useProviders();
 	const [tests, setTests] = useState<
 		Record<string, { ok: boolean; message: string }>
 	>({});
 	const save = useMutation({
-		mutationFn: (next: NonNullable<typeof ai.data>["settings"]) =>
-			client.ai.set(next),
+		mutationFn: (next: Ai["settings"]) => client.ai.set(next),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: orpc.ai.key() }),
 		onError: (e) => toast.error(e.message),
 	});
@@ -487,259 +370,97 @@ export function ModelSettings({
 		onError: (e, role) =>
 			setTests((t) => ({ ...t, [role]: { ok: false, message: e.message } })),
 	});
-	const settings = ai.data?.settings;
-	const modes: Mode[] = [
-		"api",
-		"claude-subscription",
-		"codex-subscription",
-		...(ai.data?.fakeAllowed ? (["fake"] as const) : []),
-	];
-	const body = (
-		<>
-			<QueryState isLoading={ai.isLoading} error={ai.error} what="the models" />
-			<PaidStops />
-			<Section
-				title="API keys"
-				description="Kept in your computer’s encrypted storage. Never shown, logged or sent anywhere but to the vendor."
-			>
-				<Group>
-					<KeyField
-						name="anthropic"
-						label="Anthropic API key"
-						placeholder="sk-ant-…"
-					/>
-					<KeyField name="openai" label="OpenAI API key" placeholder="sk-…" />
-				</Group>
-			</Section>
-			{settings ? (
-				<Section
-					title="Who does each step"
-					description={
-						ai.data ? (
-							<span data-testid="vendor-rule">{ai.data.vendorRule}</span>
-						) : undefined
-					}
-				>
-					<Group>
-						{ROLES.map(
-							// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keep each model role’s controls and connection states together so their settings dependencies stay visible.
-							({ role, label, hint }) => {
-								const current = settings[role];
-								const state = ai.data?.roles.find((r) => r.role === role);
-								const result = tests[role];
-								return (
-									<FormRow
-										key={role}
-										data-testid={`role-${role}`}
-										label={label}
-										hint={
-											<span className="flex flex-col gap-1">
-												<span>{hint}</span>
-												<span>
-													<Badge
-														tone={state?.ready ? "brand" : "warning"}
-														data-testid={`role-${role}-state`}
-														className="font-mono"
-													>
-														{state?.ready ? state.provider : "not connected"}
-													</Badge>
-												</span>
-												{state?.problem ? <span>{state.problem}</span> : null}
-												{result ? (
-													<span
-														className={
-															result.ok ? "text-brand" : "text-destructive"
-														}
-														data-testid={`role-${role}-test-result`}
-													>
-														{result.ok
-															? `Works: ${result.message}`
-															: result.message}
-													</span>
-												) : null}
-												{role === "claims" &&
-												vendorOf(
-													"claims",
-													current.mode as Mode,
-													draftingVendor(settings as AiChoice),
-												) === "openai" ? (
-													<ModelInput
-														value={current.model ?? ""}
-														placeholder={
-															current.mode === "api"
-																? "OpenAI model, e.g. gpt-6.1-terra"
-																: "Codex model (empty: your account's default)"
-														}
-														onSave={(model) =>
-															save.mutate({
-																...settings,
-																claims: { ...current, model },
-															})
-														}
-													/>
-												) : null}
-											</span>
-										}
-									>
-										<ModeSelect
-											// A choice made elsewhere (setup's Check again) shows at once.
-											key={current.mode}
-											role={role}
-											label={label}
-											value={current.mode as Mode}
-											modes={modes}
-											settings={settings as AiChoice}
-											disabled={save.isPending}
-											onChange={(mode) =>
-												save.mutate({
-													...settings,
-													[role]: { ...current, mode },
-												})
-											}
-										/>
-										<Button
-											variant="ghost"
-											disabled={!state?.ready || test.isPending}
-											pending={test.isPending && test.variables === role}
-											onClick={() => test.mutate(role)}
-											data-testid={`role-${role}-test`}
+	const providers = models.data?.providers ?? [];
+	return (
+		<Section title="Steps" data-testid="steps">
+			<Group>
+				{STEPS.map(({ role, label, hint }) => {
+					const current = ai.settings[role];
+					const state = ai.roles.find((r) => r.role === role);
+					const result = tests[role];
+					return (
+						<FormRow
+							key={role}
+							data-testid={`role-${role}`}
+							data-ready={state?.ready || undefined}
+							label={label}
+							hint={
+								<span className="flex flex-col gap-1">
+									<span>{hint}</span>
+									{state?.problem ? (
+										<span data-testid={`role-${role}-problem`}>
+											{state.problem}
+										</span>
+									) : null}
+									{result ? (
+										<span
+											className={result.ok ? "text-brand" : "text-destructive"}
+											data-testid={`role-${role}-test-result`}
 										>
-											Test
-										</Button>
-									</FormRow>
-								);
-							},
-						)}
-					</Group>
-				</Section>
-			) : null}
-			{subscriptions ? (
-				<>
-					<Section title="Subscriptions">
-						<SubscriptionSection />
-					</Section>
-					<Section
-						title="Plan usage"
-						description="What each plan has left, and how much OfferFinch used."
-					>
-						<PlanUsageSection />
-					</Section>
-				</>
-			) : null}
-		</>
+											{result.ok ? `Works: ${result.message}` : result.message}
+										</span>
+									) : null}
+								</span>
+							}
+						>
+							<StepPicker
+								role={role}
+								label={label}
+								value={current.model}
+								effort={current.effort}
+								providers={providers}
+								fakeAllowed={Boolean(models.data?.fakeAllowed)}
+								disabled={save.isPending || !models.data}
+								onChange={(next) =>
+									save.mutate({ ...ai.settings, [role]: next })
+								}
+							/>
+							<Button
+								variant="ghost"
+								disabled={!state?.ready || test.isPending}
+								pending={test.isPending && test.variables === role}
+								onClick={() => test.mutate(role)}
+								data-testid={`role-${role}-test`}
+							>
+								Test
+							</Button>
+						</FormRow>
+					);
+				})}
+			</Group>
+		</Section>
 	);
-	if (compact) return body;
+}
+
+/**
+ * Settings › Models (docs/design/models/, version A): the model of each step, the accounts on
+ * this computer, then the plans' usage and limits.
+ */
+export function ModelSettings() {
+	const ai = useQuery(orpc.ai.get.queryOptions());
 	return (
 		<SettingsPage
 			id="models"
 			title="Models"
-			description="The AI behind each step and how it is paid for."
+			description="Pick a model for each step. Any model from an account you're signed in to."
 		>
-			{body}
+			<QueryState isLoading={ai.isLoading} error={ai.error} what="the models" />
+			{ai.data?.keysRemoved ? (
+				<KeysRemovedNotice steps={ai.data.keysRemoved.steps} />
+			) : null}
+			<PaidStops />
+			{ai.data ? <StepsSection ai={ai.data} /> : null}
+			<AccountsSection />
+			<Section
+				title="Plan usage"
+				description="What each plan has left, and how much OfferFinch used."
+			>
+				<PlanUsageSection />
+				<SubscriptionTerms />
+				<Disclosure title="Limits" data-testid="models-advanced">
+					<PlanLimits />
+				</Disclosure>
+			</Section>
 		</SettingsPage>
-	);
-}
-
-function ModelInput({
-	value,
-	placeholder,
-	onSave,
-}: {
-	value: string;
-	placeholder: string;
-	onSave: (model: string) => void;
-}) {
-	const [draft, setDraft] = useState<string | null>(null);
-	return (
-		<form
-			className="mt-1 flex items-center gap-2"
-			onSubmit={(e) => {
-				e.preventDefault();
-				if (draft !== null) onSave(draft.trim());
-				setDraft(null);
-			}}
-		>
-			<Input
-				size="sm"
-				className="w-64 font-mono"
-				placeholder={placeholder}
-				value={draft ?? value}
-				onChange={(e) => setDraft(e.target.value)}
-				data-testid="claims-model"
-			/>
-			<Button
-				type="submit"
-				size="sm"
-				variant="outline"
-				disabled={draft === null}
-			>
-				Save model
-			</Button>
-		</form>
-	);
-}
-
-/** Who does a step: a pop-up button of the ways it can be paid for. */
-function ModeSelect({
-	role,
-	label,
-	value,
-	modes,
-	settings,
-	disabled,
-	onChange,
-}: {
-	role: Role;
-	label: string;
-	value: Mode;
-	modes: Mode[];
-	/** Every role's choice: checking drafts must stay on the other company than drafting. */
-	settings: AiChoice;
-	disabled?: boolean;
-	onChange: (mode: Mode) => void;
-}) {
-	return (
-		<Select
-			value={value}
-			disabled={disabled}
-			onValueChange={(next) => {
-				if (next && next !== value) onChange(next as Mode);
-			}}
-			items={modes.map((mode) => ({
-				value: mode,
-				label: modeLabel(role, mode, settings),
-			}))}
-		>
-			<SelectTrigger
-				aria-label={`${label}: paid with`}
-				className="w-52"
-				data-testid={`role-${role}-mode`}
-			>
-				<SelectValue />
-			</SelectTrigger>
-			<SelectContent>
-				{modes.map((mode) => {
-					const why = unavailable(role, mode, settings);
-					return (
-						<SelectItem
-							key={mode}
-							value={mode}
-							disabled={Boolean(why)}
-							title={why ?? undefined}
-							data-testid={`role-${role}-${mode}`}
-						>
-							<span className="flex flex-col">
-								<span>{modeLabel(role, mode, settings)}</span>
-								{why ? (
-									<span className="text-muted-foreground max-w-56 text-xs whitespace-normal">
-										{why}
-									</span>
-								) : null}
-							</span>
-						</SelectItem>
-					);
-				})}
-			</SelectContent>
-		</Select>
 	);
 }

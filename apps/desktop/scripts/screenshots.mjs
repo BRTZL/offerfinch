@@ -187,14 +187,14 @@ await run(
 		await shot("01-onboarding-welcome");
 		await page.getByTestId("welcome-start").click();
 		await page.getByTestId("setup-ai").waitFor();
-		await page.getByTestId("models-manual").getByRole("button").first().click();
+		// Starting models: the test models for every step.
 		for (const role of ["scoring", "tailoring", "claims"]) {
 			await page.getByTestId(`role-${role}-mode`).click();
 			await page.getByTestId(`role-${role}-fake`).click();
 		}
 		await page.waitForTimeout(500);
 		await shot("02-onboarding-connect-ai");
-		await page.getByTestId("step-skip").click();
+		await page.getByTestId("step-continue").click();
 		await page.getByTestId("resume-option-paste").click();
 		await page.getByTestId("onboarding-text").waitFor();
 		await shot("03-onboarding-resume");
@@ -246,6 +246,11 @@ await run(copy(), async ({ page, go, shot }) => {
 	await go("/settings/models");
 	await page.getByTestId("role-scoring").waitFor();
 	await shot("12-settings-models");
+	// The picker open: every model by provider, with effort.
+	await page.getByTestId("role-tailoring-mode").click();
+	await page.getByTestId("role-tailoring-mode-menu").waitFor();
+	await shot("12b-settings-models-picker");
+	await page.keyboard.press("Escape");
 	await go("/settings/sources");
 	await page.getByTestId("source-job-board-search").waitFor();
 	await shot("13-settings-sources");

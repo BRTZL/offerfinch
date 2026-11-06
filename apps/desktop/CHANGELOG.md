@@ -10,6 +10,18 @@ at the top, above the newest version. Only what is merged into main belongs here
 
 ## Unreleased
 
+- Choose any model for each step: finding matches, drafting and checking drafts. A new picker
+  in Settings › Models lists every model from the AI plans you're signed in to, grouped by
+  provider, with its effort levels. One model can do all three steps.
+- OpenCode and Gemini join Claude and Codex. OpenCode uses your own OpenCode login; Gemini runs
+  through Google's Antigravity, which OfferFinch installs and signs in to with your Google
+  account. Both are macOS only for now.
+- API keys are gone: OfferFinch runs only on your plans. Keys you stored are deleted from this
+  computer on the first start (they stay valid at Anthropic and OpenAI until you revoke them).
+  Steps that ran on a key get a model from what you're signed in to.
+- Setup's Connect AI step shows what it found on this computer and needs at least one model to
+  continue.
+
 - Windows releases now download updates in the background and install when you restart or quit;
   not yet tried on a real Windows PC.
 

@@ -70,6 +70,56 @@ async function store() {
 	return s;
 }
 
+describe("an OpenCode source that charged its paid balance", () => {
+	const opencode = (
+		source: string,
+		outcome: "ok" | "paid",
+	): LlmProvider & { calls: number } => ({
+		...provider("anthropic", outcome),
+		name: `opencode:${source}/glm-5.1`,
+		vendor: `opencode:${source}`,
+	});
+
+	it("stops that source only: not Claude, not another source, and not Claude's confirmation", async () => {
+		const s = await store();
+		await s.confirmExtraUsageOff("u1", true);
+		const confirmed = await s.extraUsageOffConfirmedAt("u1");
+		await expect(
+			meteredFor(opencode("opencode-go", "paid"), s, "u1", null).generateObject(
+				callInput,
+			),
+		).rejects.toMatchObject({ kind: "extra_usage", paid: true });
+		const stops = await s.paidStops("u1");
+		expect(stops["opencode:opencode-go"]).toBeInstanceOf(Date);
+		expect(stops.anthropic).toBeNull();
+		expect(await s.extraUsageOffConfirmedAt("u1")).toEqual(confirmed);
+		const again = opencode("opencode-go", "ok");
+		await expect(
+			meteredFor(again, s, "u1", null).generateObject(callInput),
+		).rejects.toThrow(/OpenCode \(opencode-go\) used its paid balance/);
+		expect(again.calls).toBe(0);
+		await expect(
+			meteredFor(
+				opencode("zai-coding-plan", "ok"),
+				s,
+				"u1",
+				null,
+			).generateObject(callInput),
+		).resolves.toEqual({ ok: true });
+		await expect(
+			meteredFor(provider("anthropic", "ok"), s, "u1", null).generateObject(
+				callInput,
+			),
+		).resolves.toEqual({ ok: true });
+		await s.resumeSubscription("u1", "opencode:opencode-go");
+		await expect(
+			meteredFor(opencode("opencode-go", "ok"), s, "u1", null).generateObject(
+				callInput,
+			),
+		).resolves.toEqual({ ok: true });
+	});
+});
+
 describe("a paid call stops its vendor across restarts until resumed", () => {
 	it("refuses Codex from a new process after a paid call, not Claude, and keeps Claude's confirmation", async () => {
 		const first = await store();
@@ -185,6 +235,7 @@ describe("an unclear ending is on the plan", () => {
 		expect(await s.paidStops("u1")).toEqual({
 			anthropic: null,
 			openai: null,
+			google: null,
 		});
 		expect(await s.extraUsageOffConfirmedAt("u1")).toBeInstanceOf(Date);
 	});

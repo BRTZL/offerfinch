@@ -10,8 +10,7 @@ import { zipTools } from "./zip";
 /**
  * A backup is one zip: `manifest.json`, `offerfinch.sqlite` (a consistent copy made with
  * `VACUUM INTO`, never the live file) and `files/` (profile files, documents, PDFs, proofs).
- * API keys (`secrets.json`), site sign-ins (session partitions), logs, debug snapshots and the
- * migration backups stay out. The platform's built-in zip tools add no dependency.
+ * Site sign-ins (session partitions), logs, debug snapshots and the migration backups stay out. The platform's built-in zip tools add no dependency.
  */
 const BACKUP_FORMAT = 1;
 export const MANIFEST = "manifest.json";

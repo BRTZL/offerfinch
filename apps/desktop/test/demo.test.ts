@@ -90,10 +90,10 @@ describe("try-it mode's sample data", () => {
 		).toBeTruthy();
 		const settings = new SettingsStore(db);
 		const ai = await settings.get("ai");
-		expect([ai.scoring.mode, ai.tailoring.mode, ai.claims.mode]).toEqual([
-			"fake",
-			"fake",
-			"fake",
+		expect([ai.scoring.model, ai.tailoring.model, ai.claims.model]).toEqual([
+			"fake:test",
+			"fake:test",
+			"fake:test",
 		]);
 		expect(Object.values(await settings.get("notifications"))).toEqual([
 			false,
@@ -164,7 +164,7 @@ describe("try-it mode's sample data", () => {
 		).toBe(true);
 	});
 
-	it("a demo worker builds no real subscriptions and takes no key", async () => {
+	it("a demo worker builds no real subscriptions", async () => {
 		const built = vi.mocked(subscriptionsModule.subscriptions);
 		const open = async (demo: boolean) => {
 			const userData = tempDir(demo ? "worker-demo" : "worker-real");
@@ -174,7 +174,6 @@ describe("try-it mode's sample data", () => {
 				dbFile: path.join(userData, DB_FILE),
 				version: "1.0.0",
 				claudeHost: path.join(userData, "no-claude-host.js"),
-				secrets: { openai: "real-key" },
 				...(demo ? { demo: true } : {}),
 			};
 			return WorkerApp.open(init, {
@@ -190,14 +189,10 @@ describe("try-it mode's sample data", () => {
 		built.mockClear();
 		const demoWorker = await open(true);
 		expect(built).not.toHaveBeenCalled();
-		expect(demoWorker.secretValues()).toEqual({});
-		await demoWorker.setSecrets({ openai: "real-key" });
-		expect(demoWorker.hasSecret("openai")).toBe(false);
 		await demoWorker.stop();
 		// The same start without demo mode does build them (the check above means something).
 		const real = await open(false);
 		expect(built).toHaveBeenCalledTimes(1);
-		expect(real.hasSecret("openai")).toBe(true);
 		await real.stop();
 	});
 
@@ -211,7 +206,6 @@ describe("try-it mode's sample data", () => {
 				dbFile: path.join(userData, DB_FILE),
 				version: "1.0.0",
 				claudeHost: path.join(userData, "no-claude-host.js"),
-				secrets: {},
 				demo: true,
 			},
 			{
@@ -247,7 +241,7 @@ describe("try-it mode's sample data", () => {
 		expect((await subs.codex()).path).toBeNull();
 		const provider = subs.factory({
 			role: "scoring",
-			provider: "claude-subscription",
+			provider: "claude",
 			model: "",
 			ownerUserId: LOCAL_USER_ID,
 		});

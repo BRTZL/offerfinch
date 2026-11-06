@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
 	billingOf,
+	DEFAULT_MAX_OUTPUT_TOKENS,
 	type GenerateObjectRequest,
 	type LlmBilling,
 	LlmNotBilledError,
@@ -173,6 +174,8 @@ export const SUBSCRIPTION_BASIS =
  * ChatGPT credits through Codex. Named per vendor, so the ledger says which plan it was.
  */
 export function paidBasis(vendor: string): string {
+	if (vendor.startsWith("opencode:"))
+		return "paid OpenCode balance beyond the plan: estimated at the model's listed price";
 	return vendor === "openai"
 		? "paid ChatGPT credits on the Codex plan: estimated at the API price"
 		: "paid extra usage on the Claude plan: billed per token, estimated at the API price";
@@ -200,6 +203,7 @@ export class MeteredLlm implements LlmProvider {
 
 	readonly billing: LlmBilling;
 	readonly vendor: string | undefined;
+	readonly reportsModelCalls: boolean | undefined;
 
 	constructor(
 		private readonly inner: LlmProvider,
@@ -209,6 +213,12 @@ export class MeteredLlm implements LlmProvider {
 		this.name = inner.name;
 		this.billing = billingOf(inner);
 		this.vendor = inner.vendor;
+		this.reportsModelCalls = inner.reportsModelCalls;
+	}
+
+	/** The inner provider's own price, read when asked (it may be listed later). */
+	get price(): LlmProvider["price"] {
+		return this.inner.price;
 	}
 
 	async generateObject<T>(raw: GenerateObjectRequest<T>): Promise<T> {
@@ -227,6 +237,9 @@ export class MeteredLlm implements LlmProvider {
 				? new SpendingCapReachedError(reserved.spentMicros, reserved.capMicros)
 				: new Error(`unexpected refusal of an API call: ${reserved.reason}`);
 		let usage: LlmUsage | null = null;
+		let modelCalls = 0;
+		// A provider that reports its sends: none means nothing went out, so nothing was billed.
+		const sent = () => !this.inner.reportsModelCalls || modelCalls > 0;
 		try {
 			const output = await this.inner.generateObject({
 				...request,
@@ -234,11 +247,20 @@ export class MeteredLlm implements LlmProvider {
 					usage = u;
 					request.onUsage?.(u);
 				},
+				onModelCall: () => {
+					modelCalls++;
+					request.onModelCall?.();
+				},
 			});
 			await this.settle({ id: reserved.id, estimateMicros }, usage, null);
 			return output;
 		} catch (error) {
-			await this.settle({ id: reserved.id, estimateMicros }, usage, error);
+			await this.settle(
+				{ id: reserved.id, estimateMicros },
+				usage,
+				error,
+				sent(),
+			);
 			throw error;
 		}
 	}
@@ -253,7 +275,8 @@ export class MeteredLlm implements LlmProvider {
 				request.prompt,
 				schemaText(request.schema),
 			]),
-			request.maxTokens ?? 16000,
+			request.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+			this.inner.price,
 		);
 	}
 
@@ -359,7 +382,7 @@ export class MeteredLlm implements LlmProvider {
 		) {
 			const vendor = vendorOf(this.inner);
 			await this.store.recordPaidStop(this.scope.userId, vendor);
-			const cost = usage ? estimateCost(usage) : null;
+			const cost = usage ? estimateCost(usage, this.inner.price) : null;
 			await this.store.settleSpend(reservation.id, {
 				usage,
 				costMicros: cost?.micros ?? reservation.estimateMicros,
@@ -392,6 +415,7 @@ export class MeteredLlm implements LlmProvider {
 		reservation: { id: string; estimateMicros: number },
 		usage: LlmUsage | null,
 		error: unknown,
+		sent = true,
 	): Promise<void> {
 		const message =
 			error === null
@@ -400,7 +424,7 @@ export class MeteredLlm implements LlmProvider {
 					? error.message
 					: String(error);
 		if (usage) {
-			const cost = estimateCost(usage);
+			const cost = estimateCost(usage, this.inner.price);
 			await this.store.settleSpend(reservation.id, {
 				usage,
 				costMicros: cost.micros,
@@ -424,6 +448,20 @@ export class MeteredLlm implements LlmProvider {
 				usage: null,
 				costMicros: 0,
 				basis: `not billed: the provider refused the request before processing (HTTP ${error.status})`,
+				error: message,
+			});
+			return;
+		}
+		if (
+			!sent ||
+			(error instanceof SubscriptionUnavailableError && error.notBilled)
+		) {
+			await this.store.settleSpend(reservation.id, {
+				usage: null,
+				costMicros: 0,
+				basis: sent
+					? "not billed: the provider refused the request before processing"
+					: "not billed: the call stopped before its request was sent",
 				error: message,
 			});
 			return;

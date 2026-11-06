@@ -3,9 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
 	AccountInfo,
+	ApiKeySource,
 	Options,
+	PermissionMode,
+	SDKAssistantMessageError,
 	SDKControlGetUsageResponse,
 	SDKMessage,
+	SDKRateLimitInfo,
+	SDKResultError,
 	SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
@@ -23,6 +28,12 @@ import type {
 } from "@offerfinch/core/scoring/plan-usage";
 import { z } from "zod";
 
+import {
+	ERROR_NAMES,
+	knownName,
+	parseAnswer,
+	schemaCheckFailure,
+} from "./answer";
 import { Breaker } from "./breaker";
 import { subscriptionEnv } from "./env";
 import {
@@ -44,6 +55,69 @@ export const ALLOWED_TOOLS: readonly string[] = ["StructuredOutput"];
 
 /** Skills built into the pinned CLI that `skills: []` and the disable switches do not unlist. */
 export const BUILTIN_SKILLS: readonly string[] = ["doctor", "plugin-authoring"];
+
+/**
+ * The tool names a log or error may name: the allowed carrier and the SDK's inert placeholder.
+ * Any other name (tool, MCP server, skill, plugin, agent) in a session report is counted, never
+ * kept: it comes from the CLI's output, and a name that is not the protocol's may be the user's
+ * text.
+ */
+const KNOWN_TOOLS: ReadonlySet<string> = new Set([
+	...ALLOWED_TOOLS,
+	"DeferredToolPlaceholder",
+]);
+const KNOWN_SKILLS: ReadonlySet<string> = new Set(BUILTIN_SKILLS);
+const PERMISSION_MODES: ReadonlySet<string> = new Set(
+	Object.keys({
+		default: 1,
+		acceptEdits: 1,
+		bypassPermissions: 1,
+		plan: 1,
+		dontAsk: 1,
+		auto: 1,
+	} satisfies Record<PermissionMode, 1>),
+);
+const API_KEY_SOURCES: ReadonlySet<string> = new Set(
+	Object.keys({
+		ANTHROPIC_API_KEY: 1,
+		apiKeyHelper: 1,
+		"/login managed key": 1,
+		none: 1,
+		user: 1,
+		project: 1,
+		org: 1,
+		temporary: 1,
+		oauth: 1,
+	} satisfies Record<ApiKeySource, 1>),
+);
+const API_PROVIDERS: ReadonlySet<string> = new Set(
+	Object.keys({
+		firstParty: 1,
+		bedrock: 1,
+		vertex: 1,
+		foundry: 1,
+		anthropicAws: 1,
+		anthropicGoogleCloud: 1,
+		mantle: 1,
+		gateway: 1,
+	} satisfies Record<NonNullable<AccountInfo["apiProvider"]>, 1>),
+);
+
+/**
+ * The plan and token source a log may name (the SDK types both as plain strings: these are the
+ * values seen from the pinned CLI); anything else is "other".
+ */
+const SUBSCRIPTION_TYPES: ReadonlySet<string> = new Set([
+	"pro",
+	"max",
+	"team",
+	"enterprise",
+]);
+const TOKEN_SOURCES: ReadonlySet<string> = new Set(["claude.ai"]);
+
+function counted(n: number, what: string): string {
+	return `${n} ${what}${n === 1 ? "" : "s"}`;
+}
 
 /**
  * Environment additions for every subscription CLI run. No telemetry or other nonessential
@@ -158,28 +232,85 @@ export function sessionReport(
 	};
 }
 
-/** Every way the session could reach past a pure model call; empty when it cannot. */
+/**
+ * Every way the session could reach past a pure model call; empty when it cannot. Decided on the
+ * real names; said with counts and protocol-defined values only (this text reaches the error,
+ * so the spending ledger and logs).
+ */
 export function boundaryViolations(
 	report: SessionReport,
 	cwd: string,
 ): string[] {
 	const problems: string[] = [];
 	const extraTools = report.tools.filter((t) => !ALLOWED_TOOLS.includes(t));
-	if (extraTools.length) problems.push(`tools ${extraTools.join(", ")}`);
+	if (extraTools.length)
+		problems.push(counted(extraTools.length, "unexpected tool"));
 	if (report.mcpServers.length)
-		problems.push(`MCP servers ${report.mcpServers.join(", ")}`);
+		problems.push(counted(report.mcpServers.length, "MCP server"));
 	// The CLI's own built-in skills stay listed; with no Skill tool they cannot run, and the
 	// wire test shows they are not sent. Any other skill (the user's) is refused.
 	const userSkills = report.skills.filter((s) => !BUILTIN_SKILLS.includes(s));
-	if (userSkills.length) problems.push(`skills ${userSkills.join(", ")}`);
+	if (userSkills.length)
+		problems.push(counted(userSkills.length, "unexpected skill"));
 	const userPlugins = report.plugins.filter((p) => !p.startsWith("cc-plugin-"));
-	if (userPlugins.length) problems.push(`plugins ${userPlugins.join(", ")}`);
+	if (userPlugins.length)
+		problems.push(counted(userPlugins.length, "unexpected plugin"));
 	if (report.permissionMode !== "dontAsk")
-		problems.push(`permission mode ${report.permissionMode}`);
+		problems.push(
+			`permission mode ${knownName(report.permissionMode, PERMISSION_MODES)}`,
+		);
 	// macOS reports /var/folders/... as /private/var/folders/...
 	if (report.cwd.replace(/^\/private/, "") !== cwd.replace(/^\/private/, ""))
-		problems.push(`working directory ${report.cwd}`);
+		problems.push("a working directory other than the call's own");
 	return problems;
+}
+
+/**
+ * The session report as it may be logged: the allowlisted tool and skill names and the
+ * protocol's own values; every other name only counted. `model` is kept when it is the one asked
+ * for.
+ */
+export function loggableSessionReport(
+	report: SessionReport,
+	model: string,
+): Record<string, unknown> {
+	const known = (names: string[], allowed: ReadonlySet<string>) =>
+		names.filter((name) => allowed.has(name));
+	return {
+		tools: known(report.tools, KNOWN_TOOLS),
+		otherTools: report.tools.length - known(report.tools, KNOWN_TOOLS).length,
+		mcpServers: report.mcpServers.length,
+		skills: known(report.skills, KNOWN_SKILLS),
+		otherSkills:
+			report.skills.length - known(report.skills, KNOWN_SKILLS).length,
+		plugins: report.plugins.length,
+		agents: report.agents.length,
+		slashCommands: report.slashCommands,
+		apiKeySource: knownName(report.apiKeySource, API_KEY_SOURCES),
+		model: report.model === model ? model : "other",
+		permissionMode: knownName(report.permissionMode, PERMISSION_MODES),
+	};
+}
+
+/** The login as it may be logged: known values only, anything else "other". */
+function loggableAuth(auth: AuthReport | null): Record<string, unknown> | null {
+	const named = (value: string | null, known: ReadonlySet<string>) =>
+		value === null ? null : knownName(value, known);
+	return (
+		auth && {
+			loggedIn: auth.loggedIn,
+			subscriptionType: named(auth.subscriptionType, SUBSCRIPTION_TYPES),
+			tokenSource: named(auth.tokenSource, TOKEN_SOURCES),
+			apiKeySource:
+				auth.apiKeySource === null
+					? null
+					: knownName(auth.apiKeySource, API_KEY_SOURCES),
+			apiProvider:
+				auth.apiProvider === null
+					? null
+					: knownName(auth.apiProvider, API_PROVIDERS),
+		}
+	);
 }
 
 /** The login, from non-secret fields only. */
@@ -273,6 +404,47 @@ const DRAIN_MS = 15_000;
  * already read, the throw only repeats it; the session ended by itself.
  */
 const SDK_ERROR_RESULT_ECHO = "Claude Code returned an error result";
+
+/**
+ * The values the SDK's protocol defines for the fields an error may name (`satisfies` keeps each
+ * list whole against the installed SDK's types). Anything else is kept as "other": these fields
+ * come from the CLI's output, and a value that is not the protocol's may be the user's text.
+ */
+const API_ERRORS = new Set(
+	Object.keys({
+		authentication_failed: 1,
+		oauth_org_not_allowed: 1,
+		account_on_hold: 1,
+		verification_required: 1,
+		billing_error: 1,
+		rate_limit: 1,
+		overloaded: 1,
+		invalid_request: 1,
+		model_not_found: 1,
+		server_error: 1,
+		unknown: 1,
+		max_output_tokens: 1,
+		cloud_credential_error: 1,
+	} satisfies Record<SDKAssistantMessageError, 1>),
+);
+const RESULT_ERRORS = new Set(
+	Object.keys({
+		error_during_execution: 1,
+		error_max_turns: 1,
+		error_max_budget_usd: 1,
+		error_max_structured_output_retries: 1,
+	} satisfies Record<SDKResultError["subtype"], 1>),
+);
+const RATE_LIMITS = new Set(
+	Object.keys({
+		five_hour: 1,
+		seven_day: 1,
+		seven_day_opus: 1,
+		seven_day_sonnet: 1,
+		seven_day_overage_included: 1,
+		overage: 1,
+	} satisfies Record<NonNullable<SDKRateLimitInfo["rateLimitType"]>, 1>),
+);
 /** How long a probe's "extra usage is off" is trusted by the same provider. */
 const EXTRA_USAGE_TRUST_MS = 60_000;
 /**
@@ -365,12 +537,12 @@ export function authProblem(
 	if (keySource && keySource !== "none")
 		return {
 			kind: "not_subscription",
-			detail: `Claude Code would authenticate with an API key (${keySource}), billed per token. Remove it from Claude Code's own configuration; this app never passes one.`,
+			detail: `Claude Code would authenticate with an API key (${knownName(keySource, API_KEY_SOURCES)}), billed per token. Remove it from Claude Code's own configuration; this app never passes one.`,
 		};
 	if (auth.apiProvider && auth.apiProvider !== "firstParty")
 		return {
 			kind: "not_subscription",
-			detail: `Claude Code is set to ${auth.apiProvider}, not a Claude subscription.`,
+			detail: `Claude Code is set to ${knownName(auth.apiProvider, API_PROVIDERS)}, not a Claude subscription.`,
 		};
 	if (!auth.subscriptionType)
 		return {
@@ -492,9 +664,14 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			);
 			if (answer.invalid !== undefined)
 				throw new Error(
-					`${this.name}: no valid structured output for ${request.task}: ${answer.invalid.slice(0, 500)}`,
+					`${this.name}: no valid structured output for ${request.task}: ${answer.invalid}`,
 				);
-			return request.schema.parse(answer.output);
+			return parseAnswer(
+				request.schema,
+				answer.output,
+				this.name,
+				request.task,
+			);
 		} catch (error) {
 			if (error instanceof SubscriptionUnavailableError)
 				this.breaker.trip(error, this.now());
@@ -620,7 +797,8 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 				stop(
 					this.pause(
 						"logged_out",
-						`the Claude Code CLI did not start (${error instanceof Error ? error.message : String(error)}). Check Settings › Models.`,
+						// The error's name only: its text can carry the CLI's stderr.
+						`the Claude Code CLI did not start (${knownName(error instanceof Error ? error.name : null, ERROR_NAMES)}). Check Settings › Models.`,
 					),
 				),
 		);
@@ -688,12 +866,8 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 					if (message.subtype === "success" && !message.is_error)
 						output = message.structured_output;
 					else if (message.subtype === "error_max_structured_output_retries")
-						invalid = message.errors.join("; ") || message.subtype;
-					else
-						resultError =
-							message.subtype === "success"
-								? String(message.result).slice(0, 500)
-								: `${message.subtype}: ${message.errors.join("; ").slice(0, 500)}`;
+						invalid = schemaCheckFailure(message.errors, schema);
+					else resultError = resultFailure(message);
 				}
 			}
 		} catch (error) {
@@ -769,11 +943,14 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			const report = sessionReport(message);
 			this.options.log?.("claude subscription session", {
 				provider: this.name,
-				claudeCodeVersion: message.claude_code_version,
-				...report,
-				cwd: "(empty temp directory)",
+				claudeCodeVersion: /^\d+\.\d+\.\d+$/.test(message.claude_code_version)
+					? message.claude_code_version
+					: "other",
+				...loggableSessionReport(report, this.options.model),
 				// The login from the CLI's initialize answer, apart from the session's own fields.
-				auth: account(),
+				auth: loggableAuth(account()),
+				// Names of variables this side removed from the parent's environment (its own
+				// filter's matches: API keys and the like), never values.
 				removedEnv: removed,
 			});
 			const problems = boundaryViolations(report, cwd);
@@ -813,7 +990,7 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			if (info.status === "rejected")
 				return this.pause(
 					"usage_limit",
-					`the Claude plan's ${info.rateLimitType ?? "usage"} limit is reached${resetsAt ? ` until ${resetsAt.toISOString()}` : ""}. Preparation waits; it resumes after a later scan once the limit resets, with status in Settings › Models.`,
+					`the Claude plan's ${info.rateLimitType ? knownName(info.rateLimitType, RATE_LIMITS) : "usage"} limit is reached${resetsAt ? ` until ${resetsAt.toISOString()}` : ""}. Preparation waits; it resumes after a later scan once the limit resets, with status in Settings › Models.`,
 					resetsAt,
 				);
 			return null;
@@ -823,7 +1000,7 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			if (kind) return this.pause(kind, PAUSE_DETAIL[kind]);
 			// One call is one request: the workflow step retries, not the CLI.
 			return new Error(
-				`${this.name}: request failed (${message.error}, HTTP ${message.error_status ?? "?"}); not retried by the CLI`,
+				`${this.name}: request failed (${knownName(message.error, API_ERRORS)}, HTTP ${typeof message.error_status === "number" ? message.error_status : "?"}); not retried by the CLI`,
 			);
 		}
 		if (message.type === "assistant" && message.error) {
@@ -835,14 +1012,33 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 }
 
 /**
+ * An error result in fixed words and counts: its text and errors can quote the answer, and error
+ * messages are kept (the spending ledger).
+ */
+function resultFailure(
+	message: Extract<SDKMessage, { type: "result" }>,
+): string {
+	if (message.subtype === "success")
+		return `an error result of ${String(message.result ?? "").length} characters, not kept`;
+	return `${knownName(message.subtype, RESULT_ERRORS)} (${(message.errors ?? []).length} errors, not kept)`;
+}
+
+/**
  * A stream error that is a session failure, or null when the SDK only repeated an error result
  * the session already delivered (the session then ended by itself).
  */
 function streamFailure(error: unknown, gotResult: boolean): Error | null {
 	const thrown = error instanceof Error ? error : new Error(String(error));
-	return gotResult && thrown.message.startsWith(SDK_ERROR_RESULT_ECHO)
-		? null
-		: thrown;
+	if (gotResult && thrown.message.startsWith(SDK_ERROR_RESULT_ECHO))
+		return null;
+	// Its text is not kept: the SDK's errors carry the result's text or the CLI's stderr.
+	const kept = new Error(
+		thrown.message.startsWith(SDK_ERROR_RESULT_ECHO)
+			? "the Claude Code CLI ended with an error result (its text is not kept)"
+			: `the Claude Code CLI's stream failed (${knownName(thrown.name, ERROR_NAMES)}; its text is not kept)`,
+	);
+	kept.name = ERROR_NAMES.has(thrown.name) ? thrown.name : "Error";
+	return kept;
 }
 
 /** The vendor refused the request before processing it (a 429 or a logout): not billed. */

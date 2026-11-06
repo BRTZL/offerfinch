@@ -11,6 +11,7 @@ import { startFixtureBoards } from "./fixture-boards";
 import {
 	chirps,
 	fakeChrome,
+	fakeClis,
 	launchApp,
 	notices,
 	openRoute,
@@ -44,7 +45,7 @@ const settingsNav = (page: Page, name: string) =>
 	page
 		.getByRole("navigation", { name: "Settings" })
 		.getByRole("link", { name: new RegExp(`^${name}`) });
-/** Who does a step: the pop-up button, then the choice. */
+/** Who does a step: the pop-up button, then the model (`fake`, or its reference). */
 async function chooseMode(page: Page, role: string, mode: string) {
 	await page.getByTestId(`role-${role}-mode`).click();
 	await page.getByTestId(`role-${role}-${mode}`).click();
@@ -85,20 +86,18 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 		await expect(page.getByTestId("step-count")).toContainText("Step 1 of 5");
 		await shot(page, "onboarding-ai");
 
-		// 1. Connect AI: Claude Code and Codex read as not installed in this run, so the step
-		// shows how to install them and offers API keys; test models here, each role tested live.
+		// 1. Connect AI: every provider reads as not installed in this run, so the step shows
+		// how to install them; test models here, chosen by hand in Starting models.
 		await expect(page.getByTestId("setup-cli-claude")).toHaveAttribute(
 			"data-state",
 			"missing",
 		);
 		await pickFakeModels(page);
 		for (const role of ["scoring", "tailoring", "claims"])
-			await expect(page.getByTestId(`role-${role}-state`)).toHaveText(/fake/);
-		await page.getByTestId("role-scoring-test").click();
-		await expect(page.getByTestId("role-scoring-test-result")).toContainText(
-			"Works",
-		);
-		await expect(page.getByTestId("setup-ai-summary")).toHaveAttribute(
+			await expect(page.getByTestId(`role-${role}-mode`)).toHaveText(
+				/Test models/,
+			);
+		await expect(page.getByTestId("setup-ai")).toHaveAttribute(
 			"data-all-set",
 			"true",
 		);
@@ -665,15 +664,15 @@ test("the profile as records: a view per section, add, edit, move and remove in 
 	}
 });
 
-test("an earlier version's Brave Search key and SearXNG choice are removed at start", async () => {
-	// What an earlier version left: an encrypted Brave key and SearXNG as the search service.
+test("an earlier version's API keys and SearXNG choice are removed at start", async () => {
+	// What an earlier version left: encrypted keys and SearXNG as the search service.
 	const secretsFile = path.join(userData, "secrets.json");
-	const before = fs.existsSync(secretsFile)
-		? JSON.parse(fs.readFileSync(secretsFile, "utf8"))
-		: {};
 	fs.writeFileSync(
 		secretsFile,
-		JSON.stringify({ ...before, brave: "bm90LWEtcmVhbC1rZXk=" }),
+		JSON.stringify({
+			anthropic: "bm90LWEtcmVhbC1rZXk=",
+			brave: "bm90LWEtcmVhbC1rZXk=",
+		}),
 	);
 	const db = new Database(path.join(userData, DB_FILE));
 	try {
@@ -695,9 +694,8 @@ test("an earlier version's Brave Search key and SearXNG choice are removed at st
 			page.getByTestId("source-job-board-search").locator("[title]").first(),
 		).toHaveAttribute("title", /found with DuckDuckGo/);
 		await expect(page.getByTestId("backend-searxng")).toHaveCount(0);
-		expect(
-			Object.keys(JSON.parse(fs.readFileSync(secretsFile, "utf8"))),
-		).not.toContain("brave");
+		// Deleted without being decrypted: models run on the user's own sign-ins now.
+		expect(fs.existsSync(secretsFile)).toBe(false);
 		const rows = readDb<{ config: string }>(
 			"select config from source_providers where provider = 'job-board-search'",
 		);
@@ -1301,6 +1299,8 @@ test("a paid Codex call stops Codex across a worker kill until resumed", async (
 					.trim()
 					.split("\n").length
 			: 0;
+	// Codex signed in, so its models are offered; its calls go to the paid stand-in (fakeCodex).
+	fakeClis(userData, { claude: "missing", codex: "logged_in" });
 	const { app, page } = await launchApp({
 		userData,
 		rewrite: boards.rewrite,
@@ -1310,9 +1310,13 @@ test("a paid Codex call stops Codex across a worker kill until resumed", async (
 	try {
 		await sidebar(page, "Settings").click();
 		await settingsNav(page, "Models").click();
-		await chooseMode(page, "claims", "codex-subscription");
-		await expect(page.getByTestId("role-claims-state")).toHaveText(
-			/codex-subscription/,
+		await chooseMode(page, "claims", "codex:");
+		await expect(page.getByTestId("role-claims-mode")).toHaveText(
+			/Account default/,
+		);
+		await expect(page.getByTestId("role-claims")).toHaveAttribute(
+			"data-ready",
+			"true",
 		);
 		await page.getByTestId("role-claims-test").click();
 		await expect(page.getByTestId("role-claims-test-result")).toContainText(
@@ -1352,6 +1356,7 @@ test("a paid Codex call stops Codex across a worker kill until resumed", async (
 		expect(calls()).toBe(2);
 	} finally {
 		await app.close();
+		fs.rmSync(path.join(userData, "fake-clis.json"), { force: true });
 	}
 });
 

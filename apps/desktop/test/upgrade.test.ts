@@ -42,6 +42,7 @@ import {
 	FIXTURE_TABLES,
 	INTERRUPTED,
 	LAPSED_WAIT,
+	OLD_AI,
 	type SettingName,
 	settingsFor,
 } from "./support/upgrade-fixture";
@@ -148,7 +149,6 @@ async function startWorker(userData: string, dbFile: string) {
 		dbFile,
 		version: "0.0.0-upgrade-test",
 		claudeHost: path.join(userData, "no-claude-host.js"),
-		secrets: {},
 		test: { fakeModels: true, noSchedule: true, fakeClis: true },
 	};
 	const app = await WorkerApp.open(init, {
@@ -455,7 +455,10 @@ describe.concurrent.each(POINTS)("upgrade from schema %s", (point) => {
 				(n) => (STORED_AS[n] ?? n) === row.key,
 			);
 			expect(name, `known setting ${row.key}`).toBeDefined();
-			if (name) expect(s.values[name]).toEqual(JSON.parse(row.value ?? ""));
+			// The model choices read in today's shape; the row keeps the old one (read-only move).
+			if (name === "ai") expect(JSON.parse(row.value ?? "")).toEqual(OLD_AI);
+			else if (name)
+				expect(s.values[name]).toEqual(JSON.parse(row.value ?? ""));
 		}
 		expect(s.raw.map((r) => r.key)).not.toContain("linkedinEnabled");
 		expect(s.values).toEqual({

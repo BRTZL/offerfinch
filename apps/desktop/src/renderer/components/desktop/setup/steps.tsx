@@ -14,7 +14,7 @@ import { Group, Section } from "@/components/system/layout";
 import { Button } from "@/components/ui/button";
 import { client, orpc } from "@/lib/orpc";
 import { preloadable } from "@/lib/preloadable";
-import { readyNow } from "../../../../shared/auto-connect";
+import { providerOfRef, readyNow } from "../../../../shared/auto-connect";
 import type { SetupStep } from "../../../../shared/setup-steps";
 import { ConnectAi } from "./connect-ai";
 import { FirstScan } from "./first-scan";
@@ -36,7 +36,7 @@ void JobFilterSettings.preload();
 export const STEP_META: Record<SetupStep, { title: string; lead: string }> = {
 	ai: {
 		title: "Connect your AI",
-		lead: "OfferFinch uses AI to read jobs and draft applications. It looks for Claude Code and Codex on this computer first; API keys work too.",
+		lead: "OfferFinch runs on the AI plans you already pay for. It looked on this computer; you need at least one signed in.",
 	},
 	profile: {
 		title: "Your resume",
@@ -58,17 +58,15 @@ export const STEP_META: Record<SetupStep, { title: string; lead: string }> = {
 
 /**
  * Whether a model can draft a profile from a resume now: `profile.structure` runs on the scoring
- * model. A plan's role is ready only while its CLI is signed in (`readyNow`), so the CLI states
- * are read only when scoring is on a plan. Null while that is still being read.
+ * model. A plan's role is ready only while its provider is signed in (`readyNow`), so the
+ * providers are read only when scoring is on one. Null while that is still being read.
  */
 function useCanDraft(): boolean | null {
 	const ai = useQuery(orpc.ai.get.queryOptions());
 	const scoring = ai.data?.roles.find((r) => r.role === "scoring");
-	const onPlan =
-		scoring?.mode === "claude-subscription" ||
-		scoring?.mode === "codex-subscription";
-	const clis = useQuery({
-		...orpc.ai.subscriptions.queryOptions(),
+	const onPlan = providerOfRef(scoring?.model ?? null) !== null;
+	const models = useQuery({
+		...orpc.ai.models.queryOptions(),
 		staleTime: 30_000,
 		enabled: Boolean(scoring?.ready && onPlan),
 		meta: { quiet: true },
@@ -76,11 +74,13 @@ function useCanDraft(): boolean | null {
 	if (!ai.data) return null;
 	if (!scoring?.ready) return false;
 	if (!onPlan) return true;
-	if (!clis.data) return clis.isError ? false : null;
-	const [now] = readyNow([scoring], {
-		claude: clis.data.claude.login.state === "logged_in",
-		codex: clis.data.codex.login.state === "logged_in",
-	});
+	if (!models.data) return models.isError ? false : null;
+	const [now] = readyNow(
+		[scoring],
+		Object.fromEntries(
+			models.data.providers.map((p) => [p.provider, p.signedIn]),
+		),
+	);
 	return Boolean(now?.ready);
 }
 
@@ -248,7 +248,7 @@ export function StepBody({
 }) {
 	switch (step) {
 		case "ai":
-			return <ConnectAi />;
+			return <ConnectAi onDone={onDone} />;
 		case "profile":
 			return <ProfileStep hasProfile={hasProfile} onDone={onDone} go={go} />;
 		case "wants":

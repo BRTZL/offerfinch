@@ -31,6 +31,32 @@ import type {
 	ClaudeQuery,
 	ClaudeSession,
 } from "@offerfinch/local-llm/isolated";
+import {
+	checkOpenCodeBinary,
+	findOpenCodeBinary,
+	listOpenCodeCatalog,
+	OPENCODE_INSTALL,
+	OPENCODE_TESTED_VERSION,
+	OPENCODE_WINDOWS_OFF,
+	type OpenCodeModelEntry,
+	OpenCodeProvider,
+	openCodeDataHome,
+	openCodeDbFile,
+	openCodeEntries,
+	sweepOpenCodeCrashes,
+} from "@offerfinch/local-llm/opencode";
+import {
+	type OpenCodeCredential,
+	readOpenCodeCredentials,
+} from "@offerfinch/local-llm/opencode-db";
+import {
+	EFFORTS,
+	type Effort,
+	formatModelRef,
+	type ModelInfo,
+	PROVIDER_NAMES,
+	type ProviderId,
+} from "../shared/providers";
 import type { LocalLlmFactory } from "./model-factories";
 
 /**
@@ -273,6 +299,11 @@ export interface CliFix {
 	command: string;
 	/** What to do once it runs, when the command alone is not enough. */
 	after: string | null;
+	/**
+	 * Done by OfferFinch itself, not in Terminal (`command` is empty): `ai.install` or
+	 * `ai.signIn` for the provider (Gemini through Antigravity).
+	 */
+	inApp?: "install" | "signIn";
 }
 
 /** The commands the app and its docs give for Claude Code and the Codex CLI. */
@@ -304,6 +335,21 @@ export const CODEX_FIX: Record<CliFix["kind"], CliFix> = {
 	},
 };
 
+export const OPENCODE_FIX: Record<CliFix["kind"], CliFix> = {
+	install: {
+		kind: "install",
+		command: OPENCODE_INSTALL,
+		after:
+			"Then run opencode auth login and sign in (OpenCode, OpenCode Go or a coding plan).",
+	},
+	login: {
+		kind: "login",
+		command: "opencode auth login",
+		after:
+			"Sign in to OpenCode, OpenCode Go or a coding plan with an API key; OpenCode's free models need no sign-in.",
+	},
+};
+
 export interface CliState {
 	/** The binary found on the login shell's PATH, or null. */
 	path: string | null;
@@ -316,7 +362,8 @@ export interface CliState {
 	fix: CliFix | null;
 }
 
-export interface Subscriptions {
+/** The CLI checks and the factory each run has (real, test stand-ins, try-it mode). */
+export interface CliChecks {
 	/**
 	 * Re-reads PATH from the login shell (seconds with a heavy shell profile) and finds the
 	 * CLIs. Returns the PATH, so it can be cached for the next start.
@@ -331,6 +378,178 @@ export interface Subscriptions {
 	 */
 	claude(options?: { fresh?: boolean }): Promise<CliState>;
 	codex(options?: { fresh?: boolean }): Promise<CliState>;
+}
+
+export interface Subscriptions extends CliChecks {
+	/** A provider's state: installed where, which version against the tested one, signed in. */
+	state(provider: ProviderId, options?: { fresh?: boolean }): Promise<CliState>;
+	/** The models a provider offers, whether or not it is signed in now. */
+	models(provider: ProviderId): Promise<ModelInfo[]>;
+	/** Installs a provider OfferFinch downloads itself (Antigravity); its state after. */
+	install(provider: ProviderId): Promise<CliState>;
+	/** OfferFinch's own sign-in to a provider, finished in the browser; its state after. */
+	signIn(provider: ProviderId): Promise<CliState>;
+}
+
+/**
+ * A provider OfferFinch installs and signs in to itself (Gemini through Antigravity), rather
+ * than a CLI the user installs: its state, models, calls, install and sign-in.
+ */
+export interface ManagedProvider {
+	state(options?: { fresh?: boolean }): Promise<CliState>;
+	models(): Promise<ModelInfo[]>;
+	factory: LocalLlmFactory;
+	install(): Promise<CliState>;
+	signIn(): Promise<CliState>;
+}
+
+/** Claude's models on the plan: the defaults the steps use, and Haiku. */
+const CLAUDE_MODELS: ModelInfo[] = [
+	["claude-opus-5-5", "Claude Opus 5.5"],
+	["claude-sonnet-5-5", "Claude Sonnet 5.5"],
+	["claude-haiku-5-5", "Claude Haiku 5.5"],
+].map(([id, name]) => ({
+	ref: formatModelRef("claude", id as string),
+	name: name as string,
+	provider: "claude",
+	billing: "subscription",
+	efforts: [...EFFORTS],
+}));
+
+/**
+ * Codex's models on the plan: the account's default (empty model, what Codex picks for the
+ * plan), then the known ones. The app-server's own list is not read yet (it would start the CLI
+ * for a list).
+ */
+const CODEX_MODELS: ModelInfo[] = [
+	["", "Codex account default"],
+	["gpt-6.1-sol", "GPT-6.1 Sol"],
+	["gpt-6.1-terra", "GPT-6.1 Terra"],
+].map(([id, name]) => ({
+	ref: formatModelRef("codex", id as string),
+	name: name as string,
+	provider: "codex",
+	billing: "subscription",
+	efforts: [...EFFORTS],
+}));
+
+/** A provider this version does not run yet: not installed, nothing to offer. */
+function notInstalled(provider: ProviderId): CliState {
+	return {
+		path: null,
+		version: null,
+		tested: "",
+		login: {
+			state: "logged_out",
+			detail: `${PROVIDER_NAMES[provider]} is not installed.`,
+		},
+		command: null,
+		fix: null,
+	};
+}
+
+/** `state` and `models` for every provider, on top of a run's CLI checks. */
+export function withProviders(
+	checks: CliChecks,
+	managed: Partial<Record<ProviderId, ManagedProvider>> = {},
+): Subscriptions {
+	const notManaged = (provider: ProviderId) =>
+		Promise.reject(
+			new Error(
+				`${PROVIDER_NAMES[provider]} is not installed or signed in by OfferFinch.`,
+			),
+		);
+	return {
+		...checks,
+		factory: (input) =>
+			(managed[input.provider]?.factory ?? checks.factory)(input),
+		state: (provider, options) =>
+			provider === "claude"
+				? checks.claude(options)
+				: provider === "codex"
+					? checks.codex(options)
+					: (managed[provider]?.state(options) ??
+						Promise.resolve(notInstalled(provider))),
+		models: async (provider) =>
+			provider === "claude"
+				? CLAUDE_MODELS
+				: provider === "codex"
+					? CODEX_MODELS
+					: ((await managed[provider]?.models()) ?? []),
+		install: (provider) => managed[provider]?.install() ?? notManaged(provider),
+		signIn: (provider) => managed[provider]?.signIn() ?? notManaged(provider),
+	};
+}
+
+/** An OpenCode model as the pickers show it. */
+export function openCodeModelInfo(entry: OpenCodeModelEntry): ModelInfo {
+	return {
+		ref: formatModelRef("opencode", `${entry.source}/${entry.model}`),
+		name: entry.name,
+		provider: "opencode",
+		source: entry.source,
+		billing: entry.billing === "api" ? "api" : "subscription",
+		efforts: EFFORTS.filter((e: Effort) => entry.variants.includes(e)),
+		...(entry.billing === "api" && entry.price
+			? { price: { input: entry.price.input, output: entry.price.output } }
+			: {}),
+	};
+}
+
+/** OpenCode's sign-ins in words: which sources it offers, and which it does not use, and why. */
+export function openCodeLogin(
+	credentials: OpenCodeCredential[],
+	entries: OpenCodeModelEntry[] | null,
+	now: Date = new Date(),
+): LlmLoginState {
+	const active = credentials.filter((c) => c.active);
+	const expired = active.find(
+		(c) =>
+			c.integration === "opencode" &&
+			c.type === "oauth" &&
+			c.expiresAt &&
+			c.expiresAt.getTime() < now.getTime() + 5 * 60_000,
+	);
+	if (expired)
+		return {
+			state: "logged_out",
+			detail:
+				"OpenCode's login has expired. Open OpenCode once so it refreshes it, or run opencode auth login.",
+		};
+	const offered = [
+		...new Set(
+			(entries ?? []).filter((e) => !e.unavailable).map((e) => e.source),
+		),
+	];
+	const unused = [
+		...new Set(
+			(entries ?? [])
+				.filter(
+					(e) =>
+						e.unavailable && active.some((c) => c.integration === e.source),
+				)
+				.map((e) => e.source),
+		),
+	].filter((source) => !offered.includes(source));
+	const signedIn = active.length
+		? `Signed in: ${[...new Set(active.map((c) => c.integration))].join(", ")}.`
+		: "Not signed in: only OpenCode's free models are offered.";
+	return {
+		state: "logged_in",
+		detail: [
+			signedIn,
+			entries
+				? offered.length
+					? `Models from ${offered.join(", ")}.`
+					: "No model OfferFinch can use was listed."
+				: "Models are still being listed.",
+			unused.length
+				? `Not used yet: ${unused.join(", ")} (an untested API or another company's plan login).`
+				: "",
+		]
+			.filter(Boolean)
+			.join(" "),
+	};
 }
 
 /** A role whose CLI is missing: its calls pause with what to install, never fail. */
@@ -353,6 +572,21 @@ export function subscriptions(input: {
 	log?: (message: string, data?: Record<string, unknown>) => void;
 	/** Where every read of a plan's usage goes (Settings › Models). */
 	planUsage?: (vendor: "anthropic" | "openai") => PlanUsageSink;
+	/** Providers OfferFinch installs and signs in to itself (Antigravity). */
+	managed?: Partial<Record<ProviderId, ManagedProvider>>;
+	/**
+	 * OpenCode's stable private root. Its path goes into OpenCode's environment block, which the
+	 * model sees, so it must not name the user: default a folder in the per-user temp directory.
+	 */
+	opencodeRoot?: string;
+	/**
+	 * Where OfferFinch keeps the OpenCode cleanup it owes (a marker and one intent per running
+	 * call): the app's data folder, which survives a restart and is never shown to the model.
+	 * Default the root.
+	 */
+	opencodeStateDir?: string;
+	/** Sweep sessions a crash left in the user's OpenCode database; off in test runs. */
+	opencodeSweep?: boolean;
 }): Subscriptions {
 	let env: Record<string, string | undefined> = { ...process.env };
 	let claudeBinary: string | null = null;
@@ -360,145 +594,411 @@ export function subscriptions(input: {
 	let claudeCache: { at: number; state: CliState } | null = null;
 	let codexCache: { at: number; state: CliState } | null = null;
 	const fresh = (c: { at: number } | null) => c && Date.now() - c.at < 60_000;
+	const opencode = openCodeSide({
+		root: input.opencodeRoot ?? path.join(os.tmpdir(), "offerfinch-opencode"),
+		stateDir: input.opencodeStateDir,
+		env: () => env,
+		log: input.log,
+		sweep: input.opencodeSweep ?? true,
+	});
 	const usePath = (pathEnv: string) => {
 		env = { ...process.env, PATH: pathEnv };
 		claudeBinary = findCliOnPath("claude", pathEnv);
 		codexBinary = findCliOnPath("codex", pathEnv);
 		claudeCache = null;
 		codexCache = null;
+		opencode.usePath(pathEnv);
 	};
 	usePath(mergePath(null));
-	return {
-		usePath,
-		async refresh() {
-			const pathEnv = await resolvedPath();
-			usePath(pathEnv);
-			return pathEnv;
-		},
-		factory: ({ provider, model, effort, ownerUserId }) => {
-			if (provider === CLAUDE_SUBSCRIPTION)
-				return claudeBinary
-					? new ClaudeSubscriptionProvider({
-							model,
-							effort,
-							ownerUserId,
-							parentEnv: env,
-							log: input.log,
-							query: electronClaudeQuery(input.hostScript, claudeBinary),
-							planUsage: input.planUsage?.("anthropic"),
-						})
-					: new MissingCli(
-							`${CLAUDE_SUBSCRIPTION}:${model}`,
-							"anthropic",
-							`Claude Code (claude) was not found. Install it (${CLAUDE_FIX.install.command}), run claude and log in with /login.`,
-						);
-			if (provider === CODEX_SUBSCRIPTION && process.platform === "win32")
+	return withProviders(
+		{
+			usePath,
+			async refresh() {
+				const pathEnv = await resolvedPath();
+				usePath(pathEnv);
+				return pathEnv;
+			},
+			factory: ({ provider, model, effort, ownerUserId }) => {
+				if (provider === "claude")
+					return claudeBinary
+						? new ClaudeSubscriptionProvider({
+								model,
+								effort,
+								ownerUserId,
+								parentEnv: env,
+								log: input.log,
+								query: electronClaudeQuery(input.hostScript, claudeBinary),
+								planUsage: input.planUsage?.("anthropic"),
+							})
+						: new MissingCli(
+								`${CLAUDE_SUBSCRIPTION}:${model}`,
+								"anthropic",
+								`Claude Code (claude) was not found. Install it (${CLAUDE_FIX.install.command}), run claude and log in with /login.`,
+							);
+				if (provider === "codex" && process.platform === "win32")
+					return new MissingCli(
+						`${CODEX_SUBSCRIPTION}:${model}`,
+						"openai",
+						CODEX_MACOS_ONLY,
+						"boundary",
+					);
+				if (provider === "codex")
+					return codexBinary
+						? new CodexSubscriptionProvider({
+								model,
+								effort,
+								ownerUserId,
+								parentEnv: env,
+								binary: codexBinary,
+								log: input.log,
+								planUsage: input.planUsage?.("openai"),
+							})
+						: new MissingCli(
+								`${CODEX_SUBSCRIPTION}:${model || "default"}`,
+								"openai",
+								"The Codex CLI (`codex`) was not found. Install it (npm install -g @openai/codex), then run `codex login` in Terminal.",
+							);
 				return new MissingCli(
-					`${CODEX_SUBSCRIPTION}:${model}`,
-					"openai",
-					CODEX_MACOS_ONLY,
+					`${provider}:${model}`,
+					provider,
+					`${PROVIDER_NAMES[provider]} models are not available in this version yet.`,
 					"boundary",
 				);
-			if (provider === CODEX_SUBSCRIPTION)
-				return codexBinary
-					? new CodexSubscriptionProvider({
-							model,
-							effort,
-							ownerUserId,
-							parentEnv: env,
-							binary: codexBinary,
-							log: input.log,
-							planUsage: input.planUsage?.("openai"),
-						})
-					: new MissingCli(
-							`${CODEX_SUBSCRIPTION}:${model || "default"}`,
-							"openai",
-							"The Codex CLI (`codex`) was not found. Install it (npm install -g @openai/codex), then run `codex login` in Terminal.",
-						);
-			throw new Error(`Unknown subscription provider: ${provider}`);
-		},
-		async claude(options = {}) {
-			if (!options.fresh && fresh(claudeCache))
-				return (claudeCache as { state: CliState }).state;
-			const binary = claudeBinary;
-			const state: CliState = binary
-				? await (async () => {
-						const { planUsage, ...login } = await claudeLogin(
-							env,
-							electronClaudeQuery(input.hostScript, binary),
-						);
-						if (planUsage) input.planUsage?.("anthropic").sample(planUsage);
-						return {
-							path: binary,
-							version: await version(binary, env as NodeJS.ProcessEnv),
+			},
+			async claude(options = {}) {
+				if (!options.fresh && fresh(claudeCache))
+					return (claudeCache as { state: CliState }).state;
+				const binary = claudeBinary;
+				const state: CliState = binary
+					? await (async () => {
+							const { planUsage, ...login } = await claudeLogin(
+								env,
+								electronClaudeQuery(input.hostScript, binary),
+							);
+							if (planUsage) input.planUsage?.("anthropic").sample(planUsage);
+							return {
+								path: binary,
+								version: await version(binary, env as NodeJS.ProcessEnv),
+								tested: CLAUDE_TESTED,
+								login,
+								command:
+									login.state === "logged_in"
+										? null
+										: "claude   (then type /login and sign in with your Claude plan)",
+								fix: login.state === "logged_in" ? null : CLAUDE_FIX.login,
+							};
+						})()
+					: {
+							path: null,
+							version: null,
 							tested: CLAUDE_TESTED,
-							login,
-							command:
-								login.state === "logged_in"
-									? null
-									: "claude   (then type /login and sign in with your Claude plan)",
-							fix: login.state === "logged_in" ? null : CLAUDE_FIX.login,
+							login: {
+								state: "logged_out",
+								detail: "Claude Code is not installed.",
+							},
+							command: CLAUDE_FIX.install.command,
+							fix: CLAUDE_FIX.install,
 						};
-					})()
-				: {
-						path: null,
+				claudeCache = { at: Date.now(), state };
+				return state;
+			},
+			async codex(options = {}) {
+				if (process.platform === "win32")
+					return {
+						path: codexBinary,
 						version: null,
-						tested: CLAUDE_TESTED,
-						login: {
-							state: "logged_out",
-							detail: "Claude Code is not installed.",
-						},
-						command: CLAUDE_FIX.install.command,
-						fix: CLAUDE_FIX.install,
+						tested: CODEX_TESTED,
+						login: { state: "unknown", detail: CODEX_MACOS_ONLY },
+						command: null,
+						fix: null,
 					};
-			claudeCache = { at: Date.now(), state };
-			return state;
+				if (!options.fresh && fresh(codexCache))
+					return (codexCache as { state: CliState }).state;
+				const binary = codexBinary;
+				const login: LlmLoginState = binary
+					? await codexSubscriptionLogin(env)
+					: { state: "logged_out", detail: "The Codex CLI is not installed." };
+				// Signed in: the plan's usage, as a call reads it before its prompt (no prompt here).
+				if (binary && login.state === "logged_in" && input.planUsage) {
+					const read = await codexPlanUsage({ binary, parentEnv: env });
+					if (read.snapshot) input.planUsage("openai").sample(read.snapshot);
+					else
+						input.log?.("codex plan usage not read", {
+							error: read.error,
+						});
+				}
+				const state: CliState = {
+					path: binary,
+					version: binary
+						? await version(binary, env as NodeJS.ProcessEnv)
+						: null,
+					tested: CODEX_TESTED,
+					login,
+					command: !binary
+						? CODEX_FIX.install.command
+						: login.state === "logged_in"
+							? null
+							: CODEX_FIX.login.command,
+					fix: !binary
+						? CODEX_FIX.install
+						: login.state === "logged_in"
+							? null
+							: CODEX_FIX.login,
+				};
+				codexCache = { at: Date.now(), state };
+				return state;
+			},
 		},
-		async codex(options = {}) {
+		{
+			opencode: openCodeManaged(opencode),
+			...input.managed,
+		},
+	);
+}
+
+/** How long OpenCode's model list is kept, and how long listing it may take. */
+const OPENCODE_CATALOG_TTL_MS = 10 * 60_000;
+const OPENCODE_CATALOG_TIMEOUT_MS = 30_000;
+
+/**
+ * OpenCode's model list on this computer, read from OpenCode itself (a locked-down server that
+ * creates no session) and joined with the user's credentials (types only). Kept ten minutes; a
+ * read in progress is shared; `entry` answers from what is kept, without waiting.
+ */
+function openCodeCatalog(input: {
+	binary: () => string | null;
+	root: string;
+	env: () => Record<string, string | undefined>;
+	log?: (message: string, data?: Record<string, unknown>) => void;
+}) {
+	let kept: { at: number; entries: OpenCodeModelEntry[] } | null = null;
+	let running: Promise<OpenCodeModelEntry[] | null> | null = null;
+	const read = async (): Promise<OpenCodeModelEntry[] | null> => {
+		const binary = input.binary();
+		if (!binary) return null;
+		const parentEnv = input.env();
+		const listed = await Promise.race([
+			listOpenCodeCatalog({ binary, root: input.root, parentEnv }),
+			new Promise<never>((_, reject) =>
+				setTimeout(
+					() => reject(new Error("listing OpenCode's models timed out")),
+					OPENCODE_CATALOG_TIMEOUT_MS,
+				),
+			),
+		]);
+		const entries = openCodeEntries(
+			listed,
+			readCredentials(openCodeDbFile(openCodeDataHome(parentEnv))),
+		);
+		kept = { at: Date.now(), entries };
+		return entries;
+	};
+	return {
+		entry(source: string, model: string): OpenCodeModelEntry | null {
+			return (
+				kept?.entries.find((e) => e.source === source && e.model === model) ??
+				null
+			);
+		},
+		load(options: { fresh?: boolean } = {}) {
+			if (
+				!options.fresh &&
+				kept &&
+				Date.now() - kept.at < OPENCODE_CATALOG_TTL_MS
+			)
+				return Promise.resolve(kept.entries);
+			running ??= read()
+				.catch((error) => {
+					input.log?.("opencode models not listed", { error: String(error) });
+					return kept?.entries ?? null;
+				})
+				.finally(() => {
+					running = null;
+				});
+			return running;
+		},
+		clear() {
+			kept = null;
+		},
+	};
+}
+
+/** The user's OpenCode credentials (types only); none when the database cannot be read. */
+function readCredentials(dbFile: string): OpenCodeCredential[] {
+	try {
+		return readOpenCodeCredentials(dbFile);
+	} catch {
+		return [];
+	}
+}
+
+/** OpenCode's state: installed, the tested build, and which sources it is signed in to. */
+async function openCodeState(input: {
+	binary: string | null;
+	root: string;
+	env: Record<string, string | undefined>;
+	entries: OpenCodeModelEntry[] | null;
+}): Promise<CliState> {
+	if (!input.binary)
+		return {
+			path: null,
+			version: null,
+			tested: OPENCODE_TESTED_VERSION,
+			login: { state: "logged_out", detail: "OpenCode is not installed." },
+			command: OPENCODE_FIX.install.command,
+			fix: OPENCODE_FIX.install,
+		};
+	const gate = await checkOpenCodeBinary({
+		binary: input.binary,
+		root: input.root,
+		parentEnv: input.env,
+	}).catch((error) => ({
+		ok: false as const,
+		version: null,
+		detail: String(error),
+	}));
+	if (!gate.ok)
+		return {
+			path: input.binary,
+			version: gate.version,
+			tested: OPENCODE_TESTED_VERSION,
+			login: { state: "refused", detail: gate.detail },
+			command: OPENCODE_FIX.install.command,
+			fix: OPENCODE_FIX.install,
+		};
+	const login = openCodeLogin(
+		readCredentials(openCodeDbFile(openCodeDataHome(input.env))),
+		input.entries,
+	);
+	return {
+		path: input.binary,
+		version: gate.version,
+		tested: OPENCODE_TESTED_VERSION,
+		login,
+		command: login.state === "logged_in" ? null : OPENCODE_FIX.login.command,
+		fix: login.state === "logged_in" ? null : OPENCODE_FIX.login,
+	};
+}
+
+/**
+ * OpenCode for the worker: its binary on the login shell's PATH, its model list, its state and
+ * its provider, with the crash sweep whenever a binary is found.
+ */
+function openCodeSide(input: {
+	root: string;
+	stateDir?: string;
+	env: () => Record<string, string | undefined>;
+	log?: (message: string, data?: Record<string, unknown>) => void;
+	sweep: boolean;
+}) {
+	let binary: string | null = null;
+	let cache: { at: number; state: CliState } | null = null;
+	const catalog = openCodeCatalog({
+		binary: () => binary,
+		root: input.root,
+		env: input.env,
+		log: input.log,
+	});
+	return {
+		usePath(pathEnv: string) {
+			const before = binary;
+			binary =
+				process.platform === "win32" ? null : findOpenCodeBinary(pathEnv);
+			cache = null;
+			if (binary === before) return;
+			catalog.clear();
+			if (binary && input.sweep)
+				void sweepOpenCodeCrashes({
+					binary,
+					root: input.root,
+					stateDir: input.stateDir,
+					parentEnv: input.env(),
+					log: input.log,
+				}).catch(() => {});
+		},
+		provider(choice: {
+			model: string;
+			effort?: Effort;
+			ownerUserId: string;
+		}): LlmProvider {
+			const at = choice.model.indexOf("/");
+			const source = choice.model.slice(0, at);
+			const model = choice.model.slice(at + 1);
+			const name = `opencode:${choice.model}`;
+			if (process.platform === "win32")
+				return new MissingCli(
+					name,
+					`opencode:${source}`,
+					OPENCODE_WINDOWS_OFF,
+					"boundary",
+				);
+			if (!binary)
+				return new MissingCli(
+					name,
+					`opencode:${source}`,
+					`OpenCode (opencode) was not found. Install it (${OPENCODE_INSTALL}), then run opencode auth login in Terminal.`,
+				);
+			void catalog.load();
+			return new OpenCodeProvider({
+				source,
+				model,
+				effort: choice.effort,
+				ownerUserId: choice.ownerUserId,
+				root: input.root,
+				stateDir: input.stateDir,
+				binary,
+				parentEnv: input.env(),
+				log: input.log,
+				entry: () => catalog.entry(source, model),
+				refresh: () => catalog.load(),
+			});
+		},
+		async state(options: { fresh?: boolean } = {}): Promise<CliState> {
 			if (process.platform === "win32")
 				return {
-					path: codexBinary,
+					path: null,
 					version: null,
-					tested: CODEX_TESTED,
-					login: { state: "unknown", detail: CODEX_MACOS_ONLY },
+					tested: OPENCODE_TESTED_VERSION,
+					login: { state: "unknown", detail: OPENCODE_WINDOWS_OFF },
 					command: null,
 					fix: null,
 				};
-			if (!options.fresh && fresh(codexCache))
-				return (codexCache as { state: CliState }).state;
-			const binary = codexBinary;
-			const login: LlmLoginState = binary
-				? await codexSubscriptionLogin(env)
-				: { state: "logged_out", detail: "The Codex CLI is not installed." };
-			// Signed in: the plan's usage, as a call reads it before its prompt (no prompt here).
-			if (binary && login.state === "logged_in" && input.planUsage) {
-				const read = await codexPlanUsage({ binary, parentEnv: env });
-				if (read.snapshot) input.planUsage("openai").sample(read.snapshot);
-				else
-					input.log?.("codex plan usage not read", {
-						error: read.error,
-					});
-			}
-			const state: CliState = {
-				path: binary,
-				version: binary
-					? await version(binary, env as NodeJS.ProcessEnv)
-					: null,
-				tested: CODEX_TESTED,
-				login,
-				command: !binary
-					? CODEX_FIX.install.command
-					: login.state === "logged_in"
-						? null
-						: CODEX_FIX.login.command,
-				fix: !binary
-					? CODEX_FIX.install
-					: login.state === "logged_in"
-						? null
-						: CODEX_FIX.login,
-			};
-			codexCache = { at: Date.now(), state };
+			if (!options.fresh && cache && Date.now() - cache.at < 60_000)
+				return cache.state;
+			const state = await openCodeState({
+				binary,
+				root: input.root,
+				env: input.env(),
+				entries: await catalog.load(options),
+			});
+			cache = { at: Date.now(), state };
 			return state;
 		},
+		async models(): Promise<ModelInfo[]> {
+			if (process.platform === "win32" || !binary) return [];
+			return ((await catalog.load()) ?? [])
+				.filter((e) => !e.unavailable)
+				.map(openCodeModelInfo);
+		},
+	};
+}
+
+/** OpenCode for `withProviders`: installed and signed in from Terminal, never by OfferFinch. */
+function openCodeManaged(
+	opencode: ReturnType<typeof openCodeSide>,
+): ManagedProvider {
+	const fromTerminal = () =>
+		Promise.reject(
+			new Error(
+				"OpenCode is installed and signed in from Terminal, not by OfferFinch.",
+			),
+		);
+	return {
+		state: (options) => opencode.state(options),
+		models: () => opencode.models(),
+		factory: ({ model, effort, ownerUserId }) =>
+			opencode.provider({ model, effort, ownerUserId }),
+		install: fromTerminal,
+		signIn: fromTerminal,
 	};
 }
