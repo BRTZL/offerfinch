@@ -172,8 +172,8 @@ export class SmartRecruitersSource implements JobSource {
 
 	/**
 	 * The posting's own page: open while it names this posting and is active; inactive is gone. A
-	 * 404 is gone only when the company's list (its first page) answers with postings and not
-	 * this one: SmartRecruiters answers a company that does not exist with an empty list, and a
+	 * 404 is gone only when the company's whole list answers with postings and not this one (a
+	 * list longer than one page proves nothing, so the check is left for later): SmartRecruiters answers a company that does not exist with an empty list, and a
 	 * posting of another company with 400.
 	 */
 	checkPosting(
@@ -198,6 +198,11 @@ export class SmartRecruitersSource implements JobSource {
 					Array.isArray((body as SrList).content)
 						? ((body as SrList).content as SrPosting[]).map((p) => String(p.id))
 						: [],
+				complete: (body) => {
+					const list = body as SrList;
+					const shown = Array.isArray(list?.content) ? list.content.length : 0;
+					return (list?.totalFound ?? 0) <= shown;
+				},
 			},
 			{ signal, pacing },
 		);

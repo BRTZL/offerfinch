@@ -17,7 +17,20 @@ import {
  * `https://{company}.recruitee.com/api/offers/` lists every published offer with its
  * description and requirements, and `/api/offers/{slug}` is one offer. Postings are matched by
  * slug: the careers address an offer gives may be the company's own domain.
+ *
+ * A slug is only unique within one company (two companies can both have "software-engineer"),
+ * so the posting's id is the company and the slug together: `{company}:{slug}`.
  */
+
+/** The id a Recruitee posting is stored and found under: unique across companies. */
+export function recruiteeId(company: string, slug: string): string {
+	return `${company.toLowerCase()}:${slug.toLowerCase()}`;
+}
+
+/** The slug in a stored id (`{company}:{slug}`). */
+function slugOf(externalId: string): string {
+	return externalId.slice(externalId.lastIndexOf(":") + 1).toLowerCase();
+}
 
 interface RecruiteeLocation {
 	city?: string;
@@ -86,6 +99,7 @@ function employment(code: string | undefined): string | undefined {
 function mapRecruiteeOffer(
 	offer: RecruiteeOffer,
 	origin: string,
+	company: string,
 ): NormalizedJob {
 	const locations = (
 		offer.locations?.length
@@ -98,7 +112,7 @@ function mapRecruiteeOffer(
 	const slug = offer.slug.toLowerCase();
 	return {
 		source: "recruitee",
-		externalId: slug,
+		externalId: recruiteeId(company, slug),
 		url: `${origin}/o/${encodeURIComponent(slug)}`,
 		title: offer.title.trim(),
 		locations,
@@ -139,7 +153,7 @@ export class RecruiteeSource implements JobSource {
 		return body.offers
 			.filter(isOffer)
 			.filter((offer) => !offer.status || offer.status === "published")
-			.map((offer) => mapRecruiteeOffer(offer, origin));
+			.map((offer) => mapRecruiteeOffer(offer, origin, sourceKey));
 	}
 
 	/**
@@ -153,13 +167,13 @@ export class RecruiteeSource implements JobSource {
 		pacing?: RequestPacing,
 	): Promise<PostingStatus> {
 		const origin = companyOrigin("recruitee", sourceKey, DOMAIN);
-		const slug = externalId.toLowerCase();
+		const slug = slugOf(externalId);
 		return fetchPostingStatus(
 			this.fetchImpl,
 			"recruitee",
 			{
 				url: `${origin}/api/offers/${encodeURIComponent(slug)}`,
-				id: slug,
+				id: recruiteeId(sourceKey, slug),
 				isSame: (body) => {
 					const offer = (body as { offer?: unknown })?.offer;
 					return isOffer(offer) && offer.slug.toLowerCase() === slug;
@@ -174,7 +188,7 @@ export class RecruiteeSource implements JobSource {
 				ids: (body) => {
 					const offers = (body as { offers?: unknown })?.offers;
 					return Array.isArray(offers)
-						? offers.filter(isOffer).map((o) => o.slug)
+						? offers.filter(isOffer).map((o) => recruiteeId(sourceKey, o.slug))
 						: [];
 				},
 			},

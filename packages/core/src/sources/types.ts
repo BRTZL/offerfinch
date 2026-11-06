@@ -205,7 +205,12 @@ export async function fetchPostingStatus(
 		/** The posting's own page says it is closed (Workable's state, SmartRecruiters' active). */
 		closed?: (body: unknown) => boolean;
 	},
-	board: { url: string; ids: (body: unknown) => string[] },
+	board: {
+		url: string;
+		ids: (body: unknown) => string[];
+		/** False when the answer is one page of a longer list: absence proves nothing then. */
+		complete?: (body: unknown) => boolean;
+	},
 	{ signal, pacing }: { signal?: AbortSignal; pacing?: RequestPacing } = {},
 ): Promise<PostingStatus> {
 	await pacing?.before();
@@ -236,6 +241,10 @@ export async function fetchPostingStatus(
 	if (ids.includes(posting.id.toLowerCase()))
 		throw new Error(
 			`${source}: the posting answers 404 but its board still lists it`,
+		);
+	if (board.complete && !board.complete(listed.body))
+		throw new Error(
+			`${source}: the posting answers 404 and its board's first page does not list it; the rest is not read`,
 		);
 	return "gone";
 }

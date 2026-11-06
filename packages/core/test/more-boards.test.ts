@@ -83,7 +83,7 @@ describe("posting URLs on the new boards", () => {
 		).toMatchObject({
 			board: "recruitee",
 			companyKey: "quarry",
-			jobId: "backend-engineer-payments",
+			jobId: "quarry:backend-engineer-payments",
 		});
 		expect(
 			postingFromUrl(
@@ -339,6 +339,17 @@ describe("SmartRecruitersSource", () => {
 				"744000100000003",
 			),
 		).rejects.toThrow(/lists no postings/);
+		// 404, and the posting is not on the list's first page of several: unknown.
+		await expect(
+			check(
+				{
+					[listUrl]: {
+						body: json({ ...JSON.parse(list), totalFound: 101 }),
+					},
+				},
+				"744000100000003",
+			),
+		).rejects.toThrow(/first page/);
 		// 404 while the list still has it, a 400 (another company's), a 5xx: unknown.
 		await expect(check({ [listUrl]: { body: list } })).rejects.toThrow(
 			/still lists it/,
@@ -461,9 +472,10 @@ describe("RecruiteeSource", () => {
 			}),
 		).listJobs({ sourceKey: "Quarry" });
 		// The closed offer is left out.
+		// A slug is unique only within a company: the id carries the company.
 		expect(jobs.map((j) => j.externalId)).toEqual([
-			"backend-engineer-payments",
-			"support-lead",
+			"quarry:backend-engineer-payments",
+			"quarry:support-lead",
 		]);
 		expect(jobs[0]).toMatchObject({
 			source: "recruitee",
@@ -510,7 +522,10 @@ describe("RecruiteeSource", () => {
 		const one = `${ORIGIN}/api/offers/support-lead`;
 		const offers = board("recruitee-offers.json");
 		const check = (routes: Record<string, Route>, slug = "support-lead") =>
-			new RecruiteeSource(exact(routes)).checkPosting("quarry", slug);
+			new RecruiteeSource(exact(routes)).checkPosting(
+				"quarry",
+				`quarry:${slug}`,
+			);
 		expect(
 			await check({
 				[one]: {
@@ -538,6 +553,13 @@ describe("RecruiteeSource", () => {
 		await expect(
 			check({ [`${ORIGIN}/api/offers/`]: { body: json({ offers: [] }) } }),
 		).rejects.toThrow(/lists no postings/);
+	});
+
+	it("tells two companies' offers with the same slug apart", () => {
+		const a = postingFromUrl("https://alpha.recruitee.com/o/software-engineer");
+		const b = postingFromUrl("https://beta.recruitee.com/o/software-engineer");
+		expect(a?.jobId).toBe("alpha:software-engineer");
+		expect(b?.jobId).toBe("beta:software-engineer");
 	});
 });
 

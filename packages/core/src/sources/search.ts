@@ -1,4 +1,5 @@
 import type { SiteStop } from "../sites/read";
+import { recruiteeId } from "./recruitee";
 
 /**
  * Job-board search (PLAN A): postings on the public job boards below at any company, found
@@ -169,7 +170,14 @@ export function postingFromUrl(url: string): FoundPosting | null {
 			companyKey = companyKey.toLowerCase();
 			if (NOT_A_COMPANY.has(companyKey)) return null;
 		}
-		return { board, companyKey, jobId: id(m[2]), url };
+		const jobId = id(m[2]);
+		return {
+			board,
+			companyKey,
+			// A Recruitee slug is unique only within its company (./recruitee.ts).
+			jobId: board === "recruitee" ? recruiteeId(companyKey, jobId) : jobId,
+			url,
+		};
 	}
 	return null;
 }
