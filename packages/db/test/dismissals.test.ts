@@ -507,7 +507,14 @@ describe("Inbox views", () => {
 			view: "closed",
 			limit: 500,
 		});
-		expect(closed.some((r) => r.state === "dismissed")).toBe(true);
+		// Turned down by the user (not interested, rejected): on the Rejected page, never in the Inbox.
+		const all = await repo.listApplications("u1", { view: "all", limit: 500 });
+		for (const rows of [closed, all])
+			expect(
+				rows.some((r) => r.state === "dismissed" || r.state === "rejected"),
+			).toBe(false);
+		const rejected = await repo.listRejected("u1");
+		expect(rejected.some((r) => r.state === "dismissed")).toBe(true);
 		// Scored below the minimum is closed, not a match.
 		expect(
 			closed.some((r) => r.state === "scored" && r.endedReason !== null),

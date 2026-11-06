@@ -38,6 +38,9 @@ const openMatch = sql`(${applications.state} = 'scored' and ${applications.ended
 /** Submitted or being submitted: a posting closed since then is expected, and changes nothing. */
 const submitted = sql`${applications.state} in ('applying', 'applied', 'needs_human')`;
 
+/** Never in the Inbox: not yet scored, ruled out by the job filter, or turned down by the user. */
+const TURNED_DOWN = "'found', 'rejected_by_filter', 'rejected', 'dismissed'";
+
 export function inboxViewWhere(view: InboxView) {
 	switch (view) {
 		case "matches":
@@ -52,10 +55,11 @@ export function inboxViewWhere(view: InboxView) {
 		case "closed":
 			// Scored below the minimum counts as closed: it was never a match to decide on. So does
 			// a posting found closed before it was submitted. A job the job filter rejected is
-			// hidden everywhere, here too.
-			return sql`(${applications.state} in ('applied', 'rejected', 'expired', 'failed', 'dismissed') or (${applications.state} = 'scored' and ${applications.endedReason} is not null) or (${jobs.closedAt} is not null and ${applications.state} not in ('found', 'rejected_by_filter') and not ${submitted}))`;
+			// hidden everywhere, here too, and so is one the user turned down (rejected or not
+			// interested): those live on the Rejected page, not in the Inbox.
+			return sql`(${applications.state} in ('applied', 'expired', 'failed') or (${applications.state} = 'scored' and ${applications.endedReason} is not null) or (${jobs.closedAt} is not null and ${applications.state} not in (${sql.raw(TURNED_DOWN)}) and not ${submitted}))`;
 		case "all":
-			return sql`${applications.state} not in ('found', 'rejected_by_filter')`;
+			return sql`${applications.state} not in (${sql.raw(TURNED_DOWN)})`;
 	}
 }
 

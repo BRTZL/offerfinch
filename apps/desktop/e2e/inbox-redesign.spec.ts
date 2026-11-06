@@ -339,11 +339,15 @@ test("Inbox redesign: one list, unread dots, the action bar, Rejected chips and 
 			"aria-pressed",
 			"true",
 		);
+		// By you: the rejected draft with its reason, and the match marked Not interested earlier.
 		await page.getByTestId("reason-user").click();
-		await expect(page.getByTestId("rejected-row")).toHaveCount(1);
-		await expect(page.getByTestId("rejected-row")).toContainText(
-			"Too much travel",
-		);
+		await expect(page.getByTestId("rejected-row")).toHaveCount(2);
+		await expect(
+			page.getByTestId("rejected-row").filter({ hasText: "Too much travel" }),
+		).toHaveCount(1);
+		await expect(
+			page.getByTestId("rejected-row").filter({ hasText: "Not interested" }),
+		).toHaveCount(1);
 		await page.getByTestId("reason-all").click();
 		await page.getByTestId("rejected-row").first().click();
 		await shot(page, "rejected");

@@ -8,6 +8,14 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
+## Unreleased
+
+- The Inbox shows only jobs still in play: ones you rejected or marked Not interested move to
+  the Rejected page, with your reasons (Not interested, the reasons you ticked, or Company
+  hidden).
+- A job being drafted shows a soft light passing across its row in the Inbox. It stays still
+  when macOS's Reduce motion is on.
+
 ## 0.2.0 (2026-11-06)
 
 - Choose any model for each step: finding matches, drafting and checking drafts. A new picker
