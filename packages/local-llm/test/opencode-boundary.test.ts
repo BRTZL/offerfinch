@@ -148,6 +148,8 @@ async function call(
 		...extra,
 		binary: binary as string,
 		root: join(root, "private"),
+		// The marker and intents in a folder of their own, as the desktop keeps them (userData).
+		stateDir: join(root, "state"),
 		dataHome,
 		source: "opencode",
 		model: MODEL,
@@ -360,9 +362,14 @@ describe.skipIf(!tested)("an OpenCode call is a pure model call", () => {
 	it("keeps the cleanup pending while another connection reads OpenCode's database, refuses calls past the grace period, and finishes once it closes", async () => {
 		const dbFile = join(fakeData, "opencode", "opencode.db");
 		let reader: Database.Database | null = null;
+		let intentsDuringCall: string[] = [];
+		const state = () => readdirSync(join(root, "state"));
 		const held = await call(fakeData, fakeHome, undefined, {
 			// Like the user's own OpenCode holding a read transaction during the scrub.
 			beforeScrub: async () => {
+				intentsDuringCall = state().filter((f) =>
+					f.startsWith("cleanup-intent-"),
+				);
 				reader = new Database(dbFile, { readonly: true });
 				reader.prepare("BEGIN").run();
 				reader.prepare("SELECT count(*) FROM session_v2").get();
@@ -372,6 +379,13 @@ describe.skipIf(!tested)("an OpenCode call is a pure model call", () => {
 		expect(held.scrub?.rows).toBeGreaterThan(0);
 		expect(held.scrub?.clean).toBe(false);
 		expect(held.cleanupPending).toBe(true);
+		// The call's intent was on disk while it ran; after it, the marker holds the debt.
+		expect(intentsDuringCall).toHaveLength(1);
+		expect(state().filter((f) => f.startsWith("cleanup-intent-"))).toEqual([]);
+		expect(state().some((f) => f.startsWith("cleanup-pending-"))).toBe(true);
+		expect(
+			readdirSync(join(root, "private")).some((f) => f.startsWith("cleanup-")),
+		).toBe(false);
 		// The rows are gone, the prompt is not: this is what the marker is for.
 		expect(dataHomeText(fakeData)).toContain(PROMPT_CANARY);
 
@@ -392,6 +406,7 @@ describe.skipIf(!tested)("an OpenCode call is a pure model call", () => {
 		expect(resumed.failure).toBeNull();
 		expect(resumed.scrub?.clean).toBe(true);
 		expect(resumed.cleanupPending).toBe(false);
+		expect(state().filter((f) => f.startsWith("cleanup-"))).toEqual([]);
 		expect(posts.length).toBe(1);
 		expect(dataHomeText(fakeData)).not.toContain(PROMPT_CANARY);
 	}, 180_000);

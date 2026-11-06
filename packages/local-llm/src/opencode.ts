@@ -25,21 +25,20 @@ import { Breaker } from "./breaker";
 import { findCliOnPath } from "./cli-path";
 import { subscriptionEnv } from "./env";
 import {
-	afterScrub,
 	attemptCleanup,
+	beginCall,
+	type CallIntent,
 	CLEANUP_GRACE_MS,
 	CLEANUP_REFUSAL,
 	type CleanupTarget,
+	cleanupDue,
 	cleanupOverdue,
+	finishCall,
 	type PendingCleanup,
 	readPendingCleanup,
 	scheduleCleanupRetry,
 } from "./opencode-cleanup";
-import {
-	readOpenCodeCredentials,
-	type ScrubResult,
-	scrubOpenCodeSessions,
-} from "./opencode-db";
+import { readOpenCodeCredentials, type ScrubResult } from "./opencode-db";
 import { type RelayLog, startRelay } from "./opencode-relay";
 
 /**
@@ -855,6 +854,8 @@ export interface OpenCodeCallInput {
 	timeoutMs?: number;
 	/** How long calls go on while an earlier cleanup is unfinished; default `CLEANUP_GRACE_MS`. */
 	cleanupGraceMs?: number;
+	/** Where the cleanup marker and intents live (the app's data folder); default the root. */
+	stateDir?: string;
 	log?: (message: string, data?: Record<string, unknown>) => void;
 	/** Tests: runs before the server is stopped and the session scrubbed. */
 	beforeScrub?: (input: { sessionId: string | null }) => Promise<void>;
@@ -936,8 +937,12 @@ const started = new Set<string>();
 
 const targetKey = (target: CleanupTarget) => `${target.dbFile}\0${target.cwd}`;
 
-function cleanupTarget(dirs: RootDirs, dbFile: string): CleanupTarget {
-	return { base: dirs.base, dbFile, cwd: dirs.cwd };
+function cleanupTarget(
+	dirs: RootDirs,
+	dbFile: string,
+	stateDir: string | undefined,
+): CleanupTarget {
+	return { base: stateDir ?? dirs.base, dbFile, cwd: dirs.cwd };
 }
 
 /** Retries an unfinished cleanup later, on the tested build only (the sweep is schema-bound). */
@@ -956,10 +961,12 @@ function retryLater(ctx: CleanupContext, pending: PendingCleanup): void {
 /** One cleanup attempt now; a retry is scheduled while it stays unfinished. */
 function cleanupNow(ctx: CleanupContext, now: Date): PendingCleanup | null {
 	const key = targetKey(ctx.target);
+	const start = !started.has(key);
 	started.add(key);
 	const attempt = attemptCleanup(ctx.target, {
 		idle: !running.get(key),
 		now,
+		start,
 	});
 	if (attempt.result?.rows)
 		ctx.log?.("opencode cleanup removed sessions a call left", {
@@ -988,7 +995,7 @@ function settleCleanup(
 ): string | null {
 	const first = !started.has(targetKey(ctx.target));
 	const pending =
-		first || readPendingCleanup(ctx.target) ? cleanupNow(ctx, now) : null;
+		first || cleanupDue(ctx.target, now) ? cleanupNow(ctx, now) : null;
 	return cleanupOverdue(pending, now, graceMs) ? CLEANUP_REFUSAL : null;
 }
 
@@ -1000,6 +1007,8 @@ function settleCleanup(
 export async function sweepOpenCodeCrashes(input: {
 	binary: string;
 	root: string;
+	/** Where the cleanup marker and intents live; default the root. */
+	stateDir?: string;
 	parentEnv?: Record<string, string | undefined>;
 	log?: (message: string, data?: Record<string, unknown>) => void;
 }): Promise<PendingCleanup | null> {
@@ -1009,7 +1018,11 @@ export async function sweepOpenCodeCrashes(input: {
 	const dirs = await prepareRoot(input.root);
 	return cleanupNow(
 		{
-			target: cleanupTarget(dirs, openCodeDbFile(openCodeDataHome(parentEnv))),
+			target: cleanupTarget(
+				dirs,
+				openCodeDbFile(openCodeDataHome(parentEnv)),
+				input.stateDir,
+			),
 			binary: input.binary,
 			root: input.root,
 			parentEnv,
@@ -1018,6 +1031,9 @@ export async function sweepOpenCodeCrashes(input: {
 		new Date(),
 	);
 }
+
+const INTENT_REFUSAL =
+	"OfferFinch could not write the note it keeps while an OpenCode call runs (so that a crash cannot leave the prompt in OpenCode's database unnoticed); nothing was sent. Check that OfferFinch's data folder is writable.";
 
 /** Event types that mean the model tried something other than answering. */
 const TOOL_EVENT = /^session\.(tool|shell|skill|permission|form|subagent)\b/;
@@ -1183,26 +1199,22 @@ async function converse(
 }
 
 /**
- * The call's own scrub, after its server exited: unfinished (it threw, or its checkpoint was
- * busy) keeps the cleanup pending and retries it.
+ * The call's own cleanup, after its server exited (`finishCall`: scrub, marker, then its intent):
+ * unfinished (it threw, or its checkpoint was busy) keeps the cleanup pending and retries it.
  */
 function scrubAfterCall(
 	ctx: CleanupContext,
-	sessionId: string,
+	intent: CallIntent,
 	result: OpenCodeCallResult,
 ): void {
-	try {
-		result.scrub = scrubOpenCodeSessions(ctx.target.dbFile, [sessionId]);
-	} catch (error) {
-		result.scrubError = error instanceof Error ? error.message : String(error);
-	}
-	const pending = afterScrub(
-		ctx.target,
-		{ result: result.scrub, error: result.scrubError },
-		{ idle: !running.get(targetKey(ctx.target)), now: new Date() },
-	);
-	result.cleanupPending = pending !== null;
-	if (pending) retryLater(ctx, pending);
+	const finished = finishCall(ctx.target, intent, result.sessionId, {
+		idle: !running.get(targetKey(ctx.target)),
+		now: new Date(),
+	});
+	result.scrub = finished.scrub;
+	result.scrubError = finished.scrubError;
+	result.cleanupPending = finished.pending !== null;
+	if (finished.pending) retryLater(ctx, finished.pending);
 }
 
 /**
@@ -1228,7 +1240,7 @@ export async function runOpenCodeCall(
 	}
 	const dirs = await prepareRoot(input.root);
 	const ctx: CleanupContext = {
-		target: cleanupTarget(dirs, dbFile),
+		target: cleanupTarget(dirs, dbFile, input.stateDir),
 		binary: input.binary,
 		root: input.root,
 		parentEnv,
@@ -1246,6 +1258,15 @@ export async function runOpenCodeCall(
 		return result;
 	}
 	result.cleanupPending = readPendingCleanup(ctx.target) !== null;
+	// On disk before OpenCode can write anything: a crash from here on leaves a cleanup to adopt.
+	let intent: CallIntent;
+	try {
+		intent = beginCall(ctx.target, new Date());
+	} catch {
+		result.boundary = INTENT_REFUSAL;
+		result.cleanupRefused = true;
+		return result;
+	}
 	const key = targetKey(ctx.target);
 	running.set(key, (running.get(key) ?? 0) + 1);
 	let counted = true;
@@ -1296,7 +1317,7 @@ export async function runOpenCodeCall(
 		await serve?.close();
 		await relay?.close();
 		done();
-		if (result.sessionId) scrubAfterCall(ctx, result.sessionId, result);
+		scrubAfterCall(ctx, intent, result);
 	}
 	return result;
 }
@@ -1426,6 +1447,8 @@ export interface OpenCodeProviderOptions {
 	timeoutMs?: number;
 	/** How long calls go on while an earlier cleanup is unfinished; default `CLEANUP_GRACE_MS`. */
 	cleanupGraceMs?: number;
+	/** Where the cleanup marker and intents live (the app's data folder); default the root. */
+	stateDir?: string;
 	/** Tests: stands in for `runOpenCodeCall`. */
 	runCall?: (input: OpenCodeCallInput) => Promise<OpenCodeCallResult>;
 	/** Tests: the user's credentials (types only). */
@@ -1627,6 +1650,7 @@ export class OpenCodeProvider implements LlmProvider {
 			parentEnv,
 			timeoutMs: this.options.timeoutMs,
 			cleanupGraceMs: this.options.cleanupGraceMs,
+			stateDir: this.options.stateDir,
 			log: this.options.log,
 			onModelCall: () => request.onModelCall?.(),
 		});

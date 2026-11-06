@@ -579,6 +579,12 @@ export function subscriptions(input: {
 	 * model sees, so it must not name the user: default a folder in the per-user temp directory.
 	 */
 	opencodeRoot?: string;
+	/**
+	 * Where OfferFinch keeps the OpenCode cleanup it owes (a marker and one intent per running
+	 * call): the app's data folder, which survives a restart and is never shown to the model.
+	 * Default the root.
+	 */
+	opencodeStateDir?: string;
 	/** Sweep sessions a crash left in the user's OpenCode database; off in test runs. */
 	opencodeSweep?: boolean;
 }): Subscriptions {
@@ -590,6 +596,7 @@ export function subscriptions(input: {
 	const fresh = (c: { at: number } | null) => c && Date.now() - c.at < 60_000;
 	const opencode = openCodeSide({
 		root: input.opencodeRoot ?? path.join(os.tmpdir(), "offerfinch-opencode"),
+		stateDir: input.opencodeStateDir,
 		env: () => env,
 		log: input.log,
 		sweep: input.opencodeSweep ?? true,
@@ -879,6 +886,7 @@ async function openCodeState(input: {
  */
 function openCodeSide(input: {
 	root: string;
+	stateDir?: string;
 	env: () => Record<string, string | undefined>;
 	log?: (message: string, data?: Record<string, unknown>) => void;
 	sweep: boolean;
@@ -903,6 +911,7 @@ function openCodeSide(input: {
 				void sweepOpenCodeCrashes({
 					binary,
 					root: input.root,
+					stateDir: input.stateDir,
 					parentEnv: input.env(),
 					log: input.log,
 				}).catch(() => {});
@@ -936,6 +945,7 @@ function openCodeSide(input: {
 				effort: choice.effort,
 				ownerUserId: choice.ownerUserId,
 				root: input.root,
+				stateDir: input.stateDir,
 				binary,
 				parentEnv: input.env(),
 				log: input.log,

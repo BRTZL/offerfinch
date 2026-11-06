@@ -182,6 +182,9 @@ export class WorkerApp {
 				hostScript: init.claudeHost,
 				// Test runs never touch the user's OpenCode database.
 				opencodeSweep: !init.test,
+				// The cleanup OfferFinch owes OpenCode's database must survive a restart: the data
+				// folder, not the temp folder (the root stays there: its path is shown to the model).
+				opencodeStateDir: path.join(init.userData, "opencode"),
 				log,
 				planUsage,
 				managed: init.test?.fakeClis

@@ -580,6 +580,7 @@ describe("the user's OpenCode database", () => {
 			rows: 0,
 			busy: 0,
 			clean: true,
+			projects: 0,
 		});
 	});
 

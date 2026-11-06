@@ -1,16 +1,20 @@
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
 	afterScrub,
 	attemptCleanup,
+	beginCall,
 	CLEANUP_GRACE_MS,
 	type CleanupTarget,
+	cleanupDue,
 	cleanupOverdue,
+	finishCall,
 	readPendingCleanup,
 	scheduleCleanupRetry,
 } from "../src/opencode-cleanup";
@@ -254,5 +258,171 @@ describe("an OpenCode cleanup while another connection reads the database", () =
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+const CHILD = resolve(__dirname, "fixtures", "cleanup-child.mjs");
+const intents = () =>
+	readdirSync(target.base).filter((f) => f.startsWith("cleanup-intent-"));
+
+describe("a crash between a call's deletion and its marker", () => {
+	it("leaves the call's intent, which the next start adopts: pending, refused past the grace period, finished once the reader closes", () => {
+		const reader = holdReader();
+		// Another OfferFinch process makes a call and dies right after deleting its rows, while
+		// the reader keeps the truncating checkpoint from finishing.
+		const child = spawnSync(
+			process.execPath,
+			[CHILD, "crash", JSON.stringify(target), "ses_crash"],
+			{ env: { ...process.env, PROMPT_CANARY: PROMPT }, encoding: "utf8" },
+		);
+		expect(child.status, child.stderr).toBe(1);
+		expect(count("session_v2")).toBe(0);
+		expect(filesWithPrompt()).toContain("opencode.db-wal");
+		// No marker was written, but the intent is still there.
+		expect(readPendingCleanup(target)).toBeNull();
+		expect(intents()).toHaveLength(1);
+		expect(cleanupDue(target, now)).toBe(true);
+
+		// The next start: the intent becomes the unfinished cleanup, whose checkpoint is still busy.
+		const start = new Date();
+		const first = attemptCleanup(target, {
+			idle: true,
+			now: start,
+			start: true,
+		});
+		expect(first.result).toMatchObject({ rows: 0, busy: 1, clean: false });
+		expect(first.pending).toMatchObject({ rowsLeft: false, attempts: 1 });
+		expect(readPendingCleanup(target)).toEqual(first.pending);
+		expect(intents()).toEqual([]);
+		expect(filesWithPrompt()).toContain("opencode.db-wal");
+		// Calls are refused once the grace period is over (counted from the crashed call).
+		const late = new Date(start.getTime() + CLEANUP_GRACE_MS);
+		const retry = attemptCleanup(target, { idle: true, now: late });
+		expect(retry.pending).not.toBeNull();
+		expect(cleanupOverdue(retry.pending, late)).toBe(true);
+
+		reader.prepare("COMMIT").run();
+		reader.close();
+		const done = attemptCleanup(target, { idle: true, now: late });
+		expect(done.pending).toBeNull();
+		expect(readPendingCleanup(target)).toBeNull();
+		expect(filesWithPrompt()).toEqual([]);
+	}, 30_000);
+
+	it("never sweeps the session of a call another live process is running, and that call cleans up after itself", async () => {
+		const child = spawn(
+			process.execPath,
+			[CHILD, "overlap", JSON.stringify(target), "ses_other"],
+			{ env: { ...process.env, PROMPT_CANARY: PROMPT } },
+		);
+		let out = "";
+		const line = (n: number) =>
+			new Promise<string>((done, fail) => {
+				child.stdout.on("data", (chunk) => {
+					out += String(chunk);
+					const lines = out.split("\n").filter(Boolean);
+					if (lines.length >= n) done(lines[n - 1] as string);
+				});
+				child.once("exit", (code) => fail(new Error(`child exited ${code}`)));
+			});
+		try {
+			expect(await line(1)).toBe("ready");
+			expect(intents()).toHaveLength(1);
+			// This process starts while the other one's call runs: only the checkpoint.
+			const start = attemptCleanup(target, {
+				idle: true,
+				now: new Date(),
+				start: true,
+			});
+			expect(start.result?.rows).toBe(0);
+			expect(count("session_v2")).toBe(1);
+			expect(start.pending).toBeNull();
+			expect(intents()).toHaveLength(1);
+			child.stdin.write("finish\n");
+			const finished = JSON.parse(await line(2));
+			expect(finished.scrub).toMatchObject({ clean: true });
+			expect(finished.pending).toBeNull();
+		} finally {
+			child.kill();
+		}
+		expect(count("session_v2")).toBe(0);
+		expect(intents()).toEqual([]);
+		expect(readPendingCleanup(target)).toBeNull();
+		expect(filesWithPrompt()).toEqual([]);
+	}, 30_000);
+
+	it("removes a finished call's intent, and keeps the marker before the intent goes when the checkpoint is busy", () => {
+		const call = beginCall(target, now);
+		expect(intents()).toHaveLength(1);
+		addSession("ses_ok");
+		const ok = finishCall(target, call, "ses_ok", { idle: false, now });
+		expect(ok.scrub).toMatchObject({ clean: true });
+		expect(ok.pending).toBeNull();
+		expect(intents()).toEqual([]);
+
+		const reader = holdReader();
+		const busy = beginCall(target, now);
+		addSession("ses_busy");
+		let seen: { marker: unknown; intents: number } | null = null;
+		const unfinished = finishCall(target, busy, "ses_busy", {
+			idle: false,
+			now,
+			afterDelete: () => {
+				seen = {
+					marker: readPendingCleanup(target),
+					intents: intents().length,
+				};
+			},
+		});
+		// Between the deletion and the marker, the intent alone holds the debt.
+		expect(seen).toEqual({ marker: null, intents: 1 });
+		expect(unfinished.pending).toMatchObject({ rowsLeft: false });
+		expect(readPendingCleanup(target)).not.toBeNull();
+		expect(intents()).toEqual([]);
+		reader.close();
+	}, 30_000);
+
+	it("removes an intent with no session (no prompt was sent) and leaves no marker", () => {
+		const call = beginCall(target, now);
+		expect(
+			finishCall(target, call, null, { idle: true, now }).pending,
+		).toBeNull();
+		expect(intents()).toEqual([]);
+		expect(readPendingCleanup(target)).toBeNull();
+	});
+});
+
+describe("an unknown state at start", () => {
+	it("marks a checkpoint that cannot finish when OfferFinch's project is in the database, with no marker or intent", () => {
+		const reader = holdReader();
+		const service = new Database(target.dbFile);
+		service
+			.prepare("INSERT INTO project (id, worktree) VALUES ('p', '/Users/me/p')")
+			.run();
+		service.close();
+		const start = attemptCleanup(target, { idle: true, now, start: true });
+		expect(start.result).toMatchObject({ rows: 0, busy: 1, projects: 1 });
+		expect(start.pending).toMatchObject({
+			since: now.toISOString(),
+			rowsLeft: false,
+		});
+		reader.close();
+		expect(attemptCleanup(target, { idle: true, now }).pending).toBeNull();
+	});
+
+	it("does not mark it when OfferFinch never used this database (no project of its own)", () => {
+		const db = new Database(target.dbFile);
+		db.prepare("DELETE FROM project WHERE id = 'ours'").run();
+		db.close();
+		const reader = holdReader();
+		const service = new Database(target.dbFile);
+		service
+			.prepare("INSERT INTO project (id, worktree) VALUES ('p', '/Users/me/p')")
+			.run();
+		service.close();
+		const start = attemptCleanup(target, { idle: true, now, start: true });
+		expect(start.result).toMatchObject({ busy: 1, projects: 0 });
+		expect(start.pending).toBeNull();
+		reader.close();
 	});
 });

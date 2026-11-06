@@ -96,8 +96,18 @@ From [research/opencode-v2-lockdown.md](research/opencode-v2-lockdown.md) and
    app start for sessions a crash left. Schema-dependent: part of the version gate.
    The checkpoint is finished only when it is not busy and the `-wal` file is empty: while another
    connection (the user's OpenCode) holds a read transaction, the rows are gone but the prompt
-   stays in the WAL. An unfinished cleanup leaves a marker in OfferFinch's private root (when it
-   became due, attempts, whether rows may be left; no ids, no text) and is retried, sweep and
+   stays in the WAL. An unfinished cleanup leaves a marker in OfferFinch's data folder
+   (`<userData>/opencode`, never the temp folder; the private root stays in the temp folder because
+   its path is in OpenCode's `<env>` block) holding when it became due, attempts, whether rows may
+   be left; no ids, no text. A crash must not lose it: before OpenCode starts, each call writes an
+   intent file there (pid and start time; fsync'd, renamed into place, folder fsync'd) and removes
+   it only after its scrub finished or the marker was written durably in its place. An intent whose
+   process is gone, or older than 30 minutes, is adopted as an unfinished cleanup (rows possibly
+   left) at start and on every retry; a live one of another process keeps the sweep to a
+   checkpoint. At start, a checkpoint that cannot finish with no marker or intent is marked too
+   when OfferFinch's own project is in the database (an older build may have crashed without an
+   intent); with no project of OfferFinch's nothing of its calls can be there, so the user's busy
+   OpenCode alone never stops calls. The cleanup is retried, sweep and
    checkpoint even with no rows left, on a timer with backoff, before each call and at start;
    while another OfferFinch call runs, only the checkpoint (its session is not swept). After a
    2-minute grace period OpenCode calls are refused (a local `boundary` refusal that does not trip

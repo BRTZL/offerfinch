@@ -106,6 +106,8 @@ export interface ScrubResult {
 	 * the database is not in WAL mode). Until then old frames may still hold a deleted prompt.
 	 */
 	clean: boolean;
+	/** The sweep only: how many projects of OfferFinch's it found (0: none of its calls ever ran). */
+	projects?: number;
 }
 
 export interface ScrubOptions {
@@ -260,7 +262,7 @@ export function sweepOpenCodeProject(
 		const rows = unique.length ? deleteSessions(db, unique) : 0;
 		// Always checkpoint: a scrub whose checkpoint was busy left its frames behind even though
 		// its rows are gone, so "no rows" does not mean "nothing left".
-		return { rows, ...checkpoint(db, dbFile) };
+		return { rows, ...checkpoint(db, dbFile), projects: projects.length };
 	} finally {
 		db.close();
 	}
