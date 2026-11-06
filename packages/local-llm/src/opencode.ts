@@ -1039,7 +1039,7 @@ const INTENT_REFUSAL =
 	"OfferFinch could not write the note it keeps while an OpenCode call runs (so that a crash cannot leave the prompt in OpenCode's database unnoticed); nothing was sent. Check that OfferFinch's data folder is writable.";
 
 const LOCK_REFUSAL =
-	"Another OfferFinch process kept OpenCode's cleanup busy for longer than a call waits; nothing was sent. The call is tried again later.";
+	"Another OfferFinch process kept OpenCode's cleanup busy for longer than a call waits; nothing was sent. Try again in a moment.";
 
 /** Event types that mean the model tried something other than answering. */
 const TOOL_EVENT = /^session\.(tool|shell|skill|permission|form|subagent)\b/;

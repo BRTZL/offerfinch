@@ -18,6 +18,7 @@ import {
 	attemptCleanup,
 	beginCall,
 	CLEANUP_GRACE_MS,
+	CleanupLockBusyError,
 	type CleanupTarget,
 	cleanupDue,
 	cleanupOverdue,
@@ -590,4 +591,23 @@ describe("a call another process starts while a sweep runs", () => {
 		expect(count("session_v2")).toBe(0);
 		expect(lockFiles()).toEqual([]);
 	});
+
+	it("refuses a call once another live process has held the lock past its wait, and publishes no intent", () => {
+		const id = createHash("sha256")
+			.update(target.dbFile)
+			.digest("hex")
+			.slice(0, 16);
+		writeFileSync(
+			join(target.base, `cleanup-lock-${id}`),
+			JSON.stringify({
+				pid: process.ppid,
+				since: new Date().toISOString(),
+				token: "theirs",
+			}),
+		);
+		const began = Date.now();
+		expect(() => beginCall(target, now)).toThrow(CleanupLockBusyError);
+		expect(Date.now() - began).toBeGreaterThanOrEqual(4_900);
+		expect(intents()).toEqual([]);
+	}, 30_000);
 });
