@@ -60,6 +60,15 @@ export const PROVIDER_HINT: Partial<Record<ProviderId, string>> = {
 	antigravity: "via Antigravity",
 };
 
+/** The button's own short words, so the model's name keeps the room. */
+const EFFORT_SHORT: Record<Effort, string> = {
+	low: "Low",
+	medium: "Med",
+	high: "High",
+	xhigh: "X-High",
+	max: "Max",
+};
+
 const EFFORT_LABEL: Record<Effort, string> = {
 	low: "Low",
 	medium: "Medium",
@@ -72,7 +81,7 @@ const EFFORT_LABEL: Record<Effort, string> = {
 const SOURCE_NAME: Record<string, string> = {
 	"opencode-go": "Go plan",
 	"zai-coding-plan": "Z.ai Coding Plan",
-	opencode: "OpenCode Zen, free models",
+	opencode: "OpenCode Zen",
 	openrouter: "OpenRouter",
 	anthropic: "Anthropic",
 	openai: "OpenAI",
@@ -141,23 +150,35 @@ const price = (m: ModelInfo) =>
 const optionId = (role: Role, ref: string) =>
 	`role-${role}-${parseModelRef(ref)?.provider === "fake" ? "fake" : ref}`;
 
-/** OpenCode by billing source: plan sources first, then the pay-per-use ones, labelled. */
+/**
+ * OpenCode by billing source and how it is paid: plan and free groups first, then the
+ * pay-per-use ones, labelled. One source can be both (OpenCode Zen's free and paid models).
+ */
 function sections(role: Role, view: ProviderView): PickerSection[] {
-	const bySource = new Map<string, ModelInfo[]>();
+	const groups = new Map<
+		string,
+		{ source: string; paid: boolean; models: ModelInfo[] }
+	>();
 	for (const m of view.models) {
 		// A pay-per-use model without a known price is not offered.
 		if (m.billing === "api" && !m.price) continue;
-		const key = view.provider === "opencode" ? (m.source ?? "") : "";
-		bySource.set(key, [...(bySource.get(key) ?? []), m]);
+		const source = view.provider === "opencode" ? (m.source ?? "") : "";
+		const paid = source !== "" && m.billing === "api";
+		const key = `${source}|${paid}`;
+		const group = groups.get(key) ?? { source, paid, models: [] };
+		group.models.push(m);
+		groups.set(key, group);
 	}
-	const paid = (models: ModelInfo[]) => models.some((m) => m.billing === "api");
-	return [...bySource.entries()]
-		.sort(([, a], [, b]) => Number(paid(a)) - Number(paid(b)))
-		.map(([source, models]) => ({
-			id: source || view.provider,
-			label: source
-				? `${SOURCE_NAME[source] ?? source}${paid(models) ? " · Pay per use" : ""}`
-				: undefined,
+	const named = (source: string, paid: boolean) => {
+		const name = SOURCE_NAME[source] ?? source;
+		if (paid) return `${name} · Pay per use`;
+		return source === "opencode" ? `${name}, free models` : name;
+	};
+	return [...groups.values()]
+		.sort((a, b) => Number(a.paid) - Number(b.paid))
+		.map(({ source, paid, models }) => ({
+			id: source ? `${source}${paid ? "-paid" : ""}` : view.provider,
+			label: source ? named(source, paid) : undefined,
 			items: models.map((m) => ({
 				value: m.ref,
 				label: shortName(m),
@@ -399,8 +420,11 @@ export function StepPicker({
 					{choice.unavailable ? " (not available now)" : ""}
 				</span>
 				{shownEffort ? (
-					<span className="text-muted-foreground">
-						· {EFFORT_LABEL[shownEffort]}
+					<span
+						className="text-muted-foreground shrink-0"
+						title={EFFORT_LABEL[shownEffort]}
+					>
+						· {EFFORT_SHORT[shownEffort]}
 					</span>
 				) : null}
 			</>

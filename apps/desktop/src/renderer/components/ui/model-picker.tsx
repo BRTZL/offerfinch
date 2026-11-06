@@ -41,7 +41,7 @@ export interface PickerGroup {
 }
 
 const TRIGGER =
-	"border-input bg-card text-foreground ease-standard hover:bg-hover focus-visible:ring-ring aria-expanded:bg-hover dark:bg-input/32 dark:hover:bg-input/64 flex h-8 w-fit max-w-[min(18rem,100%)] min-w-[min(9rem,100%)] items-center gap-1.5 rounded-lg border pr-2 pl-[9px] text-sm whitespace-nowrap shadow-[var(--bevel),var(--shadow-control)] transition-[background-color,box-shadow] duration-150 outline-none select-none focus-visible:ring-2 focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-64";
+	"border-input bg-card text-foreground ease-standard hover:bg-hover focus-visible:ring-ring aria-expanded:bg-hover dark:bg-input/32 dark:hover:bg-input/64 flex h-8 w-full max-w-64 min-w-0 items-center gap-1.5 rounded-lg border pr-2 pl-[9px] text-sm whitespace-nowrap shadow-[var(--bevel),var(--shadow-control)] transition-[background-color,box-shadow] duration-150 outline-none select-none focus-visible:ring-2 focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-64";
 
 const ITEM =
 	"data-[highlighted=true]:bg-primary data-[highlighted=true]:text-primary-foreground relative flex min-h-7 w-full cursor-default items-center gap-2 rounded-sm py-1 pr-2 pl-2 text-sm outline-hidden select-none";
@@ -145,7 +145,7 @@ export function ModelPicker({
 				className={TRIGGER}
 				data-testid={testId}
 			>
-				<span className="flex min-w-0 flex-1 items-center gap-1.5 truncate">
+				<span className="flex min-w-0 flex-1 items-center gap-1 truncate">
 					{trigger}
 				</span>
 				<ChevronDownIcon className="text-muted-foreground pointer-events-none size-4 shrink-0" />
