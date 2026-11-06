@@ -71,7 +71,8 @@ stream or start failure by the error's name; Codex keeps its error kind (`codexE
 and HTTP status, a JSON-RPC error by its code, item types, event methods, turn statuses and tool
 names, and never the app-server's stderr. A name is kept only when it is one of the values the
 tested protocol defines (`knownName`: Claude's lists are checked against the SDK's types with
-`satisfies`, Codex's come from `codex app-server generate-ts` for the tested version); anything
+`satisfies`, Codex's come from `codex app-server generate-ts` for the tested version, OpenCode's
+error types and tool events from the 2.2.5 binary); anything
 else is kept as `other`, since an identifier such as `PRIVATE_CV_CANARY` can be the user's text as
 well as a sentence can. Pause classification (usage limit, logged out) reads the structured kind,
 not the text. Canary tests (sentences and bare identifiers) run each path through `MeteredLlm`

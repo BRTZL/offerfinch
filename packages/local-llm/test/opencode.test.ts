@@ -1141,6 +1141,8 @@ describe("the provider", () => {
 
 	it("never keeps an answer's or a provider error's text: not in errors, the ledger or the log", async () => {
 		const CANARY = "PRIVATE_CANARY_OC_6f1d";
+		const ID_CANARY = "PRIVATE_CV_CANARY";
+		const LOWER_CANARY = "privatecanary";
 		const records = z.object({ scores: z.record(z.string(), z.number()) });
 		const cases: {
 			over: Partial<OpenCodeCallResult>;
@@ -1172,7 +1174,41 @@ describe("the provider", () => {
 						body: CANARY,
 					},
 				},
-				says: /failed: unknown \(HTTP 200\)/,
+				says: /failed: other \(HTTP 200\)/,
+			},
+			// Identifiers that are not OpenCode's own names: "other", never as given.
+			{
+				over: {
+					text: null,
+					tokens: null,
+					failure: {
+						type: ID_CANARY,
+						message: ID_CANARY,
+						status: 400,
+						body: null,
+					},
+				},
+				says: /failed: other \(HTTP 200\)/,
+			},
+			{
+				over: {
+					text: null,
+					failure: {
+						type: LOWER_CANARY,
+						message: "FreeUsageLimit",
+						status: 429,
+						body: null,
+					},
+				},
+				says: /usage limit is reached \(other/,
+			},
+			{
+				over: { toolAttempt: `session.tool.${ID_CANARY}` },
+				says: /tried to use a tool during t \(other\)/,
+			},
+			{
+				over: { toolAttempt: `content ${LOWER_CANARY}` },
+				says: /tried to use a tool during t \(other\)/,
 			},
 			{
 				over: {
@@ -1229,6 +1265,7 @@ describe("the provider", () => {
 					),
 				).toBe(true);
 				expect(kept).not.toContain(CANARY);
+				expect(kept).not.toMatch(/private_?cv_?canary|privatecanary/i);
 			}
 	});
 });

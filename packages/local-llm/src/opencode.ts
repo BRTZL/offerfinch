@@ -20,7 +20,7 @@ import {
 import { toStrictJsonSchema } from "@offerfinch/core/scoring/openai";
 import type { ModelPrice } from "@offerfinch/core/scoring/pricing";
 import type { z } from "zod";
-import { parseAnswer, unreadableAnswer } from "./answer";
+import { knownName, parseAnswer, unreadableAnswer } from "./answer";
 import { Breaker } from "./breaker";
 import { findCliOnPath } from "./cli-path";
 import { subscriptionEnv } from "./env";
@@ -1343,11 +1343,67 @@ export interface OpenCodePause {
 }
 
 /**
- * OpenCode's error type (`provider.auth`, `provider.free-limit`, …) as it may be shown: a short
- * dotted name, or `unknown`. Never its message or body, which can carry the provider's answer.
+ * OpenCode 2.2.5's provider error types (read from the binary): the only ones an error, a pause
+ * or the log may name. Any other is "other", even a bare identifier: it may be the user's text.
  */
+const FAILURE_TYPES: ReadonlySet<string> = new Set([
+	"provider.auth",
+	"provider.budget-limit",
+	"provider.chatgpt-limit",
+	"provider.content-filter",
+	"provider.error",
+	"provider.free-limit",
+	"provider.go-limit",
+	"provider.internal",
+	"provider.invalid-output",
+	"provider.invalid-request",
+	"provider.model-budget-limit",
+	"provider.no-route",
+	"provider.quota",
+	"provider.rate-limit",
+	"provider.timeout",
+	"provider.transport",
+	"provider.unknown",
+	"provider.unsupported-operation",
+	"unknown",
+]);
+
+/** OpenCode 2.2.5's tool-like session events and message content types, for a tool attempt. */
+const TOOL_ATTEMPTS: ReadonlySet<string> = new Set([
+	"a tool call",
+	"session.tool.called",
+	"session.tool.failed",
+	"session.tool.input.delta",
+	"session.tool.input.ended",
+	"session.tool.input.started",
+	"session.tool.progress",
+	"session.tool.success",
+	"session.shell.started",
+	"session.shell.ended",
+	"session.permission.create",
+	"session.permission.reply",
+	...[
+		"tool",
+		"file",
+		"agent",
+		"subtask",
+		"step-start",
+		"step-finish",
+		"snapshot",
+		"patch",
+		"compaction",
+		"retry",
+	].map((type) => `content ${type}`),
+]);
+
+/** OpenCode's error type as it may be shown; never its message or body. */
 function failureType(failure: { type: string }): string {
-	return /^[\w.-]{1,60}$/.test(failure.type) ? failure.type : "unknown";
+	return knownName(failure.type, FAILURE_TYPES);
+}
+
+/** A tool attempt as it may be shown: an event or content type of OpenCode's own, else "other". */
+function toolAttemptName(attempt: string): string {
+	return knownName(attempt, TOOL_ATTEMPTS);
 }
 
 /** The failure's type and the upstream's status, for a pause's detail. */
@@ -1679,7 +1735,7 @@ export class OpenCodeProvider implements LlmProvider {
 			refused: result.relay?.refused ?? 0,
 			upstreamStatus: result.relay?.upstreamStatus ?? null,
 			retried: result.retried,
-			toolAttempt: result.toolAttempt,
+			toolAttempt: result.toolAttempt && toolAttemptName(result.toolAttempt),
 			boundary: result.boundary,
 			failure: result.failure ? failureType(result.failure) : null,
 			scrubbedRows: result.scrub?.rows ?? null,
@@ -1776,7 +1832,7 @@ export class OpenCodeProvider implements LlmProvider {
 		result: OpenCodeCallResult,
 	): string | null {
 		if (result.toolAttempt)
-			return `${this.name}: the model tried to use a tool during ${request.task} (${result.toolAttempt}); OpenCode offered none, the session was stopped and the answer discarded.`;
+			return `${this.name}: the model tried to use a tool during ${request.task} (${toolAttemptName(result.toolAttempt)}); OpenCode offered none, the session was stopped and the answer discarded.`;
 		if (result.retried)
 			return `${this.name}: OpenCode scheduled a retry during ${request.task}; it was stopped after one request${result.relay?.upstreamStatus ? ` (upstream HTTP ${result.relay.upstreamStatus})` : ""}.`;
 		if (result.timedOut) return `${this.name}: ${request.task} timed out`;
