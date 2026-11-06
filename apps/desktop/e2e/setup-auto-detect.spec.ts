@@ -209,22 +209,12 @@ test("OpenCode and Gemini: plan model first, sources grouped, keyboard picker, S
 	try {
 		await openConnectAi(page);
 		// The first plan model takes every step; a pay-per-use one is never picked by itself.
-		// (Its steps run once the OpenCode provider is built: pipeline.ts NOT_BUILT.)
 		await expect(page.getByTestId("step-continue")).toBeEnabled();
 		for (const role of ["scoring", "tailoring", "claims"])
 			await expect(roleMode(page, role)).toHaveText(/GLM-5\.1/);
 		await expect(page.getByTestId("setup-cli-opencode")).toContainText(
 			"5 models",
 		);
-		// Gemini is installed, signed out: OfferFinch signs in itself (not in this version yet).
-		await page
-			.getByTestId("setup-cli-antigravity")
-			.getByTestId("fix-antigravity")
-			.click();
-		await expect(
-			page.getByText(/not available in this version yet/),
-		).toBeVisible();
-
 		// The picker by keyboard only: open, search, pick, Esc back to the button.
 		const mode = roleMode(page, "tailoring");
 		await mode.focus();
@@ -263,6 +253,16 @@ test("OpenCode and Gemini: plan model first, sources grouped, keyboard picker, S
 		await expect(menu).toBeHidden();
 		await expect(mode).toHaveText(/Qwen 4 Coder.*High/);
 		await expect(mode).toBeFocused();
+
+		// Gemini is installed, signed out: OfferFinch signs in itself (the stand-in skips Google).
+		await page
+			.getByTestId("setup-cli-antigravity")
+			.getByTestId("fix-antigravity")
+			.click();
+		await expect(page.getByText(/Signed in to Gemini/)).toBeVisible();
+		await expect(page.getByTestId("setup-cli-antigravity")).toContainText(
+			"Signed in",
+		);
 		expect(errors).toEqual([]);
 	} finally {
 		await app.close();
