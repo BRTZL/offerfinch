@@ -2,8 +2,11 @@
 
 OfferFinch is a local macOS app that finds matching jobs, scores fit, and prepares a CV,
 cover letter, and answers when you choose **Prepare**. Review the documents and their
-claims before approving. Ashby, Greenhouse, Lever, LinkedIn, and careers-page jobs are
-handed off for you to submit; nothing is sent without approval.
+claims before approving. Jobs come from job-board search (Greenhouse, Lever, Ashby,
+SmartRecruiters, Workable, Recruitee, Teamtailor, and Personio postings found through
+DuckDuckGo and read from each board's public data), LinkedIn, Indeed, Glassdoor, remote-job
+feeds, and web search. Every job is handed off for you to submit; nothing is sent without
+approval.
 
 The app runs in the menu bar, scans while the Mac is awake, and resumes durable work after
 a crash. Closing its window keeps scans running; **Quit** stops the app. There are no
