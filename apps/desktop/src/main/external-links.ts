@@ -73,3 +73,35 @@ export function guardLinks(wc: WebContents) {
 		open(url);
 	});
 }
+
+/**
+ * Google's sign-in page for Gemini (Antigravity), as the worker's Antigravity server asks for it:
+ * https on accounts.google.com, returning to a loopback port. Anything else is not opened.
+ */
+export function isGoogleSignInPage(url: string): boolean {
+	try {
+		const u = new URL(url);
+		if (u.protocol !== "https:" || u.hostname !== "accounts.google.com")
+			return false;
+		const back = new URL(u.searchParams.get("redirect_uri") ?? "");
+		return (
+			back.protocol === "http:" &&
+			(back.hostname === "127.0.0.1" || back.hostname === "localhost")
+		);
+	} catch {
+		return false;
+	}
+}
+
+/** Opens the worker's Google sign-in page in the default browser, if it is one. */
+export async function openSignInPage(url: string): Promise<void> {
+	if (!isGoogleSignInPage(url)) {
+		log("sign-in page refused", {
+			host: URL.canParse(url) ? new URL(url).host : "?",
+		});
+		return;
+	}
+	await openExternalLink(url, null).catch((error) =>
+		log("sign-in page not opened", String(error)),
+	);
+}

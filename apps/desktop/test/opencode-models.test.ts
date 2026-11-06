@@ -106,19 +106,24 @@ describe("OpenCode in Settings › Models", () => {
 			},
 			claude: async () => state,
 			codex: async () => state,
-			opencode: async () => ({ ...state, path: "/opencode" }),
-			opencodeModels: async () => [openCodeModelInfo(entry())],
 		} satisfies CliChecks;
-		const subscriptions = withProviders(checks);
+		const reject = () => Promise.reject(new Error("unused"));
+		const subscriptions = withProviders(checks, {
+			opencode: {
+				state: async () => ({ ...state, path: "/opencode" }),
+				models: async () => [openCodeModelInfo(entry())],
+				factory: () => {
+					throw new Error("unused");
+				},
+				install: reject,
+				signIn: reject,
+			},
+		});
 		expect((await subscriptions.state("opencode")).path).toBe("/opencode");
 		expect((await subscriptions.models("opencode")).map((m) => m.ref)).toEqual([
 			"opencode:opencode/deepseek-v4.1-flash-free",
 		]);
-		const without = withProviders({
-			...checks,
-			opencode: undefined,
-			opencodeModels: undefined,
-		});
+		const without = withProviders(checks);
 		expect((await without.state("opencode")).path).toBeNull();
 		expect(await without.models("opencode")).toEqual([]);
 	});

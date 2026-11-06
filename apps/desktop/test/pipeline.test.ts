@@ -91,10 +91,23 @@ describe("model roles", () => {
 			tailoring: { model: "antigravity:gemini-3.8-flash" },
 			claims: { model: FAKE_MODEL_REF },
 		});
-		expect(later.roles.map((r) => r.ready)).toEqual([true, false, false]);
+		expect(later.roles.map((r) => r.ready)).toEqual([true, true, false]);
 		expect(later.roles[0]?.problem).toBeNull();
-		expect(later.roles[1]?.problem).toMatch(/Antigravity\) models are not/);
+		expect(later.roles[1]?.provider).toBe(
+			"antigravity-subscription:gemini-3.8-flash",
+		);
 		expect(later.roles[2]?.problem).toMatch(/only available in test runs/);
+		const windowsGemini = build(
+			{
+				scoring: { model: "antigravity:gemini-3.8-flash" },
+				tailoring: { model: "claude:claude-opus-5-5" },
+				claims: { model: "claude:claude-opus-5-5" },
+			},
+			"win32",
+		);
+		expect(windowsGemini.roles[0]?.problem).toMatch(
+			/Antigravity\) is not available on Windows/,
+		);
 		const windows = build(
 			{
 				scoring: { model: "claude:claude-opus-5-5" },

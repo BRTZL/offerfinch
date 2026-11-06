@@ -114,6 +114,16 @@ From [research/antigravity-acp-lockdown.md](research/antigravity-acp-lockdown.md
    schema. About 3.7k tokens of Antigravity's own prompt ride on every call. Delete the private
    root after the call; sweep stale roots at start.
 
+Built in `packages/local-llm/src/antigravity*.ts` and `apps/desktop/src/worker/antigravity.ts`:
+the runtime and the sign-in live in `<app data>/antigravity/` (`runtime/1.4.1-<platform>-<arch>/`,
+`gemini-home/antigravity-acp/` with only `acp_token.json` and `settings.json`); `ai.install` and
+`ai.signIn` (`{ provider: "antigravity" }`) drive them, and main opens only an
+`accounts.google.com` page that returns to a loopback port. Model families come from
+`session/new` (efforts: the family's `-low|-medium|-high` slugs in the legacy model list; none for a
+family without them). Proof: `local-llm/test/antigravity-boundary.test.ts` runs the real server,
+opt-in with `OFFERFINCH_AGY_TOKEN=<a signed-in acp_token.json>` and the runtime installed in
+`OFFERFINCH_AGY_RUNTIME` (default `$TMPDIR/offerfinch-test-agy-cache`; `OFFERFINCH_AGY_DOWNLOAD=1` downloads it).
+
 ## Contract (code)
 
 - `apps/desktop/src/shared/providers.ts`: `ProviderId`, `ModelRef` parse and format, `Effort`,
@@ -143,6 +153,7 @@ From [research/antigravity-acp-lockdown.md](research/antigravity-acp-lockdown.md
 ## Not verified yet
 
 - A successful real OpenCode call (free-tier limit hit during the spikes).
-- OfferFinch's own Antigravity sign-in flow end to end.
+- OfferFinch's own Antigravity sign-in flow end to end (it reaches Google's page; the return
+  from the browser is not exercised).
 - Prompted JSON on Antigravity beyond one call.
 - Anything on Windows beyond unit tests in CI.

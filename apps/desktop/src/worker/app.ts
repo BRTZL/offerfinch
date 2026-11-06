@@ -55,6 +55,7 @@ import {
 	type WorkerInit,
 } from "../shared/worker-protocol";
 import { cleanStoredPostings, readPostingForJob } from "./add-job";
+import { antigravityService } from "./antigravity";
 import { localChromeProvider } from "./browser";
 import type { CheckStop, SiteTabHost } from "./checks";
 import { DEMO_SITE_REFUSAL, demoSubscriptions, seedDemo } from "./demo";
@@ -93,6 +94,8 @@ export interface WorkerHooks {
 	notify: (notice: NativeNotice) => void;
 	/** One operation on a site's hidden tab, answered by main. */
 	site: SiteCaller;
+	/** Opens Google's sign-in page for Gemini (Antigravity) in the browser (main checks it). */
+	openSignIn?: (url: string) => void;
 	log: (
 		level: "info" | "warn" | "error",
 		message: string,
@@ -169,12 +172,25 @@ export class WorkerApp {
 		// Main sets `fakeClis` only for an unpackaged build, so a shipped app never reads it.
 		if (init.demo) this.subscriptions = demoSubscriptions();
 		else {
+			const log = (message: string, data?: Record<string, unknown>) =>
+				hooks.log("info", message, data);
+			// Test runs never build the real Antigravity: it would look in the data folder and
+			// could start Google's server.
 			const local = subscriptions({
 				hostScript: init.claudeHost,
 				// Test runs never touch the user's OpenCode database.
 				opencodeSweep: !init.test,
-				log: (message, data) => hooks.log("info", message, data),
+				log,
 				planUsage,
+				managed: init.test?.fakeClis
+					? {}
+					: {
+							antigravity: antigravityService({
+								userData: init.userData,
+								openSignIn: (url) => hooks.openSignIn?.(url),
+								log,
+							}),
+						},
 			});
 			this.subscriptions = init.test?.fakeClis
 				? fakeSubscriptions(init.userData, local, planUsage)

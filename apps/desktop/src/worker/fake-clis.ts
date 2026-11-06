@@ -13,12 +13,14 @@ import type {
 	PlanUsageSink,
 } from "@offerfinch/core/scoring/plan-usage";
 import { openCodeBilling } from "@offerfinch/local-llm/opencode";
-import type { ModelInfo } from "../shared/providers";
+import { formatModelRef, type ModelInfo } from "../shared/providers";
+import { antigravityState } from "./antigravity";
 import type { LocalLlmFactory } from "./model-factories";
 import {
 	CLAUDE_FIX,
 	type CliState,
 	CODEX_FIX,
+	type ManagedProvider,
 	OPENCODE_FIX,
 	openCodeModelInfo,
 	type Subscriptions,
@@ -26,11 +28,12 @@ import {
 } from "./subscriptions";
 
 /**
- * Test runs only: Claude Code and Codex as a test says they are, never the CLIs on this Mac.
- * The state comes from `fake-clis.json` in the data folder, read on every check so a test can
- * change it while the app runs:
- * `{"claude": "logged_in", "codex": "missing", "opencode": "logged_in"}`. Unset: none is
- * installed.
+ * Test runs only: Claude Code, Codex and Gemini (Antigravity) as a test says they are, never the
+ * CLIs on this Mac or Google's server. The state comes from `fake-clis.json` in the data folder,
+ * read on every check so a test can change it while the app runs:
+ * `{"claude": "logged_in", "codex": "missing", "antigravity": "logged_out"}`. Unset: none is
+ * installed. Antigravity's Install and Sign in move it on in the file (missing, then logged_out,
+ * then logged_in) without a download or a browser.
  */
 type FakeCli = "logged_in" | "logged_out" | "not_subscription" | "missing";
 const FAKE_FILE = "fake-clis.json";
@@ -45,47 +48,15 @@ interface FakeUsage {
 	weekly?: number;
 }
 
+type FakeName = "claude" | "codex" | "antigravity" | "opencode";
+
 interface FakeState {
 	claude: FakeCli;
 	codex: FakeCli;
+	antigravity: FakeCli;
 	opencode: FakeCli;
-	usage: Partial<Record<"claude" | "codex", FakeUsage>>;
+	usage: Partial<Record<FakeName, FakeUsage>>;
 }
-
-/** The stand-in's OpenCode models: a free one and Go on the plan, one pay-per-use. */
-const FAKE_OPENCODE_MODELS: ModelInfo[] = [
-	[
-		"opencode",
-		"deepseek-v4.1-flash-free",
-		"DeepSeek V4.1 Flash Free",
-		["low", "high", "max"],
-		null,
-	],
-	["opencode-go", "glm-5.1", "GLM-5.1", ["low", "high"], null],
-	[
-		"opencode",
-		"gpt-6.1-sol",
-		"GPT-6.1 Sol",
-		["low", "medium", "high"],
-		{ input: 2, cachedInput: 0.1, output: 10, source: "test" },
-	],
-].map(([source, model, name, variants, price]) =>
-	openCodeModelInfo({
-		source: source as string,
-		model: model as string,
-		name: name as string,
-		billing: openCodeBilling(source as string, model as string),
-		variants: variants as string[],
-		price: price as {
-			input: number;
-			cachedInput: number;
-			output: number;
-			source: string;
-		} | null,
-		baseURL: "http://127.0.0.1:9/test",
-		unavailable: null,
-	}),
-);
 
 function read(dir: string): FakeState {
 	try {
@@ -99,6 +70,7 @@ function read(dir: string): FakeState {
 		return {
 			claude: pick(raw.claude),
 			codex: pick(raw.codex),
+			antigravity: pick(raw.antigravity),
 			opencode: pick(raw.opencode),
 			usage: {
 				claude: usage(raw.usage?.claude),
@@ -109,21 +81,37 @@ function read(dir: string): FakeState {
 		return {
 			claude: "missing",
 			codex: "missing",
+			antigravity: "missing",
 			opencode: "missing",
 			usage: {},
 		};
 	}
 }
 
+/** Sets one stand-in's state in the file, keeping the rest. */
+function write(dir: string, name: FakeName, value: FakeCli): void {
+	const file = path.join(dir, FAKE_FILE);
+	let raw: Record<string, unknown> = {};
+	try {
+		raw = JSON.parse(fs.readFileSync(file, "utf8"));
+	} catch {}
+	fs.writeFileSync(file, JSON.stringify({ ...raw, [name]: value }));
+}
+
 /** Stand-in calls made so far, per CLI: each moves the session window by one point. */
-const fakeCalls: Record<"claude" | "codex", number> = { claude: 0, codex: 0 };
+const fakeCalls: Record<FakeName, number> = {
+	claude: 0,
+	codex: 0,
+	antigravity: 0,
+	opencode: 0,
+};
 
 /** When the stand-in's windows began: one hour before this worker started, so a call is in them. */
 const FAKE_WINDOWS_START = Date.now() - 3_600_000;
 
 /** The stand-in's plan usage as a snapshot: a 5-hour and a 7-day window, both running. */
 function fakeSnapshot(
-	cli: "claude" | "codex",
+	cli: FakeName,
 	usage: FakeUsage | undefined,
 	now: Date,
 ): PlanSnapshot | null {
@@ -162,6 +150,41 @@ function fakeSnapshot(
 		},
 	};
 }
+
+/** The stand-in's OpenCode models: a free one and Go on the plan, one pay-per-use. */
+const FAKE_OPENCODE_MODELS: ModelInfo[] = [
+	[
+		"opencode",
+		"deepseek-v4.1-flash-free",
+		"DeepSeek V4.1 Flash Free",
+		["low", "high", "max"],
+		null,
+	],
+	["opencode-go", "glm-5.1", "GLM-5.1", ["low", "high"], null],
+	[
+		"opencode",
+		"gpt-6.1-sol",
+		"GPT-6.1 Sol",
+		["low", "medium", "high"],
+		{ input: 2, cachedInput: 0.1, output: 10, source: "test" },
+	],
+].map(([source, model, name, variants, price]) =>
+	openCodeModelInfo({
+		source: source as string,
+		model: model as string,
+		name: name as string,
+		billing: openCodeBilling(source as string, model as string),
+		variants: variants as string[],
+		price: price as {
+			input: number;
+			cachedInput: number;
+			output: number;
+			source: string;
+		} | null,
+		baseURL: "http://127.0.0.1:9/test",
+		unavailable: null,
+	}),
+);
 
 type Cli = "claude" | "codex" | "opencode";
 
@@ -206,16 +229,16 @@ class FakeCliProvider implements LlmProvider {
 	readonly billing: LlmBilling;
 	readonly name: string;
 	readonly vendor: string;
-	readonly ownerUserId: string;
 	readonly price?: LlmProvider["price"];
 	readonly reportsModelCalls = true;
+	readonly ownerUserId: string;
 	private readonly fake = new FakeLlmProvider();
 	constructor(
 		private readonly input: {
 			name: string;
 			vendor: string;
 			ownerUserId: string;
-			cli: Cli;
+			cli: FakeName;
 			state: () => FakeState;
 			planUsage: PlanUsageSink | undefined;
 			billing?: LlmBilling;
@@ -277,24 +300,6 @@ export function fakeSubscriptions(
 	planUsage?: (vendor: "anthropic" | "openai") => PlanUsageSink,
 ): Subscriptions {
 	const factory: LocalLlmFactory = ({ provider, model, ownerUserId }) => {
-		if (provider === "opencode") {
-			const source = model.slice(0, model.indexOf("/"));
-			const info = FAKE_OPENCODE_MODELS.find(
-				(m) => m.ref === `opencode:${model}`,
-			);
-			return new FakeCliProvider({
-				name: `opencode:${model}`,
-				vendor: `opencode:${source}`,
-				ownerUserId,
-				cli: "opencode",
-				state: () => read(dir),
-				planUsage: undefined,
-				billing: info?.billing ?? "subscription",
-				price: info?.price
-					? { ...info.price, cachedInput: info.price.input, source: "test" }
-					: undefined,
-			});
-		}
 		const cli = provider === "codex" ? "codex" : "claude";
 		const vendor = cli === "codex" ? "openai" : "anthropic";
 		return new FakeCliProvider({
@@ -314,14 +319,110 @@ export function fakeSubscriptions(
 			planUsage?.(cli === "codex" ? "openai" : "anthropic").sample(snapshot);
 		return stateOf(cli, state[cli]);
 	};
-	return withProviders({
-		refresh: () => real.refresh(),
-		usePath: (pathEnv) => real.usePath(pathEnv),
-		factory,
-		claude: () => check("claude"),
-		codex: () => check("codex"),
-		opencode: async () => stateOf("opencode", read(dir).opencode),
-		opencodeModels: async () =>
+	return withProviders(
+		{
+			refresh: () => real.refresh(),
+			usePath: (pathEnv) => real.usePath(pathEnv),
+			factory,
+			claude: () => check("claude"),
+			codex: () => check("codex"),
+		},
+		{ antigravity: fakeAntigravity(dir), opencode: fakeOpenCode(dir) },
+	);
+}
+
+/** The stand-in's Antigravity models: two families with Google's three thinking levels. */
+const FAKE_GEMINI: ModelInfo[] = [
+	["gemini-3.8-flash", "Gemini 3.8 Flash"],
+	["gemini-4-argon", "Gemini 4 Argon"],
+].map(([id, name]) => ({
+	ref: formatModelRef("antigravity", id as string),
+	name: name as string,
+	provider: "antigravity",
+	billing: "subscription",
+	efforts: ["low", "medium", "high"],
+}));
+
+/** Gemini (Antigravity) from `fake-clis.json`: Install and Sign in only move the file on. */
+function fakeAntigravity(dir: string): ManagedProvider {
+	const state = async (): Promise<CliState> => {
+		const fake = read(dir).antigravity;
+		const installed = fake !== "missing";
+		return antigravityState({
+			platform: process.platform,
+			installed: installed ? "/test/antigravity/agy_acp_server.par" : null,
+			signedIn: fake === "logged_in",
+			probe:
+				fake === "logged_in"
+					? {
+							login: "logged_in",
+							detail: "Signed in with Google (test stand-in).",
+							version: "test",
+							families: [],
+						}
+					: null,
+		});
+	};
+	return {
+		state,
+		models: async () =>
+			read(dir).antigravity === "logged_in" ? FAKE_GEMINI : [],
+		factory: ({ model, ownerUserId }) =>
+			new FakeCliProvider({
+				name: `antigravity:${model}`,
+				vendor: "google",
+				ownerUserId,
+				cli: "antigravity",
+				state: () => read(dir),
+				planUsage: undefined,
+			}),
+		async install() {
+			if (read(dir).antigravity === "missing")
+				write(dir, "antigravity", "logged_out");
+			return state();
+		},
+		async signIn() {
+			if (read(dir).antigravity === "missing")
+				throw new Error(
+					"Install Gemini (Antigravity) first, then sign in with Google.",
+				);
+			write(dir, "antigravity", "logged_in");
+			return state();
+		},
+	};
+}
+
+/** OpenCode from `fake-clis.json`: installed and signed in from Terminal, as the real one is. */
+function fakeOpenCode(dir: string): ManagedProvider {
+	const fromTerminal = () =>
+		Promise.reject(
+			new Error(
+				"OpenCode is installed and signed in from Terminal, not by OfferFinch.",
+			),
+		);
+	return {
+		state: async () => stateOf("opencode", read(dir).opencode),
+		models: async () =>
 			read(dir).opencode === "missing" ? [] : FAKE_OPENCODE_MODELS,
-	});
+		factory: ({ model, ownerUserId }) => {
+			const source = model.slice(0, model.indexOf("/"));
+			const info = FAKE_OPENCODE_MODELS.find(
+				(m) => m.ref === `opencode:${model}`,
+			);
+			return new FakeCliProvider({
+				name: `opencode:${model}`,
+				vendor: `opencode:${source}`,
+				ownerUserId,
+				cli: "opencode",
+				state: () => read(dir),
+				planUsage: undefined,
+				billing: info?.billing ?? "subscription",
+				price: info?.price
+					? { ...info.price, cachedInput: info.price.input, source: "test" }
+					: undefined,
+			});
+		},
+		install: fromTerminal,
+		signIn: fromTerminal,
+	};
 }

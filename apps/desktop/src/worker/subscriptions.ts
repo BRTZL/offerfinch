@@ -299,6 +299,11 @@ export interface CliFix {
 	command: string;
 	/** What to do once it runs, when the command alone is not enough. */
 	after: string | null;
+	/**
+	 * Done by OfferFinch itself, not in Terminal (`command` is empty): `ai.install` or
+	 * `ai.signIn` for the provider (Gemini through Antigravity).
+	 */
+	inApp?: "install" | "signIn";
 }
 
 /** The commands the app and its docs give for Claude Code and the Codex CLI. */
@@ -373,10 +378,6 @@ export interface CliChecks {
 	 */
 	claude(options?: { fresh?: boolean }): Promise<CliState>;
 	codex(options?: { fresh?: boolean }): Promise<CliState>;
-	/** OpenCode's state, when this run can check it. */
-	opencode?(options?: { fresh?: boolean }): Promise<CliState>;
-	/** OpenCode's models on this computer, listed by OpenCode itself (cached). */
-	opencodeModels?(): Promise<ModelInfo[]>;
 }
 
 export interface Subscriptions extends CliChecks {
@@ -384,6 +385,22 @@ export interface Subscriptions extends CliChecks {
 	state(provider: ProviderId, options?: { fresh?: boolean }): Promise<CliState>;
 	/** The models a provider offers, whether or not it is signed in now. */
 	models(provider: ProviderId): Promise<ModelInfo[]>;
+	/** Installs a provider OfferFinch downloads itself (Antigravity); its state after. */
+	install(provider: ProviderId): Promise<CliState>;
+	/** OfferFinch's own sign-in to a provider, finished in the browser; its state after. */
+	signIn(provider: ProviderId): Promise<CliState>;
+}
+
+/**
+ * A provider OfferFinch installs and signs in to itself (Gemini through Antigravity), rather
+ * than a CLI the user installs: its state, models, calls, install and sign-in.
+ */
+export interface ManagedProvider {
+	state(options?: { fresh?: boolean }): Promise<CliState>;
+	models(): Promise<ModelInfo[]>;
+	factory: LocalLlmFactory;
+	install(): Promise<CliState>;
+	signIn(): Promise<CliState>;
 }
 
 /** Claude's models on the plan: the defaults the steps use, and Haiku. */
@@ -432,25 +449,35 @@ function notInstalled(provider: ProviderId): CliState {
 }
 
 /** `state` and `models` for every provider, on top of a run's CLI checks. */
-export function withProviders(checks: CliChecks): Subscriptions {
+export function withProviders(
+	checks: CliChecks,
+	managed: Partial<Record<ProviderId, ManagedProvider>> = {},
+): Subscriptions {
+	const notManaged = (provider: ProviderId) =>
+		Promise.reject(
+			new Error(
+				`${PROVIDER_NAMES[provider]} is not installed or signed in by OfferFinch.`,
+			),
+		);
 	return {
 		...checks,
+		factory: (input) =>
+			(managed[input.provider]?.factory ?? checks.factory)(input),
 		state: (provider, options) =>
 			provider === "claude"
 				? checks.claude(options)
 				: provider === "codex"
 					? checks.codex(options)
-					: provider === "opencode" && checks.opencode
-						? checks.opencode(options)
-						: Promise.resolve(notInstalled(provider)),
+					: (managed[provider]?.state(options) ??
+						Promise.resolve(notInstalled(provider))),
 		models: async (provider) =>
 			provider === "claude"
 				? CLAUDE_MODELS
 				: provider === "codex"
 					? CODEX_MODELS
-					: provider === "opencode" && checks.opencodeModels
-						? checks.opencodeModels()
-						: [],
+					: ((await managed[provider]?.models()) ?? []),
+		install: (provider) => managed[provider]?.install() ?? notManaged(provider),
+		signIn: (provider) => managed[provider]?.signIn() ?? notManaged(provider),
 	};
 }
 
@@ -542,6 +569,11 @@ class MissingCli implements LlmProvider {
 /** The subscription providers and their login checks, for the worker. */
 export function subscriptions(input: {
 	hostScript: string;
+	log?: (message: string, data?: Record<string, unknown>) => void;
+	/** Where every read of a plan's usage goes (Settings › Models). */
+	planUsage?: (vendor: "anthropic" | "openai") => PlanUsageSink;
+	/** Providers OfferFinch installs and signs in to itself (Antigravity). */
+	managed?: Partial<Record<ProviderId, ManagedProvider>>;
 	/**
 	 * OpenCode's stable private root. Its path goes into OpenCode's environment block, which the
 	 * model sees, so it must not name the user: default a folder in the per-user temp directory.
@@ -549,9 +581,6 @@ export function subscriptions(input: {
 	opencodeRoot?: string;
 	/** Sweep sessions a crash left in the user's OpenCode database; off in test runs. */
 	opencodeSweep?: boolean;
-	log?: (message: string, data?: Record<string, unknown>) => void;
-	/** Where every read of a plan's usage goes (Settings › Models). */
-	planUsage?: (vendor: "anthropic" | "openai") => PlanUsageSink;
 }): Subscriptions {
 	let env: Record<string, string | undefined> = { ...process.env };
 	let claudeBinary: string | null = null;
@@ -574,148 +603,150 @@ export function subscriptions(input: {
 		opencode.usePath(pathEnv);
 	};
 	usePath(mergePath(null));
-	return withProviders({
-		usePath,
-		async refresh() {
-			const pathEnv = await resolvedPath();
-			usePath(pathEnv);
-			return pathEnv;
-		},
-		factory: ({ provider, model, effort, ownerUserId }) => {
-			if (provider === "claude")
-				return claudeBinary
-					? new ClaudeSubscriptionProvider({
-							model,
-							effort,
-							ownerUserId,
-							parentEnv: env,
-							log: input.log,
-							query: electronClaudeQuery(input.hostScript, claudeBinary),
-							planUsage: input.planUsage?.("anthropic"),
-						})
-					: new MissingCli(
-							`${CLAUDE_SUBSCRIPTION}:${model}`,
-							"anthropic",
-							`Claude Code (claude) was not found. Install it (${CLAUDE_FIX.install.command}), run claude and log in with /login.`,
-						);
-			if (provider === "codex" && process.platform === "win32")
+	return withProviders(
+		{
+			usePath,
+			async refresh() {
+				const pathEnv = await resolvedPath();
+				usePath(pathEnv);
+				return pathEnv;
+			},
+			factory: ({ provider, model, effort, ownerUserId }) => {
+				if (provider === "claude")
+					return claudeBinary
+						? new ClaudeSubscriptionProvider({
+								model,
+								effort,
+								ownerUserId,
+								parentEnv: env,
+								log: input.log,
+								query: electronClaudeQuery(input.hostScript, claudeBinary),
+								planUsage: input.planUsage?.("anthropic"),
+							})
+						: new MissingCli(
+								`${CLAUDE_SUBSCRIPTION}:${model}`,
+								"anthropic",
+								`Claude Code (claude) was not found. Install it (${CLAUDE_FIX.install.command}), run claude and log in with /login.`,
+							);
+				if (provider === "codex" && process.platform === "win32")
+					return new MissingCli(
+						`${CODEX_SUBSCRIPTION}:${model}`,
+						"openai",
+						CODEX_MACOS_ONLY,
+						"boundary",
+					);
+				if (provider === "codex")
+					return codexBinary
+						? new CodexSubscriptionProvider({
+								model,
+								effort,
+								ownerUserId,
+								parentEnv: env,
+								binary: codexBinary,
+								log: input.log,
+								planUsage: input.planUsage?.("openai"),
+							})
+						: new MissingCli(
+								`${CODEX_SUBSCRIPTION}:${model || "default"}`,
+								"openai",
+								"The Codex CLI (`codex`) was not found. Install it (npm install -g @openai/codex), then run `codex login` in Terminal.",
+							);
 				return new MissingCli(
-					`${CODEX_SUBSCRIPTION}:${model}`,
-					"openai",
-					CODEX_MACOS_ONLY,
+					`${provider}:${model}`,
+					provider,
+					`${PROVIDER_NAMES[provider]} models are not available in this version yet.`,
 					"boundary",
 				);
-			if (provider === "codex")
-				return codexBinary
-					? new CodexSubscriptionProvider({
-							model,
-							effort,
-							ownerUserId,
-							parentEnv: env,
-							binary: codexBinary,
-							log: input.log,
-							planUsage: input.planUsage?.("openai"),
-						})
-					: new MissingCli(
-							`${CODEX_SUBSCRIPTION}:${model || "default"}`,
-							"openai",
-							"The Codex CLI (`codex`) was not found. Install it (npm install -g @openai/codex), then run `codex login` in Terminal.",
-						);
-			if (provider === "opencode")
-				return opencode.provider({ model, effort, ownerUserId });
-			return new MissingCli(
-				`${provider}:${model}`,
-				provider,
-				`${PROVIDER_NAMES[provider]} models are not available in this version yet.`,
-				"boundary",
-			);
-		},
-		opencode: (options) => opencode.state(options),
-		opencodeModels: () => opencode.models(),
-		async claude(options = {}) {
-			if (!options.fresh && fresh(claudeCache))
-				return (claudeCache as { state: CliState }).state;
-			const binary = claudeBinary;
-			const state: CliState = binary
-				? await (async () => {
-						const { planUsage, ...login } = await claudeLogin(
-							env,
-							electronClaudeQuery(input.hostScript, binary),
-						);
-						if (planUsage) input.planUsage?.("anthropic").sample(planUsage);
-						return {
-							path: binary,
-							version: await version(binary, env as NodeJS.ProcessEnv),
+			},
+			async claude(options = {}) {
+				if (!options.fresh && fresh(claudeCache))
+					return (claudeCache as { state: CliState }).state;
+				const binary = claudeBinary;
+				const state: CliState = binary
+					? await (async () => {
+							const { planUsage, ...login } = await claudeLogin(
+								env,
+								electronClaudeQuery(input.hostScript, binary),
+							);
+							if (planUsage) input.planUsage?.("anthropic").sample(planUsage);
+							return {
+								path: binary,
+								version: await version(binary, env as NodeJS.ProcessEnv),
+								tested: CLAUDE_TESTED,
+								login,
+								command:
+									login.state === "logged_in"
+										? null
+										: "claude   (then type /login and sign in with your Claude plan)",
+								fix: login.state === "logged_in" ? null : CLAUDE_FIX.login,
+							};
+						})()
+					: {
+							path: null,
+							version: null,
 							tested: CLAUDE_TESTED,
-							login,
-							command:
-								login.state === "logged_in"
-									? null
-									: "claude   (then type /login and sign in with your Claude plan)",
-							fix: login.state === "logged_in" ? null : CLAUDE_FIX.login,
+							login: {
+								state: "logged_out",
+								detail: "Claude Code is not installed.",
+							},
+							command: CLAUDE_FIX.install.command,
+							fix: CLAUDE_FIX.install,
 						};
-					})()
-				: {
-						path: null,
+				claudeCache = { at: Date.now(), state };
+				return state;
+			},
+			async codex(options = {}) {
+				if (process.platform === "win32")
+					return {
+						path: codexBinary,
 						version: null,
-						tested: CLAUDE_TESTED,
-						login: {
-							state: "logged_out",
-							detail: "Claude Code is not installed.",
-						},
-						command: CLAUDE_FIX.install.command,
-						fix: CLAUDE_FIX.install,
+						tested: CODEX_TESTED,
+						login: { state: "unknown", detail: CODEX_MACOS_ONLY },
+						command: null,
+						fix: null,
 					};
-			claudeCache = { at: Date.now(), state };
-			return state;
-		},
-		async codex(options = {}) {
-			if (process.platform === "win32")
-				return {
-					path: codexBinary,
-					version: null,
+				if (!options.fresh && fresh(codexCache))
+					return (codexCache as { state: CliState }).state;
+				const binary = codexBinary;
+				const login: LlmLoginState = binary
+					? await codexSubscriptionLogin(env)
+					: { state: "logged_out", detail: "The Codex CLI is not installed." };
+				// Signed in: the plan's usage, as a call reads it before its prompt (no prompt here).
+				if (binary && login.state === "logged_in" && input.planUsage) {
+					const read = await codexPlanUsage({ binary, parentEnv: env });
+					if (read.snapshot) input.planUsage("openai").sample(read.snapshot);
+					else
+						input.log?.("codex plan usage not read", {
+							error: read.error,
+						});
+				}
+				const state: CliState = {
+					path: binary,
+					version: binary
+						? await version(binary, env as NodeJS.ProcessEnv)
+						: null,
 					tested: CODEX_TESTED,
-					login: { state: "unknown", detail: CODEX_MACOS_ONLY },
-					command: null,
-					fix: null,
+					login,
+					command: !binary
+						? CODEX_FIX.install.command
+						: login.state === "logged_in"
+							? null
+							: CODEX_FIX.login.command,
+					fix: !binary
+						? CODEX_FIX.install
+						: login.state === "logged_in"
+							? null
+							: CODEX_FIX.login,
 				};
-			if (!options.fresh && fresh(codexCache))
-				return (codexCache as { state: CliState }).state;
-			const binary = codexBinary;
-			const login: LlmLoginState = binary
-				? await codexSubscriptionLogin(env)
-				: { state: "logged_out", detail: "The Codex CLI is not installed." };
-			// Signed in: the plan's usage, as a call reads it before its prompt (no prompt here).
-			if (binary && login.state === "logged_in" && input.planUsage) {
-				const read = await codexPlanUsage({ binary, parentEnv: env });
-				if (read.snapshot) input.planUsage("openai").sample(read.snapshot);
-				else
-					input.log?.("codex plan usage not read", {
-						error: read.error,
-					});
-			}
-			const state: CliState = {
-				path: binary,
-				version: binary
-					? await version(binary, env as NodeJS.ProcessEnv)
-					: null,
-				tested: CODEX_TESTED,
-				login,
-				command: !binary
-					? CODEX_FIX.install.command
-					: login.state === "logged_in"
-						? null
-						: CODEX_FIX.login.command,
-				fix: !binary
-					? CODEX_FIX.install
-					: login.state === "logged_in"
-						? null
-						: CODEX_FIX.login,
-			};
-			codexCache = { at: Date.now(), state };
-			return state;
+				codexCache = { at: Date.now(), state };
+				return state;
+			},
 		},
-	});
+		{
+			opencode: openCodeManaged(opencode),
+			...input.managed,
+		},
+	);
 }
 
 /** How long OpenCode's model list is kept, and how long listing it may take. */
@@ -939,5 +970,25 @@ function openCodeSide(input: {
 				.filter((e) => !e.unavailable)
 				.map(openCodeModelInfo);
 		},
+	};
+}
+
+/** OpenCode for `withProviders`: installed and signed in from Terminal, never by OfferFinch. */
+function openCodeManaged(
+	opencode: ReturnType<typeof openCodeSide>,
+): ManagedProvider {
+	const fromTerminal = () =>
+		Promise.reject(
+			new Error(
+				"OpenCode is installed and signed in from Terminal, not by OfferFinch.",
+			),
+		);
+	return {
+		state: (options) => opencode.state(options),
+		models: () => opencode.models(),
+		factory: ({ model, effort, ownerUserId }) =>
+			opencode.provider({ model, effort, ownerUserId }),
+		install: fromTerminal,
+		signIn: fromTerminal,
 	};
 }

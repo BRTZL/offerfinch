@@ -49,7 +49,6 @@ import {
 import {
 	type ModelRef,
 	PROVIDER_NAMES,
-	type ProviderId,
 	parseModelRef,
 	providerOff,
 	type Role,
@@ -163,12 +162,6 @@ const STEP_NAME: Record<Role, string> = {
 	claims: "Checking drafts",
 };
 
-/** Providers whose models this version cannot run yet; the next versions add them. */
-const NOT_BUILT: Partial<Record<ProviderId, string>> = {
-	antigravity:
-		"Gemini (Antigravity) models are not available in this version yet.",
-};
-
 /** Why a role's choice cannot run, or null when it can be built. */
 function problemOf(
 	role: Role,
@@ -185,9 +178,7 @@ function problemOf(
 		return input.fakeModels
 			? null
 			: "Test models are only available in test runs.";
-	const off =
-		providerOff(ref.provider, input.platform ?? process.platform) ??
-		NOT_BUILT[ref.provider];
+	const off = providerOff(ref.provider, input.platform ?? process.platform);
 	if (off) return `${off} Choose another model in Settings > Models.`;
 	return input.local
 		? null

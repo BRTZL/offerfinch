@@ -158,6 +158,8 @@ export type WorkerToMain =
 	| { type: "status"; status: TrayStatus }
 	| { type: "notify"; notice: NativeNotice }
 	| { type: "site"; id: number; call: SiteCall }
+	/** Google's sign-in page for Gemini (Antigravity): main opens it in the browser. */
+	| { type: "openSignIn"; url: string }
 	| {
 			type: "log";
 			level: "info" | "warn" | "error";

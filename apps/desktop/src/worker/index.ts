@@ -214,6 +214,7 @@ parent.on("message", async (event) => {
 					status: (status) => send({ type: "status", status }),
 					notify: (notice) => send({ type: "notify", notice }),
 					site: siteCall,
+					openSignIn: (url) => send({ type: "openSignIn", url }),
 					// A moment for the last log messages to reach main, then the end.
 					exit: (code) => {
 						setTimeout(() => process.exit(code), 250);

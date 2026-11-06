@@ -37,7 +37,12 @@ export function startAppServer(input: {
 	cwd: string;
 	onServerRequest: (message: RpcMessage) => ServerRequestAnswer;
 	onNotification: (message: RpcMessage) => void;
+	/** ACP servers want `"jsonrpc": "2.0"` on every message; Codex's wire leaves it out. */
+	jsonrpc?: boolean;
+	/** Names the process in errors (default `codex app-server`). */
+	label?: string;
 }): AppServerProcess {
+	const label = input.label ?? "codex app-server";
 	const child: ChildProcess = spawn(input.command, input.args, {
 		env: input.env,
 		cwd: input.cwd,
@@ -60,7 +65,9 @@ export function startAppServer(input: {
 	});
 	const write = (message: RpcMessage) => {
 		if (child.stdin?.writable)
-			child.stdin.write(`${JSON.stringify(message)}\n`);
+			child.stdin.write(
+				`${JSON.stringify(input.jsonrpc ? { jsonrpc: "2.0", ...message } : message)}\n`,
+			);
 	};
 	const lines = createInterface({
 		input: child.stdout as NodeJS.ReadableStream,
@@ -93,7 +100,7 @@ export function startAppServer(input: {
 			const done = (code: number | null, signal: string | null) => {
 				for (const waiter of pending.values())
 					waiter.reject(
-						new Error(`codex app-server exited (${code ?? signal ?? "?"})`),
+						new Error(`${label} exited (${code ?? signal ?? "?"})`),
 					);
 				pending.clear();
 				resolve({ code, signal });
