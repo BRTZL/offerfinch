@@ -105,6 +105,9 @@ export const jobsMethods = {
 			// The same posting already found as another source's apply link (a LinkedIn listing
 			// that links to this board posting): one job, not two.
 			if (!existing && job.externalId) {
+				// The id as it appears in a posting URL: a qualified id ("{company}:{slug}", Recruitee)
+				// shows only its last part there. A wider net is fine; the URL check below decides.
+				const inUrl = job.externalId.slice(job.externalId.lastIndexOf(":") + 1);
 				const linked = await tx
 					.select({ id: jobs.id, applyUrl: jobs.applyUrl })
 					.from(jobs)
@@ -112,7 +115,7 @@ export const jobsMethods = {
 						and(
 							eq(jobs.userId, userId),
 							isNotNull(jobs.applyUrl),
-							like(jobs.applyUrl, `%${job.externalId}%`),
+							like(jobs.applyUrl, `%${inUrl}%`),
 						),
 					);
 				existing = linked.find(
