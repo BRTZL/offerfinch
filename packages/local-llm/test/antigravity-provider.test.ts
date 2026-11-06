@@ -277,6 +277,14 @@ describe.skipIf(!posix)("AntigravityProvider", () => {
 				reply: () => answer(CANARY),
 				says: /the Antigravity server answered error -32603/,
 			},
+			{
+				// A tool name is the model's own words: counted, never kept.
+				reply: () => ({
+					status: 200,
+					body: sse([{ functionCall: { name: CANARY, args: {} } }]),
+				}),
+				says: /tried to use a tool during/,
+			},
 		];
 		for (const { scenario, reply: next, schema: s, says } of cases) {
 			reply = next;
@@ -329,7 +337,7 @@ describe.skipIf(!posix)("AntigravityProvider", () => {
 						body: sse([
 							{
 								functionCall: {
-									name: "run_command",
+									name: "PRIVATE_CV_CANARY",
 									args: { CommandLine: "touch /tmp/x" },
 								},
 							},
@@ -341,7 +349,9 @@ describe.skipIf(!posix)("AntigravityProvider", () => {
 			.generateObject({ ...request(), onModelCall: () => calls.push("sent") })
 			.catch((e) => e);
 		expect(error).toBeInstanceOf(AntigravityToolAttemptError);
-		expect(String(error)).toMatch(/run_command/);
+		// The tool's name is the model's words: counted, never repeated.
+		expect(String(error)).toMatch(/tried to use a tool during/);
+		expect(String(error)).not.toMatch(/PRIVATE_CV_CANARY/);
 		expect(generates()).toHaveLength(1);
 		expect(calls).toEqual(["sent"]);
 	});

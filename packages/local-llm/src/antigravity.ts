@@ -742,16 +742,15 @@ export function resumeAntigravityCalls(
 	breaker.clear("logged_out");
 }
 
-/** The model asked for a tool: the posting's doing, not the setup's. The call fails. */
+/**
+ * The model asked for a tool: the posting's doing, not the setup's. The call fails. The names are
+ * the model's own words (they could echo the prompt), so the message only counts them.
+ */
 export class AntigravityToolAttemptError extends Error {
 	constructor(provider: string, task: string, tools: string[]) {
+		const count = tools.length;
 		super(
-			`${provider}: the model tried to use a tool during ${task} (${tools
-				.slice(0, 5)
-				.map((tool) => (/^[\w.:-]{1,64}$/.test(tool) ? tool : "unnamed"))
-				.join(
-					", ",
-				)}); no tool is offered, the server rejected it, and the answer was discarded.`,
+			`${provider}: the model tried to use ${count === 1 ? "a tool" : `${count} tools`} during ${task}; no tool is offered, the server rejected it, and the answer was discarded.`,
 		);
 		this.name = "AntigravityToolAttemptError";
 	}
