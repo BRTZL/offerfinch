@@ -24,7 +24,6 @@ import {
 	postingFromUrl,
 	type SearchBackend,
 	SearchBackendError,
-	searchQueries,
 } from "../src/sources/search";
 import { fakeExporter } from "./helpers";
 import { MemoryRepo } from "./memory-repo";
@@ -72,29 +71,6 @@ describe("postings from search results", () => {
 			"https://example.com/boards.greenhouse.io/x/jobs/1",
 		])
 			expect(postingFromUrl(url)).toBeNull();
-	});
-
-	it("builds bounded searches from titles and where the user can work", () => {
-		const queries = searchQueries(
-			{
-				titles: ["Frontend Engineer", "React Developer"],
-				remote: true,
-				places: [],
-			},
-			5,
-		);
-		expect(queries).toHaveLength(5);
-		expect(queries[0]).toBe(
-			'site:job-boards.greenhouse.io "Frontend Engineer" remote',
-		);
-		expect(queries[1]).toBe('site:jobs.lever.co "Frontend Engineer" remote');
-		expect(
-			searchQueries({
-				titles: ["Engineer"],
-				remote: false,
-				places: ["Porto, Portugal"],
-			})[2],
-		).toBe('site:jobs.ashbyhq.com "Engineer" "Porto, Portugal"');
 	});
 });
 

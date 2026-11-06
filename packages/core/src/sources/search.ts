@@ -81,42 +81,6 @@ export function postingFromUrl(url: string): FoundPosting | null {
 	return null;
 }
 
-const SITES: Record<SearchBoard, string> = {
-	ashby: "site:jobs.ashbyhq.com",
-	// One site per query: the form checked on DuckDuckGo (job-boards is where boards.greenhouse.io
-	// postings live now). An OR of two sites met DuckDuckGo's bot check on its first query.
-	greenhouse: "site:job-boards.greenhouse.io",
-	lever: "site:jobs.lever.co",
-};
-
-export interface SearchPreferences {
-	/** Words a job title should contain ("frontend engineer"). */
-	titles: string[];
-	/** Remote roles are wanted. */
-	remote: boolean;
-	/** Places an office role is fine in. */
-	places: string[];
-}
-
-/**
- * The searches for one scan: each title on each board, with "remote" or the first place, at most
- * `max` queries so a scan stays a handful of results pages.
- */
-export function searchQueries(prefs: SearchPreferences, max = 6): string[] {
-	const titles = prefs.titles
-		.map((t) => t.replace(/["\s]+/g, " ").trim())
-		.filter(Boolean)
-		.slice(0, 4);
-	const where = prefs.remote ? "remote" : (prefs.places[0] ?? "").trim();
-	const out: string[] = [];
-	for (const title of titles)
-		for (const board of ["greenhouse", "lever", "ashby"] as const)
-			out.push(
-				`${SITES[board]} "${title}"${where ? ` ${where.includes(" ") ? `"${where}"` : where}` : ""}`,
-			);
-	return out.slice(0, max);
-}
-
 /**
  * Runs the searches and returns each posting once, in the order found, skipping ones `known`
  * already has. A backend error stops the run and is thrown; nothing is retried here.
