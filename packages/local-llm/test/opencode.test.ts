@@ -175,118 +175,124 @@ describe("the relay", () => {
 	});
 });
 
-describe("the configuration check before the prompt", () => {
-	const nonce = "offerfinch-abc123";
-	const cfg = "/private/root/cfg";
-	const own = {
-		type: "document",
-		info: openCodeConfig({ source: "opencode", model: "m", nonce }),
-	};
-	const dir = { type: "directory", path: `${cfg}/opencode` };
-	const org = {
-		type: "document",
-		info: {
-			websearch: { provider: "opencode" },
-			providers: {
-				opencode: {
-					name: "Default / OpenCode",
-					headers: { "x-opencode-org-id": "wrk_1" },
-					models: { "gpt-5": { disabled: true } },
-				},
-			},
-		},
-	};
-
-	it("passes our document, our folder and the Console org document", () => {
-		expect(configProblem([org, dir, own], nonce, cfg)).toBeNull();
-		expect(configProblem({ data: [dir, own] }, nonce, cfg)).toBeNull();
-	});
-
-	it("refuses a document it does not know (a well-known integration)", () => {
-		const wellKnown = {
+// POSIX paths in the checked documents; OpenCode is off on Windows.
+describe.skipIf(process.platform === "win32")(
+	"the configuration check before the prompt",
+	() => {
+		const nonce = "offerfinch-abc123";
+		const cfg = "/private/root/cfg";
+		const own = {
 			type: "document",
-			info: { instructions: ["/x/wk.md"], mcp: { servers: { x: {} } } },
+			info: openCodeConfig({ source: "opencode", model: "m", nonce }),
 		};
-		expect(configProblem([wellKnown, dir, own], nonce, cfg)).toMatch(
-			/did not set/,
-		);
-	});
-
-	it("refuses an org-shaped document that carries more", () => {
-		const sneaky = structuredClone(org);
-		(sneaky.info.providers.opencode as Record<string, unknown>).options = {
-			instructions: "x",
-		};
-		expect(configProblem([sneaky, dir, own], nonce, cfg)).toMatch(
-			/did not set/,
-		);
-		const allow = structuredClone(org) as { info: Record<string, unknown> };
-		allow.info.policies = [
-			{ action: "tool.use", resource: "*", effect: "allow" },
-		];
-		expect(configProblem([allow, dir, own], nonce, cfg)).toMatch(/did not set/);
-	});
-
-	it("refuses two org documents, a foreign folder, or our document missing", () => {
-		expect(configProblem([org, org, dir, own], nonce, cfg)).toMatch(
-			/more than one/,
-		);
-		expect(
-			configProblem(
-				[{ type: "directory", path: "/Users/x/.config/opencode" }, own],
-				nonce,
-				cfg,
-			),
-		).toMatch(/folder/);
-		expect(configProblem([dir], nonce, cfg)).toMatch(/not loaded once/);
-		expect(configProblem("nope", nonce, cfg)).toMatch(/did not list/);
-	});
-
-	it("sets the reserved output limit as the model's max_completion_tokens", () => {
-		const config = openCodeConfig({
-			source: "opencode",
-			model: "m",
-			schema: { type: "object" },
-			maxTokens: 1234,
-			nonce: "n",
-		}) as { providers: Record<string, { models: Record<string, unknown> }> };
-		expect(config.providers.opencode?.models.m).toMatchObject({
-			body: {
-				max_completion_tokens: 1234,
-				response_format: { type: "json_schema" },
-			},
-		});
-	});
-
-	it("locks the config down and never sets steps or a key", () => {
-		const config = openCodeConfig({
-			source: "zai-coding-plan",
-			model: "glm-5.3",
-			relayUrl: "http://127.0.0.1:9",
-			schema: { type: "object" },
-			system: "sys",
-			nonce,
-		});
-		const text = JSON.stringify(config);
-		expect(text).not.toMatch(/"steps"|apiKey/);
-		expect(config).toMatchObject({
-			instructions: [],
-			skills: [],
-			plugins: [],
-			mcp: { servers: {} },
-			permissions: [{ action: "*", resource: "*", effect: "deny" }],
-			providers: {
-				"zai-coding-plan": {
-					settings: { baseURL: "http://127.0.0.1:9" },
-					models: {
-						"glm-5.3": { body: { response_format: { type: "json_schema" } } },
+		const dir = { type: "directory", path: `${cfg}/opencode` };
+		const org = {
+			type: "document",
+			info: {
+				websearch: { provider: "opencode" },
+				providers: {
+					opencode: {
+						name: "Default / OpenCode",
+						headers: { "x-opencode-org-id": "wrk_1" },
+						models: { "gpt-5": { disabled: true } },
 					},
 				},
 			},
-			agents: { offerfinch: { description: nonce, system: "sys" } },
+		};
+
+		it("passes our document, our folder and the Console org document", () => {
+			expect(configProblem([org, dir, own], nonce, cfg)).toBeNull();
+			expect(configProblem({ data: [dir, own] }, nonce, cfg)).toBeNull();
 		});
-	});
-});
+
+		it("refuses a document it does not know (a well-known integration)", () => {
+			const wellKnown = {
+				type: "document",
+				info: { instructions: ["/x/wk.md"], mcp: { servers: { x: {} } } },
+			};
+			expect(configProblem([wellKnown, dir, own], nonce, cfg)).toMatch(
+				/did not set/,
+			);
+		});
+
+		it("refuses an org-shaped document that carries more", () => {
+			const sneaky = structuredClone(org);
+			(sneaky.info.providers.opencode as Record<string, unknown>).options = {
+				instructions: "x",
+			};
+			expect(configProblem([sneaky, dir, own], nonce, cfg)).toMatch(
+				/did not set/,
+			);
+			const allow = structuredClone(org) as { info: Record<string, unknown> };
+			allow.info.policies = [
+				{ action: "tool.use", resource: "*", effect: "allow" },
+			];
+			expect(configProblem([allow, dir, own], nonce, cfg)).toMatch(
+				/did not set/,
+			);
+		});
+
+		it("refuses two org documents, a foreign folder, or our document missing", () => {
+			expect(configProblem([org, org, dir, own], nonce, cfg)).toMatch(
+				/more than one/,
+			);
+			expect(
+				configProblem(
+					[{ type: "directory", path: "/Users/x/.config/opencode" }, own],
+					nonce,
+					cfg,
+				),
+			).toMatch(/folder/);
+			expect(configProblem([dir], nonce, cfg)).toMatch(/not loaded once/);
+			expect(configProblem("nope", nonce, cfg)).toMatch(/did not list/);
+		});
+
+		it("sets the reserved output limit as the model's max_completion_tokens", () => {
+			const config = openCodeConfig({
+				source: "opencode",
+				model: "m",
+				schema: { type: "object" },
+				maxTokens: 1234,
+				nonce: "n",
+			}) as { providers: Record<string, { models: Record<string, unknown> }> };
+			expect(config.providers.opencode?.models.m).toMatchObject({
+				body: {
+					max_completion_tokens: 1234,
+					response_format: { type: "json_schema" },
+				},
+			});
+		});
+
+		it("locks the config down and never sets steps or a key", () => {
+			const config = openCodeConfig({
+				source: "zai-coding-plan",
+				model: "glm-5.3",
+				relayUrl: "http://127.0.0.1:9",
+				schema: { type: "object" },
+				system: "sys",
+				nonce,
+			});
+			const text = JSON.stringify(config);
+			expect(text).not.toMatch(/"steps"|apiKey/);
+			expect(config).toMatchObject({
+				instructions: [],
+				skills: [],
+				plugins: [],
+				mcp: { servers: {} },
+				permissions: [{ action: "*", resource: "*", effect: "deny" }],
+				providers: {
+					"zai-coding-plan": {
+						settings: { baseURL: "http://127.0.0.1:9" },
+						models: {
+							"glm-5.3": { body: { response_format: { type: "json_schema" } } },
+						},
+					},
+				},
+				agents: { offerfinch: { description: nonce, system: "sys" } },
+			});
+		});
+	},
+);
 
 describe("billing per source", () => {
 	const catalog: OpenCodeCatalog = {
@@ -761,7 +767,8 @@ describe("what a failed call means", () => {
 	});
 });
 
-describe("the provider", () => {
+// OpenCode refuses every call on Windows (its own test below).
+describe.skipIf(process.platform === "win32")("the provider", () => {
 	const entry: OpenCodeModelEntry = {
 		source: "opencode",
 		model: "deepseek-v4.1-flash-free",
@@ -1269,3 +1276,30 @@ describe("the provider", () => {
 			}
 	});
 });
+
+it.runIf(process.platform === "win32")(
+	"refuses every call on Windows before starting OpenCode, not billed",
+	async () => {
+		const llm = new OpenCodeProvider({
+			source: "opencode",
+			model: "deepseek-v4.1-flash-free",
+			ownerUserId: "u1",
+			root: "C:\\offerfinch-test",
+			entry: () => null,
+			runCall: () => {
+				throw new Error("must not start OpenCode on Windows");
+			},
+		});
+		const error = await llm
+			.generateObject({
+				system: "s",
+				prompt: "p",
+				schema: z.object({ ok: z.boolean() }),
+				task: "t",
+			})
+			.catch((e) => e);
+		expect(error).toBeInstanceOf(SubscriptionUnavailableError);
+		expect(error).toMatchObject({ kind: "boundary", notBilled: true });
+		expect(String(error)).toMatch(/not available on Windows/);
+	},
+);

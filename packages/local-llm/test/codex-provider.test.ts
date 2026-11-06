@@ -1048,77 +1048,160 @@ describe("the schemas Codex answers for finding matches and drafting", () => {
  * a canary in every such field; the real `runCodexTurn` reads it, without sandbox-exec (the
  * stand-in runs on this Node, which the sandbox profile may not let it read).
  */
-describe("what a failed Codex call keeps", () => {
-	const FIXTURE = resolve(__dirname, "fixtures", "fake-codex-app-server.mjs");
-	let dir: string;
-	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "offerfinch-codex-canary-"));
-	});
-	afterAll(() => rm(dir, { recursive: true, force: true }));
+// Codex refuses on Windows (macOS only): these cases need a call that runs.
+describe.skipIf(process.platform === "win32")(
+	"what a failed Codex call keeps",
+	() => {
+		const FIXTURE = resolve(__dirname, "fixtures", "fake-codex-app-server.mjs");
+		let dir: string;
+		beforeAll(async () => {
+			dir = await mkdtemp(join(tmpdir(), "offerfinch-codex-canary-"));
+		});
+		afterAll(() => rm(dir, { recursive: true, force: true }));
 
-	async function fakeBinary(scenario: string): Promise<string> {
-		const file = join(dir, `codex-${scenario}.mjs`);
-		await writeFile(
-			file,
-			`#!${process.execPath}\nawait import(${JSON.stringify(pathToFileURL(FIXTURE).href)});\n`,
-		);
-		await chmod(file, 0o755);
-		return file;
-	}
+		async function fakeBinary(scenario: string): Promise<string> {
+			const file = join(dir, `codex-${scenario}.mjs`);
+			await writeFile(
+				file,
+				`#!${process.execPath}\nawait import(${JSON.stringify(pathToFileURL(FIXTURE).href)});\n`,
+			);
+			await chmod(file, 0o755);
+			return file;
+		}
 
-	for (const [scenario, says] of [
-		["stderr", /failed \(client\); the error's text is not kept/],
-		["hang", /failed \(timeout\); the error's text is not kept/],
-		[
-			"retry",
-			/retried a request inside the turn \(responseStreamDisconnected, HTTP 502\)/,
-		],
-		["error", /failed \(other\); the error's text is not kept/],
-		["rpc", /failed \(client\); the error's text is not kept/],
-		["tool", /tried to use a tool during claims-check \(raw other other\)/],
-		// Identifiers that are not the protocol's values: kept as "other", never as given.
-		["kind", /failed \(other\); the error's text is not kept/],
-		[
-			"retrykind",
-			/retried a request inside the turn \(other, HTTP 502\), although/,
-		],
-		["rpccode", /failed \(client\); the error's text is not kept/],
-		[
-			"request",
-			/tried to use a tool during claims-check \(server request other\)/,
-		],
-		["item", /tried to use a tool during claims-check \(item other\)/],
-		[
-			"rawtool",
-			/tried to use a tool during claims-check \(raw function_call other\)/,
-		],
-		["tools", /Codex offered 2 tools outside the tested list/],
-		[
-			"thread",
-			/tried to use a tool during claims-check \(event from another thread \(other\)\)/,
-		],
-	] as const)
-		it(`keeps none of it: ${scenario}`, async () => {
-			const binary = await fakeBinary(scenario);
-			const logs: string[] = [];
+		for (const [scenario, says] of [
+			["stderr", /failed \(client\); the error's text is not kept/],
+			["hang", /failed \(timeout\); the error's text is not kept/],
+			[
+				"retry",
+				/retried a request inside the turn \(responseStreamDisconnected, HTTP 502\)/,
+			],
+			["error", /failed \(other\); the error's text is not kept/],
+			["rpc", /failed \(client\); the error's text is not kept/],
+			["tool", /tried to use a tool during claims-check \(raw other other\)/],
+			// Identifiers that are not the protocol's values: kept as "other", never as given.
+			["kind", /failed \(other\); the error's text is not kept/],
+			[
+				"retrykind",
+				/retried a request inside the turn \(other, HTTP 502\), although/,
+			],
+			["rpccode", /failed \(client\); the error's text is not kept/],
+			[
+				"request",
+				/tried to use a tool during claims-check \(server request other\)/,
+			],
+			["item", /tried to use a tool during claims-check \(item other\)/],
+			[
+				"rawtool",
+				/tried to use a tool during claims-check \(raw function_call other\)/,
+			],
+			["tools", /Codex offered 2 tools outside the tested list/],
+			[
+				"thread",
+				/tried to use a tool during claims-check \(event from another thread \(other\)\)/,
+			],
+		] as const)
+			it(`keeps none of it: ${scenario}`, async () => {
+				const binary = await fakeBinary(scenario);
+				const logs: string[] = [];
+				const store = new SpendRecorder();
+				const turns: CodexTurnResult[] = [];
+				const metered = new MeteredLlm(
+					new CodexSubscriptionProvider({
+						ownerUserId: "user-1",
+						captureBaseUrl: "http://127.0.0.1:9",
+						binary,
+						breaker: new Breaker(),
+						parentEnv: { PATH: "/usr/bin:/bin", HOME: dir },
+						timeoutMs: scenario === "hang" ? 1500 : 20_000,
+						log: (message, data) => logs.push(message, JSON.stringify(data)),
+						runTurn: async (input) => {
+							const result = await runCodexTurn({
+								...input,
+								layers: { ...ALL_LAYERS, sandboxExec: false },
+							});
+							turns.push(result);
+							return result;
+						},
+					}),
+					store,
+					{ userId: "user-1", applicationId: null },
+				);
+				const error = await metered
+					.generateObject({
+						system: "s",
+						prompt: "p",
+						schema,
+						task: "claims-check",
+					})
+					.catch((e: unknown) => e);
+				expect(String(error)).toMatch(says);
+				const kept = [
+					String(error),
+					JSON.stringify(error),
+					// What the provider builds its messages from (`info` is Codex's raw kind, never shown).
+					JSON.stringify(
+						turns.map((t) => [t.turnError?.message, t.boundary, t.toolAttempt]),
+					),
+					...store.rows,
+					...logs,
+				].join("\n");
+				expect(store.rows.some((r) => /^(settle|refusal|hold) /.test(r))).toBe(
+					true,
+				);
+				expect(kept).not.toContain("ANSWER_CANARY");
+				expect(kept).not.toMatch(/private_?cv_?canary|privatecanary/i);
+				if (scenario === "rpccode")
+					expect(turns[0]?.turnError?.message).toBe(
+						"the app-server request failed (Error other)",
+					);
+				if (scenario === "tools")
+					expect(turns[0]?.toolNames).toEqual([
+						"functions.exec",
+						"other",
+						"other",
+					]);
+				// An exit rejects initialize first; the "did not start" error (stderr's length only) is
+				// reached when the call times out during initialize.
+				if (scenario === "stderr")
+					expect(turns[0]?.turnError?.message).toBe(
+						"codex app-server exited (3)",
+					);
+			}, 60_000);
+
+		it("keeps none of a turn error a turn runner reports with its own text", async () => {
 			const store = new SpendRecorder();
-			const turns: CodexTurnResult[] = [];
 			const metered = new MeteredLlm(
 				new CodexSubscriptionProvider({
 					ownerUserId: "user-1",
 					captureBaseUrl: "http://127.0.0.1:9",
-					binary,
+					binary: join(dir, "no-codex"),
 					breaker: new Breaker(),
 					parentEnv: { PATH: "/usr/bin:/bin", HOME: dir },
-					timeoutMs: scenario === "hang" ? 1500 : 20_000,
-					log: (message, data) => logs.push(message, JSON.stringify(data)),
 					runTurn: async (input) => {
-						const result = await runCodexTurn({
-							...input,
-							layers: { ...ALL_LAYERS, sandboxExec: false },
-						});
-						turns.push(result);
-						return result;
+						input.onModelCall?.();
+						return {
+							text: null,
+							usage: null,
+							model: null,
+							toolAttempt: null,
+							boundary: null,
+							refused: null,
+							creditsBefore: null,
+							creditsAfter: null,
+							rateLimitsBefore: null,
+							rateLimitsAfter: null,
+							turnError: {
+								message: "ANSWER_CANARY_CX_51d0",
+								info: { httpConnectionFailed: { httpStatusCode: 413 } },
+							},
+							status: "failed",
+							sent: true,
+							rawTypes: [],
+							toolNames: [],
+							codexVersion: "0.166.0",
+							removedEnv: [],
+						};
 					},
 				}),
 				store,
@@ -1132,89 +1215,12 @@ describe("what a failed Codex call keeps", () => {
 					task: "claims-check",
 				})
 				.catch((e: unknown) => e);
-			expect(String(error)).toMatch(says);
-			const kept = [
-				String(error),
-				JSON.stringify(error),
-				// What the provider builds its messages from (`info` is Codex's raw kind, never shown).
-				JSON.stringify(
-					turns.map((t) => [t.turnError?.message, t.boundary, t.toolAttempt]),
-				),
-				...store.rows,
-				...logs,
-			].join("\n");
-			expect(store.rows.some((r) => /^(settle|refusal|hold) /.test(r))).toBe(
-				true,
+			expect(String(error)).toMatch(
+				/failed \(httpConnectionFailed, HTTP 413\)/,
 			);
-			expect(kept).not.toContain("ANSWER_CANARY");
-			expect(kept).not.toMatch(/private_?cv_?canary|privatecanary/i);
-			if (scenario === "rpccode")
-				expect(turns[0]?.turnError?.message).toBe(
-					"the app-server request failed (Error other)",
-				);
-			if (scenario === "tools")
-				expect(turns[0]?.toolNames).toEqual([
-					"functions.exec",
-					"other",
-					"other",
-				]);
-			// An exit rejects initialize first; the "did not start" error (stderr's length only) is
-			// reached when the call times out during initialize.
-			if (scenario === "stderr")
-				expect(turns[0]?.turnError?.message).toBe(
-					"codex app-server exited (3)",
-				);
-		}, 60_000);
-
-	it("keeps none of a turn error a turn runner reports with its own text", async () => {
-		const store = new SpendRecorder();
-		const metered = new MeteredLlm(
-			new CodexSubscriptionProvider({
-				ownerUserId: "user-1",
-				captureBaseUrl: "http://127.0.0.1:9",
-				binary: join(dir, "no-codex"),
-				breaker: new Breaker(),
-				parentEnv: { PATH: "/usr/bin:/bin", HOME: dir },
-				runTurn: async (input) => {
-					input.onModelCall?.();
-					return {
-						text: null,
-						usage: null,
-						model: null,
-						toolAttempt: null,
-						boundary: null,
-						refused: null,
-						creditsBefore: null,
-						creditsAfter: null,
-						rateLimitsBefore: null,
-						rateLimitsAfter: null,
-						turnError: {
-							message: "ANSWER_CANARY_CX_51d0",
-							info: { httpConnectionFailed: { httpStatusCode: 413 } },
-						},
-						status: "failed",
-						sent: true,
-						rawTypes: [],
-						toolNames: [],
-						codexVersion: "0.166.0",
-						removedEnv: [],
-					};
-				},
-			}),
-			store,
-			{ userId: "user-1", applicationId: null },
-		);
-		const error = await metered
-			.generateObject({
-				system: "s",
-				prompt: "p",
-				schema,
-				task: "claims-check",
-			})
-			.catch((e: unknown) => e);
-		expect(String(error)).toMatch(/failed \(httpConnectionFailed, HTTP 413\)/);
-		expect([String(error), ...store.rows].join("\n")).not.toContain(
-			"ANSWER_CANARY",
-		);
-	});
-});
+			expect([String(error), ...store.rows].join("\n")).not.toContain(
+				"ANSWER_CANARY",
+			);
+		});
+	},
+);

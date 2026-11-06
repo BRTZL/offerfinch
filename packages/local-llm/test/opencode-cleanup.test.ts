@@ -610,7 +610,8 @@ describe("a call another process starts while a sweep runs", () => {
  * synchronously with no deadline). Only a missing file is missing: anything else refuses the
  * call at once, and nothing is swept, adopted or cleared on its account.
  */
-describe.skipIf(process.getuid?.() === 0)(
+// Windows has no mode-000 files: a read never fails there the way these cases need.
+describe.skipIf(process.getuid?.() === 0 || process.platform === "win32")(
 	"a cleanup file that cannot be read",
 	() => {
 		const locked: string[] = [];
