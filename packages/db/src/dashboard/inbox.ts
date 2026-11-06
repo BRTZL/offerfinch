@@ -10,6 +10,7 @@ import {
 	or,
 	sql,
 } from "drizzle-orm";
+import { dismissals } from "../schema/dismissals";
 import {
 	applications,
 	applicationTransitions,
@@ -253,6 +254,10 @@ export const inboxMethods = {
 				userReason: sql<
 					string | null
 				>`(select t.reason from ${applicationTransitions} t where t.application_id = ${applications.id} and t.to_state = 'rejected' order by t.created_at desc limit 1)`,
+				/** Not interested: the reasons the user ticked (JSON), or null. */
+				dismissReasons: sql<
+					string | null
+				>`(select d.reasons from ${dismissals} d where d.application_id = ${applications.id} order by d.created_at desc limit 1)`,
 			})
 			.from(applications)
 			.innerJoin(
@@ -268,6 +273,7 @@ export const inboxMethods = {
 					eq(applications.userId, userId),
 					or(
 						eq(applications.state, "rejected"),
+						eq(applications.state, "dismissed"),
 						and(
 							eq(applications.state, "scored"),
 							isNotNull(applications.endedReason),

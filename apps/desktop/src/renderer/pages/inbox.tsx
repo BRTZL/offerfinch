@@ -1254,6 +1254,7 @@ function RowLine({
 				data-state={row.state}
 				data-step={step ?? undefined}
 				data-child={child ? "" : undefined}
+				data-working={!step && status.chip.tone === "drafting" ? "" : undefined}
 				title={
 					child ? row.title : reading ? linkHost(row.url) : row.companyName
 				}

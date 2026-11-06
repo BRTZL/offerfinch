@@ -1,3 +1,8 @@
+import {
+	DISMISS_REASON_LABEL,
+	type DismissReason,
+	ENDED_COMPANY_HIDDEN,
+} from "@offerfinch/core/domain/dismissal";
 import { filterRuleLabel } from "@offerfinch/core/filter/rule-labels";
 import { useQuery } from "@tanstack/react-query";
 import { Archive } from "lucide-react";
@@ -15,6 +20,7 @@ type RejectedRow = NonNullable<
 /** Why the job was turned down, in a few words. */
 function reason(r: RejectedRow): string {
 	if (r.state === "rejected") return r.userReason || "Rejected by you";
+	if (r.state === "dismissed") return notInterested(r);
 	if (r.state === "scored") return "Fit below your minimum";
 	const failed = (r.filterResult?.reasons ?? []).find(
 		(x) => x.outcome === "reject",
@@ -24,10 +30,28 @@ function reason(r: RejectedRow): string {
 		: (r.filterResult?.summary ?? r.endedReason ?? "Ruled out");
 }
 
+/** Not interested, with the reasons the user ticked; or the company they hid. */
+function notInterested(r: RejectedRow): string {
+	if (r.endedReason === ENDED_COMPANY_HIDDEN) return "Company hidden";
+	let ticked: DismissReason[] = [];
+	try {
+		ticked = r.dismissReasons ? JSON.parse(r.dismissReasons) : [];
+	} catch {}
+	const words = ticked
+		.map((x) => DISMISS_REASON_LABEL[x])
+		.filter(Boolean)
+		.join(", ");
+	return words ? `Not interested: ${words}` : "Not interested";
+}
+
 type ReasonKind = "filter" | "score" | "user";
 
 const kindOf = (r: RejectedRow): ReasonKind =>
-	r.state === "rejected" ? "user" : r.state === "scored" ? "score" : "filter";
+	r.state === "rejected" || r.state === "dismissed"
+		? "user"
+		: r.state === "scored"
+			? "score"
+			: "filter";
 
 /** The reason chips' words, short enough for the list column. */
 const KIND_LABEL: Record<ReasonKind, string> = {

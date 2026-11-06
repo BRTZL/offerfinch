@@ -293,15 +293,19 @@ test("Inbox: Matches grouped by company, Not interested with reasons, hide and u
 			{ timeout: 30_000 },
 		);
 
-		// Closed holds the dismissed matches.
+		// Turned down by the user: not in the Inbox (not even Closed), but on the Rejected page.
 		await sidebar(page, "Inbox").click();
 		await showStatus(page, /^Closed/);
 		await expect(
+			page.locator("[data-testid=inbox-row][data-state=dismissed]"),
+		).toHaveCount(0);
+		await sidebar(page, "Rejected").click();
+		await expect(
 			page
-				.locator("[data-testid=inbox-row][data-state=dismissed]")
+				.getByTestId("rejected-row")
 				.filter({ hasText: "Company hidden" })
 				.first(),
-		).toBeVisible();
+		).toBeVisible({ timeout: 30_000 });
 
 		// Settings › Hidden companies: Show again brings back the jobs hidden with it.
 		await sidebar(page, "Settings").click();
