@@ -180,13 +180,19 @@ export function ConnectAi({ onDone }: { onDone: () => void }) {
 	const detectNow = detect.mutate;
 	useEffect(() => detectNow(false), [detectNow]);
 	const ai = useQuery(orpc.ai.get.queryOptions());
+	// The rows follow the live model list: a sign-in or install from a row refreshes it.
+	const live = useQuery({
+		...orpc.ai.models.queryOptions(),
+		enabled: d !== null,
+	});
+	const providers = live.data?.providers ?? d?.providers ?? [];
 	const signedIn = Object.fromEntries(
-		(d?.providers ?? []).map((p) => [p.provider, p.signedIn]),
+		providers.map((p) => [p.provider, p.signedIn]),
 	);
 	// A step is ready only while its provider is signed in, whatever the settings say.
 	const roles = readyNow(ai.data?.roles ?? d?.roles ?? [], signedIn);
 	const allSet = roles.length === 3 && roles.every((r) => r.ready);
-	const available = d ? anyModelAvailable(d.providers, d.fakeAllowed) : false;
+	const available = d ? anyModelAvailable(providers, d.fakeAllowed) : false;
 	useStepAction({
 		label: "Continue",
 		onClick: onDone,
@@ -207,11 +213,11 @@ export function ConnectAi({ onDone }: { onDone: () => void }) {
 			celebrate();
 	}, [d, ai.data, allSet, celebrate]);
 
-	const found = d?.providers
+	const found = providers
 		.filter((p) => p.signedIn)
 		.map((p) => ACCOUNT_NAME[p.provider]);
 	// Read out as it changes: one region, there from the first frame, so every change is said.
-	const live = (
+	const status = (
 		<p
 			className="sr-only"
 			role="status"
@@ -222,7 +228,7 @@ export function ConnectAi({ onDone }: { onDone: () => void }) {
 				? "Looking for your AI accounts."
 				: allSet
 					? "You're all set: every step has a model."
-					: found?.length
+					: found.length
 						? `Signed in: ${found.join(", ")}. Choose a model for every step.`
 						: "No AI account is signed in yet."}
 		</p>
@@ -230,7 +236,7 @@ export function ConnectAi({ onDone }: { onDone: () => void }) {
 	if (!d)
 		return (
 			<div className="flex flex-col gap-3" data-testid="setup-ai-detecting">
-				{live}
+				{status}
 				<RowsSkeleton rows={4} twoLine />
 			</div>
 		);
@@ -240,11 +246,11 @@ export function ConnectAi({ onDone }: { onDone: () => void }) {
 			data-testid="setup-ai"
 			data-all-set={allSet || undefined}
 		>
-			{live}
+			{status}
 			<div className="relative">
 				<SparkleBurst burst={burst} />
 				<Group>
-					{d.providers.map((view) => (
+					{providers.map((view) => (
 						<DetectedRow key={view.provider} view={view} />
 					))}
 					<Row
