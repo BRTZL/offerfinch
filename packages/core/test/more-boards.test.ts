@@ -194,7 +194,7 @@ describe("company subdomains", () => {
 		for (const key of [
 			"evil.net/",
 			"a.b",
-			"x@evil.net",
+			"user@host",
 			"evil.net#",
 			"-acme",
 			"",
