@@ -142,7 +142,10 @@ async function call(
 	dataHome: string,
 	home: string,
 	text = `${PROMPT_CANARY} Say hi.`,
-	extra: Pick<OpenCodeCallInput, "beforeScrub" | "cleanupGraceMs"> = {},
+	extra: Pick<
+		OpenCodeCallInput,
+		"beforeScrub" | "afterDelete" | "cleanupGraceMs"
+	> = {},
 ): Promise<OpenCodeCallResult> {
 	return runOpenCodeCall({
 		...extra,
@@ -358,6 +361,52 @@ describe.skipIf(!tested)("an OpenCode call is a pure model call", () => {
 		expect(provider.billing).toBe("subscription");
 		expect(provider.vendor).toBe("opencode:opencode");
 	}, 120_000);
+
+	it("refuses calls after a cleanup that failed between the deletion and its marker, until it is done", async () => {
+		// Runs before the busy-reader test below: no retry timer of an earlier cleanup is pending
+		// here, so only the call path itself can adopt the intent.
+		const dbFile = join(fakeData, "opencode", "opencode.db");
+		const state = () => readdirSync(join(root, "state"));
+		let reader: Database.Database | null = null;
+		const failed = await call(fakeData, fakeHome, undefined, {
+			beforeScrub: async () => {
+				reader = new Database(dbFile, { readonly: true });
+				reader.prepare("BEGIN").run();
+				reader.prepare("SELECT count(*) FROM session_v2").get();
+			},
+			afterDelete: () => {
+				throw new Error("the marker could not be written");
+			},
+		}).catch((e: unknown) => e);
+		expect(String(failed)).toMatch(/marker could not be written/);
+		// The rows are gone, the prompt is in the WAL, there is no marker: only the intent.
+		expect(state().filter((f) => f.startsWith("cleanup-intent-"))).toHaveLength(
+			1,
+		);
+		expect(state().some((f) => f.startsWith("cleanup-pending-"))).toBe(false);
+		expect(dataHomeText(fakeData)).toContain(PROMPT_CANARY);
+
+		posts.length = 0;
+		const refused = await call(fakeData, fakeHome, undefined, {
+			cleanupGraceMs: 0,
+		});
+		expect(refused.cleanupRefused).toBe(true);
+		expect(refused.boundary).toBe(CLEANUP_REFUSAL);
+		expect(refused.sent).toBe(false);
+		expect(posts.length).toBe(0);
+		expect(state().filter((f) => f.startsWith("cleanup-intent-"))).toEqual([]);
+
+		(reader as Database.Database | null)?.close();
+		const resumed = await call(fakeData, fakeHome, undefined, {
+			cleanupGraceMs: 0,
+		});
+		expect(resumed.cleanupRefused).toBe(false);
+		expect(resumed.failure).toBeNull();
+		expect(resumed.scrub?.clean).toBe(true);
+		expect(posts.length).toBe(1);
+		expect(state().filter((f) => f.startsWith("cleanup-"))).toEqual([]);
+		expect(dataHomeText(fakeData)).not.toContain(PROMPT_CANARY);
+	}, 180_000);
 
 	it("keeps the cleanup pending while another connection reads OpenCode's database, refuses calls past the grace period, and finishes once it closes", async () => {
 		const dbFile = join(fakeData, "opencode", "opencode.db");

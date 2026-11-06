@@ -859,6 +859,8 @@ export interface OpenCodeCallInput {
 	log?: (message: string, data?: Record<string, unknown>) => void;
 	/** Tests: runs before the server is stopped and the session scrubbed. */
 	beforeScrub?: (input: { sessionId: string | null }) => Promise<void>;
+	/** Tests: runs between the session's deletion and the cleanup marker (a failure there). */
+	afterDelete?: () => void;
 	/** Tests: the relay's upstream fetch. */
 	fetch?: typeof fetch;
 }
@@ -1206,10 +1208,12 @@ function scrubAfterCall(
 	ctx: CleanupContext,
 	intent: CallIntent,
 	result: OpenCodeCallResult,
+	afterDelete?: () => void,
 ): void {
 	const finished = finishCall(ctx.target, intent, result.sessionId, {
 		idle: !running.get(targetKey(ctx.target)),
 		now: new Date(),
+		afterDelete,
 	});
 	result.scrub = finished.scrub;
 	result.scrubError = finished.scrubError;
@@ -1317,7 +1321,7 @@ export async function runOpenCodeCall(
 		await serve?.close();
 		await relay?.close();
 		done();
-		scrubAfterCall(ctx, intent, result);
+		scrubAfterCall(ctx, intent, result, input.afterDelete);
 	}
 	return result;
 }

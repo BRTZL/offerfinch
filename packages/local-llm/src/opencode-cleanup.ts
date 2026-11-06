@@ -218,12 +218,21 @@ function processRuns(pid: number): boolean {
 	}
 }
 
+/**
+ * This module's calls still running: an intent of this process's id that is not here was left by
+ * a call whose cleanup threw before its marker (or by an earlier instance with the same id), so it
+ * is stale at once. (The desktop runs the worker as a utility process; a restarted worker gets a
+ * new id, but this does not rely on it.)
+ */
+const activeIntents = new Set<string>();
+
 /** The call behind the intent may still be running (in this process or another). */
 function intentLive(intent: IntentRecord, now: Date): boolean {
+	if (intent.pid === process.pid) return activeIntents.has(intent.file);
 	if (intent.pid === null || intent.since === null) return false;
 	if (now.getTime() - Date.parse(intent.since) >= INTENT_MAX_AGE_MS)
 		return false;
-	return intent.pid === process.pid || processRuns(intent.pid);
+	return processRuns(intent.pid);
 }
 
 /**
@@ -235,10 +244,16 @@ export function beginCall(target: CleanupTarget, now: Date): CallIntent {
 		target.base,
 		`${intentPrefix(target)}${process.pid}-${randomBytes(6).toString("hex")}.json`,
 	);
-	writeDurable(
-		file,
-		JSON.stringify({ pid: process.pid, since: now.toISOString() }),
-	);
+	activeIntents.add(file);
+	try {
+		writeDurable(
+			file,
+			JSON.stringify({ pid: process.pid, since: now.toISOString() }),
+		);
+	} catch (error) {
+		activeIntents.delete(file);
+		throw error;
+	}
 	return { file };
 }
 
@@ -397,16 +412,26 @@ export function finishCall(
 	let scrub: ScrubResult | null = null;
 	let scrubError: string | null = null;
 	let pending: PendingCleanup | null = null;
-	if (sessionId) {
-		try {
-			scrub = scrubOpenCodeSessions(target.dbFile, [sessionId]);
-		} catch (error) {
-			scrubError = error instanceof Error ? error.message : String(error);
-		}
-		options.afterDelete?.();
-		pending = afterScrub(target, { result: scrub, error: scrubError }, options);
-	} else pending = readPendingCleanup(target);
-	removeDurable(intent.file);
+	try {
+		if (sessionId) {
+			try {
+				scrub = scrubOpenCodeSessions(target.dbFile, [sessionId]);
+			} catch (error) {
+				scrubError = error instanceof Error ? error.message : String(error);
+			}
+			options.afterDelete?.();
+			pending = afterScrub(
+				target,
+				{ result: scrub, error: scrubError },
+				options,
+			);
+		} else pending = readPendingCleanup(target);
+		// Only once the marker is on disk (or nothing is owed).
+		removeDurable(intent.file);
+	} finally {
+		// A throw above leaves the file: no longer this call's, so the next attempt adopts it.
+		activeIntents.delete(intent.file);
+	}
 	return { scrub, scrubError, pending };
 }
 

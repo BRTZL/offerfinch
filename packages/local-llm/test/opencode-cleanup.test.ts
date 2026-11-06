@@ -382,6 +382,38 @@ describe("a crash between a call's deletion and its marker", () => {
 		reader.close();
 	}, 30_000);
 
+	it("adopts at once the intent a call of this process left when its cleanup threw before the marker", () => {
+		const reader = holdReader();
+		const call = beginCall(target, now);
+		addSession("ses_throw");
+		expect(cleanupDue(target, now)).toBe(false);
+		expect(() =>
+			finishCall(target, call, "ses_throw", {
+				idle: true,
+				now,
+				afterDelete: () => {
+					throw new Error("disk full");
+				},
+			}),
+		).toThrow("disk full");
+		expect(readPendingCleanup(target)).toBeNull();
+		expect(intents()).toHaveLength(1);
+		expect(filesWithPrompt()).toContain("opencode.db-wal");
+		// Same process, no restart: the next call sees the cleanup due, and past the grace period
+		// it is refused.
+		expect(cleanupDue(target, now)).toBe(true);
+		const late = new Date(now.getTime() + CLEANUP_GRACE_MS);
+		const retry = attemptCleanup(target, { idle: true, now: late });
+		expect(retry.pending).toMatchObject({ since: now.toISOString() });
+		expect(cleanupOverdue(retry.pending, late)).toBe(true);
+		expect(intents()).toEqual([]);
+		reader.close();
+		expect(
+			attemptCleanup(target, { idle: true, now: late }).pending,
+		).toBeNull();
+		expect(filesWithPrompt()).toEqual([]);
+	}, 30_000);
+
 	it("removes an intent with no session (no prompt was sent) and leaves no marker", () => {
 		const call = beginCall(target, now);
 		expect(
