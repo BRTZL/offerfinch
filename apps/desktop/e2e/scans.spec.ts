@@ -196,7 +196,7 @@ test("the scan history: found, scored below the minimum with reasons, and a paus
 		await page.getByTestId("scan-status").click();
 		await expect(page.getByTestId("scan-outcome")).toBeVisible();
 		await toastsGone(page, 15_000);
-		// The sidebar settles on the finished scan.
+		// Scan now comes back once the scan has finished.
 		await expect(page.getByTestId("scan-now").first()).toHaveAttribute(
 			"aria-label",
 			"Scan now",

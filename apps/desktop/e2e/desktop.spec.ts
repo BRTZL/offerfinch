@@ -764,7 +764,7 @@ test("Indeed and Glassdoor read local stand-ins only: jobs handed off, a check s
 			await sidebar(page, "Settings").click();
 			await settingsNav(page, "Sources").click();
 		};
-		await sidebar(page, "Home").click();
+		await page.getByTestId("scan-status").click();
 		await page.getByTestId("scan-now").click();
 		await expect
 			.poll(
@@ -803,7 +803,7 @@ test("Indeed and Glassdoor read local stand-ins only: jobs handed off, a check s
 				"select count(*) n from flow_runs where kind = 'scan' and status = 'complete'",
 			)[0]?.n ?? 0;
 		const before = scansDone();
-		await sidebar(page, "Home").click();
+		await page.getByTestId("scan-status").click();
 		await expect(page.getByTestId("scan-now")).toBeEnabled({ timeout: 60_000 });
 		await page.getByTestId("scan-now").click();
 		await expect.poll(scansDone, { timeout: 90_000 }).toBeGreaterThan(before);
@@ -945,7 +945,7 @@ test("site tabs inside the app: the sign-in sheet, a check that pauses and notif
 		// A scan reads Indeed in its hidden tab; the search page is a check: the run pauses,
 		// a notification says so, and the row says "Needs you".
 		await page.getByTestId("source-indeed-enabled").click();
-		await sidebar(page, "Home").click();
+		await page.getByTestId("scan-status").click();
 		await expect(page.getByTestId("scan-now")).toBeEnabled({ timeout: 60_000 });
 		await page.getByTestId("scan-now").click();
 		await expect
@@ -1069,6 +1069,7 @@ test("kill -9: the worker mid-step, then the whole app mid-step; work resumes an
 	});
 	let killedStep: string | undefined;
 	try {
+		await first.page.getByTestId("scan-status").click();
 		await expect(first.page.getByTestId("scan-now")).toBeEnabled({
 			timeout: 30_000,
 		});
@@ -1186,7 +1187,7 @@ test("a scan reads every source from the shared plan, LinkedIn's Top picks first
 			)[0]?.n ?? 0;
 		const scansBefore = scansDone();
 		const searchesBefore = boards.searches.length;
-		await sidebar(page, "Home").click();
+		await page.getByTestId("scan-status").click();
 		await expect(page.getByTestId("scan-now")).toBeEnabled({ timeout: 60_000 });
 		await page.getByTestId("scan-now").click();
 		await expect
@@ -1264,7 +1265,7 @@ test("a scan reads every source from the shared plan, LinkedIn's Top picks first
 
 		// The next scan within 3 hours does not read LinkedIn, and says when it will.
 		const opened = fixture.requests.length;
-		await sidebar(page, "Home").click();
+		await page.getByTestId("scan-status").click();
 		await expect(page.getByTestId("scan-now")).toBeEnabled({ timeout: 60_000 });
 		await page.getByTestId("scan-now").click();
 		await expect.poll(scansDone, { timeout: 90_000 }).toBe(scansBefore + 2);

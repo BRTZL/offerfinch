@@ -111,6 +111,7 @@ export default function ScansPage() {
 				>
 					Sources
 				</Link>
+				<ScanButton labeled />
 			</PageHeader>
 			<MasterDetail
 				list={
@@ -178,15 +179,12 @@ function NoScans() {
 			icon={<Radar />}
 			title="No scans yet"
 			actions={
-				<>
-					<ScanButton labeled />
-					<Link
-						href="/settings/sources"
-						className="text-primary text-sm hover:underline"
-					>
-						Open Sources
-					</Link>
-				</>
+				<Link
+					href="/settings/sources"
+					className="text-primary text-sm hover:underline"
+				>
+					Open Sources
+				</Link>
 			}
 		>
 			A scan searches the sources you turn on in Settings › Sources for the

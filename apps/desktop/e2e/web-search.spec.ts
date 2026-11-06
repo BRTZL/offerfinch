@@ -117,7 +117,7 @@ test("web search finds postings on any other site: job data read as is, others b
 			page.getByTestId("sources-list").getByRole("textbox"),
 		).toHaveCount(0);
 		await expect(page.getByTestId("web-searches")).toHaveCount(0);
-		await sidebar(page, "Home").click();
+		await page.getByTestId("scan-status").click();
 		await page.getByTestId("scan-now").click();
 		await expect
 			.poll(
