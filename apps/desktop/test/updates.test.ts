@@ -24,9 +24,9 @@ class StubUpdater implements Updater {
 	checkForUpdates() {
 		return this.check();
 	}
-	quitAndInstall() {
+	quitAndInstall = vi.fn(() => {
 		this.installs++;
-	}
+	});
 }
 
 const make = (
@@ -48,6 +48,33 @@ const make = (
 };
 
 describe("Updates", () => {
+	it("silently installs and restarts on Windows", () => {
+		vi.stubGlobal("process", { ...process, platform: "win32" });
+		try {
+			const { updater, updates } = make();
+			updater.emit("update-downloaded", { version: "0.2.0" });
+			expect(updates.install()).toBe(true);
+			expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("checks at launch and every six hours", async () => {
+		vi.useFakeTimers();
+		const { updater, updates } = make();
+		try {
+			updates.start();
+			await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000 - 1);
+			expect(updater.check).toHaveBeenCalledTimes(1);
+			await vi.advanceTimersByTimeAsync(1);
+			expect(updater.check).toHaveBeenCalledTimes(2);
+		} finally {
+			updates.stop();
+			vi.useRealTimers();
+		}
+	});
+
 	it("downloads in the background and installs only once ready", async () => {
 		const { updater, updates, ready } = make();
 		expect(updater.autoDownload).toBe(true);

@@ -10,6 +10,8 @@ at the top, above the newest version. Only what is merged into main belongs here
 
 ## Unreleased
 
+- Windows releases now download updates in the background and install when you restart or quit.
+
 - No rule sets a job aside any more: every job a search finds gets a fit score. A job you
   can't take (it needs another citizenship, a security clearance, a work permit you don't
   have, or a language you don't work in) is scored below your minimum fit, and the reason says

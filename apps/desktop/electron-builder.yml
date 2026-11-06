@@ -79,8 +79,6 @@ win:
   icon: build/icon.png
   files:
     - "!**/node_modules/better-sqlite3/prebuilds/{darwin,linux,linuxmusl}-*"
-  # Windows releases and updates are not published yet.
-  publish: null
 nsis:
   oneClick: true
   perMachine: false
@@ -104,7 +102,7 @@ dmg:
       y: 196
       type: link
       path: /Applications
-# Over-the-air updates read latest-mac.yml and the zips from this repository's GitHub Releases.
+# Over-the-air updates read channel metadata and installers/zips from GitHub Releases.
 publish:
   provider: github
   owner: BRTZL # public-ok: the owner of the public release repository

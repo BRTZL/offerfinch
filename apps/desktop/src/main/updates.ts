@@ -1,8 +1,8 @@
 import type { UpdateState } from "../shared/bridge";
 
 /**
- * Over-the-air updates from GitHub Releases (electron-updater, Squirrel.Mac underneath).
- * Checks at launch, every 30 minutes, and when the Mac wakes or the window comes forward (at
+ * Over-the-air updates from GitHub Releases (electron-updater: Squirrel.Mac on macOS, NSIS on Windows).
+ * Checks at launch, every 6 hours, and when the Mac wakes or the window comes forward (at
  * most every 10 minutes), downloads in the background, and installs when the user restarts (or
  * on the next quit). Only a Developer ID–signed, notarized build can install an
  * update: macOS checks that the new app is signed by the same team as the running one.
@@ -43,7 +43,7 @@ export interface UpdateInfo {
 	releaseNotes?: string | { version: string; note: string | null }[] | null;
 }
 
-const CHECK_EVERY_MS = 30 * 60 * 1000;
+const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
 /** Waking the Mac or bringing the window forward checks again once the last check is this old. */
 const STALE_AFTER_MS = 10 * 60 * 1000;
 
@@ -263,7 +263,7 @@ export class Updates {
 		return this.state;
 	}
 
-	/** Checks now and then every 30 minutes (not while suspended). */
+	/** Checks now and then every 6 hours (not while suspended). */
 	start() {
 		if (!this.updater || this.state.status === "disabled") return;
 		if (this.suspended) return;
@@ -424,7 +424,7 @@ export class Updates {
 			this.options.log("update install refused: try-it mode runs");
 			return false;
 		}
-		this.updater.quitAndInstall(false, true);
+		this.updater.quitAndInstall(process.platform === "win32", true);
 		return true;
 	}
 }

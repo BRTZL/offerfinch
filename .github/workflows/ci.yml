@@ -117,8 +117,10 @@ jobs:
       - name: Production build
         run: pnpm --filter @offerfinch/desktop build --production
       # NSIS also produces win-unpacked, which is launched below.
-      - name: Package x64 app and installer
-        run: pnpm --filter @offerfinch/desktop exec electron-builder --win --x64 --publish never
+      - name: Package x64 and arm64 apps and installers
+        run: pnpm --filter @offerfinch/desktop exec electron-builder --win --x64 --arm64 --publish never
+      - name: Verify update metadata
+        run: ./scripts/check-windows-update.ps1 -Universal
       - name: Launch packaged app in demo mode
         env:
           OFFERFINCH_SMOKE_EXE: ${{ github.workspace }}\apps\desktop\dist\win-unpacked\OfferFinch.exe
@@ -126,7 +128,7 @@ jobs:
       - name: Upload installer
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: windows-x64-installer
+          name: windows-installers
           path: apps/desktop/dist/*-setup.exe
           if-no-files-found: error
       - name: Upload smoke evidence

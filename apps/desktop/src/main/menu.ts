@@ -29,7 +29,7 @@ export function menuTemplate(
 			label: "OfferFinch",
 			submenu: [
 				{ label: "About OfferFinch", click: () => app.showAboutPanel() },
-				updateMenuItem(platform),
+				updateMenuItem(),
 				{ type: "separator" },
 				{
 					id: "settings",
@@ -198,12 +198,7 @@ export function contextMenu(items: unknown): Promise<ContextItemId | null> {
  * The app menu's update item: "Check for Updates…", or "Restart to Update" once downloaded.
  * Try-it mode (updates suspended) shows neither working: the check is greyed out.
  */
-function updateMenuItem(platform: NodeJS.Platform): MenuItemConstructorOptions {
-	if (platform === "win32")
-		return {
-			label: "Updates on Windows: download from GitHub Releases",
-			enabled: false,
-		};
+function updateMenuItem(): MenuItemConstructorOptions {
 	const state = mainState.updates?.get();
 	if (state?.status === "ready" && mainState.updates.canInstall())
 		return {

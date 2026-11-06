@@ -323,6 +323,12 @@ The user chose the Grid mark, replacing Facet, and rounded corners, replacing th
 
 Releases are signed with a Developer ID, notarized, and published to the configured GitHub release repository on a `v<version>` tag. Installed apps update themselves with electron-updater (Squirrel.Mac): check at launch and every 6 hours, download in the background, install on Restart to Update or the next quit. Squirrel.Mac only installs an update signed by the same team as the running app, so ad-hoc signed builds cannot update themselves; local `pnpm dist` builds stay ad-hoc signed (as the app's bundle id, which notifications need). Moving from the ad-hoc build to the first signed build changes the code signature: Keychain-encrypted keys from the ad-hoc build show as unreadable and are entered again once, and macOS may ask again for notification permission.
 
+Windows releases use electron-updater's NSIS updater with the same launch/six-hour checks and
+install-on-quit behavior. Release CI stamps both platforms; local/test builds stay excluded.
+Windows installers are unsigned with no `publisherName`, so NSIS skips Authenticode validation.
+GitHub channel metadata selects the combined x64/arm64 installer; signing remains future work.
+
+
 ## 2026-11-02: Site readers in hidden tabs inside the app (phase 1)
 
 LinkedIn, Indeed and Glassdoor no longer launch the user's Chrome. They are read in hidden tabs inside OfferFinch (`apps/desktop/src/main/site-browser.ts`); sign-in and Watch live are sheets in the app. Careers pages and PDF export still use the installed Chrome through playwright-core until phase 2.

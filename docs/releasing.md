@@ -1,6 +1,6 @@
 # Releasing OfferFinch
 
-One workflow releases the macOS app: `.github/workflows/desktop-release.yml` ("Release" in the
+One workflow releases the macOS and Windows apps: `.github/workflows/desktop-release.yml` ("Release" in the
 Actions tab). It runs only for a release, never on an ordinary push: CI runs
 on pull requests (and on demand from the Actions tab).
 
@@ -9,6 +9,25 @@ A release publishes a GitHub Release in this repository with:
 - `OfferFinch-<version>-arm64.dmg`, `OfferFinch-<version>-x64.dmg`: first install.
 - `OfferFinch-<version>-arm64-mac.zip`, `OfferFinch-<version>-mac.zip` (x64), their `.blockmap`
   files and `latest-mac.yml`: what installed apps download to update themselves.
+
+- Windows: `OfferFinch-<version>-setup.exe` (combined x64/arm64),
+  `OfferFinch-<version>-x64-setup.exe`, `OfferFinch-<version>-arm64-setup.exe`,
+  their `.blockmap` files, and `latest.yml` (`preview.yml` for previews; macOS uses
+  `preview-mac.yml`). The combined installer is first in `files` and in `path`, so either
+  architecture updates with the same download. Separate installers remain available for smaller
+  first-install downloads; all manifest references are uploaded and size-checked before publishing.
+
+Windows builds are unsigned for now. SmartScreen may warn on first manual installation;
+background updates run silently. Windows policy or antivirus can still block an unsigned
+installer, so a warning-free update needs proof on a real PC. No `publisherName` is configured:
+electron-updater skips Authenticode verification when it is absent (download hashes still apply).
+
+To test Windows OTA, install an older **release-stamped preview** on a Windows PC, then publish a
+newer preview through the normal release flow. Use Settings › General › Updates › Check Now;
+verify background download, Restart to Update (silent install and relaunch), preserved data and
+new version. Repeat with normal Quit after downloading, and with an active scan/Chrome/Claude
+process to verify shutdown releases files. Check both x64 and arm64, and confirm a stable install
+ignores previews. A local build or dry-run artifact cannot prove OTA: both lack the release stamp.
 
 **The repository must be public** for installed apps to update: they read the releases without
 credentials, and a private repository's releases return 404 to them.
@@ -25,9 +44,9 @@ credentials, and a private repository's releases return 404 to them.
 | Notes | that version's section of `apps/desktop/CHANGELOG.md` (the release refuses an empty one) | "Unreleased" plus the commits since the last tag |
 
 Installed stable apps ask GitHub for the *latest* release, which a prerelease never is, so they
-never see previews. An app running a preview (installed from a preview DMG) follows newer previews
+never see previews. An app running a preview (installed from a preview DMG or Windows installer) follows newer previews
 only: electron-updater keeps a `-preview` version on the `preview` channel and skips stable
-releases. To go back to stable, install the stable DMG over it (stable is newer than the previews
+releases. To go back to stable, install the stable DMG or Windows installer over it (stable is newer than the previews
 before it, so nothing is lost). What's new in a preview shows the "Unreleased" notes it was built
 with.
 
@@ -76,7 +95,7 @@ by side; the longest is the build at about six minutes, each e2e shard about fou
 long GitHub takes to hand out macOS runners, which has been anything from seconds to twenty
 minutes. Only one release runs at a time and a running release is never cancelled. A second run waits; GitHub keeps only one waiting run, so a third replaces the
 waiting one. Installed apps find a new
-release within 30 minutes, or soon after the Mac wakes or the window comes forward (or at once with
+release within six hours, or soon after the computer wakes or the window comes forward (or at once with
 Settings › General › Updates › Check Now). They download it in the background, and the sidebar's
 update indicator turns into a restart button with the release's notes and **Restart now**.
 
@@ -89,7 +108,7 @@ update indicator turns into a restart button with the release's notes and **Rest
 2. In parallel: **quality** (lint, types, knip, release plan tests) and **test**
    (the core, store and runner unit tests) on Linux; **test-mac** (the Codex boundary tests,
    which need `sandbox-exec`, and the desktop app's tests), **e2e** (the desktop suite in three
-   shards, in the background, each failing test retried once) and **build** on macOS. The e2e
+   shards, in the background, each failing test retried once) and **build** on macOS, plus **build-windows** on Windows. The e2e
    suite is reported, never required: it does not hold a release. Slow, uneven macOS runners
    failed it on timing rather than on the app, and each rerun cost a full release. A failure
    keeps its traces as the run's `e2e-results-N` artifacts and the notification says so.
@@ -100,7 +119,10 @@ update indicator turns into a restart button with the release's notes and **Rest
    setup screen. The files are kept as the run's `offerfinch-mac` artifact for 14 days. It does
    not wait for the checks: a failed check leaves the signed build as that artifact and nothing
    more.
-4. **finalize** (the button only), once quality, test, test-mac and the build have passed, in the
+   **build-windows** builds unsigned x64 and arm64 NSIS installers, verifies embedded GitHub
+   updater configuration and every manifest reference, then launches the packaged x64 app in demo
+   mode (`windows-smoke.spec.ts`). Its `offerfinch-windows` artifact is kept for 14 days.
+4. **finalize** (the button only), once quality, test, test-mac and both builds have passed, in the
    `release-push` environment: commit and tag, pushed over SSH with the release deploy key.
 5. **publish**: the GitHub Release, titled "OfferFinch X.Y.Z", with the resolved notes.
 6. **notify**: one phone notification (ntfy) for success, failure or a finished dry run, with a
@@ -111,9 +133,9 @@ update indicator turns into a restart button with the release's notes and **Rest
 A run is a dry run only when the button's `dry_run` is ticked; a pushed tag never is one. A real
 run with a signing secret missing fails with the missing names; it never turns into a dry run.
 
-A dry run runs every check and builds both arches **ad-hoc signed** (as `pnpm dist` does: not
+A dry run runs every check and builds both macOS arches **ad-hoc signed** (as `pnpm dist` does: not
 notarized, without the release stamp, so it never updates itself), runs the launch check and keeps
-the files as a run artifact. It uses no environment, so it reads no signing secret and makes no
+the files as a run artifact. Windows builds both arches unsigned, also without the release stamp. It uses no environment, so it reads no signing secret and makes no
 deployment. It commits, tags and publishes nothing; the run summary says
 "Dry run: nothing published". The button runs a dry run from any branch:
 

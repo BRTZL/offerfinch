@@ -10,7 +10,7 @@ import { type Updater, Updates } from "./updates";
 import { FakeUpdater } from "./updates-fake";
 
 /**
- * Only the release workflow's builds can install updates (signed with the Developer ID). It
+ * Only the release workflow's builds can install updates. It
  * stamps `"offerfinchRelease": true` into the packaged package.json; local builds lack it.
  */
 function releaseBuild(): boolean {
@@ -34,10 +34,7 @@ export async function createUpdates(): Promise<Updates> {
 		: undefined;
 	let updater: Updater | null = null;
 	let disabledReason: string | null = null;
-	if (process.platform === "win32")
-		disabledReason =
-			"Updates on Windows: download new versions from GitHub Releases.";
-	else if (fakeVersion) updater = new FakeUpdater(fakeVersion, log);
+	if (fakeVersion) updater = new FakeUpdater(fakeVersion, log);
 	else if (TEST_MODE) disabledReason = "Test builds don't update themselves.";
 	else if (!app.isPackaged)
 		disabledReason = "Development builds don't update themselves.";
