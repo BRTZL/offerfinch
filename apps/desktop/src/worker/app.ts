@@ -47,6 +47,7 @@ import {
 } from "@offerfinch/runner";
 import { and, desc, eq, gt, inArray, isNotNull } from "drizzle-orm";
 import type { SiteTabId } from "../shared/bridge";
+import type { Role } from "../shared/providers";
 import {
 	type NativeNotice,
 	type NoticeOutcome,
@@ -68,6 +69,7 @@ import {
 } from "./follow-ups";
 import { movedSearchesNote, upgradeJobSearch } from "./job-search";
 import { linkedinScanDeps } from "./linkedin";
+import { fillKeySteps, noteRemovedKeys } from "./model-choice";
 import { NoticeBatcher } from "./notices";
 import { buildPipeline, type RoleState } from "./pipeline";
 import { scanLogFor, scanRunRepo } from "./scan-history";
@@ -289,6 +291,13 @@ export class WorkerApp {
 		await app.ensureLocalUser();
 		await app.planUsage.load();
 		await app.retirePerSourceSettings();
+		// Steps an earlier version ran on an API key: noted for Settings › Models, before
+		// anything writes the choice again (their models are filled once the CLIs are found).
+		app.keySteps = await noteRemovedKeys(app.settings);
+		if (app.keySteps.length)
+			hooks.log("info", "API key steps need a model", {
+				steps: app.keySteps,
+			});
 		app.notifications = await app.settings.get("notifications");
 		// Last start's login-shell PATH, so `claude` and `codex` are found without waiting for
 		// the shell (seconds); start() reads it again in the background.
@@ -538,15 +547,31 @@ export class WorkerApp {
 	/** The queue's delayed start (see start()). */
 	background: Promise<void> = Promise.resolve();
 
-	/** The background PATH refresh started by start(). */
+	/**
+	 * Steps an earlier version ran on an API key, as found at open; start() fills them after the
+	 * PATH refresh, so `ai.get` waits for it while any is pending.
+	 */
+	keySteps: Role[] = [];
+
+	/** The background PATH refresh started by start(), then the key steps' fill. */
 	pathRefresh: Promise<void> = Promise.resolve();
 
 	async start(): Promise<void> {
 		// Try-it mode starts no login shell: no CLI is looked for.
 		if (!this.init.demo)
-			this.pathRefresh = this.refreshClis().catch((error) =>
-				this.hooks.log("warn", "login shell PATH not read", String(error)),
-			);
+			this.pathRefresh = this.refreshClis()
+				.catch((error) =>
+					this.hooks.log("warn", "login shell PATH not read", String(error)),
+				)
+				// Steps that ran on an API key get a model from what is signed in now.
+				.then(() => fillKeySteps(this))
+				.then((filled) => {
+					if (filled.length)
+						this.hooks.log("info", "API key steps filled", { steps: filled });
+				})
+				.catch((error) =>
+					this.hooks.log("warn", "API key steps not filled", String(error)),
+				);
 		// The window's first queries go first: the queue (recovery, replays, the hourly scan)
 		// starts a moment later, so a busy queue does not hold the first screen back.
 		this.background = new Promise<void>((resolve) => {

@@ -86,20 +86,18 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 		await expect(page.getByTestId("step-count")).toContainText("Step 1 of 5");
 		await shot(page, "onboarding-ai");
 
-		// 1. Connect AI: Claude Code and Codex read as not installed in this run, so the step
-		// shows how to install them; test models here (chosen by hand), each role tested live.
+		// 1. Connect AI: every provider reads as not installed in this run, so the step shows
+		// how to install them; test models here, chosen by hand in Starting models.
 		await expect(page.getByTestId("setup-cli-claude")).toHaveAttribute(
 			"data-state",
 			"missing",
 		);
 		await pickFakeModels(page);
 		for (const role of ["scoring", "tailoring", "claims"])
-			await expect(page.getByTestId(`role-${role}-state`)).toHaveText(/fake/);
-		await page.getByTestId("role-scoring-test").click();
-		await expect(page.getByTestId("role-scoring-test-result")).toContainText(
-			"Works",
-		);
-		await expect(page.getByTestId("setup-ai-summary")).toHaveAttribute(
+			await expect(page.getByTestId(`role-${role}-mode`)).toHaveText(
+				/Test models/,
+			);
+		await expect(page.getByTestId("setup-ai")).toHaveAttribute(
 			"data-all-set",
 			"true",
 		);
@@ -1313,8 +1311,12 @@ test("a paid Codex call stops Codex across a worker kill until resumed", async (
 		await sidebar(page, "Settings").click();
 		await settingsNav(page, "Models").click();
 		await chooseMode(page, "claims", "codex:");
-		await expect(page.getByTestId("role-claims-state")).toHaveText(
-			/codex-subscription/,
+		await expect(page.getByTestId("role-claims-mode")).toHaveText(
+			/Account default/,
+		);
+		await expect(page.getByTestId("role-claims")).toHaveAttribute(
+			"data-ready",
+			"true",
 		);
 		await page.getByTestId("role-claims-test").click();
 		await expect(page.getByTestId("role-claims-test-result")).toContainText(

@@ -222,6 +222,20 @@ const KEYS = {
 		schema: z.string().max(40),
 		fallback: "",
 	},
+	/**
+	 * API keys were removed (docs/model-providers.md): the steps an earlier version ran on a key,
+	 * for Settings › Models' one-time notice, until the user dismisses it. Null: nothing to say.
+	 */
+	keysRemoved: {
+		key: "keysRemoved",
+		schema: z
+			.object({
+				steps: z.array(z.enum(ROLES as [Role, ...Role[]])),
+				dismissed: z.boolean(),
+			})
+			.nullable(),
+		fallback: null as { steps: Role[]; dismissed: boolean } | null,
+	},
 	/** Notification watermark: transitions after this time have not been announced. */
 	noticeWatermark: {
 		key: "noticeWatermark",
@@ -246,6 +260,15 @@ export class SettingsStore {
 		return (parsed.success ? parsed.data : spec.fallback) as z.infer<
 			Keys[K]["schema"]
 		>;
+	}
+
+	/** A setting's row as stored, before any move to today's shape; undefined when unset. */
+	async raw(name: keyof Keys): Promise<unknown> {
+		const [row] = await this.db
+			.select({ value: appSettings.value })
+			.from(appSettings)
+			.where(eq(appSettings.key, KEYS[name].key));
+		return row?.value;
 	}
 
 	async set<K extends keyof Keys>(

@@ -12,7 +12,6 @@ import type {
 	PlanSnapshot,
 	PlanUsageSink,
 } from "@offerfinch/core/scoring/plan-usage";
-import { openCodeBilling } from "@offerfinch/local-llm/opencode";
 import { formatModelRef, type ModelInfo } from "../shared/providers";
 import { antigravityState } from "./antigravity";
 import type { LocalLlmFactory } from "./model-factories";
@@ -22,7 +21,6 @@ import {
 	CODEX_FIX,
 	type ManagedProvider,
 	OPENCODE_FIX,
-	openCodeModelInfo,
 	type Subscriptions,
 	withProviders,
 } from "./subscriptions";
@@ -151,40 +149,64 @@ function fakeSnapshot(
 	};
 }
 
-/** The stand-in's OpenCode models: a free one and Go on the plan, one pay-per-use. */
-const FAKE_OPENCODE_MODELS: ModelInfo[] = [
-	[
-		"opencode",
-		"deepseek-v4.1-flash-free",
-		"DeepSeek V4.1 Flash Free",
-		["low", "high", "max"],
-		null,
+const plan = (
+	provider: "opencode" | "antigravity",
+	model: string,
+	name: string,
+	extra: Partial<ModelInfo> = {},
+): ModelInfo => ({
+	ref: formatModelRef(provider, model),
+	name,
+	provider,
+	billing: "subscription",
+	efforts: [],
+	...extra,
+});
+
+/**
+ * The stand-in models: OpenCode's plan sources (Go, and the free models of OpenCode Zen) and one
+ * pay-per-use source with prices; Gemini's two models with effort levels.
+ */
+const FAKE_MODELS: Record<"opencode" | "antigravity", ModelInfo[]> = {
+	opencode: [
+		plan("opencode", "opencode-go/glm-5.1", "GLM-5.1", {
+			source: "opencode-go",
+		}),
+		plan("opencode", "opencode-go/kimi-k2.5", "Kimi K2.5", {
+			source: "opencode-go",
+		}),
+		plan(
+			"opencode",
+			"opencode/deepseek-v4.1-flash-free",
+			"DeepSeek V4.1 Flash",
+			{
+				source: "opencode",
+			},
+		),
+		plan("opencode", "openrouter/minimax-m2.7", "MiniMax M2.7", {
+			source: "openrouter",
+			billing: "api",
+			price: { input: 0.3, output: 1.2 },
+		}),
+		plan("opencode", "openrouter/qwen-4-coder", "Qwen 4 Coder", {
+			source: "openrouter",
+			billing: "api",
+			price: { input: 0.45, output: 1.8 },
+			efforts: ["low", "medium", "high"],
+		}),
 	],
-	["opencode-go", "glm-5.1", "GLM-5.1", ["low", "high"], null],
-	[
-		"opencode",
-		"gpt-6.1-sol",
-		"GPT-6.1 Sol",
-		["low", "medium", "high"],
-		{ input: 2, cachedInput: 0.1, output: 10, source: "test" },
+	antigravity: [
+		plan("antigravity", "gemini-3.8-flash", "Gemini 3.8 Flash", {
+			efforts: ["low", "medium", "high"],
+		}),
+		plan("antigravity", "gemini-4-argon", "Gemini 4 Argon", {
+			efforts: ["low", "medium", "high"],
+		}),
 	],
-].map(([source, model, name, variants, price]) =>
-	openCodeModelInfo({
-		source: source as string,
-		model: model as string,
-		name: name as string,
-		billing: openCodeBilling(source as string, model as string),
-		variants: variants as string[],
-		price: price as {
-			input: number;
-			cachedInput: number;
-			output: number;
-			source: string;
-		} | null,
-		baseURL: "http://127.0.0.1:9/test",
-		unavailable: null,
-	}),
-);
+};
+
+/** The stand-in's OpenCode models (plan sources first, then pay-per-use). */
+const FAKE_OPENCODE_MODELS = FAKE_MODELS.opencode;
 
 type Cli = "claude" | "codex" | "opencode";
 
@@ -331,17 +353,8 @@ export function fakeSubscriptions(
 	);
 }
 
-/** The stand-in's Antigravity models: two families with Google's three thinking levels. */
-const FAKE_GEMINI: ModelInfo[] = [
-	["gemini-3.8-flash", "Gemini 3.8 Flash"],
-	["gemini-4-argon", "Gemini 4 Argon"],
-].map(([id, name]) => ({
-	ref: formatModelRef("antigravity", id as string),
-	name: name as string,
-	provider: "antigravity",
-	billing: "subscription",
-	efforts: ["low", "medium", "high"],
-}));
+/** The stand-in's Antigravity models, with Google's three thinking levels. */
+const FAKE_GEMINI = FAKE_MODELS.antigravity;
 
 /** Gemini (Antigravity) from `fake-clis.json`: Install and Sign in only move the file on. */
 function fakeAntigravity(dir: string): ManagedProvider {

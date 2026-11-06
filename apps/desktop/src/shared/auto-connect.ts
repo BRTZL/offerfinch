@@ -7,7 +7,9 @@ import {
 	type Effort,
 	FAKE_PROVIDER,
 	formatModelRef,
+	type ModelInfo,
 	type ModelRef,
+	PROVIDER_IDS,
 	type ProviderId,
 	parseModelRef,
 	ROLES,
@@ -19,34 +21,45 @@ export type { Role } from "./providers";
 type RoleChoice = { model: ModelRef | null; effort?: Effort };
 export type AiChoice = Record<Role, RoleChoice>;
 
-/** What a signed-in provider gives a step that has no model yet. */
-function defaultRef(provider: "claude" | "codex", role: Role): ModelRef {
-	return provider === "claude"
-		? formatModelRef("claude", CLAUDE_DEFAULTS[role])
-		: // The account's default Codex model.
-			formatModelRef("codex", "");
+/**
+ * The provider and model a step without a model gets from what is available: Claude's default
+ * for the step when Claude is signed in, else the first plan model of the first provider that
+ * has one (Codex, OpenCode, Gemini, in that order). A pay-per-use model is never picked by
+ * itself: it costs money, so the user chooses it.
+ */
+function startingRef(
+	available: Partial<Record<ProviderId, ModelInfo[]>>,
+	role: Role,
+): ModelRef | null {
+	if (available.claude?.length)
+		return formatModelRef("claude", CLAUDE_DEFAULTS[role]);
+	for (const provider of PROVIDER_IDS) {
+		const model = available[provider]?.find(
+			(m) => m.billing === "subscription",
+		);
+		if (model) return model.ref;
+	}
+	return null;
 }
 
 /**
- * Fills every step without a model: all three on Claude when Claude Code is signed in, else all
- * three on Codex. Any model may do any step, the same one included. A step the user chose a
- * model for is never changed.
+ * Fills every step without a model from the models available now (`available`: the models of
+ * each provider that is on and signed in): all three on Claude when it is signed in, else on
+ * the first plan model found. Any model may do any step, the same one included. A step the
+ * user chose a model for is never changed; `only` limits the fill to some steps.
  */
 export function autoFill(input: {
 	settings: AiChoice;
-	signedIn: Partial<Record<ProviderId, boolean>>;
+	available: Partial<Record<ProviderId, ModelInfo[]>>;
+	only?: readonly Role[];
 }): { settings: AiChoice; filled: Role[] } {
-	const provider = input.signedIn.claude
-		? "claude"
-		: input.signedIn.codex
-			? "codex"
-			: null;
 	const next: AiChoice = { ...input.settings };
 	const filled: Role[] = [];
-	if (!provider) return { settings: next, filled };
-	for (const role of ROLES) {
+	for (const role of input.only ?? ROLES) {
 		if (next[role].model !== null) continue;
-		next[role] = { model: defaultRef(provider, role) };
+		const model = startingRef(input.available, role);
+		if (!model) continue;
+		next[role] = { model };
 		filled.push(role);
 	}
 	return { settings: next, filled };

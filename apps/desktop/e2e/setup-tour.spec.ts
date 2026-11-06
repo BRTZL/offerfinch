@@ -66,7 +66,7 @@ test("setup's happy path: found both CLIs, five steps, first matches with a chir
 		await page.getByTestId("welcome-start").click();
 
 		// 1. Connect AI: found and set by itself.
-		await expect(page.getByTestId("setup-ai-summary")).toHaveAttribute(
+		await expect(page.getByTestId("setup-ai")).toHaveAttribute(
 			"data-all-set",
 			"true",
 			{ timeout: 30_000 },

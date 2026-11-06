@@ -97,7 +97,6 @@ try {
 	await page.getByTestId("welcome-start").click();
 	await page.getByTestId("setup-ai").waitFor();
 	await shot("connect-ai");
-	await page.getByTestId("models-manual").getByRole("button").first().click();
 	for (const role of ["scoring", "tailoring", "claims"]) {
 		await page.getByTestId(`role-${role}-mode`).click();
 		await page.getByTestId(`role-${role}-fake`).click();
