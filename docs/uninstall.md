@@ -1,7 +1,7 @@
 # Uninstall OfferFinch
 
 Dragging the app to the Trash leaves your data behind: the database, files, site sign-ins,
-logs and the Keychain item for your API keys. These steps remove all of it. They cannot be
+logs, and a Keychain item if an earlier version stored API keys. These steps remove all of it. They cannot be
 undone, so export a backup first (Settings › Your data › Export backup) if you may want your
 data again.
 
@@ -42,8 +42,8 @@ you out of those sites in your own browser.
 
 ## 4. Remove the Keychain item
 
-The API keys are encrypted with a key macOS keeps in your Keychain. It exists only if you
-stored an API key.
+Earlier versions encrypted API keys with a key macOS keeps in your Keychain. It exists only if
+you stored an API key in one of them.
 
 1. Open Keychain Access (Applications › Utilities).
 2. Search for `OfferFinch Safe Storage`.
