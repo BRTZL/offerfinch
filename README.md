@@ -35,15 +35,21 @@ If dependencies are already cached, `pnpm install --offline` also works. CI inst
 loads in the unit tests.
 
 Setup guides you through connecting models, importing a resume, reviewing profile records,
-and choosing job preferences. Models can use API keys or an installed Claude/Codex CLI
-subscription. The claims check uses a different vendor from tailoring. Subscription
-billing holds, spending limits, and site checks remain visible in the app; resolve them
-through their existing prompts before work resumes.
+and choosing job preferences. Models run on AI plans you already have, never on API keys:
+Claude Code, Codex (macOS only), OpenCode, and Gemini through Google's Antigravity (OfferFinch
+downloads Google's pinned server and signs in to Google itself). Each step (finding matches,
+drafting, checking drafts) can use any available model. OpenCode and Gemini are off on
+Windows until they are proven there. Using a plan from a third-party app may not be allowed by
+its provider's terms; you decide whether your use is ([decisions](docs/decisions.md),
+"Model providers"). OpenCode runs on your own OpenCode login, and OfferFinch removes its call
+records from OpenCode's database afterwards. Pay-per-use OpenCode models count toward the
+spending limit. Plan pauses, spending limits, and site checks remain visible in the app;
+resolve them through their existing prompts before work resumes.
 
 Data lives locally under `~/Library/Application Support/OfferFinch/`: the SQLite database,
-files, migration backups, and encrypted API keys. Logs are under `~/Library/Logs/OfferFinch/`.
+files, and migration backups. Logs are under `~/Library/Logs/OfferFinch/`.
 Site sign-in uses the app's own browser sessions. Settings › Your data exports a backup (one
-.zip, without API keys or site sign-ins) and restores one, on this Mac or another.
+.zip, without site sign-ins) and restores one, on this Mac or another.
 [Privacy](docs/privacy.md) says what is stored and what leaves the Mac, and to whom;
 [uninstall](docs/uninstall.md) removes the app and all of its data. See
 [the desktop system](docs/design/desktop/system.md) and [decisions](docs/decisions.md) for the
