@@ -13,6 +13,12 @@ export interface SourceTarget {
 	parser?: string | null;
 	companyName?: string;
 	/**
+	 * The postings wanted from this board (job-board search reads only the ones it found). A
+	 * board whose list has no descriptions (SmartRecruiters) then reads only these postings' pages;
+	 * the others may ignore it.
+	 */
+	postingIds?: string[];
+	/**
 	 * The model for the scrape source's extraction fallback, metered for the user whose scan this
 	 * is (no application), so the spending cap applies. Without it the fallback is skipped.
 	 */
@@ -51,24 +57,33 @@ export interface BoardAnswer {
 	body: unknown;
 }
 
-/** One board read for a run of checks: paced, and shared with the run when it has `pacing`. */
+/**
+ * One board read for a run of checks: paced, and shared with the run when it has `pacing`. A
+ * JSON board's body is parsed; an XML board's (`kind` "text": Teamtailor's RSS, Personio's
+ * feed) is its text.
+ */
 export function readBoard(
 	fetchImpl: FetchLike,
 	url: string,
 	signal?: AbortSignal,
 	pacing?: RequestPacing,
+	kind: "json" | "text" = "json",
 ): Promise<BoardAnswer> {
 	const known = pacing?.boards.get(url);
 	if (known !== undefined) return known;
 	const read = (async () => {
 		await pacing?.before();
 		const response = await fetchImpl(url, {
-			headers: { accept: "application/json", "user-agent": USER_AGENT },
+			headers: { accept: ACCEPT[kind], "user-agent": USER_AGENT },
 			signal,
 		});
 		return {
 			status: response.status,
-			body: response.ok ? await response.json() : null,
+			body: response.ok
+				? kind === "json"
+					? await response.json()
+					: await response.text()
+				: null,
 		};
 	})();
 	// A failed read is not kept: the next posting may read the board again.
@@ -112,6 +127,50 @@ export class RobotsDisallowedError extends Error {
 /** Honest and identifiable as a bot, but not tied to a person. */
 export const USER_AGENT = "OfferFinchBot/0.1 (automated job board reader)";
 
+const ACCEPT = {
+	json: "application/json",
+	text: "application/rss+xml, application/xml, text/xml",
+} as const;
+
+/** One DNS label, as a company's subdomain on a board must be. */
+const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/**
+ * The board's own site for one company, on boards that key the company in the subdomain
+ * (`https://acme.recruitee.com`). The key is checked again here, whatever stored it (a pasted
+ * link's company): one DNS label, so it can only name a subdomain of `domain`, never another
+ * host, a port or a user name. A key that is not one is a board that does not exist.
+ */
+export function companyOrigin(
+	source: JobSourceKind,
+	key: string,
+	domain: string,
+): string {
+	const label = key.toLowerCase();
+	const host = `${label}.${domain}`;
+	if (!LABEL.test(label) || new URL(`https://${host}`).hostname !== host)
+		throw new BoardNotFoundError(source, key);
+	return `https://${host}`;
+}
+
+/** A board's XML (RSS or a feed of its own) as text; 404 is a missing board. */
+export async function fetchXml(
+	fetchImpl: FetchLike,
+	source: JobSourceKind,
+	sourceKey: string,
+	url: string,
+): Promise<string> {
+	const response = await fetchImpl(url, {
+		headers: { accept: ACCEPT.text, "user-agent": USER_AGENT },
+	});
+	if (response.status === 404) throw new BoardNotFoundError(source, sourceKey);
+	if (!response.ok)
+		throw new Error(
+			`${source} ${sourceKey}: HTTP ${response.status} from ${url}`,
+		);
+	return response.text();
+}
+
 export async function fetchJson<T>(
 	fetchImpl: FetchLike,
 	source: JobSourceKind,
@@ -139,7 +198,13 @@ export async function fetchJson<T>(
 export async function fetchPostingStatus(
 	fetchImpl: FetchLike,
 	source: JobSourceKind,
-	posting: { url: string; id: string; isSame: (body: unknown) => boolean },
+	posting: {
+		url: string;
+		id: string;
+		isSame: (body: unknown) => boolean;
+		/** The posting's own page says it is closed (Workable's state, SmartRecruiters' active). */
+		closed?: (body: unknown) => boolean;
+	},
 	board: { url: string; ids: (body: unknown) => string[] },
 	{ signal, pacing }: { signal?: AbortSignal; pacing?: RequestPacing } = {},
 ): Promise<PostingStatus> {
@@ -149,11 +214,12 @@ export async function fetchPostingStatus(
 		signal,
 	});
 	if (response.ok) {
-		if (!posting.isSame(await response.json()))
+		const body = await response.json();
+		if (!posting.isSame(body))
 			throw new Error(
 				`${source}: ${posting.url} answered with another posting`,
 			);
-		return "open";
+		return posting.closed?.(body) ? "gone" : "open";
 	}
 	if (response.status !== 404)
 		throw new Error(`${source}: HTTP ${response.status} from ${posting.url}`);

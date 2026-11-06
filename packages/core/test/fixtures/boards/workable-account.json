@@ -1,0 +1,41 @@
+{
+	"name": "Lumen Labs",
+	"description": "<p>Lumen Labs builds tools for lab notebooks.</p>",
+	"jobs": [
+		{
+			"title": "Frontend Engineer - EMEA Remote",
+			"shortcode": "A1B2C3D4E5",
+			"code": "",
+			"employment_type": "Full-time",
+			"telecommuting": true,
+			"department": "Product",
+			"url": "https://apply.workable.com/j/A1B2C3D4E5",
+			"shortlink": "https://apply.workable.com/j/A1B2C3D4E5",
+			"application_url": "https://apply.workable.com/j/A1B2C3D4E5/apply",
+			"published_on": "2026-10-29",
+			"created_at": "2026-10-28",
+			"country": "Netherlands",
+			"city": "Utrecht",
+			"state": "Utrecht",
+			"locations": [
+				{ "country": "Netherlands", "countryCode": "NL", "city": "Utrecht", "region": "Utrecht", "hidden": false },
+				{ "country": "Spain", "countryCode": "ES", "city": "Valencia", "region": "Valencian Community", "hidden": false },
+				{ "country": "Spain", "countryCode": "ES", "city": "", "region": "", "hidden": true }
+			],
+			"description": "<p>Build the notebook editor in React and TypeScript.</p><p><strong>Requirements</strong></p><ul><li>Four years of frontend work</li></ul>"
+		},
+		{
+			"title": "Office Manager (Hybrid)",
+			"shortcode": "F6E5D4C3B2",
+			"employment_type": "Part-time",
+			"telecommuting": false,
+			"department": "Operations",
+			"published_on": "2026-10-20",
+			"country": "Netherlands",
+			"city": "Utrecht",
+			"state": "Utrecht",
+			"locations": [],
+			"description": "<p>Keep the Utrecht office running.</p>"
+		}
+	]
+}

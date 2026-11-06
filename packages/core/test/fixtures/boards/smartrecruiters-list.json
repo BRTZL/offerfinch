@@ -1,0 +1,23 @@
+{
+	"offset": 0,
+	"limit": 100,
+	"totalFound": 2,
+	"content": [
+		{
+			"id": "744000100000001",
+			"name": "Senior Platform Engineer ",
+			"company": { "identifier": "HarborMills", "name": "Harbor Mills" },
+			"releasedDate": "2026-10-30T09:15:00.000Z",
+			"location": { "city": "Lisbon", "country": "pt", "remote": false, "hybrid": true },
+			"ref": "https://api.smartrecruiters.com/v1/companies/HarborMills/postings/744000100000001"
+		},
+		{
+			"id": "744000100000002",
+			"name": "Data Analyst",
+			"company": { "identifier": "HarborMills", "name": "Harbor Mills" },
+			"releasedDate": "2026-10-28T09:15:00.000Z",
+			"location": { "city": "Porto", "country": "pt", "remote": true, "hybrid": false },
+			"ref": "https://api.smartrecruiters.com/v1/companies/HarborMills/postings/744000100000002"
+		}
+	]
+}

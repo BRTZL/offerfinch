@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:tt="https://teamtailor.com/locations">
+  <channel>
+    <title>Nimbus Freight</title>
+    <description>Current job openings</description>
+    <link>https://careers.nimbus.example/jobs</link>
+    <item>
+      <title>Senior Mobile Engineer</title>
+      <description>&lt;h3&gt;About Nimbus Freight&lt;/h3&gt;&lt;p&gt;We track parcels across Europe &amp;amp; beyond.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;&lt;p&gt;Ship the Android and iOS apps&lt;/p&gt;&lt;/li&gt;&lt;/ul&gt;</description>
+      <pubDate>Tue, 03 Nov 2026 19:37:57 +0100</pubDate>
+      <link>https://careers.nimbus.example/jobs/5550001-senior-mobile-engineer</link>
+      <remoteStatus>fully</remoteStatus>
+      <guid>00000000-0000-4000-8000-000000000011</guid>
+      <tt:locations>
+        <tt:location>
+          <tt:name>Gothenburg HQ</tt:name>
+          <tt:city>Gothenburg</tt:city>
+          <tt:country>Sweden</tt:country>
+        </tt:location>
+        <tt:location>
+          <tt:name>Oslo</tt:name>
+          <tt:city>Oslo</tt:city>
+          <tt:country>Norway</tt:country>
+        </tt:location>
+      </tt:locations>
+      <tt:department>Engineering</tt:department>
+      <tt:role>Mobile Engineer</tt:role>
+      <tt:division/>
+    </item>
+    <item>
+      <title>Warehouse Coordinator</title>
+      <description>&lt;p&gt;Run the Malmö warehouse floor.&lt;/p&gt;</description>
+      <pubDate>Mon, 26 Oct 2026 10:00:00 +0100</pubDate>
+      <link>https://nimbusfreight.teamtailor.com/jobs/5550002-warehouse-coordinator</link>
+      <remoteStatus>none</remoteStatus>
+      <guid>00000000-0000-4000-8000-000000000012</guid>
+      <tt:locations>
+        <tt:location>
+          <tt:name>Malmö</tt:name>
+          <tt:city>Malmö</tt:city>
+          <tt:country>Sweden</tt:country>
+        </tt:location>
+      </tt:locations>
+      <tt:department>Operations</tt:department>
+    </item>
+  </channel>
+</rss>
