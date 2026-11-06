@@ -3,6 +3,7 @@ import type {
 	CheckOrigin,
 	ClosedPostingStore,
 } from "@offerfinch/core/pipeline/closed";
+import { SEARCH_BOARDS } from "@offerfinch/core/sources/search";
 import { and, asc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 
 import type { Database } from "./client";
@@ -22,8 +23,8 @@ const checkable = {
 	validThrough: jobs.validThrough,
 };
 
-/** Board sources the sweep checks through their public APIs. */
-const BOARD_SOURCES = ["greenhouse", "lever", "ashby"] as const;
+/** Board sources the sweep checks through their public APIs: every board job-board search reads. */
+const BOARD_SOURCES = SEARCH_BOARDS;
 
 export class DrizzleClosedPostingStore implements ClosedPostingStore {
 	constructor(private readonly db: Database) {}

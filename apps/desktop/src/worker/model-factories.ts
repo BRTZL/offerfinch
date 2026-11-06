@@ -14,7 +14,12 @@ import { ScrapeSource } from "@offerfinch/core/scrape/source";
 import { AshbySource } from "@offerfinch/core/sources/ashby";
 import { GreenhouseSource } from "@offerfinch/core/sources/greenhouse";
 import { LeverSource } from "@offerfinch/core/sources/lever";
+import { PersonioSource } from "@offerfinch/core/sources/personio";
+import { RecruiteeSource } from "@offerfinch/core/sources/recruitee";
+import { SmartRecruitersSource } from "@offerfinch/core/sources/smartrecruiters";
+import { TeamtailorSource } from "@offerfinch/core/sources/teamtailor";
 import { type FetchLike, USER_AGENT } from "@offerfinch/core/sources/types";
+import { WorkableSource } from "@offerfinch/core/sources/workable";
 import { fakeClaimsResponder } from "@offerfinch/core/tailor/fake";
 import {
 	type Database,
@@ -234,6 +239,11 @@ export function createPipelineDeps(
 		ashby: new AshbySource(fetchImpl),
 		greenhouse: new GreenhouseSource(fetchImpl),
 		lever: new LeverSource(fetchImpl),
+		smartrecruiters: new SmartRecruitersSource(fetchImpl),
+		workable: new WorkableSource(fetchImpl),
+		recruitee: new RecruiteeSource(fetchImpl),
+		teamtailor: new TeamtailorSource(fetchImpl),
+		personio: new PersonioSource(fetchImpl),
 	};
 	if (options.browser) {
 		sources.scrape = new ScrapeSource({

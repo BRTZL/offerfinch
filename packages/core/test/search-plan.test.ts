@@ -373,20 +373,32 @@ describe("each source's form of the plan", () => {
 			},
 			{ keywords: "UI Engineer", where: "onsite", place: "New York" },
 		];
-		const first = boardQueries(plan, "Poland", 6, 0);
+		const first = boardQueries(plan, "Poland", 10, 0);
 		expect(first).toEqual([
 			'site:job-boards.greenhouse.io "Frontend Engineer" remote',
 			'site:jobs.lever.co "Frontend Engineer" remote',
 			'site:jobs.ashbyhq.com "Frontend Engineer" remote',
+			'site:jobs.smartrecruiters.com "Frontend Engineer" remote',
+			'site:apply.workable.com "Frontend Engineer" remote',
+			'site:recruitee.com "Frontend Engineer" remote',
+			'site:teamtailor.com "Frontend Engineer" remote',
+			'site:jobs.personio.de "Frontend Engineer" remote',
 			'site:job-boards.greenhouse.io "Design Engineer" remote Poland',
 			'site:jobs.lever.co "Design Engineer" remote Poland',
-			'site:jobs.ashbyhq.com "Design Engineer" remote Poland',
 		]);
 		for (const q of first) expect(q.match(/site:/g)).toHaveLength(1);
 		// The next scan starts where this one ended.
-		expect(boardQueries(plan, "Poland", 6, 6)[0]).toBe(
-			'site:job-boards.greenhouse.io "UI Engineer" "New York"',
+		expect(boardQueries(plan, "Poland", 10, 10)[0]).toBe(
+			'site:jobs.ashbyhq.com "Design Engineer" remote Poland',
 		);
+		// Three entries on eight boards: the third scan wraps to the start.
+		expect(boardQueries(plan, "Poland", 10, 20).slice(0, 5)).toEqual([
+			'site:apply.workable.com "UI Engineer" "New York"',
+			'site:recruitee.com "UI Engineer" "New York"',
+			'site:teamtailor.com "UI Engineer" "New York"',
+			'site:jobs.personio.de "UI Engineer" "New York"',
+			'site:job-boards.greenhouse.io "Frontend Engineer" remote',
+		]);
 	});
 
 	it("web search: plain words, at most a few a scan", () => {

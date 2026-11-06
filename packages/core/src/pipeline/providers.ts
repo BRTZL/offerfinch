@@ -13,8 +13,10 @@ import {
 import {
 	type FoundPosting,
 	findPostings,
+	SEARCH_BOARDS,
 	type SearchBackend,
 	SearchBackendError,
+	type SearchBoard,
 } from "../sources/search";
 import { BoardNotFoundError } from "../sources/types";
 import type { PipelineDeps } from "./ports";
@@ -66,6 +68,19 @@ export interface ProviderRun extends ProviderRunReport {
 	 * Top picks), with their own counts and new jobs; `newJobIds` above does not repeat theirs.
 	 */
 	parts?: (Omit<ProviderRun, "parts"> & { label: string })[];
+	/**
+	 * Job-board search: each board its searches found postings on, in board order. `found`
+	 * counts the postings found there (ones the app had included), `new` the jobs it added. Only
+	 * on a run that searched; boards with nothing found are left out.
+	 */
+	boards?: BoardCount[];
+}
+
+/** One board's share of a job-board search run (Settings › Sources). */
+interface BoardCount {
+	board: SearchBoard;
+	found: number;
+	new: number;
 }
 
 /** What the job-board search provider stores, beyond the pipeline's repository. */
@@ -143,9 +158,9 @@ export function nameFromKey(key: string): string {
 }
 
 /**
- * The employer's display name for a board posting: Greenhouse gives it on the job; for Lever and
- * Ashby it is read from one public posting page's title. The board key ("acme-robotics" ->
- * "Acme Robotics") only when neither says.
+ * The employer's display name for a board posting: the board's API gives it on the job (every
+ * board but Lever and Ashby); for Lever and Ashby it is read from one public posting page's
+ * title. The board key ("acme-robotics" -> "Acme Robotics") only when neither says.
  */
 export async function companyNameFor(
 	posting: Pick<FoundPosting, "board" | "companyKey">,
@@ -155,7 +170,7 @@ export async function companyNameFor(
 	const named = jobs.find((j) => j.companyName)?.companyName;
 	if (named) return named;
 	const job = jobs[0];
-	if (job && posting.board !== "greenhouse")
+	if (job && (posting.board === "lever" || posting.board === "ashby"))
 		try {
 			const res = await fetchImpl(job.url, {
 				headers: { Accept: "text/html" },
@@ -174,23 +189,52 @@ export async function companyNameFor(
 	return nameFromKey(posting.companyKey);
 }
 
+/** Per-board counts for one run; `list` keeps board order and grows as boards are seen. */
+function boardCounts() {
+	const list: BoardCount[] = [];
+	const of = (board: SearchBoard) => {
+		let count = list.find((c) => c.board === board);
+		if (!count) {
+			count = { board, found: 0, new: 0 };
+			list.push(count);
+			list.sort(
+				(a, b) =>
+					SEARCH_BOARDS.indexOf(a.board) - SEARCH_BOARDS.indexOf(b.board),
+			);
+		}
+		return count;
+	};
+	return {
+		list,
+		found: (board: SearchBoard) => {
+			of(board).found += 1;
+		},
+		added: (board: SearchBoard) => {
+			of(board).new += 1;
+		},
+	};
+}
+
 /**
- * Ashby, Greenhouse and Lever postings at any company, found through a web search (DuckDuckGo's
- * results pages in the app's own tab), then read from each board's public data: one read per
- * company, keeping only the postings the search found.
+ * Postings on the public job boards (`SEARCH_BOARDS`: Greenhouse, Lever, Ashby, SmartRecruiters,
+ * Workable, Recruitee, Teamtailor, Personio) at any company, found through a web search
+ * (DuckDuckGo's results pages in the app's own tab), then read from each board's public data:
+ * one read per company, keeping only the postings the search found.
  */
 export class JobBoardSearchProvider implements ScanProvider {
 	readonly id = "job-board-search";
 	readonly label = "Job-board search";
 	/**
-	 * Six results pages with up to 20 s between them, each up to 75 s to load, plus the reader's
-	 * budget for a check the user solves (20 min), then the boards' public data: under an hour.
+	 * Ten results pages with up to 20 s between them, each up to 75 s to load (about 16 min), plus
+	 * the reader's budget for a check the user solves (20 min), then the boards' public data: at
+	 * most 40 companies, one read each (a SmartRecruiters company one page per found posting,
+	 * 1 s apart): under an hour.
 	 */
 	readonly timeoutSeconds = 3_600;
 	constructor(
 		private readonly backend: SearchBackend,
 		private readonly store: SearchStore & Partial<StopStore>,
-		private readonly limits = { queries: 6, perQuery: 20, companies: 40 },
+		private readonly limits = { queries: 10, perQuery: 20, companies: 40 },
 		private readonly fetchImpl: typeof fetch = fetch,
 		private readonly now: () => Date = () => new Date(),
 	) {}
@@ -267,6 +311,7 @@ export class JobBoardSearchProvider implements ScanProvider {
 		out.queries = queries.length;
 		out.searches = queries;
 		const drops = new DropLog();
+		const counts = boardCounts();
 		let postings: FoundPosting[];
 		try {
 			const known = new Set<string>();
@@ -294,6 +339,7 @@ export class JobBoardSearchProvider implements ScanProvider {
 			out.cursor = start + queries.length;
 			out.results = found.postings.length;
 			out.duplicates = known.size;
+			for (const p of found.postings) counts.found(p.board);
 		} catch (error) {
 			if (error instanceof SearchBackendError) {
 				out.problem = error.message;
@@ -303,6 +349,7 @@ export class JobBoardSearchProvider implements ScanProvider {
 			throw error;
 		}
 		out.found = postings.length;
+		out.boards = counts.list;
 		const byCompany = new Map<string, FoundPosting[]>();
 		for (const p of postings) {
 			const key = `${p.board}:${p.companyKey}`;
@@ -317,7 +364,10 @@ export class JobBoardSearchProvider implements ScanProvider {
 			if (!source) continue;
 			let jobs: NormalizedJob[];
 			try {
-				jobs = await source.listJobs({ sourceKey: first.companyKey });
+				jobs = await source.listJobs({
+					sourceKey: first.companyKey,
+					postingIds: group.map((p) => p.jobId),
+				});
 			} catch (error) {
 				// A posting taken down since the search: nothing to read.
 				if (error instanceof BoardNotFoundError) {
@@ -327,25 +377,16 @@ export class JobBoardSearchProvider implements ScanProvider {
 				}
 				throw error;
 			}
-			const wanted = new Set(group.map((p) => p.jobId));
+			// Ids compare in any case: Workable's shortcodes are upper case, Lever's ids lower.
+			const wanted = new Set(group.map((p) => p.jobId.toLowerCase()));
 			const matched = jobs.filter((j) =>
-				wanted.has(
-					first.board === "greenhouse"
-						? j.externalId
-						: j.externalId.toLowerCase(),
-				),
+				wanted.has(j.externalId.toLowerCase()),
 			);
 			out.fetched += matched.length;
 			// Found by the search but no longer on the board.
-			const listed = new Set(
-				matched.map((j) =>
-					first.board === "greenhouse"
-						? j.externalId
-						: j.externalId.toLowerCase(),
-				),
-			);
+			const listed = new Set(matched.map((j) => j.externalId.toLowerCase()));
 			for (const p of group)
-				if (!listed.has(p.jobId))
+				if (!listed.has(p.jobId.toLowerCase()))
 					drops.add("expired", { title: p.jobId, url: p.url });
 			if (matched.length === 0) continue;
 			const companyId = await this.store.companyFor(userId, {
@@ -359,7 +400,10 @@ export class JobBoardSearchProvider implements ScanProvider {
 					companyId,
 					job,
 				);
-				if (inserted) out.newJobIds.push(jobId);
+				if (inserted) {
+					out.newJobIds.push(jobId);
+					counts.added(first.board);
+				}
 			}
 		}
 		out.dropped = drops.report();

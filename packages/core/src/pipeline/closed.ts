@@ -1,6 +1,6 @@
 import type { JobSourceKind } from "../domain/types";
 import { routeJobLink } from "../sources/link";
-import { postingFromUrl } from "../sources/search";
+import { postingFromUrl, type SearchBoard } from "../sources/search";
 import type { JobSource, RequestPacing } from "../sources/types";
 import { readableResult } from "../web/hosts";
 import { type PostingIdentity, postingIdentities } from "../web/structured";
@@ -9,7 +9,8 @@ import { type PostingIdentity, postingIdentities } from "../web/structured";
  * Closed postings (docs/decisions.md, 2026-11-03). A match can wait for days; preparing or
  * applying to a posting the employer took down wastes money and time. So the posting is checked
  * where that is cheap and safe:
- * - board postings (Greenhouse, Lever, Ashby) through the board's public API;
+ * - board postings (Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Recruitee, Teamtailor,
+ *   Personio) through the board's public API;
  * - other web pages by their stored end date (`validThrough`), else one plain fetch of the page
  *   (no browser, no model): a 404 or 410, or an end date in the page's job data that has passed;
  * - LinkedIn, Indeed and Glassdoor never: a re-read costs their page budget and risks a check.
@@ -44,7 +45,7 @@ export interface CheckableJob {
 	source: JobSourceKind;
 	url: string;
 	externalId: string;
-	/** The board's company key (Greenhouse token, Lever and Ashby company name) for board jobs. */
+	/** The board's company key (Greenhouse token, a company's name or subdomain) for board jobs. */
 	companyKey: string;
 	validThrough: Date | null;
 }
@@ -81,12 +82,17 @@ export interface OpenCheckDeps {
 	pacing?: RequestPacing;
 }
 
-const BOARD_LABEL = {
+const BOARD_LABEL: Readonly<Record<SearchBoard, string>> = {
 	greenhouse: "Greenhouse",
 	lever: "Lever",
 	ashby: "Ashby",
-} as const;
-type Board = keyof typeof BOARD_LABEL;
+	smartrecruiters: "SmartRecruiters",
+	workable: "Workable",
+	recruitee: "Recruitee",
+	teamtailor: "Teamtailor",
+	personio: "Personio",
+};
+type Board = SearchBoard;
 
 const SITE_READ = new Set<string>(["linkedin", "indeed", "glassdoor"]);
 

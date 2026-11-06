@@ -174,6 +174,13 @@ const BOARD_SITES = [
 	"site:job-boards.greenhouse.io",
 	"site:jobs.lever.co",
 	"site:jobs.ashbyhq.com",
+	"site:jobs.smartrecruiters.com",
+	"site:apply.workable.com",
+	// Recruitee, Teamtailor and Personio put each company on its own subdomain; a site: names
+	// them all.
+	"site:recruitee.com",
+	"site:teamtailor.com",
+	"site:jobs.personio.de",
 ] as const;
 
 const quoted = (text: string) => (text.includes(" ") ? `"${text}"` : text);
