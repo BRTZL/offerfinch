@@ -2,10 +2,10 @@ import type { UpdateState } from "../shared/bridge";
 
 /**
  * Over-the-air updates from GitHub Releases (electron-updater: Squirrel.Mac on macOS, NSIS on Windows).
- * Checks at launch, every 6 hours, and when the Mac wakes or the window comes forward (at
+ * Checks at launch, every 6 hours, and when the computer wakes or the window comes forward (at
  * most every 10 minutes), downloads in the background, and installs when the user restarts (or
- * on the next quit). Only a Developer ID–signed, notarized build can install an
- * update: macOS checks that the new app is signed by the same team as the running one.
+ * on the next quit). macOS requires Developer ID signing and notarization, with the same team
+ * as the running app. Windows NSIS builds currently update without Authenticode signing.
  */
 
 /**
@@ -44,7 +44,7 @@ export interface UpdateInfo {
 }
 
 const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
-/** Waking the Mac or bringing the window forward checks again once the last check is this old. */
+/** Waking the computer or bringing the window forward checks again once the last check is this old. */
 const STALE_AFTER_MS = 10 * 60 * 1000;
 
 const ENTITIES: Record<string, string> = {
@@ -343,7 +343,7 @@ export class Updates {
 
 	/**
 	 * Checks again if the last check is over 10 minutes old: for waking from sleep, unlocking
-	 * and the window coming forward, so a Mac that sleeps through the timer still hears of a
+	 * and the window coming forward, so a computer that sleeps through the timer still hears of a
 	 * release soon after it is back.
 	 */
 	checkIfStale(): void {

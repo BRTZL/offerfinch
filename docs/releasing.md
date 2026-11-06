@@ -14,8 +14,8 @@ A release publishes a GitHub Release in this repository with:
   `OfferFinch-<version>-x64-setup.exe`, `OfferFinch-<version>-arm64-setup.exe`,
   their `.blockmap` files, and `latest.yml` (`preview.yml` for previews; macOS uses
   `preview-mac.yml`). The combined installer is first in `files` and in `path`, so either
-  architecture updates with the same download. Separate installers remain available for smaller
-  first-install downloads; all manifest references are uploaded and size-checked before publishing.
+  architecture has a compatible fallback. electron-updater 6.8.11 prefers an architecture-named
+  entry when available; separate installers allow smaller native downloads; all manifest references are uploaded and size-checked before publishing.
 
 Windows builds are unsigned for now. SmartScreen may warn on first manual installation;
 background updates run silently. Windows policy or antivirus can still block an unsigned
