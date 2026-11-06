@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
 	AccountInfo,
+	ApiKeySource,
 	Options,
+	PermissionMode,
 	SDKAssistantMessageError,
 	SDKControlGetUsageResponse,
 	SDKMessage,
@@ -53,6 +55,57 @@ export const ALLOWED_TOOLS: readonly string[] = ["StructuredOutput"];
 
 /** Skills built into the pinned CLI that `skills: []` and the disable switches do not unlist. */
 export const BUILTIN_SKILLS: readonly string[] = ["doctor", "plugin-authoring"];
+
+/**
+ * The tool names a log or error may name: the allowed carrier and the SDK's inert placeholder.
+ * Any other name (tool, MCP server, skill, plugin, agent) in a session report is counted, never
+ * kept: it comes from the CLI's output, and a name that is not the protocol's may be the user's
+ * text.
+ */
+const KNOWN_TOOLS: ReadonlySet<string> = new Set([
+	...ALLOWED_TOOLS,
+	"DeferredToolPlaceholder",
+]);
+const KNOWN_SKILLS: ReadonlySet<string> = new Set(BUILTIN_SKILLS);
+const PERMISSION_MODES: ReadonlySet<string> = new Set(
+	Object.keys({
+		default: 1,
+		acceptEdits: 1,
+		bypassPermissions: 1,
+		plan: 1,
+		dontAsk: 1,
+		auto: 1,
+	} satisfies Record<PermissionMode, 1>),
+);
+const API_KEY_SOURCES: ReadonlySet<string> = new Set(
+	Object.keys({
+		ANTHROPIC_API_KEY: 1,
+		apiKeyHelper: 1,
+		"/login managed key": 1,
+		none: 1,
+		user: 1,
+		project: 1,
+		org: 1,
+		temporary: 1,
+		oauth: 1,
+	} satisfies Record<ApiKeySource, 1>),
+);
+const API_PROVIDERS: ReadonlySet<string> = new Set(
+	Object.keys({
+		firstParty: 1,
+		bedrock: 1,
+		vertex: 1,
+		foundry: 1,
+		anthropicAws: 1,
+		anthropicGoogleCloud: 1,
+		mantle: 1,
+		gateway: 1,
+	} satisfies Record<NonNullable<AccountInfo["apiProvider"]>, 1>),
+);
+
+function counted(n: number, what: string): string {
+	return `${n} ${what}${n === 1 ? "" : "s"}`;
+}
 
 /**
  * Environment additions for every subscription CLI run. No telemetry or other nonessential
@@ -167,28 +220,81 @@ export function sessionReport(
 	};
 }
 
-/** Every way the session could reach past a pure model call; empty when it cannot. */
+/**
+ * Every way the session could reach past a pure model call; empty when it cannot. Decided on the
+ * real names; said with counts and protocol-defined values only (this text reaches the error,
+ * so the spending ledger and logs).
+ */
 export function boundaryViolations(
 	report: SessionReport,
 	cwd: string,
 ): string[] {
 	const problems: string[] = [];
 	const extraTools = report.tools.filter((t) => !ALLOWED_TOOLS.includes(t));
-	if (extraTools.length) problems.push(`tools ${extraTools.join(", ")}`);
+	if (extraTools.length)
+		problems.push(counted(extraTools.length, "unexpected tool"));
 	if (report.mcpServers.length)
-		problems.push(`MCP servers ${report.mcpServers.join(", ")}`);
+		problems.push(counted(report.mcpServers.length, "MCP server"));
 	// The CLI's own built-in skills stay listed; with no Skill tool they cannot run, and the
 	// wire test shows they are not sent. Any other skill (the user's) is refused.
 	const userSkills = report.skills.filter((s) => !BUILTIN_SKILLS.includes(s));
-	if (userSkills.length) problems.push(`skills ${userSkills.join(", ")}`);
+	if (userSkills.length)
+		problems.push(counted(userSkills.length, "unexpected skill"));
 	const userPlugins = report.plugins.filter((p) => !p.startsWith("cc-plugin-"));
-	if (userPlugins.length) problems.push(`plugins ${userPlugins.join(", ")}`);
+	if (userPlugins.length)
+		problems.push(counted(userPlugins.length, "unexpected plugin"));
 	if (report.permissionMode !== "dontAsk")
-		problems.push(`permission mode ${report.permissionMode}`);
+		problems.push(
+			`permission mode ${knownName(report.permissionMode, PERMISSION_MODES)}`,
+		);
 	// macOS reports /var/folders/... as /private/var/folders/...
 	if (report.cwd.replace(/^\/private/, "") !== cwd.replace(/^\/private/, ""))
-		problems.push(`working directory ${report.cwd}`);
+		problems.push("a working directory other than the call's own");
 	return problems;
+}
+
+/**
+ * The session report as it may be logged: the allowlisted tool and skill names and the
+ * protocol's own values; every other name only counted. `model` is kept when it is the one asked
+ * for.
+ */
+export function loggableSessionReport(
+	report: SessionReport,
+	model: string,
+): Record<string, unknown> {
+	const known = (names: string[], allowed: ReadonlySet<string>) =>
+		names.filter((name) => allowed.has(name));
+	return {
+		tools: known(report.tools, KNOWN_TOOLS),
+		otherTools: report.tools.length - known(report.tools, KNOWN_TOOLS).length,
+		mcpServers: report.mcpServers.length,
+		skills: known(report.skills, KNOWN_SKILLS),
+		otherSkills:
+			report.skills.length - known(report.skills, KNOWN_SKILLS).length,
+		plugins: report.plugins.length,
+		agents: report.agents.length,
+		slashCommands: report.slashCommands,
+		apiKeySource: knownName(report.apiKeySource, API_KEY_SOURCES),
+		model: report.model === model ? model : "other",
+		permissionMode: knownName(report.permissionMode, PERMISSION_MODES),
+	};
+}
+
+/** The login as it may be logged: the protocol's own values; the plan and token source as read. */
+function loggableAuth(auth: AuthReport | null): Record<string, unknown> | null {
+	return (
+		auth && {
+			...auth,
+			apiKeySource:
+				auth.apiKeySource === null
+					? null
+					: knownName(auth.apiKeySource, API_KEY_SOURCES),
+			apiProvider:
+				auth.apiProvider === null
+					? null
+					: knownName(auth.apiProvider, API_PROVIDERS),
+		}
+	);
 }
 
 /** The login, from non-secret fields only. */
@@ -415,12 +521,12 @@ export function authProblem(
 	if (keySource && keySource !== "none")
 		return {
 			kind: "not_subscription",
-			detail: `Claude Code would authenticate with an API key (${keySource}), billed per token. Remove it from Claude Code's own configuration; this app never passes one.`,
+			detail: `Claude Code would authenticate with an API key (${knownName(keySource, API_KEY_SOURCES)}), billed per token. Remove it from Claude Code's own configuration; this app never passes one.`,
 		};
 	if (auth.apiProvider && auth.apiProvider !== "firstParty")
 		return {
 			kind: "not_subscription",
-			detail: `Claude Code is set to ${auth.apiProvider}, not a Claude subscription.`,
+			detail: `Claude Code is set to ${knownName(auth.apiProvider, API_PROVIDERS)}, not a Claude subscription.`,
 		};
 	if (!auth.subscriptionType)
 		return {
@@ -821,11 +927,14 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			const report = sessionReport(message);
 			this.options.log?.("claude subscription session", {
 				provider: this.name,
-				claudeCodeVersion: message.claude_code_version,
-				...report,
-				cwd: "(empty temp directory)",
+				claudeCodeVersion: /^\d+\.\d+\.\d+$/.test(message.claude_code_version)
+					? message.claude_code_version
+					: "other",
+				...loggableSessionReport(report, this.options.model),
 				// The login from the CLI's initialize answer, apart from the session's own fields.
-				auth: account(),
+				auth: loggableAuth(account()),
+				// Names of variables this side removed from the parent's environment (its own
+				// filter's matches: API keys and the like), never values.
 				removedEnv: removed,
 			});
 			const problems = boundaryViolations(report, cwd);

@@ -74,7 +74,12 @@ tested protocol defines (`knownName`: Claude's lists are checked against the SDK
 `satisfies`, Codex's come from `codex app-server generate-ts` for the tested version, OpenCode's
 error types and tool events from the 2.2.5 binary); anything
 else is kept as `other`, since an identifier such as `PRIVATE_CV_CANARY` can be the user's text as
-well as a sentence can. Pause classification (usage limit, logged out) reads the structured kind,
+well as a sentence can. A Claude session's init report is decided on its real names but said
+with counts: a boundary error and the session log name only `StructuredOutput`,
+`DeferredToolPlaceholder` and the CLI's built-in skills, and count every other tool, MCP server,
+skill, plugin and agent ("2 MCP servers"); the permission mode, API key source and API provider
+are protocol values or `other`, the working directory is never named, the model only when it is
+the one asked for. Pause classification (usage limit, logged out) reads the structured kind,
 not the text. Canary tests (sentences and bare identifiers) run each path through `MeteredLlm`
 and check the recorded rows and logs.
 
