@@ -8,7 +8,7 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
-## Unreleased
+## 0.2.0 (2026-11-06)
 
 - Choose any model for each step: finding matches, drafting and checking drafts. A new picker
   in Settings › Models lists every model from the AI plans you're signed in to, grouped by
