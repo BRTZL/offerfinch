@@ -87,14 +87,26 @@ export function parseAnswer<T>(
 }
 
 /**
- * A protocol name as it may be kept (an error kind, an item or event type, a tool name): a short
- * identifier, else `fallback`. Free text (a sentence, a quote of the answer) never passes.
+ * A protocol value as it may be kept (an error kind, a result subtype, an item or event type, a
+ * tool name): one of the values the tested protocol defines, else "other". Shape is not enough:
+ * an identifier (`PRIVATE_CV_CANARY`) can be the user's text as well as any sentence can.
  */
-export function safeName(value: unknown, fallback = "unnamed"): string {
-	return typeof value === "string" && /^[\w.:/-]{1,64}$/.test(value)
-		? value
-		: fallback;
+export function knownName(value: unknown, known: ReadonlySet<string>): string {
+	return typeof value === "string" && known.has(value) ? value : "other";
 }
+
+/** The error names a thrown error may be kept by (JavaScript's own, and the SDKs' abort). */
+export const ERROR_NAMES: ReadonlySet<string> = new Set([
+	"Error",
+	"AbortError",
+	"AggregateError",
+	"EvalError",
+	"RangeError",
+	"ReferenceError",
+	"SyntaxError",
+	"TypeError",
+	"URIError",
+]);
 
 /**
  * Why a CLI's own schema check refused the answer, as it may be kept: how many errors, and the

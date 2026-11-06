@@ -7,10 +7,22 @@
 //   error   an `error` notification, then a failed turn
 //   rpc     turn/start answered with a JSON-RPC error
 //   tool    a raw item of an unknown type named by the model
+// The rest put identifiers that are not the protocol's (no spaces: the shape of a name, the
+// content of the user's text) in every field an error or the session log may name:
+//   kind      an error kind, a turn status and a failed turn's kind
+//   retrykind a retry's kind
+//   rpccode   a JSON-RPC error with a string code and a message like this side's own
+//   request   a server request's method
+//   item      a thread item's type
+//   rawtool   a function call's tool name
+//   tools     the tools Codex offers
+//   thread    an event from another thread
 import { basename } from "node:path";
 import { createInterface } from "node:readline";
 
 const CANARY = "ANSWER_CANARY_CX_51d0 my CV says";
+const ID = "PRIVATE_CV_CANARY";
+const LOWER = "privatecanary";
 const scenario = /^codex-(\w+)\.mjs$/.exec(basename(process.argv[1] ?? ""))?.[1];
 
 if (scenario === "stderr") {
@@ -53,7 +65,49 @@ lines.on("line", (line) => {
 					id: message.id,
 					error: { code: -32001, message: CANARY },
 				});
+			if (scenario === "rpccode")
+				return send({
+					id: message.id,
+					error: { code: ID, message: "codex app-server exited (1)" },
+				});
 			answer({ turn: { id: "turn_1" } });
+			if (scenario === "kind") {
+				notify("error", {
+					willRetry: false,
+					error: { message: ID, codexErrorInfo: ID },
+				});
+				notify("turn/completed", {
+					turn: {
+						id: "turn_1",
+						status: LOWER,
+						error: { message: ID, codexErrorInfo: { [LOWER]: { httpStatusCode: 500 } } },
+					},
+				});
+			} else if (scenario === "retrykind")
+				notify("error", {
+					willRetry: true,
+					error: { message: ID, codexErrorInfo: { [ID]: { httpStatusCode: 502 } } },
+				});
+			else if (scenario === "request")
+				send({ id: 900, method: ID, params: { threadId: "thr_1", reason: ID } });
+			else if (scenario === "item")
+				notify("item/started", { item: { type: ID, id: LOWER } });
+			else if (scenario === "rawtool")
+				notify("rawResponseItem/completed", {
+					item: { type: "function_call", name: LOWER, arguments: ID },
+				});
+			else if (scenario === "tools")
+				notify("rawResponseItem/completed", {
+					item: {
+						type: "additional_tools",
+						tools: [
+							{ name: "functions", tools: [{ name: "exec" }, { name: ID }] },
+							{ name: LOWER, tools: [{ name: LOWER }] },
+						],
+					},
+				});
+			else if (scenario === "thread")
+				send({ method: ID, params: { threadId: "thr_other" } });
 			if (scenario === "retry")
 				notify("error", {
 					willRetry: true,

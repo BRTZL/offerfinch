@@ -1073,9 +1073,30 @@ describe("what a failed Codex call keeps", () => {
 			"retry",
 			/retried a request inside the turn \(responseStreamDisconnected, HTTP 502\)/,
 		],
-		["error", /failed \(an unnamed kind\); the error's text is not kept/],
+		["error", /failed \(other\); the error's text is not kept/],
 		["rpc", /failed \(client\); the error's text is not kept/],
-		["tool", /tried to use a tool during claims-check \(raw unnamed unnamed\)/],
+		["tool", /tried to use a tool during claims-check \(raw other other\)/],
+		// Identifiers that are not the protocol's values: kept as "other", never as given.
+		["kind", /failed \(other\); the error's text is not kept/],
+		[
+			"retrykind",
+			/retried a request inside the turn \(other, HTTP 502\), although/,
+		],
+		["rpccode", /failed \(client\); the error's text is not kept/],
+		[
+			"request",
+			/tried to use a tool during claims-check \(server request other\)/,
+		],
+		["item", /tried to use a tool during claims-check \(item other\)/],
+		[
+			"rawtool",
+			/tried to use a tool during claims-check \(raw function_call other\)/,
+		],
+		["tools", /Codex offered 2 tools outside the tested list/],
+		[
+			"thread",
+			/tried to use a tool during claims-check \(event from another thread \(other\)\)/,
+		],
 	] as const)
 		it(`keeps none of it: ${scenario}`, async () => {
 			const binary = await fakeBinary(scenario);
@@ -1126,6 +1147,17 @@ describe("what a failed Codex call keeps", () => {
 				true,
 			);
 			expect(kept).not.toContain("ANSWER_CANARY");
+			expect(kept).not.toMatch(/private_?cv_?canary|privatecanary/i);
+			if (scenario === "rpccode")
+				expect(turns[0]?.turnError?.message).toBe(
+					"the app-server request failed (Error other)",
+				);
+			if (scenario === "tools")
+				expect(turns[0]?.toolNames).toEqual([
+					"functions.exec",
+					"other",
+					"other",
+				]);
 			// An exit rejects initialize first; the "did not start" error (stderr's length only) is
 			// reached when the call times out during initialize.
 			if (scenario === "stderr")
@@ -1158,7 +1190,7 @@ describe("what a failed Codex call keeps", () => {
 						rateLimitsAfter: null,
 						turnError: {
 							message: "ANSWER_CANARY_CX_51d0",
-							info: { responseTooLarge: { httpStatusCode: 413 } },
+							info: { httpConnectionFailed: { httpStatusCode: 413 } },
 						},
 						status: "failed",
 						sent: true,
@@ -1180,7 +1212,7 @@ describe("what a failed Codex call keeps", () => {
 				task: "claims-check",
 			})
 			.catch((e: unknown) => e);
-		expect(String(error)).toMatch(/failed \(responseTooLarge, HTTP 413\)/);
+		expect(String(error)).toMatch(/failed \(httpConnectionFailed, HTTP 413\)/);
 		expect([String(error), ...store.rows].join("\n")).not.toContain(
 			"ANSWER_CANARY",
 		);

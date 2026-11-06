@@ -46,6 +46,8 @@ interface Script {
 	early?: SDKMessage[];
 	/** The CLI's initialize answer fails with this message (the CLI did not start). */
 	initFails?: string;
+	/** The name of the errors `lose` and `initFails` throw (default `Error`). */
+	errorName?: string;
 }
 
 const EXTRA_OFF = {
@@ -132,7 +134,12 @@ function scripted(script: Script) {
 		const record = { options: params.options, prompts: [] as string[] };
 		seen.push(record);
 		const messages = script.runs?.[run++] ?? [];
-		const lost = new Error(script.loseWith || "lost response");
+		const named = (message: string) => {
+			const error = new Error(message);
+			if (script.errorName) error.name = script.errorName;
+			return error;
+		};
+		const lost = named(script.loseWith || "lost response");
 		const ready = Promise.resolve({ account: script.account ?? SUBSCRIBED });
 		// Like the isolated session: an abort closes it at once, and it ends as if cleanly.
 		const aborted = () => params.options.abortController?.signal.aborted;
@@ -153,7 +160,7 @@ function scripted(script: Script) {
 		}
 		return Object.assign(stream(), {
 			initializationResult: () =>
-				script.initFails ? Promise.reject(new Error(script.initFails)) : ready,
+				script.initFails ? Promise.reject(named(script.initFails)) : ready,
 			usage: async () => {
 				if (script.usage === "throw") throw new Error("usage endpoint failed");
 				return script.usage ?? EXTRA_OFF;
@@ -1238,6 +1245,8 @@ describe("plan usage baseline", () => {
  */
 describe("what a failed Claude call keeps", () => {
 	const CANARY = "ANSWER_CANARY_CL_7c3e my CV says";
+	const ID_CANARY = "PRIVATE_CV_CANARY";
+	const LOWER_CANARY = "privatecanary";
 	const usage = {
 		"claude-sonnet-5-5": {
 			inputTokens: 10,
@@ -1334,12 +1343,77 @@ describe("what a failed Claude call keeps", () => {
 					],
 				],
 			},
-			/request failed \(unknown, HTTP 500\)/,
+			/request failed \(other, HTTP 500\)/,
 		],
 		[
 			"a CLI that did not start",
 			{ runs: [[]], initFails: `spawn failed: ${CANARY}` },
 			/did not start \(Error\)/,
+		],
+		// Identifiers that are not the protocol's: the shape of a name, the content of the user's.
+		[
+			"an api_retry error that is not a known kind",
+			{
+				runs: [
+					[
+						{
+							type: "system",
+							subtype: "api_retry",
+							error: ID_CANARY,
+							error_status: 500,
+						} as unknown as SDKMessage,
+					],
+				],
+			},
+			/request failed \(other, HTTP 500\)/,
+		],
+		[
+			"an error result whose subtype is not a known one",
+			{
+				runs: [
+					[
+						{
+							type: "result",
+							subtype: LOWER_CANARY,
+							is_error: true,
+							errors: [ID_CANARY],
+							modelUsage: usage,
+						} as unknown as SDKMessage,
+					],
+				],
+			},
+			/returned no answer: other \(1 errors, not kept\)/,
+		],
+		[
+			"a lost stream whose error has a name that is not a known one",
+			{ runs: [[]], lose: true, loseWith: ID_CANARY, errorName: ID_CANARY },
+			/stream failed \(other; its text is not kept\)/,
+		],
+		[
+			"a CLI that did not start with an error named by the user's text",
+			{
+				runs: [[]],
+				initFails: LOWER_CANARY,
+				errorName: LOWER_CANARY,
+			},
+			/did not start \(other\)/,
+		],
+		[
+			"a usage limit whose type is not a known one",
+			{
+				runs: [
+					[
+						{
+							type: "rate_limit_event",
+							rate_limit_info: {
+								status: "rejected",
+								rateLimitType: ID_CANARY,
+							},
+						} as unknown as SDKMessage,
+					],
+				],
+			},
+			/plan's other limit is reached/,
 		],
 	];
 	for (const [name, script, says] of scenarios)
@@ -1372,5 +1446,6 @@ describe("what a failed Claude call keeps", () => {
 				true,
 			);
 			expect(kept).not.toContain("ANSWER_CANARY");
+			expect(kept).not.toMatch(/private_?cv_?canary|privatecanary/i);
 		});
 });

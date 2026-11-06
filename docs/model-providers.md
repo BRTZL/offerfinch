@@ -68,10 +68,14 @@ record key shown as `*`, an HTTP status, an error type or code). See `local-llm/
 This holds for every provider: Claude keeps a result's subtype and error count (never its text or
 errors), the CLI's schema check by error count and the schema's own missing property names, a
 stream or start failure by the error's name; Codex keeps its error kind (`codexErrorInfo`'s tag)
-and HTTP status, a JSON-RPC error by its code, item types and tool names only when they are short
-identifiers, and never the app-server's stderr. Pause classification (usage limit, logged out)
-reads the structured kind, not the text. Canary tests run each path through `MeteredLlm` and check
-the recorded rows.
+and HTTP status, a JSON-RPC error by its code, item types, event methods, turn statuses and tool
+names, and never the app-server's stderr. A name is kept only when it is one of the values the
+tested protocol defines (`knownName`: Claude's lists are checked against the SDK's types with
+`satisfies`, Codex's come from `codex app-server generate-ts` for the tested version); anything
+else is kept as `other`, since an identifier such as `PRIVATE_CV_CANARY` can be the user's text as
+well as a sentence can. Pause classification (usage limit, logged out) reads the structured kind,
+not the text. Canary tests (sentences and bare identifiers) run each path through `MeteredLlm`
+and check the recorded rows and logs.
 
 ### OpenCode recipe (2.2.5)
 

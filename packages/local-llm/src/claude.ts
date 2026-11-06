@@ -4,8 +4,11 @@ import { join } from "node:path";
 import type {
 	AccountInfo,
 	Options,
+	SDKAssistantMessageError,
 	SDKControlGetUsageResponse,
 	SDKMessage,
+	SDKRateLimitInfo,
+	SDKResultError,
 	SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
@@ -23,7 +26,12 @@ import type {
 } from "@offerfinch/core/scoring/plan-usage";
 import { z } from "zod";
 
-import { parseAnswer, safeName, schemaCheckFailure } from "./answer";
+import {
+	ERROR_NAMES,
+	knownName,
+	parseAnswer,
+	schemaCheckFailure,
+} from "./answer";
 import { Breaker } from "./breaker";
 import { subscriptionEnv } from "./env";
 import {
@@ -274,6 +282,47 @@ const DRAIN_MS = 15_000;
  * already read, the throw only repeats it; the session ended by itself.
  */
 const SDK_ERROR_RESULT_ECHO = "Claude Code returned an error result";
+
+/**
+ * The values the SDK's protocol defines for the fields an error may name (`satisfies` keeps each
+ * list whole against the installed SDK's types). Anything else is kept as "other": these fields
+ * come from the CLI's output, and a value that is not the protocol's may be the user's text.
+ */
+const API_ERRORS = new Set(
+	Object.keys({
+		authentication_failed: 1,
+		oauth_org_not_allowed: 1,
+		account_on_hold: 1,
+		verification_required: 1,
+		billing_error: 1,
+		rate_limit: 1,
+		overloaded: 1,
+		invalid_request: 1,
+		model_not_found: 1,
+		server_error: 1,
+		unknown: 1,
+		max_output_tokens: 1,
+		cloud_credential_error: 1,
+	} satisfies Record<SDKAssistantMessageError, 1>),
+);
+const RESULT_ERRORS = new Set(
+	Object.keys({
+		error_during_execution: 1,
+		error_max_turns: 1,
+		error_max_budget_usd: 1,
+		error_max_structured_output_retries: 1,
+	} satisfies Record<SDKResultError["subtype"], 1>),
+);
+const RATE_LIMITS = new Set(
+	Object.keys({
+		five_hour: 1,
+		seven_day: 1,
+		seven_day_opus: 1,
+		seven_day_sonnet: 1,
+		seven_day_overage_included: 1,
+		overage: 1,
+	} satisfies Record<NonNullable<SDKRateLimitInfo["rateLimitType"]>, 1>),
+);
 /** How long a probe's "extra usage is off" is trusted by the same provider. */
 const EXTRA_USAGE_TRUST_MS = 60_000;
 /**
@@ -627,7 +676,7 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 					this.pause(
 						"logged_out",
 						// The error's name only: its text can carry the CLI's stderr.
-						`the Claude Code CLI did not start (${safeName(error instanceof Error ? error.name : null, "Error")}). Check Settings › Models.`,
+						`the Claude Code CLI did not start (${knownName(error instanceof Error ? error.name : null, ERROR_NAMES)}). Check Settings › Models.`,
 					),
 				),
 		);
@@ -816,7 +865,7 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			if (info.status === "rejected")
 				return this.pause(
 					"usage_limit",
-					`the Claude plan's ${info.rateLimitType ?? "usage"} limit is reached${resetsAt ? ` until ${resetsAt.toISOString()}` : ""}. Preparation waits; it resumes after a later scan once the limit resets, with status in Settings › Models.`,
+					`the Claude plan's ${info.rateLimitType ? knownName(info.rateLimitType, RATE_LIMITS) : "usage"} limit is reached${resetsAt ? ` until ${resetsAt.toISOString()}` : ""}. Preparation waits; it resumes after a later scan once the limit resets, with status in Settings › Models.`,
 					resetsAt,
 				);
 			return null;
@@ -826,7 +875,7 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			if (kind) return this.pause(kind, PAUSE_DETAIL[kind]);
 			// One call is one request: the workflow step retries, not the CLI.
 			return new Error(
-				`${this.name}: request failed (${safeName(message.error, "unknown")}, HTTP ${typeof message.error_status === "number" ? message.error_status : "?"}); not retried by the CLI`,
+				`${this.name}: request failed (${knownName(message.error, API_ERRORS)}, HTTP ${typeof message.error_status === "number" ? message.error_status : "?"}); not retried by the CLI`,
 			);
 		}
 		if (message.type === "assistant" && message.error) {
@@ -846,7 +895,7 @@ function resultFailure(
 ): string {
 	if (message.subtype === "success")
 		return `an error result of ${String(message.result ?? "").length} characters, not kept`;
-	return `${safeName(message.subtype, "an error result")} (${(message.errors ?? []).length} errors, not kept)`;
+	return `${knownName(message.subtype, RESULT_ERRORS)} (${(message.errors ?? []).length} errors, not kept)`;
 }
 
 /**
@@ -861,9 +910,9 @@ function streamFailure(error: unknown, gotResult: boolean): Error | null {
 	const kept = new Error(
 		thrown.message.startsWith(SDK_ERROR_RESULT_ECHO)
 			? "the Claude Code CLI ended with an error result (its text is not kept)"
-			: `the Claude Code CLI's stream failed (${safeName(thrown.name, "Error")}; its text is not kept)`,
+			: `the Claude Code CLI's stream failed (${knownName(thrown.name, ERROR_NAMES)}; its text is not kept)`,
 	);
-	kept.name = safeName(thrown.name, "Error");
+	kept.name = ERROR_NAMES.has(thrown.name) ? thrown.name : "Error";
 	return kept;
 }
 
