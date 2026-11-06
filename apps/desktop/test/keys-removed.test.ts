@@ -93,29 +93,34 @@ describe("steps that ran on an API key", () => {
 		expect(apiKeySteps(first.raw)).toEqual([]);
 	}, 30_000);
 
-	it("wait for a model while nothing is signed in, and are filled on a later start", async () => {
-		const { dir, start } = await upgrade({});
-		const first = await start();
-		expect(first.ai.tailoring).toEqual({ model: null });
-		expect(first.ai.claims).toEqual({ model: null });
-		expect(apiKeySteps(first.raw)).toEqual(["tailoring", "claims"]);
-		// Codex signs in; the user had dismissed the notice: it stays dismissed.
-		const db = openSqlite(path.join(dir, "offerfinch.sqlite"));
-		await new SettingsStore(db).set("keysRemoved", {
-			steps: ["tailoring", "claims"],
-			dismissed: true,
-		});
-		db.$close();
-		fs.writeFileSync(
-			path.join(dir, "fake-clis.json"),
-			JSON.stringify({ codex: "logged_in" }),
-		);
-		const second = await start();
-		expect(second.ai).toEqual({
-			scoring: { model: "claude:claude-sonnet-5-5" },
-			tailoring: { model: "codex:" },
-			claims: { model: "codex:" },
-		});
-		expect(second.notice?.dismissed).toBe(true);
-	}, 30_000);
+	// Codex is off on Windows, so its sign-in fills nothing there.
+	it.skipIf(process.platform === "win32")(
+		"wait for a model while nothing is signed in, and are filled on a later start",
+		async () => {
+			const { dir, start } = await upgrade({});
+			const first = await start();
+			expect(first.ai.tailoring).toEqual({ model: null });
+			expect(first.ai.claims).toEqual({ model: null });
+			expect(apiKeySteps(first.raw)).toEqual(["tailoring", "claims"]);
+			// Codex signs in; the user had dismissed the notice: it stays dismissed.
+			const db = openSqlite(path.join(dir, "offerfinch.sqlite"));
+			await new SettingsStore(db).set("keysRemoved", {
+				steps: ["tailoring", "claims"],
+				dismissed: true,
+			});
+			db.$close();
+			fs.writeFileSync(
+				path.join(dir, "fake-clis.json"),
+				JSON.stringify({ codex: "logged_in" }),
+			);
+			const second = await start();
+			expect(second.ai).toEqual({
+				scoring: { model: "claude:claude-sonnet-5-5" },
+				tailoring: { model: "codex:" },
+				claims: { model: "codex:" },
+			});
+			expect(second.notice?.dismissed).toBe(true);
+		},
+		30_000,
+	);
 });

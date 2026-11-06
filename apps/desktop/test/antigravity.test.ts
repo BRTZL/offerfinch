@@ -165,43 +165,47 @@ describe("the test stand-in", () => {
 	});
 	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-	it("installs, signs in and answers without a download or a browser", async () => {
-		const real = withProviders({
-			refresh: async () => "",
-			usePath: () => {},
-			factory: () => {
-				throw new Error("no real factory in tests");
-			},
-			claude: async () => {
-				throw new Error("unused");
-			},
-			codex: async () => {
-				throw new Error("unused");
-			},
-		});
-		const subs = fakeSubscriptions(dir, real);
-		expect((await subs.state("antigravity")).fix?.inApp).toBe("install");
-		await expect(subs.signIn("antigravity")).rejects.toThrow(/Install/);
-		expect((await subs.install("antigravity")).fix?.inApp).toBe("signIn");
-		expect(await subs.models("antigravity")).toEqual([]);
-		const signedIn = await subs.signIn("antigravity");
-		expect(signedIn.login.state).toBe("logged_in");
-		const models = await subs.models("antigravity");
-		expect(models.map((m) => m.ref)).toEqual([
-			"antigravity:gemini-3.8-flash",
-			"antigravity:gemini-4-argon",
-		]);
-		const llm = subs.factory({
-			role: "scoring",
-			provider: "antigravity",
-			model: "gemini-3.8-flash",
-			ownerUserId: "u",
-		});
-		expect(llm.vendor).toBe("google");
-		expect(llm.billing).toBe("subscription");
-		expect(llm.name).toBe("antigravity:gemini-3.8-flash");
-		await expect(subs.install("opencode")).rejects.toThrow(/from Terminal/);
-	});
+	// Gemini is off on Windows: no Install or Sign in there (pipeline.test.ts checks the refusal).
+	it.skipIf(process.platform === "win32")(
+		"installs, signs in and answers without a download or a browser",
+		async () => {
+			const real = withProviders({
+				refresh: async () => "",
+				usePath: () => {},
+				factory: () => {
+					throw new Error("no real factory in tests");
+				},
+				claude: async () => {
+					throw new Error("unused");
+				},
+				codex: async () => {
+					throw new Error("unused");
+				},
+			});
+			const subs = fakeSubscriptions(dir, real);
+			expect((await subs.state("antigravity")).fix?.inApp).toBe("install");
+			await expect(subs.signIn("antigravity")).rejects.toThrow(/Install/);
+			expect((await subs.install("antigravity")).fix?.inApp).toBe("signIn");
+			expect(await subs.models("antigravity")).toEqual([]);
+			const signedIn = await subs.signIn("antigravity");
+			expect(signedIn.login.state).toBe("logged_in");
+			const models = await subs.models("antigravity");
+			expect(models.map((m) => m.ref)).toEqual([
+				"antigravity:gemini-3.8-flash",
+				"antigravity:gemini-4-argon",
+			]);
+			const llm = subs.factory({
+				role: "scoring",
+				provider: "antigravity",
+				model: "gemini-3.8-flash",
+				ownerUserId: "u",
+			});
+			expect(llm.vendor).toBe("google");
+			expect(llm.billing).toBe("subscription");
+			expect(llm.name).toBe("antigravity:gemini-3.8-flash");
+			await expect(subs.install("opencode")).rejects.toThrow(/from Terminal/);
+		},
+	);
 });
 
 describe("main opens only Google's sign-in page", () => {
