@@ -1,9 +1,14 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { fitAssessmentSchema } from "@offerfinch/core/scoring/fit";
 import { SubscriptionUnavailableError } from "@offerfinch/core/scoring/llm";
-import { meteredFor, type SpendStore } from "@offerfinch/core/scoring/metered";
+import {
+	MeteredLlm,
+	meteredFor,
+	type SpendStore,
+} from "@offerfinch/core/scoring/metered";
 import { toStrictJsonSchema } from "@offerfinch/core/scoring/openai";
 import { claimsCheckSchema } from "@offerfinch/core/tailor/claims/types";
 import { tailorOutputSchema } from "@offerfinch/core/tailor/tailor";
@@ -12,6 +17,7 @@ import { z } from "zod";
 
 import { Breaker } from "../src/breaker";
 import {
+	ALL_LAYERS,
 	type CodexRateLimits,
 	CodexSubscriptionProvider,
 	CodexToolAttemptError,
@@ -22,6 +28,7 @@ import {
 	rateLimitProblem,
 	readCodexLogin,
 	resumeCodexCalls,
+	runCodexTurn,
 	sandboxProfile,
 } from "../src/codex";
 import { loginShellPath } from "../src/status";
@@ -31,6 +38,7 @@ import {
 	fakeResponses,
 	makeCanary,
 } from "./codex-capture";
+import { SpendRecorder } from "./spend-recorder";
 
 const schema = z.object({
 	verdict: z.enum(["fit", "no_fit"]),
@@ -1030,5 +1038,151 @@ describe("the schemas Codex answers for finding matches and drafting", () => {
 			expect(loose(json)).toEqual([]);
 			expect([...keywordsOf(json)].filter((k) => !proven.has(k))).toEqual([]);
 		}
+	});
+});
+
+/**
+ * Finding: Codex's error text (an error notification's message, a retry's message, a JSON-RPC
+ * error, the app-server's stderr, a tool name the model chose) reached the thrown message, which
+ * the spending ledger keeps. A stand-in app-server (test/fixtures/fake-codex-app-server.mjs) puts
+ * a canary in every such field; the real `runCodexTurn` reads it, without sandbox-exec (the
+ * stand-in runs on this Node, which the sandbox profile may not let it read).
+ */
+describe("what a failed Codex call keeps", () => {
+	const FIXTURE = resolve(__dirname, "fixtures", "fake-codex-app-server.mjs");
+	let dir: string;
+	beforeAll(async () => {
+		dir = await mkdtemp(join(tmpdir(), "offerfinch-codex-canary-"));
+	});
+	afterAll(() => rm(dir, { recursive: true, force: true }));
+
+	async function fakeBinary(scenario: string): Promise<string> {
+		const file = join(dir, `codex-${scenario}.mjs`);
+		await writeFile(
+			file,
+			`#!${process.execPath}\nawait import(${JSON.stringify(pathToFileURL(FIXTURE).href)});\n`,
+		);
+		await chmod(file, 0o755);
+		return file;
+	}
+
+	for (const [scenario, says] of [
+		["stderr", /failed \(client\); the error's text is not kept/],
+		["hang", /failed \(timeout\); the error's text is not kept/],
+		[
+			"retry",
+			/retried a request inside the turn \(responseStreamDisconnected, HTTP 502\)/,
+		],
+		["error", /failed \(an unnamed kind\); the error's text is not kept/],
+		["rpc", /failed \(client\); the error's text is not kept/],
+		["tool", /tried to use a tool during claims-check \(raw unnamed unnamed\)/],
+	] as const)
+		it(`keeps none of it: ${scenario}`, async () => {
+			const binary = await fakeBinary(scenario);
+			const logs: string[] = [];
+			const store = new SpendRecorder();
+			const turns: CodexTurnResult[] = [];
+			const metered = new MeteredLlm(
+				new CodexSubscriptionProvider({
+					ownerUserId: "user-1",
+					captureBaseUrl: "http://127.0.0.1:9",
+					binary,
+					breaker: new Breaker(),
+					parentEnv: { PATH: "/usr/bin:/bin", HOME: dir },
+					timeoutMs: scenario === "hang" ? 1500 : 20_000,
+					log: (message, data) => logs.push(message, JSON.stringify(data)),
+					runTurn: async (input) => {
+						const result = await runCodexTurn({
+							...input,
+							layers: { ...ALL_LAYERS, sandboxExec: false },
+						});
+						turns.push(result);
+						return result;
+					},
+				}),
+				store,
+				{ userId: "user-1", applicationId: null },
+			);
+			const error = await metered
+				.generateObject({
+					system: "s",
+					prompt: "p",
+					schema,
+					task: "claims-check",
+				})
+				.catch((e: unknown) => e);
+			expect(String(error)).toMatch(says);
+			const kept = [
+				String(error),
+				JSON.stringify(error),
+				// What the provider builds its messages from (`info` is Codex's raw kind, never shown).
+				JSON.stringify(
+					turns.map((t) => [t.turnError?.message, t.boundary, t.toolAttempt]),
+				),
+				...store.rows,
+				...logs,
+			].join("\n");
+			expect(store.rows.some((r) => /^(settle|refusal|hold) /.test(r))).toBe(
+				true,
+			);
+			expect(kept).not.toContain("ANSWER_CANARY");
+			// An exit rejects initialize first; the "did not start" error (stderr's length only) is
+			// reached when the call times out during initialize.
+			if (scenario === "stderr")
+				expect(turns[0]?.turnError?.message).toBe(
+					"codex app-server exited (3)",
+				);
+		}, 60_000);
+
+	it("keeps none of a turn error a turn runner reports with its own text", async () => {
+		const store = new SpendRecorder();
+		const metered = new MeteredLlm(
+			new CodexSubscriptionProvider({
+				ownerUserId: "user-1",
+				captureBaseUrl: "http://127.0.0.1:9",
+				binary: join(dir, "no-codex"),
+				breaker: new Breaker(),
+				parentEnv: { PATH: "/usr/bin:/bin", HOME: dir },
+				runTurn: async (input) => {
+					input.onModelCall?.();
+					return {
+						text: null,
+						usage: null,
+						model: null,
+						toolAttempt: null,
+						boundary: null,
+						refused: null,
+						creditsBefore: null,
+						creditsAfter: null,
+						rateLimitsBefore: null,
+						rateLimitsAfter: null,
+						turnError: {
+							message: "ANSWER_CANARY_CX_51d0",
+							info: { responseTooLarge: { httpStatusCode: 413 } },
+						},
+						status: "failed",
+						sent: true,
+						rawTypes: [],
+						toolNames: [],
+						codexVersion: "0.166.0",
+						removedEnv: [],
+					};
+				},
+			}),
+			store,
+			{ userId: "user-1", applicationId: null },
+		);
+		const error = await metered
+			.generateObject({
+				system: "s",
+				prompt: "p",
+				schema,
+				task: "claims-check",
+			})
+			.catch((e: unknown) => e);
+		expect(String(error)).toMatch(/failed \(responseTooLarge, HTTP 413\)/);
+		expect([String(error), ...store.rows].join("\n")).not.toContain(
+			"ANSWER_CANARY",
+		);
 	});
 });

@@ -23,13 +23,16 @@ export function unreadableAnswer(
 
 /** The property names the schema declares: the only path segments an error may name. */
 function schemaKeys(schema: z.ZodType): Set<string> {
-	const keys = new Set<string>();
-	let json: unknown;
 	try {
-		json = z.toJSONSchema(schema, { unrepresentable: "any" });
+		return jsonSchemaKeys(z.toJSONSchema(schema, { unrepresentable: "any" }));
 	} catch {
-		return keys;
+		return new Set();
 	}
+}
+
+/** The property names a JSON schema declares. */
+function jsonSchemaKeys(json: unknown): Set<string> {
+	const keys = new Set<string>();
 	const walk = (node: unknown): void => {
 		if (Array.isArray(node)) {
 			for (const item of node) walk(item);
@@ -81,4 +84,34 @@ export function parseAnswer<T>(
 	throw new Error(
 		`${provider}: the answer for ${task} did not match the schema (${named.join("; ")}${more}; the answer is not kept)`,
 	);
+}
+
+/**
+ * A protocol name as it may be kept (an error kind, an item or event type, a tool name): a short
+ * identifier, else `fallback`. Free text (a sentence, a quote of the answer) never passes.
+ */
+export function safeName(value: unknown, fallback = "unnamed"): string {
+	return typeof value === "string" && /^[\w.:/-]{1,64}$/.test(value)
+		? value
+		: fallback;
+}
+
+/**
+ * Why a CLI's own schema check refused the answer, as it may be kept: how many errors, and the
+ * required properties it says are missing when they are the schema's own names. Never the errors'
+ * text, which can quote the answer.
+ */
+export function schemaCheckFailure(
+	errors: string[],
+	jsonSchema: unknown,
+): string {
+	const keys = jsonSchemaKeys(jsonSchema);
+	const missing = new Set<string>();
+	for (const error of errors)
+		for (const match of error.matchAll(/required property '([^']{1,64})'/g))
+			if (match[1] && keys.has(match[1])) missing.add(match[1]);
+	const named = missing.size
+		? `; missing ${[...missing].slice(0, MAX_ISSUES).join(", ")}`
+		: "";
+	return `the CLI's schema check refused the answer (${errors.length} ${errors.length === 1 ? "error" : "errors"}${named}; the answer is not kept)`;
 }

@@ -23,6 +23,7 @@ import type {
 } from "@offerfinch/core/scoring/plan-usage";
 import { z } from "zod";
 
+import { parseAnswer, safeName, schemaCheckFailure } from "./answer";
 import { Breaker } from "./breaker";
 import { subscriptionEnv } from "./env";
 import {
@@ -492,9 +493,14 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			);
 			if (answer.invalid !== undefined)
 				throw new Error(
-					`${this.name}: no valid structured output for ${request.task}: ${answer.invalid.slice(0, 500)}`,
+					`${this.name}: no valid structured output for ${request.task}: ${answer.invalid}`,
 				);
-			return request.schema.parse(answer.output);
+			return parseAnswer(
+				request.schema,
+				answer.output,
+				this.name,
+				request.task,
+			);
 		} catch (error) {
 			if (error instanceof SubscriptionUnavailableError)
 				this.breaker.trip(error, this.now());
@@ -620,7 +626,8 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 				stop(
 					this.pause(
 						"logged_out",
-						`the Claude Code CLI did not start (${error instanceof Error ? error.message : String(error)}). Check Settings › Models.`,
+						// The error's name only: its text can carry the CLI's stderr.
+						`the Claude Code CLI did not start (${safeName(error instanceof Error ? error.name : null, "Error")}). Check Settings › Models.`,
 					),
 				),
 		);
@@ -688,12 +695,8 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 					if (message.subtype === "success" && !message.is_error)
 						output = message.structured_output;
 					else if (message.subtype === "error_max_structured_output_retries")
-						invalid = message.errors.join("; ") || message.subtype;
-					else
-						resultError =
-							message.subtype === "success"
-								? String(message.result).slice(0, 500)
-								: `${message.subtype}: ${message.errors.join("; ").slice(0, 500)}`;
+						invalid = schemaCheckFailure(message.errors, schema);
+					else resultError = resultFailure(message);
 				}
 			}
 		} catch (error) {
@@ -823,7 +826,7 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			if (kind) return this.pause(kind, PAUSE_DETAIL[kind]);
 			// One call is one request: the workflow step retries, not the CLI.
 			return new Error(
-				`${this.name}: request failed (${message.error}, HTTP ${message.error_status ?? "?"}); not retried by the CLI`,
+				`${this.name}: request failed (${safeName(message.error, "unknown")}, HTTP ${typeof message.error_status === "number" ? message.error_status : "?"}); not retried by the CLI`,
 			);
 		}
 		if (message.type === "assistant" && message.error) {
@@ -835,14 +838,33 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 }
 
 /**
+ * An error result in fixed words and counts: its text and errors can quote the answer, and error
+ * messages are kept (the spending ledger).
+ */
+function resultFailure(
+	message: Extract<SDKMessage, { type: "result" }>,
+): string {
+	if (message.subtype === "success")
+		return `an error result of ${String(message.result ?? "").length} characters, not kept`;
+	return `${safeName(message.subtype, "an error result")} (${(message.errors ?? []).length} errors, not kept)`;
+}
+
+/**
  * A stream error that is a session failure, or null when the SDK only repeated an error result
  * the session already delivered (the session then ended by itself).
  */
 function streamFailure(error: unknown, gotResult: boolean): Error | null {
 	const thrown = error instanceof Error ? error : new Error(String(error));
-	return gotResult && thrown.message.startsWith(SDK_ERROR_RESULT_ECHO)
-		? null
-		: thrown;
+	if (gotResult && thrown.message.startsWith(SDK_ERROR_RESULT_ECHO))
+		return null;
+	// Its text is not kept: the SDK's errors carry the result's text or the CLI's stderr.
+	const kept = new Error(
+		thrown.message.startsWith(SDK_ERROR_RESULT_ECHO)
+			? "the Claude Code CLI ended with an error result (its text is not kept)"
+			: `the Claude Code CLI's stream failed (${safeName(thrown.name, "Error")}; its text is not kept)`,
+	);
+	kept.name = safeName(thrown.name, "Error");
+	return kept;
 }
 
 /** The vendor refused the request before processing it (a 429 or a logout): not billed. */

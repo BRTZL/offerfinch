@@ -7,6 +7,7 @@ import type {
 import { fitAssessmentSchema } from "@offerfinch/core/scoring/fit";
 import { SubscriptionUnavailableError } from "@offerfinch/core/scoring/llm";
 import {
+	MeteredLlm,
 	meteredFor,
 	type SpendStore,
 	SUBSCRIPTION_BASIS,
@@ -21,6 +22,7 @@ import {
 	resumeClaudeCalls,
 	USAGE_PROBE_SYSTEM,
 } from "../src/claude";
+import { SpendRecorder } from "./spend-recorder";
 
 /**
  * The provider's decisions, against a scripted stand-in for the SDK's `query`: what it starts
@@ -42,6 +44,8 @@ interface Script {
 	loseWith?: string;
 	/** Emitted before the prompt is read (a result here answers nothing that was sent). */
 	early?: SDKMessage[];
+	/** The CLI's initialize answer fails with this message (the CLI did not start). */
+	initFails?: string;
 }
 
 const EXTRA_OFF = {
@@ -148,7 +152,8 @@ function scripted(script: Script) {
 			}
 		}
 		return Object.assign(stream(), {
-			initializationResult: () => ready,
+			initializationResult: () =>
+				script.initFails ? Promise.reject(new Error(script.initFails)) : ready,
 			usage: async () => {
 				if (script.usage === "throw") throw new Error("usage endpoint failed");
 				return script.usage ?? EXTRA_OFF;
@@ -391,7 +396,7 @@ describe("ClaudeSubscriptionProvider", () => {
 				...request((u) => usage.push(u as never)),
 				onModelCall: () => sent.push(1),
 			}),
-		).rejects.toBeInstanceOf(z.ZodError);
+		).rejects.toThrow(/did not match the schema \(greeting: invalid_type/);
 		// Exactly the request the caller reserved for: one run, the prompt unchanged.
 		expect(seen).toHaveLength(1);
 		expect(seen[0]?.prompts).toHaveLength(1);
@@ -549,7 +554,9 @@ describe("what the real CLI emits", () => {
 		});
 		await expect(
 			claude.generateObject(request((u) => usage.push(u as never))),
-		).rejects.toThrow(/must have required property 'greeting'/);
+		).rejects.toThrow(
+			/the CLI's schema check refused the answer \(1 error; missing greeting; the answer is not kept\)/,
+		);
 		expect(seen).toHaveLength(1);
 		expect(usage.map((u) => u.outputTokens)).toEqual([5]);
 	});
@@ -731,9 +738,11 @@ describe("what the real CLI emits", () => {
 				lose: true,
 				loseWith: "socket hang up",
 			});
-			await expect(claude.generateObject(request())).rejects.toThrow(
-				/socket hang up/,
+			const lost = await claude.generateObject(request()).catch((e) => e);
+			expect(lost.message).toMatch(
+				/stream failed \(Error; its text is not kept\)/,
 			);
+			expect(lost.message).not.toMatch(/socket hang up/);
 			expect(seen[0]?.prompts).toHaveLength(1);
 			expect(warnings).toEqual([
 				"warning: claude subscription call got no answer after its prompt was sent; settled on the plan",
@@ -1221,4 +1230,147 @@ describe("plan usage baseline", () => {
 		await claude.generateObject(request());
 		expect(probes).toHaveLength(2);
 	});
+});
+
+/**
+ * Finding: the provider's error text (a result's text, its errors, the SDK's stream error, the
+ * CLI's start error) reached the thrown message, which the spending ledger keeps. None of it may.
+ */
+describe("what a failed Claude call keeps", () => {
+	const CANARY = "ANSWER_CANARY_CL_7c3e my CV says";
+	const usage = {
+		"claude-sonnet-5-5": {
+			inputTokens: 10,
+			outputTokens: 5,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+		},
+	};
+	const scenarios: [string, Script, RegExp][] = [
+		[
+			"an error result's text",
+			{
+				runs: [
+					[
+						{
+							type: "result",
+							subtype: "success",
+							is_error: true,
+							result: CANARY,
+							modelUsage: usage,
+						} as unknown as SDKMessage,
+					],
+				],
+			},
+			/returned no answer: an error result of \d+ characters, not kept/,
+		],
+		[
+			"an error result's errors",
+			{
+				runs: [
+					[
+						{
+							type: "result",
+							subtype: "error_during_execution",
+							is_error: true,
+							errors: [CANARY],
+							modelUsage: usage,
+						} as unknown as SDKMessage,
+					],
+				],
+			},
+			/returned no answer: error_during_execution \(1 errors, not kept\)/,
+		],
+		[
+			"the CLI's schema check errors",
+			{
+				runs: [
+					[
+						{
+							type: "result",
+							subtype: "error_max_structured_output_retries",
+							is_error: true,
+							errors: [
+								`Output does not match: root: must have required property 'greeting'; got ${CANARY}`,
+								`must have required property '${CANARY}'`,
+							],
+							modelUsage: usage,
+						} as unknown as SDKMessage,
+					],
+				],
+			},
+			/schema check refused the answer \(2 errors; missing greeting; the answer is not kept\)/,
+		],
+		[
+			"an answer that fails zod",
+			{ runs: [[result({ greeting: { [CANARY]: CANARY } })]] },
+			/did not match the schema \(greeting: invalid_type; the answer is not kept\)/,
+		],
+		[
+			"a lost stream",
+			{ runs: [[]], lose: true, loseWith: CANARY },
+			/stream failed \(Error; its text is not kept\)/,
+		],
+		[
+			"the SDK's echo of an error result with no result read",
+			{
+				runs: [[]],
+				lose: true,
+				loseWith: `Claude Code returned an error result: ${CANARY}`,
+			},
+			/ended with an error result \(its text is not kept\)/,
+		],
+		[
+			"a request the CLI would retry",
+			{
+				runs: [
+					[
+						{
+							type: "system",
+							subtype: "api_retry",
+							error: CANARY,
+							error_status: 500,
+						} as unknown as SDKMessage,
+					],
+				],
+			},
+			/request failed \(unknown, HTTP 500\)/,
+		],
+		[
+			"a CLI that did not start",
+			{ runs: [[]], initFails: `spawn failed: ${CANARY}` },
+			/did not start \(Error\)/,
+		],
+	];
+	for (const [name, script, says] of scenarios)
+		it(`keeps none of ${name}`, async () => {
+			const logs: string[] = [];
+			const { query } = scripted(script);
+			const store = new SpendRecorder();
+			const metered = new MeteredLlm(
+				new ClaudeSubscriptionProvider({
+					model: "claude-sonnet-5-5",
+					ownerUserId: "u1",
+					parentEnv: { PATH: "/usr/bin" },
+					query,
+					breaker: new Breaker(),
+					drainMs: 50,
+					log: (message, data) => logs.push(message, JSON.stringify(data)),
+				}),
+				store,
+				{ userId: "u1", applicationId: null },
+			);
+			const error = await metered.generateObject(request()).catch((e) => e);
+			expect(String(error)).toMatch(says);
+			const kept = [
+				String(error),
+				JSON.stringify(error),
+				...store.rows,
+				...logs,
+			].join("\n");
+			expect(store.rows.some((r) => /^(settle|refusal|hold) /.test(r))).toBe(
+				true,
+			);
+			expect(kept).not.toContain("ANSWER_CANARY");
+		});
 });

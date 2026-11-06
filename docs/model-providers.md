@@ -65,6 +65,13 @@ Errors never carry what the model wrote or a provider's error body (both can hol
 text, and the spending ledger and workflows keep error messages): fixed words plus bounded facts
 (the answer's length, whether it had braces, the schema paths and zod issue codes that failed, a
 record key shown as `*`, an HTTP status, an error type or code). See `local-llm/src/answer.ts`.
+This holds for every provider: Claude keeps a result's subtype and error count (never its text or
+errors), the CLI's schema check by error count and the schema's own missing property names, a
+stream or start failure by the error's name; Codex keeps its error kind (`codexErrorInfo`'s tag)
+and HTTP status, a JSON-RPC error by its code, item types and tool names only when they are short
+identifiers, and never the app-server's stderr. Pause classification (usage limit, logged out)
+reads the structured kind, not the text. Canary tests run each path through `MeteredLlm` and check
+the recorded rows.
 
 ### OpenCode recipe (2.2.5)
 
