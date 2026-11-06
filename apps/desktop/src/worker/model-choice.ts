@@ -51,7 +51,7 @@ export async function providerViews(
 }
 
 /** The models of each provider that is on and signed in: what a step can run on now. */
-export function availableModels(
+function availableModels(
 	views: ProviderView[],
 ): Partial<Record<ProviderId, ModelInfo[]>> {
 	return Object.fromEntries(

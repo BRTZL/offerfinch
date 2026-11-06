@@ -316,15 +316,12 @@ export async function skipRestOfSetup(page: Page): Promise<void> {
 }
 
 /**
- * Setup's Connect AI with the test models: Claude Code and Codex read as not installed in a
- * test run (unless `fakeClis` says otherwise), so no step is filled by itself; this opens the
- * models to choose by hand, folded away, and picks the test models for every role.
+ * Setup's Connect AI with the test models: every provider reads as not installed in a test run
+ * (unless `fakeClis` says otherwise), so no step is filled by itself; this picks the test models
+ * for every step in Starting models.
  */
 export async function pickFakeModels(page: Page): Promise<void> {
 	await expect(page.getByTestId("setup-ai")).toBeVisible({ timeout: 30_000 });
-	const mode = page.getByTestId("role-scoring-mode");
-	if (!(await mode.isVisible()))
-		await page.getByTestId("models-manual").getByRole("button").first().click();
 	for (const role of ["scoring", "tailoring", "claims"]) {
 		await page.getByTestId(`role-${role}-mode`).click();
 		await page.getByTestId(`role-${role}-fake`).click();
@@ -338,12 +335,18 @@ export type FakeCli =
 	| "missing";
 
 /**
- * What Claude Code and Codex read as in a test run (src/worker/fake-clis.ts): written to the
- * data folder, read on every check, so it can change while the app runs (Check again).
+ * What the providers read as in a test run (src/worker/fake-clis.ts): written to the data
+ * folder, read on every check, so it can change while the app runs (Check again). OpenCode and
+ * Gemini (Antigravity) are not installed unless set.
  */
 export function fakeClis(
 	userData: string,
-	clis: { claude: FakeCli; codex: FakeCli },
+	clis: {
+		claude: FakeCli;
+		codex: FakeCli;
+		opencode?: FakeCli;
+		antigravity?: FakeCli;
+	},
 ): void {
 	fs.mkdirSync(userData, { recursive: true });
 	fs.writeFileSync(path.join(userData, "fake-clis.json"), JSON.stringify(clis));
