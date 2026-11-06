@@ -23,10 +23,19 @@ foreach ($reference in $references) {
   if (!(Test-Path (Join-Path $dist "$file.blockmap"))) { throw "Missing blockmap: $file.blockmap" }
 }
 if ($Universal) {
+  foreach ($arch in @('x64', 'arm64')) {
+    $urls = [regex]::Matches($manifest, '(?m)^\s*-?\s*url:\s*(.+?)\s*$')
+    $native = @($urls | Where-Object { $_.Groups[1].Value -match "-$arch-" })
+    if ($native.Count -eq 0) { throw "Missing $arch url in $manifestName" }
+    foreach ($url in $native) {
+      $file = $url.Groups[1].Value.Trim('"', "'")
+      if (!(Test-Path (Join-Path $dist "$file.blockmap"))) { throw "Missing blockmap: $file.blockmap" }
+    }
+  }
   $version = [regex]::Match($manifest, '(?m)^version:\s*(.+?)\s*$').Groups[1].Value
   $combined = "OfferFinch-$version-setup.exe"
   if ($references[0].Groups[1].Value -ne $combined -or $manifest -notmatch "(?m)^path: $([regex]::Escape($combined))\s*$") {
-    throw "$manifestName must select the combined x64/arm64 installer first"
+    throw "$manifestName must list the combined x64/arm64 fallback first"
   }
 }
 Write-Output "Windows update metadata verified: $manifestName, all referenced installers and blockmaps exist."

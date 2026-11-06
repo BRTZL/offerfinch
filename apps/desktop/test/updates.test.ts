@@ -32,12 +32,14 @@ class StubUpdater implements Updater {
 const make = (
 	disabledReason: string | null = null,
 	clock = { now: new Date("2026-11-02T12:00:00Z") },
+	beforeWindowsInstall = async () => {},
 ) => {
 	const updater = new StubUpdater();
 	const states: UpdateState[] = [];
 	const ready: string[] = [];
 	const updates = new Updates(updater, {
 		currentVersion: "0.1.0",
+		beforeWindowsInstall,
 		disabledReason,
 		onChange: (s) => states.push(s),
 		onReady: (v) => ready.push(v),
@@ -48,24 +50,83 @@ const make = (
 };
 
 describe("Updates", () => {
-	it("silently installs and restarts on Windows", () => {
+	it("silently installs and restarts on Windows", async () => {
 		vi.stubGlobal("process", { ...process, platform: "win32" });
 		try {
 			const { updater, updates } = make();
 			updater.emit("update-downloaded", { version: "0.2.0" });
 			expect(updates.install()).toBe(true);
-			expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
+			await vi.waitFor(() =>
+				expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true),
+			);
 		} finally {
 			vi.unstubAllGlobals();
 		}
 	});
 
-	it("checks at launch and every six hours", async () => {
+	it("waits for Windows shutdown and refuses a second restart press", async () => {
+		vi.stubGlobal("process", { ...process, platform: "win32" });
+		try {
+			let finish = () => {};
+			const shutdown = vi.fn(
+				() =>
+					new Promise<void>((resolve) => {
+						finish = resolve;
+					}),
+			);
+			const { updater, updates } = make(null, undefined, shutdown);
+			updater.emit("update-downloaded", { version: "0.2.0" });
+			expect(updates.install()).toBe(true);
+			expect(updates.install()).toBe(false);
+			expect(shutdown).toHaveBeenCalledTimes(1);
+			expect(updater.quitAndInstall).not.toHaveBeenCalled();
+			finish();
+			await vi.waitFor(() =>
+				expect(updater.quitAndInstall).toHaveBeenCalledExactlyOnceWith(
+					true,
+					true,
+				),
+			);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("does not launch NSIS when Windows shutdown fails", async () => {
+		vi.stubGlobal("process", { ...process, platform: "win32" });
+		try {
+			const { updater, updates } = make(null, undefined, async () => {
+				throw new Error("still running");
+			});
+			updater.emit("update-downloaded", { version: "0.2.0" });
+			updates.install();
+			await vi.waitFor(() => expect(updates.get().status).toBe("error"));
+			expect(updater.quitAndInstall).not.toHaveBeenCalled();
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("keeps macOS restart immediate without Windows shutdown", () => {
+		vi.stubGlobal("process", { ...process, platform: "darwin" });
+		try {
+			const shutdown = vi.fn(async () => {});
+			const { updater, updates } = make(null, undefined, shutdown);
+			updater.emit("update-downloaded", { version: "0.2.0" });
+			expect(updates.install()).toBe(true);
+			expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true);
+			expect(shutdown).not.toHaveBeenCalled();
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("checks at launch and every 30 minutes", async () => {
 		vi.useFakeTimers();
 		const { updater, updates } = make();
 		try {
 			updates.start();
-			await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000 - 1);
+			await vi.advanceTimersByTimeAsync(30 * 60 * 1000 - 1);
 			expect(updater.check).toHaveBeenCalledTimes(1);
 			await vi.advanceTimersByTimeAsync(1);
 			expect(updater.check).toHaveBeenCalledTimes(2);

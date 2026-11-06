@@ -23,6 +23,7 @@ import { runNoticeAction } from "./notice-actions";
 import { showNotice } from "./notices";
 import { CHIRP_SOUND, chirpPlayer, Notifier } from "./notifications";
 import { registerAppScheme } from "./protocol";
+import { shutdownForQuit } from "./quit-shutdown";
 import { SecretStore } from "./secrets";
 import { SiteBrowser } from "./site-browser";
 import { connectSiteTabs } from "./site-wiring";
@@ -262,11 +263,10 @@ async function main() {
 		mainState.quitting = true;
 	});
 	app.on("will-quit", (event) => {
-		mainState.sites.closeAll();
+		const stopping = shutdownForQuit();
 		if (mainState.worker.pid === undefined) return;
 		event.preventDefault();
-		void mainState.worker
-			.stop()
+		void stopping
 			.catch((error) => log("worker did not stop at quit", String(error)))
 			.finally(() => app.exit(0));
 	});

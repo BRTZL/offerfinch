@@ -3,6 +3,7 @@ import path from "node:path";
 import { app, BrowserWindow } from "electron";
 import { IPC, type UpdateState } from "../shared/bridge";
 import { buildMenu } from "./menu";
+import { shutdownForQuit } from "./quit-shutdown";
 import { log, mainState, TEST_MODE } from "./state";
 import { testHooks } from "./test-hooks";
 import { updateTray } from "./tray";
@@ -53,6 +54,7 @@ export async function createUpdates(): Promise<Updates> {
 	}
 	return new Updates(updater, {
 		currentVersion: app.getVersion(),
+		beforeWindowsInstall: shutdownForQuit,
 		disabledReason,
 		log,
 		onChange: (state: UpdateState) => {

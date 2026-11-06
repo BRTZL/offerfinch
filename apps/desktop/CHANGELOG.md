@@ -10,7 +10,8 @@ at the top, above the newest version. Only what is merged into main belongs here
 
 ## Unreleased
 
-- Windows releases now download updates in the background and install when you restart or quit.
+- Windows releases now download updates in the background and install when you restart or quit;
+  not yet tried on a real Windows PC.
 
 - No rule sets a job aside any more: every job a search finds gets a fit score. A job you
   can't take (it needs another citizenship, a security clearance, a work permit you don't
@@ -21,7 +22,7 @@ at the top, above the newest version. Only what is merged into main belongs here
   or avoid. Saving Job search applies to new jobs; jobs already in your Inbox keep their score.
 - Claude and Codex plans now allow 500 model calls a day by default (was 40). Jobs found past
   the limit wait and are scored when there is room.
-- First Windows builds (x64 and arm64 installers, not yet signed or published, an early
+- First Windows builds (x64 and arm64 installers, not yet signed, an early
   preview). Backups, diagnostics, Chrome, Claude Code and notifications have Windows support,
   still to be tried on a real Windows PC; the ChatGPT plan through Codex stays macOS only,
   because it needs macOS's sandbox.

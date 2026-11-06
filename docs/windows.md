@@ -19,7 +19,7 @@ same problem (`packages/shared/src/shell.ts`, `apps/server/src/provider/Drivers/
 | Notification sound | plays `chirp.aiff` with `/usr/bin/afplay` | Windows' own notification sound; AppUserModelID set so toasts show |
 | Tray | black template PNGs | Colour tray icon |
 | Menu | macOS app menu (Services, Hide, ...) | Same menus without the macOS-only roles |
-| Updates | electron-updater, Squirrel.Mac zips | electron-updater, NSIS installers from GitHub Releases (x64 + arm64 combined installer) |
+| Updates | electron-updater, Squirrel.Mac zips | electron-updater, NSIS installers from GitHub Releases (per-architecture installers, combined fallback) |
 | Secrets | `safeStorage` (Keychain) | `safeStorage` uses DPAPI: works as is; wording says "this computer" |
 
 ## Phase 1 (this change)
@@ -31,7 +31,7 @@ same problem (`packages/shared/src/shell.ts`, `apps/server/src/provider/Drivers/
    core/db/runner, desktop and local-llm tests (macOS tool and Seatbelt cases skip), builds the installer, launches the packaged app and uploads the installer.
 
 5. Release workflow publishes Windows installers, blockmaps and stable/preview update metadata.
-   Release-stamped builds check at launch and every six hours, download in the background and
+   Release-stamped builds check at launch and every 30 minutes, download in the background and
    install on Restart to Update or next quit. Local and dry-run builds do not update.
 
 ## Later

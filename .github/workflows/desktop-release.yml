@@ -9,11 +9,11 @@
 #   starts a second run; it waits for this one (one release at a time), finds the release already
 #   made and ends green without building ("already released").
 #
-# released -> resolve -> quality, test, test-mac, e2e (3 shards), build (arm64 + x64 on one runner)
+# released -> resolve -> quality, test, test-mac, e2e (3 shards), build (arm64 + x64 on one runner), build-windows
 #          -> finalize (button only) -> publish -> notify
 #
 # The checks and the build run side by side: signing and notarization take as long as the tests,
-# and nothing is committed, tagged or published until quality, test, test-mac and build have
+# and nothing is committed, tagged or published until quality, test, test-mac, build and build-windows have
 # passed. A failed check leaves a signed build as a run artifact and nothing more. The e2e suite
 # runs beside them but does not hold a release: a failure keeps its traces as an artifact and the
 # notification says so, and the release goes out (slow, uneven macOS runners made it fail on

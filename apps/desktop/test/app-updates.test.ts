@@ -41,6 +41,8 @@ afterEach(() => {
 	mocks.test = false;
 	mocks.release = true;
 	mocks.updater.on.mockClear();
+	mocks.updater.autoDownload = false;
+	mocks.updater.autoInstallOnAppQuit = false;
 });
 
 describe("release updater gating", () => {

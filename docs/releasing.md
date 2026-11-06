@@ -18,9 +18,19 @@ A release publishes a GitHub Release in this repository with:
   entry when available; separate installers allow smaller native downloads; all manifest references are uploaded and size-checked before publishing.
 
 Windows builds are unsigned for now. SmartScreen may warn on first manual installation;
-background updates run silently. Windows policy or antivirus can still block an unsigned
-installer, so a warning-free update needs proof on a real PC. No `publisherName` is configured:
+background updates are expected to install silently, pending a real-PC test. Windows policy
+or antivirus can still block an unsigned installer, so a warning-free update needs proof on a real PC. No `publisherName` is configured:
 electron-updater skips Authenticode verification when it is absent (download hashes still apply).
+
+For manual downloads, use `OfferFinch-<version>-x64-setup.exe` for most PCs or
+`OfferFinch-<version>-arm64-setup.exe` for ARM PCs. Installing the combined installer is supported,
+but its first update is a full download rather than differential.
+
+Windows updates are unsigned and no `publisherName` is set, so GitHub release assets and HTTPS
+are the only trust root. Anyone able to write release assets, including with a token granting
+`contents: write`, can ship code every Windows install runs on its next update. macOS has an
+extra Developer ID check. Authenticode signing with a fixed `publisherName` closes this gap;
+once added, the certificate's publisher must stay the same.
 
 To test Windows OTA, install an older **release-stamped preview** on a Windows PC, then publish a
 newer preview through the normal release flow. Use Settings › General › Updates › Check Now;
@@ -95,7 +105,7 @@ by side; the longest is the build at about six minutes, each e2e shard about fou
 long GitHub takes to hand out macOS runners, which has been anything from seconds to twenty
 minutes. Only one release runs at a time and a running release is never cancelled. A second run waits; GitHub keeps only one waiting run, so a third replaces the
 waiting one. Installed apps find a new
-release within six hours, or soon after the computer wakes or the window comes forward (or at once with
+release within 30 minutes, or soon after the computer wakes or the window comes forward (or at once with
 Settings › General › Updates › Check Now). They download it in the background, and the sidebar's
 update indicator turns into a restart button with the release's notes and **Restart now**.
 
