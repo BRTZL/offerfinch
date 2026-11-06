@@ -101,7 +101,9 @@ export async function openSignInPage(url: string): Promise<void> {
 		});
 		return;
 	}
-	await openExternalLink(url, null).catch((error) =>
-		log("sign-in page not opened", String(error)),
-	);
+	const opened = await openExternalLink(url, null).catch((error) => {
+		log("sign-in page not opened", String(error));
+		return false;
+	});
+	if (opened) log("sign-in page opened in the browser");
 }

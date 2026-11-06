@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, Download, LogIn } from "lucide-react";
+import { Copy, Download, ExternalLink, LogIn } from "lucide-react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 import { ProviderMark } from "@/components/system/provider-mark";
@@ -191,6 +191,11 @@ function useProviderAction() {
 	});
 	return {
 		pending: run.isPending,
+		/** A sign-in from the app is waiting for the browser (it can take minutes). */
+		signingIn: run.isPending && run.variables?.kind === "signIn",
+		/** Opens the same sign-in page again; the waiting sign-in finishes either way. */
+		reopen: (view: ProviderView) =>
+			void client.ai.signIn({ provider: view.provider }).catch(() => {}),
 		run: (view: ProviderView) => {
 			const kind = view.state.path ? "signIn" : "install";
 			if (view.inApp[kind])
@@ -232,6 +237,26 @@ export function ProviderFix({
 	if (!fixable(view)) return null;
 	const install = providerStatus(view).kind === "missing";
 	const inApp = view.inApp[install ? "install" : "signIn"];
+	if (action.signingIn)
+		return (
+			<span
+				className="flex items-center gap-2"
+				data-testid={`fix-${view.provider}-waiting`}
+			>
+				<span className="text-muted-foreground text-xs">
+					Finish signing in in your browser
+				</span>
+				<Button
+					variant={variant}
+					size={size}
+					onClick={() => action.reopen(view)}
+					data-testid={`fix-${view.provider}-reopen`}
+				>
+					<ExternalLink />
+					Open again
+				</Button>
+			</span>
+		);
 	return (
 		<Button
 			variant={variant}
