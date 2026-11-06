@@ -11,6 +11,7 @@ import {
 	providerStatus,
 	STEPS,
 	StepPicker,
+	signedInLine,
 	useProviders,
 } from "@/components/desktop/step-picker";
 import {
@@ -308,11 +309,13 @@ function AccountRow({ view }: { view: ProviderView }) {
 				</span>
 			}
 			subtitle={
-				status.kind === "off"
-					? view.off
-					: status.kind === "signed-in"
-						? `${view.state.login.detail} · ${view.models.length} models`
-						: view.state.login.detail
+				<span title={view.state.login.detail}>
+					{status.kind === "off"
+						? view.off
+						: status.kind === "signed-in"
+							? signedInLine(view)
+							: view.state.login.detail}
+				</span>
 			}
 			detail={
 				fix && !inApp && status.kind !== "signed-in" ? (

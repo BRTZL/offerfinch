@@ -56,6 +56,8 @@ async function providerAction(
 export const aiRouter = {
 	get: protectedProcedure.handler(async () => {
 		const w = worker();
+		// After an upgrade, the steps that ran on a key are filled once the CLIs are found.
+		if (w.keySteps.length) await w.pathRefresh;
 		return {
 			settings: await w.settings.get("ai"),
 			roles: w.roles,

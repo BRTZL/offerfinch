@@ -13,6 +13,7 @@ import {
 	providerStatus,
 	STEPS,
 	StepPicker,
+	signedInLine,
 } from "@/components/desktop/step-picker";
 import { Group, Section } from "@/components/system/layout";
 import { ProviderTile } from "@/components/system/provider-mark";
@@ -31,10 +32,7 @@ type Detected = Awaited<ReturnType<typeof client.ai.autoConnect>>;
 function detectedLine(view: ProviderView): string {
 	const status = providerStatus(view);
 	if (status.kind === "off") return view.off ?? "Not available here.";
-	if (status.kind === "signed-in") {
-		const n = view.models.length;
-		return `${view.state.login.detail} · ${n} model${n === 1 ? "" : "s"}`;
-	}
+	if (status.kind === "signed-in") return signedInLine(view);
 	if (status.kind === "missing") return "Not installed.";
 	return view.state.login.state === "not_subscription"
 		? "Signed in with an API account, not a plan."
@@ -62,7 +60,9 @@ function DetectedRow({ view }: { view: ProviderView }) {
 					) : null}
 				</span>
 			}
-			subtitle={detectedLine(view)}
+			subtitle={
+				<span title={view.state.login.detail}>{detectedLine(view)}</span>
+			}
 			detail={
 				command ? (
 					<span className="flex flex-col gap-1">

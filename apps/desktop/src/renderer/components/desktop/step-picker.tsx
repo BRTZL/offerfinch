@@ -100,6 +100,29 @@ export function providerStatus(view: ProviderView): ProviderStatus {
 	return { kind: "signed-out", label: "Signed out" };
 }
 
+const cap = (w: string) => w.charAt(0).toUpperCase() + w.slice(1);
+
+/**
+ * The plan in a few words, from a login's detail when it names one ("Max plan", "ChatGPT
+ * Plus"); null otherwise (the full detail is the line's tooltip).
+ */
+function planOf(view: ProviderView): string | null {
+	const detail = view.state.login.detail;
+	const chatgpt = /ChatGPT plan ([a-z]+)/i.exec(detail)?.[1];
+	if (chatgpt && chatgpt !== "unknown") return `ChatGPT ${cap(chatgpt)}`;
+	const claude = /\bplan ([a-z]+)/i.exec(detail)?.[1];
+	if (view.provider === "claude" && claude) return `${cap(claude)} plan`;
+	return null;
+}
+
+/** A signed-in account in one short line: "Max plan · 3 models". */
+export function signedInLine(view: ProviderView): string {
+	const n = view.models.length;
+	const models = `${n} model${n === 1 ? "" : "s"}`;
+	const plan = planOf(view);
+	return plan ? `${plan} · ${models}` : models;
+}
+
 /** A model's name inside its provider's group: "Opus 5.5", not "Claude Opus 5.5". */
 function shortName(model: Pick<ModelInfo, "name" | "provider">): string {
 	const prefix = `${GROUP_NAME[model.provider]} `;
