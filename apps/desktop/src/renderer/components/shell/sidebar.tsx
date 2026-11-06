@@ -74,7 +74,8 @@ function SidebarLink({ item, active }: { item: Item; active: boolean }) {
 
 /**
  * The window's sidebar: the traffic lights at its top, the pages with plain counts (as in
- * Mail), and the scan state with the mark at its foot, beside Scan now and the update indicator.
+ * Mail), and the scan state with the mark at its foot, beside the update indicator. Scan now
+ * lives on the Scans page, in the command menu, the app menu and the tray.
  */
 export function Sidebar() {
 	const pathname = usePathname();
@@ -189,7 +190,6 @@ export function Sidebar() {
 						)}
 					</div>
 				</Link>
-				<ScanButton />
 				<UpdateIndicator />
 			</div>
 		</nav>
@@ -197,8 +197,7 @@ export function Sidebar() {
 }
 
 /**
- * Scan now, beside the sidebar's scan state (an icon), or labelled where a page offers the first
- * scan: reads every watched board once, now.
+ * Scan now, an icon or labelled where a page offers a scan: reads every watched board once, now.
  */
 export function ScanButton({ labeled = false }: { labeled?: boolean }) {
 	const queryClient = useQueryClient();
@@ -229,8 +228,6 @@ export function ScanButton({ labeled = false }: { labeled?: boolean }) {
 			aria-label={label}
 			title={next ? `${label}. ${next}` : label}
 		>
-			{/* Still while a scan runs: the scan state beside it shows the progress, and the only
-			    moving thing at the sidebar's foot is an update downloading. */}
 			<RefreshCw />
 			{labeled ? label : null}
 		</Button>
