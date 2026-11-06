@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
 	billingOf,
+	DEFAULT_MAX_OUTPUT_TOKENS,
 	type GenerateObjectRequest,
 	type LlmBilling,
 	LlmNotBilledError,
@@ -274,7 +275,7 @@ export class MeteredLlm implements LlmProvider {
 				request.prompt,
 				schemaText(request.schema),
 			]),
-			request.maxTokens ?? 16000,
+			request.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
 			this.inner.price,
 		);
 	}

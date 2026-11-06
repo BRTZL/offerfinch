@@ -12,6 +12,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { SubscriptionUnavailableError } from "@offerfinch/core/scoring/llm";
+import { MeteredLlm } from "@offerfinch/core/scoring/metered";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -23,6 +24,7 @@ import {
 } from "../src/antigravity";
 import type { AntigravityInstall } from "../src/antigravity-release";
 import { Breaker } from "../src/breaker";
+import { SpendRecorder } from "./spend-recorder";
 
 /**
  * The provider against a stand-in ACP server (test/fixtures/fake-agy.mjs) and a stand-in for
@@ -234,7 +236,72 @@ describe.skipIf(!posix)("AntigravityProvider", () => {
 		const off = await provider("ok")
 			.generateObject(request())
 			.catch((e) => e);
-		expect(off).toBeInstanceOf(z.ZodError);
+		expect(off).not.toBeInstanceOf(SubscriptionUnavailableError);
+		expect(String(off)).toMatch(/did not match the schema \(ok: invalid_type/);
+	});
+
+	it("never keeps an answer's or Google's error text: not in errors, the ledger or the log", async () => {
+		const CANARY = "PRIVATE_CANARY_AGY_2c7e";
+		const records = z.object({ scores: z.record(z.string(), z.number()) });
+		const json = (status: number, message: string) => ({
+			status,
+			body: JSON.stringify({ error: { code: status, message } }),
+		});
+		const cases: {
+			scenario?: string;
+			reply: () => { status: number; body: string };
+			schema?: z.ZodType;
+			says: RegExp;
+		}[] = [
+			{ reply: () => answer(`Sure! ${CANARY}`), says: /no JSON object/ },
+			{
+				reply: () => answer(JSON.stringify({ ok: CANARY })),
+				says: /\(ok: invalid_type/,
+			},
+			{
+				reply: () => answer(JSON.stringify({ scores: { [CANARY]: "x" } })),
+				schema: records,
+				says: /scores\.\*: invalid_type/,
+			},
+			{ reply: () => json(500, CANARY), says: /Google answered 500$/ },
+			{
+				reply: () => ({ status: 503, body: `<html>${CANARY}</html>` }),
+				says: /Google answered 503$/,
+			},
+			{
+				reply: () => json(429, `quota ${CANARY}`),
+				says: /usage limit for this model is reached \(HTTP 429\)/,
+			},
+			{
+				scenario: "rpc-error",
+				reply: () => answer(CANARY),
+				says: /the Antigravity server answered error -32603/,
+			},
+		];
+		for (const { scenario, reply: next, schema: s, says } of cases) {
+			reply = next;
+			const logs: string[] = [];
+			const store = new SpendRecorder();
+			const metered = new MeteredLlm(
+				provider(scenario ?? "ok", {
+					log: (message, data) => logs.push(message, JSON.stringify(data)),
+				}),
+				store,
+				{ userId: "u1", applicationId: null },
+			);
+			const error = await metered
+				.generateObject(request(s ? { schema: s } : {}))
+				.catch((e) => e);
+			expect(String(error)).toMatch(says);
+			const kept = [
+				String(error),
+				JSON.stringify(error),
+				...store.rows,
+				...logs,
+			].join("\n");
+			expect(store.rows.some((r) => r.startsWith("settle"))).toBe(true);
+			expect(kept).not.toContain(CANARY);
+		}
 	});
 
 	for (const [scenario, why] of [

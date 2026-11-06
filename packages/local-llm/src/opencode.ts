@@ -5,6 +5,7 @@ import { chmod, mkdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+	DEFAULT_MAX_OUTPUT_TOKENS,
 	fullPrompt,
 	type GenerateObjectRequest,
 	type LlmBilling,
@@ -19,14 +20,25 @@ import {
 import { toStrictJsonSchema } from "@offerfinch/core/scoring/openai";
 import type { ModelPrice } from "@offerfinch/core/scoring/pricing";
 import type { z } from "zod";
+import { parseAnswer, unreadableAnswer } from "./answer";
 import { Breaker } from "./breaker";
 import { findCliOnPath } from "./cli-path";
 import { subscriptionEnv } from "./env";
 import {
+	afterScrub,
+	attemptCleanup,
+	CLEANUP_GRACE_MS,
+	CLEANUP_REFUSAL,
+	type CleanupTarget,
+	cleanupOverdue,
+	type PendingCleanup,
+	readPendingCleanup,
+	scheduleCleanupRetry,
+} from "./opencode-cleanup";
+import {
 	readOpenCodeCredentials,
 	type ScrubResult,
 	scrubOpenCodeSessions,
-	sweepOpenCodeProject,
 } from "./opencode-db";
 import { type RelayLog, startRelay } from "./opencode-relay";
 
@@ -119,6 +131,8 @@ export function openCodeDbFile(dataHome: string): string {
 }
 
 interface RootDirs {
+	/** The root's real path: OfferFinch's own files (the cleanup marker). */
+	base: string;
 	home: string;
 	cfg: string;
 	state: string;
@@ -138,7 +152,7 @@ interface RootDirs {
 async function prepareRoot(root: string): Promise<RootDirs> {
 	await mkdir(root, { recursive: true, mode: 0o700 });
 	const real = await realpath(root);
-	const dirs: RootDirs = {
+	const dirs: Omit<RootDirs, "base"> = {
 		home: join(real, "home"),
 		cfg: join(real, "cfg"),
 		state: join(real, "state"),
@@ -152,7 +166,7 @@ async function prepareRoot(root: string): Promise<RootDirs> {
 	const own = join(dirs.cfg, "opencode");
 	await mkdir(own, { recursive: true });
 	await chmod(own, 0o555);
-	return dirs;
+	return { base: real, ...dirs };
 }
 
 /** The environment of every OpenCode process: the allowlist, the private root, the switches. */
@@ -283,7 +297,9 @@ function responseFormat(schema: Record<string, unknown>) {
 /**
  * `OPENCODE_CONFIG_CONTENT` for one call: deny-all permissions and policies, no MCP, plugins,
  * skills, instructions or commands, updates and sharing off, the source's `baseURL` pointed at
- * the relay, the schema as the model's `response_format`, and one agent with our system prompt.
+ * the relay, the schema as the model's `response_format`, the reserved output limit as its
+ * `max_completion_tokens` (2.2.5 otherwise sends the model's own limit, 32,000 on the tested
+ * model; the model's `body` overrides it), and one agent with our system prompt.
  * The nonce in the agent's description identifies this document in `GET /api/config`. Never
  * `agents.*.steps` (it injects an assistant message), never an API key.
  */
@@ -292,13 +308,24 @@ export function openCodeConfig(input: {
 	model: string;
 	relayUrl?: string;
 	schema?: Record<string, unknown>;
+	/** The output limit the call was reserved for. */
+	maxTokens?: number;
 	system?: string;
 	nonce: string;
 }): Record<string, unknown> {
 	const provider: Record<string, unknown> = {};
 	if (input.relayUrl) provider.settings = { baseURL: input.relayUrl };
-	if (input.schema)
-		provider.models = { [input.model]: { body: responseFormat(input.schema) } };
+	if (input.schema || input.maxTokens)
+		provider.models = {
+			[input.model]: {
+				body: {
+					...(input.schema ? responseFormat(input.schema) : {}),
+					...(input.maxTokens
+						? { max_completion_tokens: input.maxTokens }
+						: {}),
+				},
+			},
+		};
 	const allowed = [...new Set(["opencode", input.source])];
 	return {
 		$schema: "https://opencode.ai/v2/config.json",
@@ -534,8 +561,9 @@ async function startServe(input: {
 	});
 	if (!url || !/^http:\/\/127\.0\.0\.1:\d+$/.test(url)) {
 		await close();
+		// Its output is not quoted: an error line can carry a provider's answer.
 		throw new Error(
-			`opencode serve did not start: ${stderr.slice(-300) || stdout.slice(-300)}`,
+			`opencode serve did not start (${child.exitCode ?? child.signalCode ?? "no exit"}, ${stderr.length} characters on stderr)`,
 		);
 	}
 	const streams = new AbortController();
@@ -820,9 +848,14 @@ export interface OpenCodeCallInput {
 	system: string;
 	prompt: string;
 	schema: Record<string, unknown>;
+	/** The output limit the call was reserved for: set in the config and held by the relay. */
+	maxTokens: number;
 	parentEnv?: Record<string, string | undefined>;
 	onModelCall?: () => void;
 	timeoutMs?: number;
+	/** How long calls go on while an earlier cleanup is unfinished; default `CLEANUP_GRACE_MS`. */
+	cleanupGraceMs?: number;
+	log?: (message: string, data?: Record<string, unknown>) => void;
 	/** Tests: runs before the server is stopped and the session scrubbed. */
 	beforeScrub?: (input: { sessionId: string | null }) => Promise<void>;
 	/** Tests: the relay's upstream fetch. */
@@ -859,6 +892,10 @@ export interface OpenCodeCallResult {
 	relay: RelayLog | null;
 	scrub: ScrubResult | null;
 	scrubError: string | null;
+	/** A cleanup (this call's or an earlier one's) is unfinished; it is retried. */
+	cleanupPending: boolean;
+	/** Refused before starting: an earlier cleanup has been unfinished past the grace period. */
+	cleanupRefused: boolean;
 	removedEnv: string[];
 }
 
@@ -878,59 +915,108 @@ function emptyResult(removedEnv: string[]): OpenCodeCallResult {
 		relay: null,
 		scrub: null,
 		scrubError: null,
+		cleanupPending: false,
+		cleanupRefused: false,
 		removedEnv,
 	};
 }
 
-/** The crash sweep runs once per process, before its first call, per database. */
-const swept = new Map<string, Promise<ScrubResult | null>>();
+interface CleanupContext {
+	target: CleanupTarget;
+	binary: string;
+	root: string;
+	parentEnv: Record<string, string | undefined>;
+	log?: (message: string, data?: Record<string, unknown>) => void;
+}
 
-/** Sessions an earlier process left in the user's database (it stopped before its scrub). */
-function sweepOnce(
-	dbFile: string,
-	cwd: string,
-	log?: (message: string, data?: Record<string, unknown>) => void,
-): Promise<ScrubResult | null> {
-	const key = `${dbFile}\0${cwd}`;
-	let run = swept.get(key);
-	if (!run) {
-		run = Promise.resolve()
-			.then(() =>
-				existsSync(dbFile) ? sweepOpenCodeProject(dbFile, cwd) : null,
-			)
-			.catch((error) => {
-				log?.("opencode crash sweep failed", { error: String(error) });
-				return null;
-			});
-		swept.set(key, run);
+/** OpenCode calls running, per cleanup target: a sweep must not delete their sessions. */
+const running = new Map<string, number>();
+/** Targets swept since this process started (the crash sweep runs once, then on the marker). */
+const started = new Set<string>();
+
+const targetKey = (target: CleanupTarget) => `${target.dbFile}\0${target.cwd}`;
+
+function cleanupTarget(dirs: RootDirs, dbFile: string): CleanupTarget {
+	return { base: dirs.base, dbFile, cwd: dirs.cwd };
+}
+
+/** Retries an unfinished cleanup later, on the tested build only (the sweep is schema-bound). */
+function retryLater(ctx: CleanupContext, pending: PendingCleanup): void {
+	scheduleCleanupRetry(ctx.target, pending.attempts, async () => {
+		const gate = await checkOpenCodeBinary({
+			binary: ctx.binary,
+			root: ctx.root,
+			parentEnv: ctx.parentEnv,
+		});
+		// Another build now: the next call or start retries after its own gate (and refuses).
+		if (gate.ok) cleanupNow(ctx, new Date());
+	});
+}
+
+/** One cleanup attempt now; a retry is scheduled while it stays unfinished. */
+function cleanupNow(ctx: CleanupContext, now: Date): PendingCleanup | null {
+	const key = targetKey(ctx.target);
+	started.add(key);
+	const attempt = attemptCleanup(ctx.target, {
+		idle: !running.get(key),
+		now,
+	});
+	if (attempt.result?.rows)
+		ctx.log?.("opencode cleanup removed sessions a call left", {
+			rows: attempt.result.rows,
+		});
+	if (attempt.pending) {
+		ctx.log?.("warning: an OpenCode cleanup is unfinished; retrying", {
+			busy: attempt.result?.busy ?? null,
+			error: attempt.error,
+			attempts: attempt.pending.attempts,
+			since: attempt.pending.since,
+		});
+		retryLater(ctx, attempt.pending);
 	}
-	return run;
+	return attempt.pending;
+}
+
+/**
+ * Before a call: the crash sweep once per process, then a retry of any unfinished cleanup. A
+ * refusal (in words) when the cleanup has been unfinished past the grace period; else null.
+ */
+function settleCleanup(
+	ctx: CleanupContext,
+	now: Date,
+	graceMs: number,
+): string | null {
+	const first = !started.has(targetKey(ctx.target));
+	const pending =
+		first || readPendingCleanup(ctx.target) ? cleanupNow(ctx, now) : null;
+	return cleanupOverdue(pending, now, graceMs) ? CLEANUP_REFUSAL : null;
 }
 
 /**
  * The start-up sweep: sessions a crash left in the user's database (the app stopped between a
- * prompt and its scrub). Only on the tested build, only OfferFinch's own project.
+ * prompt and its scrub), and any cleanup an earlier run left unfinished. Only on the tested
+ * build, only OfferFinch's own project.
  */
 export async function sweepOpenCodeCrashes(input: {
 	binary: string;
 	root: string;
 	parentEnv?: Record<string, string | undefined>;
 	log?: (message: string, data?: Record<string, unknown>) => void;
-}): Promise<ScrubResult | null> {
+}): Promise<PendingCleanup | null> {
 	const parentEnv = input.parentEnv ?? process.env;
 	const gate = await checkOpenCodeBinary({ ...input, parentEnv });
 	if (!gate.ok) return null;
 	const dirs = await prepareRoot(input.root);
-	const result = await sweepOnce(
-		openCodeDbFile(openCodeDataHome(parentEnv)),
-		dirs.cwd,
-		input.log,
+	return cleanupNow(
+		{
+			target: cleanupTarget(dirs, openCodeDbFile(openCodeDataHome(parentEnv))),
+			binary: input.binary,
+			root: input.root,
+			parentEnv,
+			log: input.log,
+		},
+		new Date(),
 	);
-	if (result?.rows)
-		input.log?.("opencode crash sweep removed a stale session", {
-			rows: result.rows,
-		});
-	return result;
 }
 
 /** Event types that mean the model tried something other than answering. */
@@ -1097,6 +1183,29 @@ async function converse(
 }
 
 /**
+ * The call's own scrub, after its server exited: unfinished (it threw, or its checkpoint was
+ * busy) keeps the cleanup pending and retries it.
+ */
+function scrubAfterCall(
+	ctx: CleanupContext,
+	sessionId: string,
+	result: OpenCodeCallResult,
+): void {
+	try {
+		result.scrub = scrubOpenCodeSessions(ctx.target.dbFile, [sessionId]);
+	} catch (error) {
+		result.scrubError = error instanceof Error ? error.message : String(error);
+	}
+	const pending = afterScrub(
+		ctx.target,
+		{ result: result.scrub, error: result.scrubError },
+		{ idle: !running.get(targetKey(ctx.target)), now: new Date() },
+	);
+	result.cleanupPending = pending !== null;
+	if (pending) retryLater(ctx, pending);
+}
+
+/**
  * Runs one locked-down OpenCode call (the recipe's steps 1 to 5) and reports what happened;
  * it never throws for an outcome the provider maps (a failure, a retry, a refusal).
  */
@@ -1118,24 +1227,55 @@ export async function runOpenCodeCall(
 		return result;
 	}
 	const dirs = await prepareRoot(input.root);
-	await sweepOnce(dbFile, dirs.cwd);
-	const relay = await startRelay(input.upstream, input.fetch);
-	result.relay = relay.log;
-	const nonce = `offerfinch-${randomBytes(8).toString("hex")}`;
-	const { env } = openCodeEnv(parentEnv, dirs, dataHome, {
-		OPENCODE_CONFIG_CONTENT: JSON.stringify(
-			openCodeConfig({
-				source: input.source,
-				model: input.model,
-				relayUrl: relay.url,
-				schema: input.schema,
-				system: input.system,
-				nonce,
-			}),
-		),
-	});
+	const ctx: CleanupContext = {
+		target: cleanupTarget(dirs, dbFile),
+		binary: input.binary,
+		root: input.root,
+		parentEnv,
+		log: input.log,
+	};
+	const refusal = settleCleanup(
+		ctx,
+		new Date(),
+		input.cleanupGraceMs ?? CLEANUP_GRACE_MS,
+	);
+	if (refusal) {
+		result.boundary = refusal;
+		result.cleanupPending = true;
+		result.cleanupRefused = true;
+		return result;
+	}
+	result.cleanupPending = readPendingCleanup(ctx.target) !== null;
+	const key = targetKey(ctx.target);
+	running.set(key, (running.get(key) ?? 0) + 1);
+	let counted = true;
+	const done = () => {
+		if (!counted) return;
+		counted = false;
+		running.set(key, (running.get(key) ?? 1) - 1);
+	};
 	let serve: Serve | null = null;
+	let relay: Awaited<ReturnType<typeof startRelay>> | null = null;
 	try {
+		relay = await startRelay(input.upstream, {
+			maxTokens: input.maxTokens,
+			fetch: input.fetch,
+		});
+		result.relay = relay.log;
+		const nonce = `offerfinch-${randomBytes(8).toString("hex")}`;
+		const { env } = openCodeEnv(parentEnv, dirs, dataHome, {
+			OPENCODE_CONFIG_CONTENT: JSON.stringify(
+				openCodeConfig({
+					source: input.source,
+					model: input.model,
+					relayUrl: relay.url,
+					schema: input.schema,
+					maxTokens: input.maxTokens,
+					system: input.system,
+					nonce,
+				}),
+			),
+		});
 		serve = await startServe({ binary: input.binary, env, cwd: dirs.cwd });
 		await converse(
 			serve,
@@ -1154,15 +1294,9 @@ export async function runOpenCodeCall(
 		if (input.beforeScrub)
 			await input.beforeScrub({ sessionId: result.sessionId }).catch(() => {});
 		await serve?.close();
-		await relay.close();
-		if (result.sessionId) {
-			try {
-				result.scrub = scrubOpenCodeSessions(dbFile, [result.sessionId]);
-			} catch (error) {
-				result.scrubError =
-					error instanceof Error ? error.message : String(error);
-			}
-		}
+		await relay?.close();
+		done();
+		if (result.sessionId) scrubAfterCall(ctx, result.sessionId, result);
 	}
 	return result;
 }
@@ -1176,6 +1310,19 @@ export interface OpenCodePause {
 	resetsAt?: Date;
 	paid?: boolean;
 	notBilled?: boolean;
+}
+
+/**
+ * OpenCode's error type (`provider.auth`, `provider.free-limit`, …) as it may be shown: a short
+ * dotted name, or `unknown`. Never its message or body, which can carry the provider's answer.
+ */
+function failureType(failure: { type: string }): string {
+	return /^[\w.-]{1,60}$/.test(failure.type) ? failure.type : "unknown";
+}
+
+/** The failure's type and the upstream's status, for a pause's detail. */
+function failureLabel(failure: { type: string }, upstream: number | null) {
+	return `${failureType(failure)}${upstream ? `, HTTP ${upstream}` : ""}`;
 }
 
 /** `retry-after` in seconds or as an HTTP date, as a time. */
@@ -1232,7 +1379,7 @@ export function openCodePause(
 		)
 			return {
 				kind: "usage_limit",
-				detail: `${vendor}'s usage limit is reached (${failure.message.slice(0, 160)}). Preparation waits and resumes after a later scan once it resets, with status in Settings › Models.`,
+				detail: `${vendor}'s usage limit is reached (${failureLabel(failure, upstream)}). Preparation waits and resumes after a later scan once it resets, with status in Settings › Models.`,
 				resetsAt: retryAfterDate(result.relay?.retryAfter ?? null, now),
 				notBilled,
 			};
@@ -1242,7 +1389,7 @@ export function openCodePause(
 		)
 			return {
 				kind: "usage_limit",
-				detail: `${vendor} has no balance left for this model (${failure.message.slice(0, 160)}). Add balance in OpenCode or choose another model in Settings › Models.`,
+				detail: `${vendor} has no balance left for this model (${failureLabel(failure, upstream)}). Add balance in OpenCode or choose another model in Settings › Models.`,
 				notBilled,
 			};
 		return null;
@@ -1277,6 +1424,8 @@ export interface OpenCodeProviderOptions {
 	log?: (message: string, data?: Record<string, unknown>) => void;
 	now?: () => Date;
 	timeoutMs?: number;
+	/** How long calls go on while an earlier cleanup is unfinished; default `CLEANUP_GRACE_MS`. */
+	cleanupGraceMs?: number;
 	/** Tests: stands in for `runOpenCodeCall`. */
 	runCall?: (input: OpenCodeCallInput) => Promise<OpenCodeCallResult>;
 	/** Tests: the user's credentials (types only). */
@@ -1461,6 +1610,8 @@ export class OpenCodeProvider implements LlmProvider {
 			});
 		const schema = toStrictJsonSchema(request.schema as z.ZodType);
 		const effort = this.options.effort;
+		// What the cap reserved for (MeteredLlm reserves at the same default).
+		const maxTokens = request.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
 		const result = await (this.options.runCall ?? runOpenCodeCall)({
 			binary,
 			root: this.options.root,
@@ -1472,16 +1623,20 @@ export class OpenCodeProvider implements LlmProvider {
 			system: `${request.system}\n\nAnswer with one JSON object that matches this JSON schema, and nothing else:\n${JSON.stringify(schema)}`,
 			prompt: fullPrompt(request),
 			schema,
+			maxTokens,
 			parentEnv,
 			timeoutMs: this.options.timeoutMs,
+			cleanupGraceMs: this.options.cleanupGraceMs,
+			log: this.options.log,
 			onModelCall: () => request.onModelCall?.(),
 		});
-		return this.outcome(request, result);
+		return this.outcome(request, result, maxTokens);
 	}
 
 	private outcome<T>(
 		request: GenerateObjectRequest<T>,
 		result: OpenCodeCallResult,
+		maxTokens: number,
 	): T {
 		this.options.log?.("opencode call", {
 			provider: this.name,
@@ -1493,15 +1648,31 @@ export class OpenCodeProvider implements LlmProvider {
 			retried: result.retried,
 			toolAttempt: result.toolAttempt,
 			boundary: result.boundary,
-			failure: result.failure?.type ?? null,
+			failure: result.failure ? failureType(result.failure) : null,
 			scrubbedRows: result.scrub?.rows ?? null,
+			scrubBusy: result.scrub?.busy ?? null,
 			scrubError: result.scrubError,
+			cleanupPending: result.cleanupPending,
+			limitClamped: result.relay?.limitClamped ?? null,
 			removedEnv: result.removedEnv,
 		});
-		if (result.scrubError)
+		if (result.scrubError || (result.scrub && !result.scrub.clean))
 			this.options.log?.(
-				"warning: the OpenCode session was not removed from OpenCode's database; it is removed at the next start",
+				"warning: the OpenCode call's cleanup did not finish in OpenCode's database; it is retried, and OpenCode calls stop if it stays unfinished",
 				{ provider: this.name, error: result.scrubError },
+			);
+		if (
+			result.tokens &&
+			result.tokens.output + result.tokens.reasoning > maxTokens
+		)
+			this.options.log?.(
+				"warning: the answer used more output tokens than its limit (the source does not count reasoning in it)",
+				{
+					provider: this.name,
+					maxTokens,
+					output: result.tokens.output,
+					reasoning: result.tokens.reasoning,
+				},
 			);
 		if (result.tokens) {
 			const usage: LlmUsage = {
@@ -1513,6 +1684,10 @@ export class OpenCodeProvider implements LlmProvider {
 			};
 			request.onUsage?.(usage);
 		}
+		// About this computer's cleanup, not the source: never trips the breaker, so calls resume
+		// as soon as the cleanup finishes.
+		if (result.cleanupRefused)
+			throw this.refuse(result.boundary ?? CLEANUP_REFUSAL);
 		if (result.boundary)
 			throw this.pause("boundary", result.boundary, {
 				notBilled: !result.sent,
@@ -1538,11 +1713,9 @@ export class OpenCodeProvider implements LlmProvider {
 		try {
 			parsed = JSON.parse(stripFence(result.text));
 		} catch {
-			throw new Error(
-				`${this.name}: no valid structured output for ${request.task}: ${result.text.slice(0, 300)}`,
-			);
+			throw unreadableAnswer(this.name, request.task, result.text);
 		}
-		return request.schema.parse(parsed);
+		return parseAnswer(request.schema, parsed, this.name, request.task);
 	}
 
 	/**
@@ -1574,8 +1747,10 @@ export class OpenCodeProvider implements LlmProvider {
 		if (result.retried)
 			return `${this.name}: OpenCode scheduled a retry during ${request.task}; it was stopped after one request${result.relay?.upstreamStatus ? ` (upstream HTTP ${result.relay.upstreamStatus})` : ""}.`;
 		if (result.timedOut) return `${this.name}: ${request.task} timed out`;
-		if (result.failure)
-			return `${this.name}: ${request.task} failed: ${result.failure.type}: ${result.failure.message.slice(0, 300)}`;
+		if (result.failure) {
+			const status = result.relay?.upstreamStatus ?? result.failure.status;
+			return `${this.name}: ${request.task} failed: ${failureType(result.failure)}${status ? ` (HTTP ${status})` : ""}`;
+		}
 		return null;
 	}
 }

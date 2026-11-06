@@ -160,9 +160,12 @@ export function readAnswer(text: string): {
 	return { usage, modelVersion, functionCalls };
 }
 
-/** The upstream's error body (`{error: {code, message, details}}`), read. */
+/**
+ * The upstream's error body (`{error: {code, message, details}}`), read. A body that is not that
+ * JSON is not kept: only its length.
+ */
 export function readError(status: number, text: string): UpstreamError {
-	let message = text.slice(0, 300);
+	let message = `(an error body of ${text.length} characters that is not Google's JSON)`;
 	let reason: string | null = null;
 	let resetsAt: Date | null = null;
 	try {

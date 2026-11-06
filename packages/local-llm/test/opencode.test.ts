@@ -7,6 +7,7 @@ import {
 	LlmNotBilledError,
 	SubscriptionUnavailableError,
 } from "@offerfinch/core/scoring/llm";
+import { MeteredLlm } from "@offerfinch/core/scoring/metered";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -28,12 +29,15 @@ import {
 	parseOpenCodeVersion,
 	retryAfterDate,
 } from "../src/opencode";
+import { CLEANUP_REFUSAL } from "../src/opencode-cleanup";
 import {
 	readOpenCodeCredentials,
 	scrubOpenCodeSessions,
 	sweepOpenCodeProject,
 } from "../src/opencode-db";
-import { relayedStatus, startRelay } from "../src/opencode-relay";
+import { limitedBody, relayedStatus, startRelay } from "../src/opencode-relay";
+import { OPENCODE_SCHEMA as SCHEMA } from "./opencode-schema";
+import { SpendRecorder } from "./spend-recorder";
 
 const SHA = "abe4d88594bffb12b364375b8a6732d2d1f7a977195ed1a35c5c76f8e89c9e0e";
 
@@ -92,7 +96,7 @@ describe("the relay", () => {
 	it("forwards exactly one completion request, with its headers, and refuses the rest", async () => {
 		seen.length = 0;
 		status = 200;
-		const relay = await startRelay(base);
+		const relay = await startRelay(base, { maxTokens: 1000 });
 		expect((await post(relay.url)).status).toBe(200);
 		expect((await post(relay.url)).status).toBe(400);
 		expect((await post(relay.url, "/models")).status).toBe(404);
@@ -104,12 +108,16 @@ describe("the relay", () => {
 			other: 1,
 			upstreamStatus: 200,
 		});
-		expect(relay.log.body).toEqual({ model: "m", messages: [] });
+		expect(relay.log.body).toEqual({
+			model: "m",
+			messages: [],
+			max_completion_tokens: 1000,
+		});
 	});
 
 	it("turns a retryable upstream failure into a 400 and keeps the real status", async () => {
 		status = 429;
-		const relay = await startRelay(base);
+		const relay = await startRelay(base, { maxTokens: 1000 });
 		expect((await post(relay.url)).status).toBe(400);
 		await relay.close();
 		expect(relay.log.upstreamStatus).toBe(429);
@@ -119,8 +127,48 @@ describe("the relay", () => {
 		expect(relayedStatus(200)).toBe(200);
 	});
 
+	it("holds the request to the reserved output limit, and refuses a body it cannot read", async () => {
+		const raw = (body: unknown) => Buffer.from(JSON.stringify(body));
+		expect(limitedBody(raw({ max_completion_tokens: 32000 }), 500)).toEqual({
+			body: { max_completion_tokens: 500 },
+			clamped: true,
+		});
+		expect(
+			limitedBody(raw({ max_tokens: 100, max_completion_tokens: 900 }), 500),
+		).toEqual({
+			body: { max_tokens: 100, max_completion_tokens: 500 },
+			clamped: true,
+		});
+		expect(limitedBody(raw({ max_completion_tokens: 500 }), 500)).toEqual({
+			body: { max_completion_tokens: 500 },
+			clamped: false,
+		});
+		for (const bad of [null, "500", 0, 1.5])
+			expect(limitedBody(raw({ max_output_tokens: bad }), 500)?.body).toEqual({
+				max_output_tokens: 500,
+			});
+		expect(limitedBody(Buffer.from("not json"), 500)).toBeNull();
+		expect(limitedBody(raw([1]), 500)).toBeNull();
+
+		seen.length = 0;
+		status = 200;
+		const relay = await startRelay(base, { maxTokens: 7 });
+		const refused = await fetch(`${relay.url}/chat/completions`, {
+			method: "POST",
+			body: "not json",
+		});
+		expect(refused.status).toBe(400);
+		// Refused unsent, and the relay stays closed: one request per call.
+		expect((await post(relay.url)).status).toBe(400);
+		await relay.close();
+		expect(seen).toEqual([]);
+		expect(relay.log).toMatchObject({ forwarded: 0, refused: 2 });
+	});
+
 	it("answers 400 when the upstream cannot be reached", async () => {
-		const relay = await startRelay("http://127.0.0.1:1/v1");
+		const relay = await startRelay("http://127.0.0.1:1/v1", {
+			maxTokens: 1000,
+		});
 		expect((await post(relay.url)).status).toBe(400);
 		await relay.close();
 		expect(relay.log.upstreamError).not.toBeNull();
@@ -192,6 +240,22 @@ describe("the configuration check before the prompt", () => {
 		).toMatch(/folder/);
 		expect(configProblem([dir], nonce, cfg)).toMatch(/not loaded once/);
 		expect(configProblem("nope", nonce, cfg)).toMatch(/did not list/);
+	});
+
+	it("sets the reserved output limit as the model's max_completion_tokens", () => {
+		const config = openCodeConfig({
+			source: "opencode",
+			model: "m",
+			schema: { type: "object" },
+			maxTokens: 1234,
+			nonce: "n",
+		}) as { providers: Record<string, { models: Record<string, unknown> }> };
+		expect(config.providers.opencode?.models.m).toMatchObject({
+			body: {
+				max_completion_tokens: 1234,
+				response_format: { type: "json_schema" },
+			},
+		});
 	});
 
 	it("locks the config down and never sets steps or a key", () => {
@@ -370,29 +434,6 @@ describe("billing per source", () => {
 	});
 });
 
-/** The 2.2.5 tables the scrub touches, with their foreign keys, as OpenCode creates them. */
-const SCHEMA = `
-CREATE TABLE project (id text PRIMARY KEY, worktree text NOT NULL, sandboxes text NOT NULL DEFAULT '[]', time_created integer NOT NULL DEFAULT 0, time_updated integer NOT NULL DEFAULT 0);
-CREATE TABLE session_v2 (id text PRIMARY KEY, project_id text NOT NULL, slug text NOT NULL DEFAULT '', directory text NOT NULL DEFAULT '', title text, version text NOT NULL DEFAULT '2.2.5', time_created integer NOT NULL DEFAULT 0, time_updated integer NOT NULL DEFAULT 0,
-  CONSTRAINT fk_project FOREIGN KEY (project_id) REFERENCES project(id) ON DELETE CASCADE);
-CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL DEFAULT 0, time_updated integer NOT NULL DEFAULT 0, data text NOT NULL,
-  CONSTRAINT fk_sm FOREIGN KEY (session_id) REFERENCES session_v2(id) ON DELETE CASCADE);
-CREATE TABLE session_part (message_id text NOT NULL, session_id text NOT NULL, ordinal integer NOT NULL, type text NOT NULL, time_created integer NOT NULL DEFAULT 0, time_updated integer NOT NULL DEFAULT 0, data text NOT NULL,
-  PRIMARY KEY (message_id, ordinal),
-  CONSTRAINT fk_sp_m FOREIGN KEY (message_id) REFERENCES session_message(id) ON DELETE CASCADE,
-  CONSTRAINT fk_sp_s FOREIGN KEY (session_id) REFERENCES session_v2(id) ON DELETE CASCADE);
-CREATE TABLE session_inbox (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, payload text NOT NULL, delivery text NOT NULL, enqueued_seq integer NOT NULL, time_created integer NOT NULL DEFAULT 0,
-  CONSTRAINT fk_si FOREIGN KEY (session_id) REFERENCES session_v2(id) ON DELETE CASCADE);
-CREATE TABLE event_sequence (aggregate_id text PRIMARY KEY, seq integer NOT NULL, owner_id text);
-CREATE TABLE event (id text PRIMARY KEY, aggregate_id text NOT NULL, seq integer NOT NULL, type text NOT NULL, data text NOT NULL, created integer NOT NULL DEFAULT 0,
-  CONSTRAINT fk_ev FOREIGN KEY (aggregate_id) REFERENCES event_sequence(aggregate_id) ON DELETE CASCADE);
-CREATE TABLE session (id text PRIMARY KEY, project_id text NOT NULL, slug text NOT NULL DEFAULT '', directory text NOT NULL DEFAULT '', title text NOT NULL DEFAULT '', version text NOT NULL DEFAULT '', time_created integer NOT NULL DEFAULT 0, time_updated integer NOT NULL DEFAULT 0,
-  CONSTRAINT fk_s FOREIGN KEY (project_id) REFERENCES project(id) ON DELETE CASCADE);
-CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL DEFAULT 0, time_updated integer NOT NULL DEFAULT 0, data text NOT NULL,
-  CONSTRAINT fk_m FOREIGN KEY (session_id) REFERENCES session(id) ON DELETE CASCADE);
-CREATE TABLE credential (id text PRIMARY KEY, integration_id text, label text NOT NULL, value text NOT NULL, connector_id text, method_id text, active integer, time_created integer NOT NULL, time_updated integer NOT NULL);
-`;
-
 describe("the user's OpenCode database", () => {
 	let dir: string;
 	let file: string;
@@ -538,6 +579,7 @@ describe("the user's OpenCode database", () => {
 		expect(sweepOpenCodeProject(file, "/nowhere")).toEqual({
 			rows: 0,
 			busy: 0,
+			clean: true,
 		});
 	});
 
@@ -605,6 +647,7 @@ describe("what a failed call means", () => {
 				retryAfter: null,
 				upstreamError: null,
 				body: null,
+				limitClamped: false,
 			},
 		};
 	const failed = (
@@ -755,9 +798,12 @@ describe("the provider", () => {
 			retryAfter: null,
 			upstreamError: null,
 			body: null,
+			limitClamped: false,
 		},
-		scrub: { rows: 6, busy: 0 },
+		scrub: { rows: 6, busy: 0, clean: true },
 		scrubError: null,
+		cleanupPending: false,
+		cleanupRefused: false,
 		removedEnv: [],
 		...over,
 	});
@@ -900,6 +946,7 @@ describe("the provider", () => {
 						retryAfter: "600",
 						upstreamError: null,
 						body: null,
+						limitClamped: false,
 					},
 				});
 			},
@@ -967,6 +1014,7 @@ describe("the provider", () => {
 						retryAfter: null,
 						upstreamError: null,
 						body: null,
+						limitClamped: false,
 					},
 				});
 			},
@@ -996,6 +1044,7 @@ describe("the provider", () => {
 						retryAfter: null,
 						upstreamError: null,
 						body: null,
+						limitClamped: false,
 					},
 				}),
 		});
@@ -1004,7 +1053,8 @@ describe("the provider", () => {
 			.generateObject(request())
 			.catch((e) => e);
 		expect(error).not.toBeInstanceOf(LlmNotBilledError);
-		expect(String(error)).toMatch(/bad gateway/);
+		expect(String(error)).toMatch(/provider\.error \(HTTP 502\)/);
+		expect(String(error)).not.toMatch(/bad gateway/);
 	});
 
 	it("accepts JSON in a Markdown fence", async () => {
@@ -1030,5 +1080,154 @@ describe("the provider", () => {
 			kind: "boundary",
 			notBilled: true,
 		});
+	});
+	it("sends a pay-per-use call with the output limit its reservation was made for", async () => {
+		const paid = {
+			...entry,
+			model: "gpt-5.5-pro",
+			billing: "api" as const,
+			price: { input: 30, cachedInput: 30, output: 180, source: "t" },
+		};
+		const { provider, calls } = make({
+			model: "gpt-5.5-pro",
+			entry: () => paid,
+		});
+		const store = new SpendRecorder();
+		const metered = new MeteredLlm(provider, store, {
+			userId: "u1",
+			applicationId: null,
+		});
+		await metered.generateObject(request({ maxTokens: 1 }));
+		await metered.generateObject(request());
+		expect(calls.map((c) => c.maxTokens)).toEqual([1, 16_000]);
+		const reserved = store.rows
+			.filter((r) => r.startsWith("reserve"))
+			.map((r) => JSON.parse(r.slice(8)).estimateMicros as number);
+		// 1 output token at $180/M is 180 µ$ on top of the input; 16,000 are 2,880,000 µ$.
+		expect((reserved[1] ?? 0) - (reserved[0] ?? 0)).toBe(15_999 * 180);
+	});
+
+	it("refuses calls while an earlier cleanup is unfinished, without stopping the source", async () => {
+		const breaker = new Breaker();
+		const refused = make({
+			breaker,
+			runCall: async () =>
+				answered({
+					sent: false,
+					sessionId: null,
+					text: null,
+					tokens: null,
+					relay: null,
+					scrub: null,
+					boundary: CLEANUP_REFUSAL,
+					cleanupPending: true,
+					cleanupRefused: true,
+				}),
+		});
+		const error = await refused.provider
+			.generateObject(request())
+			.catch((e) => e);
+		expect(error).toBeInstanceOf(SubscriptionUnavailableError);
+		expect(error).toMatchObject({ kind: "boundary", notBilled: true });
+		expect(String(error)).toMatch(
+			/has not finished removing an earlier OpenCode call/,
+		);
+		const after = make({ breaker });
+		await expect(after.provider.generateObject(request())).resolves.toEqual({
+			ok: true,
+		});
+	});
+
+	it("never keeps an answer's or a provider error's text: not in errors, the ledger or the log", async () => {
+		const CANARY = "PRIVATE_CANARY_OC_6f1d";
+		const records = z.object({ scores: z.record(z.string(), z.number()) });
+		const cases: {
+			over: Partial<OpenCodeCallResult>;
+			schema?: z.ZodType;
+			says: RegExp;
+		}[] = [
+			{ over: { text: `Sure! ${CANARY}` }, says: /no JSON object/ },
+			{
+				over: { text: `{ ${CANARY} }` },
+				says: /braces did not hold valid JSON/,
+			},
+			{
+				over: { text: JSON.stringify({ ok: CANARY }) },
+				says: /did not match the schema \(ok: invalid_type/,
+			},
+			{
+				over: { text: JSON.stringify({ scores: { [CANARY]: CANARY } }) },
+				schema: records,
+				says: /scores\.\*: invalid_type/,
+			},
+			{
+				over: {
+					text: null,
+					tokens: null,
+					failure: {
+						type: `provider error ${CANARY}`,
+						message: CANARY,
+						status: 400,
+						body: CANARY,
+					},
+				},
+				says: /failed: unknown \(HTTP 200\)/,
+			},
+			{
+				over: {
+					text: null,
+					failure: {
+						type: "provider.free-limit",
+						message: `FreeUsageLimit ${CANARY}`,
+						status: 429,
+						body: CANARY,
+					},
+				},
+				says: /usage limit is reached \(provider\.free-limit/,
+			},
+		];
+		const paid = {
+			...entry,
+			model: "gpt-5.5-pro",
+			billing: "api" as const,
+			price: { input: 30, cachedInput: 30, output: 180, source: "t" },
+		};
+		for (const billing of ["subscription", "api"] as const)
+			for (const { over, schema, says } of cases) {
+				const logs: string[] = [];
+				const { provider } = make({
+					...(billing === "api"
+						? { model: "gpt-5.5-pro", entry: () => paid }
+						: {}),
+					log: (message, data) => logs.push(message, JSON.stringify(data)),
+					runCall: async (input) => {
+						input.onModelCall?.();
+						return answered(over);
+					},
+				});
+				const store = new SpendRecorder();
+				const metered = new MeteredLlm(provider, store, {
+					userId: "u1",
+					applicationId: null,
+				});
+				const error = await metered
+					.generateObject(request(schema ? { schema } : {}))
+					.catch((e) => e);
+				expect(error).toBeInstanceOf(Error);
+				expect(String(error)).toMatch(says);
+				const kept = [
+					String(error),
+					JSON.stringify(error),
+					String((error as { cause?: unknown }).cause ?? ""),
+					...store.rows,
+					...logs,
+				].join("\n");
+				expect(
+					store.rows.some(
+						(r) => r.startsWith("settle") || r.startsWith("hold"),
+					),
+				).toBe(true);
+				expect(kept).not.toContain(CANARY);
+			}
 	});
 });

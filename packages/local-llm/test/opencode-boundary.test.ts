@@ -6,14 +6,15 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
-
 import {
 	checkOpenCodeBinary,
 	findOpenCodeBinary,
+	type OpenCodeCallInput,
 	type OpenCodeCallResult,
 	OpenCodeProvider,
 	runOpenCodeCall,
 } from "../src/opencode";
+import { CLEANUP_REFUSAL } from "../src/opencode-cleanup";
 
 /**
  * What the model would see on an OpenCode call, read off the wire: the real `opencode` 2.2.5
@@ -141,8 +142,10 @@ async function call(
 	dataHome: string,
 	home: string,
 	text = `${PROMPT_CANARY} Say hi.`,
+	extra: Pick<OpenCodeCallInput, "beforeScrub" | "cleanupGraceMs"> = {},
 ): Promise<OpenCodeCallResult> {
 	return runOpenCodeCall({
+		...extra,
 		binary: binary as string,
 		root: join(root, "private"),
 		dataHome,
@@ -153,6 +156,7 @@ async function call(
 		system: "You extract a greeting.",
 		prompt: text,
 		schema: z.toJSONSchema(schema) as Record<string, unknown>,
+		maxTokens: 1234,
 		parentEnv: parentEnv(home),
 		timeoutMs: 60_000,
 	});
@@ -222,6 +226,14 @@ describe.skipIf(!tested)("an OpenCode call is a pure model call", () => {
 		expect((body.tools as unknown[] | undefined)?.length ?? 0).toBe(0);
 		expect(JSON.stringify(body.response_format)).toContain("greeting");
 		expect(body.reasoning_effort).toBe("low");
+	});
+
+	it("asks for no more output than the call reserved", () => {
+		const body = okPosts[0]?.body ?? {};
+		// OpenCode's own limit for the model is 32,000; ours, from the config, reached the wire.
+		expect(body.max_completion_tokens).toBe(1234);
+		expect(body.max_tokens).toBeUndefined();
+		expect(ok.relay?.limitClamped).toBe(false);
 	});
 
 	it("sends none of the user's configuration, only ours", () => {
@@ -325,10 +337,12 @@ describe.skipIf(!tested)("an OpenCode call is a pure model call", () => {
 		});
 		let sent = 0;
 		let usage = 0;
+		posts.length = 0;
 		const out = await provider.generateObject({
 			task: "boundary",
 			system: "You extract a greeting.",
 			prompt: "Say hi.",
+			maxTokens: 777,
 			schema,
 			onModelCall: () => sent++,
 			onUsage: (u) => {
@@ -336,11 +350,51 @@ describe.skipIf(!tested)("an OpenCode call is a pure model call", () => {
 			},
 		});
 		expect(out).toEqual({ greeting: "hi" });
+		expect(posts.map((p) => p.body.max_completion_tokens)).toEqual([777]);
 		expect(sent).toBe(1);
 		expect(usage).toBeGreaterThan(0);
 		expect(provider.billing).toBe("subscription");
 		expect(provider.vendor).toBe("opencode:opencode");
 	}, 120_000);
+
+	it("keeps the cleanup pending while another connection reads OpenCode's database, refuses calls past the grace period, and finishes once it closes", async () => {
+		const dbFile = join(fakeData, "opencode", "opencode.db");
+		let reader: Database.Database | null = null;
+		const held = await call(fakeData, fakeHome, undefined, {
+			// Like the user's own OpenCode holding a read transaction during the scrub.
+			beforeScrub: async () => {
+				reader = new Database(dbFile, { readonly: true });
+				reader.prepare("BEGIN").run();
+				reader.prepare("SELECT count(*) FROM session_v2").get();
+			},
+		});
+		expect(held.failure).toBeNull();
+		expect(held.scrub?.rows).toBeGreaterThan(0);
+		expect(held.scrub?.clean).toBe(false);
+		expect(held.cleanupPending).toBe(true);
+		// The rows are gone, the prompt is not: this is what the marker is for.
+		expect(dataHomeText(fakeData)).toContain(PROMPT_CANARY);
+
+		posts.length = 0;
+		const refused = await call(fakeData, fakeHome, undefined, {
+			cleanupGraceMs: 0,
+		});
+		expect(refused.cleanupRefused).toBe(true);
+		expect(refused.boundary).toBe(CLEANUP_REFUSAL);
+		expect(refused.sent).toBe(false);
+		expect(posts.length).toBe(0);
+
+		(reader as Database.Database | null)?.close();
+		const resumed = await call(fakeData, fakeHome, undefined, {
+			cleanupGraceMs: 0,
+		});
+		expect(resumed.cleanupRefused).toBe(false);
+		expect(resumed.failure).toBeNull();
+		expect(resumed.scrub?.clean).toBe(true);
+		expect(resumed.cleanupPending).toBe(false);
+		expect(posts.length).toBe(1);
+		expect(dataHomeText(fakeData)).not.toContain(PROMPT_CANARY);
+	}, 180_000);
 
 	it("never uses the user's real data home", () => {
 		const real = join(homedir(), ".local", "share");

@@ -61,6 +61,11 @@ nothing of the prompt left on disk, at most one model request per call, version 
 provider by an in-repo boundary test that runs the real CLI against a local capture server
 (skipped when the CLI is not installed), like `local-llm/test/claude-boundary.test.ts`.
 
+Errors never carry what the model wrote or a provider's error body (both can hold the user's
+text, and the spending ledger and workflows keep error messages): fixed words plus bounded facts
+(the answer's length, whether it had braces, the schema paths and zod issue codes that failed, a
+record key shown as `*`, an HTTP status, an error type or code). See `local-llm/src/answer.ts`.
+
 ### OpenCode recipe (2.2.5)
 
 From [research/opencode-v2-lockdown.md](research/opencode-v2-lockdown.md) and
@@ -80,10 +85,25 @@ From [research/opencode-v2-lockdown.md](research/opencode-v2-lockdown.md) and
    inject instructions that lockdown does not remove).
 4. `POST /api/session`, `POST /api/session/{id}/prompt`, watch `/api/event`; interrupt on the
    first `session.retry.scheduled`. The relay forwards exactly one POST and turns 429/5xx into 400.
+   Output limit: the call's reserved `maxTokens` (the cap's own default, 16,000, when unset) goes
+   into the model's config `body` as `max_completion_tokens`, which overrides the model's own
+   limit that 2.2.5 sends otherwise (32,000 on the tested model; checked on the wire by the
+   boundary test). The relay lowers any larger limit field to it, adds it when none is sent, and
+   refuses unsent a body that is not a JSON object.
 5. After: close stdin (SIGKILL fallback), then on our own SQLite connection to the user's
    `opencode.db`: `foreign_keys=ON; secure_delete=ON`, delete the call's `session_v2`,
    `event_sequence` and legacy `session` rows, `PRAGMA wal_checkpoint(TRUNCATE)`. The same sweep at
    app start for sessions a crash left. Schema-dependent: part of the version gate.
+   The checkpoint is finished only when it is not busy and the `-wal` file is empty: while another
+   connection (the user's OpenCode) holds a read transaction, the rows are gone but the prompt
+   stays in the WAL. An unfinished cleanup leaves a marker in OfferFinch's private root (when it
+   became due, attempts, whether rows may be left; no ids, no text) and is retried, sweep and
+   checkpoint even with no rows left, on a timer with backoff, before each call and at start;
+   while another OfferFinch call runs, only the checkpoint (its session is not swept). After a
+   2-minute grace period OpenCode calls are refused (a local `boundary` refusal that does not trip
+   the source's breaker) until the cleanup finishes. Once a truncating checkpoint has finished,
+   the user's service writing afterwards appends only current page versions, which no longer hold
+   the prompt (tested: 20 writes after the cleanup, no canary in db, `-wal` or `-shm`).
 
 ### Antigravity recipe (1.4.1)
 

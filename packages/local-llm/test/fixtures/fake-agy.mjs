@@ -118,6 +118,9 @@ async function prompt(id, params) {
 		await new Promise((r) => setTimeout(r, 5000));
 	}
 	const first = await generate(scenario === "tools" ? { tools: [{ functionDeclarations: [] }] } : {});
+	if (scenario === "rpc-error")
+		// A server error that quotes what the model said, as an internal error can.
+		return send({ id, error: { code: -32603, message: `Internal error: ${first.text}` } });
 	let text;
 	if (first.status !== 200) {
 		text = scenario === "quota"

@@ -32,6 +32,12 @@ export interface GenerateObjectRequest<T> {
 	onModelCall?: () => void;
 }
 
+/**
+ * The output limit of a request without `maxTokens`: what the spending cap reserves for, and what
+ * a provider that can bill per token must hold the answer to.
+ */
+export const DEFAULT_MAX_OUTPUT_TOKENS = 16_000;
+
 /** Tokens one call used, as the provider reported them. */
 export interface LlmUsage {
 	/** The model that answered (a fallback may differ from the one asked for). */

@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import Database from "better-sqlite3";
 
 /**
@@ -7,7 +8,10 @@ import Database from "better-sqlite3";
  * - Read, never write, which sources the user signed in to: integration, credential type, method,
  *   whether active, and an OAuth token's expiry. Never a key or token value.
  * - Remove what a call left: the call's session rows, with `secure_delete` and a truncating WAL
- *   checkpoint so the prompt is not left in freed pages or old WAL frames.
+ *   checkpoint so the prompt is not left in freed pages or old WAL frames. Another connection
+ *   (the user's own OpenCode) holding a read transaction makes the checkpoint report busy and
+ *   leaves the old frames, so a result says whether it finished (`clean`); the caller keeps
+ *   retrying until it does (opencode-cleanup.ts).
  */
 
 export interface OpenCodeCredential {
@@ -97,12 +101,33 @@ export interface ScrubResult {
 	rows: number;
 	/** `PRAGMA wal_checkpoint(TRUNCATE)`'s busy flag: 1 when a reader kept old frames. */
 	busy: number;
+	/**
+	 * The checkpoint finished: not busy, every frame copied back, and the `-wal` file empty (or
+	 * the database is not in WAL mode). Until then old frames may still hold a deleted prompt.
+	 */
+	clean: boolean;
 }
 
+export interface ScrubOptions {
+	/**
+	 * How long to wait for another connection's lock (ms). The connection is synchronous, so this
+	 * blocks the caller: short for retries, longer right after a call.
+	 */
+	busyTimeoutMs?: number;
+}
+
+/** Right after a call: the user's service may be writing for a moment. */
+const SCRUB_BUSY_TIMEOUT_MS = 5000;
+
 /** A connection that deletes for good: cascades on, freed pages zeroed. */
-function scrubConnection(dbFile: string): Database.Database {
+function scrubConnection(
+	dbFile: string,
+	options: ScrubOptions = {},
+): Database.Database {
 	const db = new Database(dbFile, { fileMustExist: true });
-	db.pragma("busy_timeout = 5000");
+	db.pragma(
+		`busy_timeout = ${Math.max(0, Math.floor(options.busyTimeoutMs ?? SCRUB_BUSY_TIMEOUT_MS))}`,
+	);
 	db.pragma("foreign_keys = ON");
 	db.pragma("secure_delete = ON");
 	const have = tables(db);
@@ -134,9 +159,37 @@ function deleteSessions(db: Database.Database, ids: string[]): number {
 	return after.n - before.n;
 }
 
-function checkpoint(db: Database.Database): number {
-	const [row] = db.pragma("wal_checkpoint(TRUNCATE)") as { busy: number }[];
-	return row?.busy ?? 0;
+/** The `-wal` file's size; 0 when there is none. */
+function walBytes(dbFile: string): number {
+	try {
+		return statSync(`${dbFile}-wal`).size;
+	} catch {
+		return 0;
+	}
+}
+
+/** A truncating checkpoint, and whether it finished (see `ScrubResult.clean`). */
+function checkpoint(
+	db: Database.Database,
+	dbFile: string,
+): Omit<ScrubResult, "rows"> {
+	const [row] = db.pragma("wal_checkpoint(TRUNCATE)") as {
+		busy: number;
+		log: number;
+		checkpointed: number;
+	}[];
+	const busy = row?.busy ?? 1;
+	const log = row?.log ?? 1;
+	// Not in WAL mode: log and checkpointed are -1 and there are no frames to keep anything.
+	if (log === -1) return { busy, clean: busy === 0 };
+	return {
+		busy,
+		clean:
+			busy === 0 &&
+			log === row?.checkpointed &&
+			log === 0 &&
+			walBytes(dbFile) === 0,
+	};
 }
 
 /**
@@ -146,11 +199,28 @@ function checkpoint(db: Database.Database): number {
 export function scrubOpenCodeSessions(
 	dbFile: string,
 	sessionIds: string[],
+	options: ScrubOptions = {},
 ): ScrubResult {
-	const db = scrubConnection(dbFile);
+	const db = scrubConnection(dbFile, options);
 	try {
 		const rows = deleteSessions(db, sessionIds);
-		return { rows, busy: checkpoint(db) };
+		return { rows, ...checkpoint(db, dbFile) };
+	} finally {
+		db.close();
+	}
+}
+
+/**
+ * Only the truncating checkpoint, no deletion: the retry while another OfferFinch call is still
+ * running (its session must not be swept from under it).
+ */
+export function checkpointOpenCodeDb(
+	dbFile: string,
+	options: ScrubOptions = {},
+): ScrubResult {
+	const db = scrubConnection(dbFile, options);
+	try {
+		return { rows: 0, ...checkpoint(db, dbFile) };
 	} finally {
 		db.close();
 	}
@@ -159,17 +229,21 @@ export function scrubOpenCodeSessions(
 /**
  * The crash sweep: every session of OfferFinch's own OpenCode project (the one whose worktree is
  * the stable private root's working directory, `cwd` as a real path), left when the app stopped
- * between a prompt and its scrub. No other project is touched.
+ * between a prompt and its scrub, then a truncating checkpoint (always, even with nothing to
+ * delete). No other project is touched.
  */
-export function sweepOpenCodeProject(dbFile: string, cwd: string): ScrubResult {
-	const db = scrubConnection(dbFile);
+export function sweepOpenCodeProject(
+	dbFile: string,
+	cwd: string,
+	options: ScrubOptions = {},
+): ScrubResult {
+	const db = scrubConnection(dbFile, options);
 	try {
 		const projects = (
 			db.prepare("SELECT id FROM project WHERE worktree = ?").all(cwd) as {
 				id: string;
 			}[]
 		).map((p) => p.id);
-		if (!projects.length) return { rows: 0, busy: 0 };
 		const ids: string[] = [];
 		const legacy = tables(db).has("session");
 		for (const project of projects) {
@@ -183,9 +257,10 @@ export function sweepOpenCodeProject(dbFile: string, cwd: string): ScrubResult {
 				);
 		}
 		const unique = [...new Set(ids)];
-		if (!unique.length) return { rows: 0, busy: 0 };
-		const rows = deleteSessions(db, unique);
-		return { rows, busy: checkpoint(db) };
+		const rows = unique.length ? deleteSessions(db, unique) : 0;
+		// Always checkpoint: a scrub whose checkpoint was busy left its frames behind even though
+		// its rows are gone, so "no rows" does not mean "nothing left".
+		return { rows, ...checkpoint(db, dbFile) };
 	} finally {
 		db.close();
 	}

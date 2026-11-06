@@ -21,6 +21,7 @@ import {
 import { toStrictJsonSchema } from "@offerfinch/core/scoring/openai";
 import type { PlanUsageSink } from "@offerfinch/core/scoring/plan-usage";
 import type { z } from "zod";
+import { parseAnswer, unreadableAnswer } from "./answer";
 import { Breaker } from "./breaker";
 import { findCliOnPath } from "./cli-path";
 import {
@@ -1263,11 +1264,9 @@ export class CodexSubscriptionProvider implements LlmProvider {
 		try {
 			parsed = JSON.parse(result.text);
 		} catch {
-			throw new Error(
-				`${this.name}: no valid structured output for ${request.task}: ${result.text.slice(0, 300)}`,
-			);
+			throw unreadableAnswer(this.name, request.task, result.text);
 		}
-		return request.schema.parse(parsed);
+		return parseAnswer(request.schema, parsed, this.name, request.task);
 	}
 }
 

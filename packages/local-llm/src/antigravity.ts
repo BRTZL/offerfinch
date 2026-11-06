@@ -24,6 +24,7 @@ import {
 	SubscriptionUnavailableError,
 } from "@offerfinch/core/scoring/llm";
 import { z } from "zod";
+import { parseAnswer, unreadableAnswer } from "./answer";
 import { type Gate, type GateRecord, startGate } from "./antigravity-gate";
 import {
 	ANTIGRAVITY_VERSION,
@@ -107,6 +108,22 @@ export function familiesOf(session: unknown): AntigravityFamily[] {
 		}));
 }
 
+/** Google's error reason (`QUOTA_EXHAUSTED`, …) as it may be shown: an enum name, or nothing. */
+function reasonText(reason: string | null): string {
+	return reason && /^[A-Z][A-Z0-9_]{0,59}$/.test(reason) ? `, ${reason}` : "";
+}
+
+/**
+ * Why a session failed, as it may be kept: a JSON-RPC error from the server (it can quote the
+ * provider's answer) by its code only; the session's own reasons (timed out, exited) as they are.
+ */
+function sessionFailure(error: unknown): string {
+	const code = (error as { code?: unknown } | null)?.code;
+	if (typeof code === "number")
+		return `the Antigravity server answered error ${code}`;
+	return error instanceof Error ? error.message : String(error);
+}
+
 /** The answer's JSON: code fences stripped, else the outermost object in the text. */
 export function parseJsonAnswer(text: string): unknown {
 	let body = text.trim();
@@ -176,7 +193,7 @@ export function errorPause(
 		if (quota)
 			return {
 				kind: "usage_limit",
-				detail: `Google's usage limit for this model is reached: ${error.message.slice(0, 200)}`,
+				detail: `Google's usage limit for this model is reached (HTTP ${error.status}${reasonText(error.reason)}).`,
 				resetsAt: error.resetsAt ?? resetFromText(text, now),
 			};
 		if (error.status === 401)
@@ -190,7 +207,8 @@ export function errorPause(
 	if (/usage limit reached|exhausted your (capacity|quota)|quota/i.test(text))
 		return {
 			kind: "usage_limit",
-			detail: `Google's usage limit is reached: ${text.slice(0, 200)}`,
+			detail:
+				"Google's usage limit is reached (the Antigravity server said so before asking the model).",
 			resetsAt: resetFromText(text, now),
 		};
 	if (
@@ -384,7 +402,7 @@ async function runAntigravitySession(
 			await converse(session.ask, r, input, result, gate);
 		} catch (error) {
 			if (!result.boundary && !result.loggedOut)
-				result.failure = error instanceof Error ? error.message : String(error);
+				result.failure = sessionFailure(error);
 		}
 		return result;
 	} finally {
@@ -728,7 +746,12 @@ export function resumeAntigravityCalls(
 export class AntigravityToolAttemptError extends Error {
 	constructor(provider: string, task: string, tools: string[]) {
 		super(
-			`${provider}: the model tried to use a tool during ${task} (${tools.slice(0, 5).join(", ")}); no tool is offered, the server rejected it, and the answer was discarded.`,
+			`${provider}: the model tried to use a tool during ${task} (${tools
+				.slice(0, 5)
+				.map((tool) => (/^[\w.:-]{1,64}$/.test(tool) ? tool : "unnamed"))
+				.join(
+					", ",
+				)}); no tool is offered, the server rejected it, and the answer was discarded.`,
 		);
 		this.name = "AntigravityToolAttemptError";
 	}
@@ -850,7 +873,7 @@ export class AntigravityProvider implements LlmProvider {
 			);
 		if (gate.error)
 			throw new Error(
-				`${this.name}: ${request.task} failed: Google answered ${gate.error.status}: ${gate.error.message.slice(0, 200)}`,
+				`${this.name}: ${request.task} failed: Google answered ${gate.error.status}${reasonText(gate.error.reason)}`,
 			);
 		if (result.failure)
 			throw new Error(
@@ -858,7 +881,7 @@ export class AntigravityProvider implements LlmProvider {
 			);
 		if (!gate.forwarded)
 			throw new Error(
-				`${this.name}: ${request.task} failed before the model was asked: ${result.text.slice(0, 200) || "no answer"}`,
+				`${this.name}: ${request.task} failed before the model was asked (${result.text ? `the server answered ${result.text.length} characters itself` : "no answer"})`,
 			);
 		if (result.stopReason !== "end_turn" || !result.text.trim())
 			throw new Error(
@@ -868,10 +891,8 @@ export class AntigravityProvider implements LlmProvider {
 		try {
 			parsed = parseJsonAnswer(result.text);
 		} catch {
-			throw new Error(
-				`${this.name}: no valid structured output for ${request.task}: ${result.text.slice(0, 300)}`,
-			);
+			throw unreadableAnswer(this.name, request.task, result.text);
 		}
-		return request.schema.parse(parsed);
+		return parseAnswer(request.schema, parsed, this.name, request.task);
 	}
 }
