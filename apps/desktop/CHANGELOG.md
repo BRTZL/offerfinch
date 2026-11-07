@@ -8,6 +8,15 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
+## Unreleased
+
+- Claude no longer stops with "Subscription paused (extra_usage …): the Claude plan's usage
+  could not be read". OfferFinch no longer checks whether a plan could pay for a call with
+  extra usage or credits: that is your own setting with each provider (Claude, ChatGPT,
+  OpenCode). A plan still waits when its usage limit is reached.
+- Codex no longer waits once a usage window passes 90%, and no plan stops after a paid call,
+  so there is no Resume in Settings › Models any more.
+
 ## 0.3.0 (2026-11-07)
 
 - Job-board search finds jobs on five more boards: SmartRecruiters, Workable, Recruitee,
