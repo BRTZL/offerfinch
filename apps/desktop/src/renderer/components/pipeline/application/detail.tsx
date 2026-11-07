@@ -12,6 +12,7 @@ import { ChatPanel } from "@/components/pipeline/chat/chat-panel";
 import { ACTION_BAR_SPACE } from "@/components/system/action-bar";
 import { ErrorLine } from "@/components/system/bits";
 import { ReadingColumn, ReadingPage } from "@/components/system/document";
+import { FocusBackdrop } from "@/components/system/focus-backdrop";
 import { ResizeHandle } from "@/components/system/resize-handle";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -238,10 +239,16 @@ export function ApplicationDetail(props: ApplicationDetailProps) {
 					hasDocuments,
 				})}
 			</section>
+			{overlay ? (
+				<FocusBackdrop
+					open={rightOpen}
+					onClose={() => (chatOpen ? setChatOpen(false) : toggleDetails())}
+				/>
+			) : null}
 			{rightOpen ? (
 				<div
 					className={
-						overlay ? "absolute inset-y-0 right-0 z-20 flex shadow-2xl" : "flex"
+						overlay ? "absolute inset-y-0 right-0 z-40 flex shadow-2xl" : "flex"
 					}
 				>
 					{chatOpen ? chat : inspector}

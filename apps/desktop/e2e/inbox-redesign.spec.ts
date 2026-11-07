@@ -183,6 +183,52 @@ test("Inbox redesign: one list, unread dots, the action bar, Rejected chips and 
 		await page.getByTestId("inspector-close").click();
 		await expect(page.getByTestId("inspector")).toHaveCount(0);
 
+		// Docked (wide window): no backdrop, the layout as before.
+		const backdrop = page.getByTestId("focus-backdrop");
+		await page.getByTestId("fit-card").click();
+		await expect(page.getByTestId("inspector")).toBeVisible();
+		await expect(backdrop).toHaveCount(0);
+		await shot(page, "sheet-wide");
+		await page.getByTestId("inspector-close").click();
+		await expect(page.getByTestId("inspector")).toHaveCount(0);
+		// Over the document (narrow window): the whole window behind the sheet dims and blurs, and
+		// a click on it (here over the sidebar) closes the sheet.
+		await page.setViewportSize({ width: 1100, height: 800 });
+		await expect(backdrop).toBeHidden();
+		await page.getByTestId("fit-card").click();
+		await expect(page.getByTestId("inspector")).toBeVisible();
+		await expect(backdrop).toBeVisible();
+		expect(await backdrop.boundingBox()).toEqual({
+			x: 0,
+			y: 0,
+			width: 1100,
+			height: 800,
+		});
+		await shot(page, "sheet-backdrop-open");
+		await app.evaluate(({ nativeTheme }) => {
+			nativeTheme.themeSource = "light";
+		});
+		await expect
+			.poll(() =>
+				page.evaluate(() =>
+					document.documentElement.classList.contains("dark"),
+				),
+			)
+			.toBe(false);
+		await shot(page, "sheet-backdrop-open-light");
+		await dark(app, page);
+		await backdrop.click({ position: { x: 100, y: 400 } });
+		await expect(page.getByTestId("inspector")).toHaveCount(0);
+		await expect(backdrop).toBeHidden();
+		// The chat over the document closes the same way.
+		await page.getByTestId("chat-toggle").click();
+		await expect(page.getByTestId("chat-panel")).toBeVisible();
+		await expect(backdrop).toBeVisible();
+		await backdrop.click({ position: { x: 100, y: 400 } });
+		await expect(page.getByTestId("chat-panel")).toHaveCount(0);
+		await expect(backdrop).toBeHidden();
+		await page.setViewportSize({ width: 1440, height: 900 });
+
 		// Not interested from the bar: the popover above its button; the row leaves, the next opens.
 		const leaving = await selectedRow(page).getAttribute("id");
 		const before = await rows.count();
