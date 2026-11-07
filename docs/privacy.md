@@ -73,8 +73,10 @@ and the result is stored on this Mac only.
 
 To find jobs, OfferFinch reads public pages, the way a browser does:
 
-- **Job boards' public job lists** (Greenhouse, Lever, Ashby) for the companies it finds. Only the
-  company's board name is sent.
+- **Job boards' public job lists** (Greenhouse, Lever, Ashby, SmartRecruiters, Workable,
+  Recruitee, Teamtailor, Personio) for the companies it finds. Only the company's board name is
+  sent (on Recruitee, Teamtailor and Personio it is the company's address on the board, such as
+  `acme.recruitee.com`), and on SmartRecruiters the ids of the postings it found.
 - **DuckDuckGo** search pages, with search words built from your job titles and where you want
   to work (for example `senior frontend engineer remote "Germany"`).
 - **LinkedIn, Indeed and Glassdoor**, if you turn them on and sign in: their job search pages,

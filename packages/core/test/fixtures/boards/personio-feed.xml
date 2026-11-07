@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<workzag-jobs>
+
+<position>
+    <id>2900001</id>
+    <subcompany>Kestrel Works GmbH</subcompany>
+    <office>Berlin</office>
+    <additionalOffices>
+        <office>Remote (Germany)</office>
+    </additionalOffices>
+    <department>Engineering</department>
+    <recruitingCategory>Tech &amp; Product</recruitingCategory>
+    <name>Senior Backend Engineer (m/f/d)</name>
+    <jobDescriptions>
+        <jobDescription>
+            <name>Your mission</name>
+            <value>
+                <![CDATA[<p>Build the billing service in Kotlin.</p><ul><li><p>Own the invoice API</p></li></ul>]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Your profile</name>
+            <value>
+                <![CDATA[<ul><li><p>Five years of backend work &amp; a service you ran</p></li></ul>]]>
+            </value>
+        </jobDescription>
+    </jobDescriptions>
+    <employmentType>permanent</employmentType>
+    <seniority>experienced</seniority>
+    <schedule>full-time</schedule>
+    <yearsOfExperience>5-7</yearsOfExperience>
+    <keywords>Kotlin,Backend,Billing</keywords>
+    <occupation>software_development</occupation>
+    <occupationCategory>it_software</occupationCategory>
+    <createdAt>2026-10-22T09:48:25+00:00</createdAt>
+</position>
+
+<position>
+    <id>2900002</id>
+    <subcompany>Kestrel Works GmbH</subcompany>
+    <office>Munich</office>
+    <department>Finance</department>
+    <name>Werkstudent:in Accounting (m/w/d)</name>
+    <jobDescriptions></jobDescriptions>
+    <employmentType>intern</employmentType>
+    <schedule>part-time</schedule>
+    <createdAt>2026-10-13T09:59:49+00:00</createdAt>
+</position>
+
+</workzag-jobs>

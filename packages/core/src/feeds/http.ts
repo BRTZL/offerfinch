@@ -180,6 +180,32 @@ export function rssItems(xml: string): Record<string, string>[] {
 	return items;
 }
 
+const escapeTag = (tag: string) => tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The raw inner XML of each `<tag>` element in `xml` (Teamtailor's items, Personio's positions). */
+export function xmlBlocks(xml: string, tag: string): string[] {
+	const t = escapeTag(tag);
+	return [
+		...xml.matchAll(new RegExp(`<${t}(?:\\s[^>]*)?>([\\s\\S]*?)</${t}>`, "gi")),
+	].map((m) => m[1] ?? "");
+}
+
+/**
+ * The text of the first `<tag>` in `xml`: CDATA as it is, anything else with XML's escapes undone
+ * once (an escaped HTML description arrives as HTML). Undefined when there is none; "" for
+ * `<tag/>`.
+ */
+export function xmlField(xml: string, tag: string): string | undefined {
+	const t = escapeTag(tag);
+	const m = xml.match(
+		new RegExp(`<${t}(?:\\s[^>]*?)?(?:\\s*/>|>([\\s\\S]*?)</${t}>)`, "i"),
+	);
+	if (!m) return undefined;
+	const raw = m[1] ?? "";
+	const cdata = raw.match(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/);
+	return (cdata ? (cdata[1] ?? "") : xmlText(raw)).trim();
+}
+
 /** A feed's postings, and how many of its items could not be read (skipped, never fatal). */
 export interface FeedParse<P> {
 	postings: P[];

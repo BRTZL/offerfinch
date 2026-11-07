@@ -1,0 +1,40 @@
+{
+	"id": "744000100000001",
+	"name": "Senior Platform Engineer ",
+	"uuid": "00000000-0000-4000-8000-000000000001",
+	"refNumber": "REF0001",
+	"company": { "identifier": "HarborMills", "name": "Harbor Mills" },
+	"releasedDate": "2026-10-30T09:15:00.000Z",
+	"location": {
+		"city": "Lisbon",
+		"country": "pt",
+		"remote": false,
+		"hybrid": true,
+		"hybridDescription": "Two days in the office",
+		"fullLocation": "Lisbon, , Portugal"
+	},
+	"department": { "label": "Engineering" },
+	"function": { "id": "engineering", "label": "Engineering" },
+	"typeOfEmployment": { "id": "permanent", "label": "Full-time" },
+	"postingUrl": "https://jobs.smartrecruiters.com/HarborMills/744000100000001-senior-platform-engineer",
+	"applyUrl": "https://jobs.smartrecruiters.com/HarborMills/744000100000001-senior-platform-engineer?oga=true",
+	"active": true,
+	"visibility": "PUBLIC",
+	"jobAd": {
+		"sections": {
+			"companyDescription": {
+				"title": "Company Description",
+				"text": "<p>Harbor Mills makes scheduling software for small ports.</p>"
+			},
+			"jobDescription": {
+				"title": "Job Description",
+				"text": "<p>You will run the platform our product teams deploy on.</p><ul><li>Own the deploy pipeline</li><li>Keep the clusters healthy</li></ul>"
+			},
+			"qualifications": {
+				"title": "Qualifications",
+				"text": "<ul><li>Five years of platform work</li><li>Go and Kubernetes</li></ul>"
+			},
+			"additionalInformation": { "title": "Additional Information", "text": "" }
+		}
+	}
+}

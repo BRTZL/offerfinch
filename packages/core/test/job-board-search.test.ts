@@ -24,7 +24,6 @@ import {
 	postingFromUrl,
 	type SearchBackend,
 	SearchBackendError,
-	searchQueries,
 } from "../src/sources/search";
 import { fakeExporter } from "./helpers";
 import { MemoryRepo } from "./memory-repo";
@@ -72,29 +71,6 @@ describe("postings from search results", () => {
 			"https://example.com/boards.greenhouse.io/x/jobs/1",
 		])
 			expect(postingFromUrl(url)).toBeNull();
-	});
-
-	it("builds bounded searches from titles and where the user can work", () => {
-		const queries = searchQueries(
-			{
-				titles: ["Frontend Engineer", "React Developer"],
-				remote: true,
-				places: [],
-			},
-			5,
-		);
-		expect(queries).toHaveLength(5);
-		expect(queries[0]).toBe(
-			'site:job-boards.greenhouse.io "Frontend Engineer" remote',
-		);
-		expect(queries[1]).toBe('site:jobs.lever.co "Frontend Engineer" remote');
-		expect(
-			searchQueries({
-				titles: ["Engineer"],
-				remote: false,
-				places: ["Porto, Portugal"],
-			})[2],
-		).toBe('site:jobs.ashbyhq.com "Engineer" "Porto, Portugal"');
 	});
 });
 
@@ -375,6 +351,105 @@ describe("the job-board search provider", () => {
 			newJobIds: [],
 			duplicates: 2,
 		});
+	});
+
+	it("makes up to ten searches a scan, one board each", async () => {
+		const { deps, search } = setup(URLS);
+		const result = await runScanFlow(new LocalStep(), deps, {
+			userId: "u1",
+			trigger: "cli",
+		});
+		// Two titles on eight boards: sixteen searches, ten of them this scan.
+		expect(search.searches).toBe(10);
+		expect(result.providers?.[0]?.queries).toBe(10);
+		for (const q of result.providers?.[0]?.searches ?? [])
+			expect(q.match(/site:/g)).toHaveLength(1);
+	});
+
+	it("counts each board's postings, and reads the new boards' postings by id", async () => {
+		const SR = "744000100000001";
+		const { repo, deps } = setup([
+			"https://boards.greenhouse.io/harbormills/jobs/1",
+			`https://jobs.smartrecruiters.com/HarborMills/${SR}-senior-platform-engineer`,
+			"https://apply.workable.com/lumen-labs/j/a1b2c3d4e5/",
+			"https://apply.workable.com/lumen-labs/j/0000000000/",
+		]);
+		const asked: { board: string; key: string; ids?: string[] }[] = [];
+		const posting = (
+			source: "smartrecruiters" | "workable",
+			externalId: string,
+		): NormalizedJob => ({
+			...job(externalId, "Frontend Engineer"),
+			source,
+			url: `https://example.com/${externalId}`,
+			companyName: source === "workable" ? "Lumen Labs" : "Harbor Mills",
+		});
+		deps.sources.smartrecruiters = {
+			kind: "smartrecruiters",
+			listJobs: async ({ sourceKey, postingIds }) => {
+				asked.push({
+					board: "smartrecruiters",
+					key: sourceKey,
+					ids: postingIds,
+				});
+				return [posting("smartrecruiters", SR)];
+			},
+		};
+		deps.sources.workable = {
+			kind: "workable",
+			listJobs: async ({ sourceKey, postingIds }) => {
+				asked.push({ board: "workable", key: sourceKey, ids: postingIds });
+				return [
+					posting("workable", "A1B2C3D4E5"),
+					posting("workable", "F6E5D4C3B2"),
+				];
+			},
+		};
+		const result = await runScanFlow(new LocalStep(), deps, {
+			userId: "u1",
+			trigger: "cli",
+		});
+		expect(asked).toEqual([
+			{ board: "smartrecruiters", key: "HarborMills", ids: [SR] },
+			{
+				board: "workable",
+				key: "lumen-labs",
+				ids: ["A1B2C3D4E5", "0000000000"],
+			},
+		]);
+		// Workable's shortcode matched in any case; the job it did not list is set aside.
+		expect(
+			repo.jobs
+				.filter((j) => j.job.source === "workable")
+				.map((j) => j.job.externalId),
+		).toEqual(["A1B2C3D4E5"]);
+		expect(result.providers?.[0]?.boards).toEqual([
+			{ board: "greenhouse", found: 1, new: 1 },
+			{ board: "smartrecruiters", found: 1, new: 1 },
+			{ board: "workable", found: 2, new: 1 },
+		]);
+		expect(result.providers?.[0]?.dropped).toEqual([
+			expect.objectContaining({ reason: "expired", count: 1 }),
+		]);
+
+		// Next scan: found again, nothing new, no board read (known by its exact id).
+		asked.length = 0;
+		const again = await runScanFlow(new LocalStep(), deps, {
+			userId: "u1",
+			trigger: "cli",
+		});
+		expect(asked).toEqual([
+			{
+				board: "workable",
+				key: "lumen-labs",
+				ids: ["0000000000"],
+			},
+		]);
+		expect(again.providers?.[0]?.boards).toEqual([
+			{ board: "greenhouse", found: 1, new: 0 },
+			{ board: "smartrecruiters", found: 1, new: 0 },
+			{ board: "workable", found: 2, new: 0 },
+		]);
 	});
 
 	it("sets aside, as expired, a posting the search found but the board no longer lists", async () => {

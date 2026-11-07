@@ -107,4 +107,31 @@ describe("one job across sources", () => {
 		// And search will not read the board for it again.
 		expect(await search.hasPosting("u1", "greenhouse", "55")).toBe(true);
 	});
+	it("the LinkedIn listing first, then search finds the Recruitee offer it links to", async () => {
+		expect(
+			await linkedin.saveListing(
+				"u1",
+				listing(
+					"li-3",
+					"Alpha Works",
+					"https://alpha.recruitee.com/o/software-engineer",
+				),
+				"https://www.linkedin.com/jobs/view/li-3",
+			),
+		).toMatchObject({ outcome: "inserted" });
+		const companyId = await search.companyFor("u1", {
+			name: "Alpha Works",
+			source: "recruitee",
+			sourceKey: "alpha",
+		});
+		// The offer's id carries its company; its URL shows only the slug.
+		const offer: NormalizedJob = {
+			...posting("alpha", "x"),
+			source: "recruitee",
+			externalId: "alpha:software-engineer",
+			url: "https://alpha.recruitee.com/o/software-engineer",
+		};
+		expect((await repo.upsertJob("u1", companyId, offer)).inserted).toBe(false);
+		expect(await jobsOf("alpha.recruitee.com/o/software-engineer")).toBe(1);
+	});
 });

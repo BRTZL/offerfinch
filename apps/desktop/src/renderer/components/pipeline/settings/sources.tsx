@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ago } from "@/components/pipeline/bits";
+import { ago, sourceLabel } from "@/components/pipeline/bits";
 import {
 	QueryState,
 	SettingsPage,
@@ -33,6 +33,23 @@ function lastRunLine(p: {
 	const n = (count: number, one: string, many: string) =>
 		`${count} ${count === 1 ? one : many}`;
 	return `${ago(p.lastRunAt)}: ${n(r.queries, "search", "searches")}, ${n(r.found, "new posting", "new postings")}, ${n(r.newJobs, "new job", "new jobs")}`;
+}
+
+/**
+ * Job-board search's last run per board: "By board: Greenhouse 3 found, 1 new · Workable 2
+ * found, 2 new". Only boards its searches found postings on; null when there are none.
+ */
+function boardsLine(p: {
+	lastRun: {
+		problem?: string;
+		boards?: { board: string; found: number; new: number }[];
+	} | null;
+}): string | null {
+	const boards = (p.lastRun?.boards ?? []).filter((b) => b.found > 0);
+	if (p.lastRun?.problem || boards.length === 0) return null;
+	return `By board: ${boards
+		.map((b) => `${sourceLabel(b.board)} ${b.found} found, ${b.new} new`)
+		.join(" · ")}`;
 }
 
 type SourcesData = Awaited<ReturnType<typeof client.sources.list>>;
@@ -109,7 +126,7 @@ const SOURCES: {
 		tab: "duckduckgo",
 		signIn: false,
 		about:
-			"Ashby, Greenhouse and Lever postings at any company, found with DuckDuckGo and read from the boards' public pages.",
+			"Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Recruitee, Teamtailor and Personio postings at any company, found with DuckDuckGo and read from the boards' public pages.",
 	},
 	{
 		id: "linkedin",
@@ -429,7 +446,11 @@ function SourceRow({
 				<SourceHint
 					testId={`source-${id}-status`}
 					tone={toneOf(p, tab, reading)}
-					lines={[statusLine(p, tab, reading), detailLine(source, p, tab)]}
+					lines={[
+						statusLine(p, tab, reading),
+						detailLine(source, p, tab),
+						p.enabled && !p.stop && !reading ? boardsLine(p) : null,
+					]}
 				/>
 			}
 		>

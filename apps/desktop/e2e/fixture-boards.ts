@@ -68,12 +68,129 @@ function postingPage(
 	res.end(JSON.stringify(code === 200 ? job : {}));
 }
 
+const SR_ID = "744000200000001";
+
+/**
+ * The five boards added on 2026-11-07, one fabricated Acme Robotics posting each: the site its
+ * search names, the posting's URL a search would list, and the board's public data, by host and
+ * path. Recruitee, Teamtailor and Personio key the company in the subdomain, so their stand-in
+ * hosts name the company.
+ */
+const MORE_BOARDS: {
+	site: string;
+	url: string;
+	host: string;
+	path: string;
+	type: string;
+	body: () => string;
+}[] = [
+	{
+		site: "site:jobs.smartrecruiters.com",
+		url: `https://jobs.smartrecruiters.com/AcmeRobotics/${SR_ID}-senior-platform-engineer`,
+		host: "api.smartrecruiters.com",
+		path: `/v1/companies/AcmeRobotics/postings/${SR_ID}`,
+		type: "application/json",
+		body: () =>
+			JSON.stringify({
+				id: SR_ID,
+				name: "Senior Platform Engineer",
+				company: { identifier: "AcmeRobotics", name: "Acme Robotics" },
+				releasedDate: "2026-10-30T10:00:00.000Z",
+				location: {
+					city: "Lisbon",
+					fullLocation: "Lisbon, , Portugal",
+					remote: true,
+				},
+				postingUrl: `https://jobs.smartrecruiters.com/AcmeRobotics/${SR_ID}-senior-platform-engineer`,
+				active: true,
+				jobAd: {
+					sections: {
+						jobDescription: {
+							title: "Job Description",
+							text: posting("acme-senior-fullstack.txt"),
+						},
+					},
+				},
+			}),
+	},
+	{
+		site: "site:apply.workable.com",
+		url: "https://apply.workable.com/acme-robotics/j/A1B2C3D4E5/",
+		host: "apply.workable.com",
+		path: "/api/v1/widget/accounts/acme-robotics",
+		type: "application/json",
+		body: () =>
+			JSON.stringify({
+				name: "Acme Robotics",
+				jobs: [
+					{
+						title: "Senior Design Engineer",
+						shortcode: "A1B2C3D4E5",
+						telecommuting: true,
+						published_on: "2026-10-30",
+						locations: [{ city: "Utrecht", country: "Netherlands" }],
+						description: posting("nimbus-senior-frontend.txt").replace(
+							/Nimbus Labs/g,
+							"Acme Robotics",
+						),
+					},
+				],
+			}),
+	},
+	{
+		site: "site:recruitee.com",
+		url: "https://acmerobotics.recruitee.com/o/senior-backend-engineer",
+		host: "acmerobotics.recruitee.com",
+		path: "/api/offers/",
+		type: "application/json",
+		body: () =>
+			JSON.stringify({
+				offers: [
+					{
+						id: 3000001,
+						slug: "senior-backend-engineer",
+						title: "Senior Backend Engineer",
+						status: "published",
+						description: posting("northbeam-senior-fullstack.txt"),
+						requirements: "<ul><li>Five years of backend work</li></ul>",
+						location: "Remote",
+						remote: true,
+						published_at: "2026-10-30 10:00:00 UTC",
+						company_name: "Acme Robotics",
+					},
+				],
+			}),
+	},
+	{
+		site: "site:teamtailor.com",
+		url: "https://acmerobotics.teamtailor.com/jobs/5550001-senior-mobile-engineer",
+		host: "acmerobotics.teamtailor.com",
+		path: "/jobs.rss",
+		type: "application/rss+xml",
+		body: () =>
+			`<?xml version="1.0" encoding="UTF-8"?><rss version="2.0" xmlns:tt="https://teamtailor.com/locations"><channel><title>Acme Robotics</title><item><title>Senior Mobile Engineer</title><description>${posting("acme-senior-fullstack.txt").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</description><pubDate>Fri, 30 Oct 2026 10:00:00 +0000</pubDate><link>https://acmerobotics.teamtailor.com/jobs/5550001-senior-mobile-engineer</link><remoteStatus>fully</remoteStatus><tt:locations><tt:location><tt:city>Stockholm</tt:city><tt:country>Sweden</tt:country></tt:location></tt:locations></item></channel></rss>`,
+	},
+	{
+		site: "site:jobs.personio.de",
+		url: "https://acmerobotics.jobs.personio.de/job/2900001",
+		host: "acmerobotics.jobs.personio.de",
+		path: "/xml",
+		type: "text/xml",
+		body: () =>
+			`<?xml version="1.0" encoding="UTF-8"?><workzag-jobs><position><id>2900001</id><subcompany>Acme Robotics GmbH</subcompany><office>Remote (Germany)</office><name>Senior Data Engineer</name><jobDescriptions><jobDescription><name>Your mission</name><value><![CDATA[${posting("acme-senior-fullstack.txt")}]]></value></jobDescription></jobDescriptions><createdAt>2026-10-30T10:00:00+00:00</createdAt></position></workzag-jobs>`,
+	},
+];
+
 /**
  * Stand-ins for the job boards' public APIs and DuckDuckGo's HTML results pages on 127.0.0.1. The
  * app is started with the board hosts rewritten here and its DuckDuckGo tab pointed here
- * (`siteOrigins`), so a scan never leaves this Mac. Counts requests.
+ * (`siteOrigins`), so a scan never leaves this Mac. Counts requests. With `moreBoards`, a search
+ * naming one of the five boards added on 2026-11-07 lists that board's posting; without it every
+ * search lists the Greenhouse postings, as before.
  */
-export async function startFixtureBoards() {
+export async function startFixtureBoards(
+	options: { moreBoards?: boolean } = {},
+) {
 	const requests: string[] = [];
 	/** Queries the search stand-in answered. */
 	const searches: string[] = [];
@@ -111,32 +228,20 @@ export async function startFixtureBoards() {
 			postingPage(res, listed, Number(one[1]), postingStatus);
 			return;
 		}
+		const more = MORE_BOARDS.find((b) => b.host === host && b.path === tail);
+		if (more) {
+			res.writeHead(200, { "content-type": more.type });
+			res.end(more.body());
+			return;
+		}
 		// DuckDuckGo's HTML results page (the live page's markup): every Acme posting, as a web
 		// search would list them, through DuckDuckGo's /l/?uddg= redirect, plus one other page.
 		if (host === "html") {
 			const q = url.searchParams.get("q") ?? "";
 			searches.push(q);
-			// Web search's queries name no site: results on careers pages and job sites.
-			if (!/\bsite:/.test(q)) {
-				res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-				res.end(webResults(base));
-				return;
-			}
 			const ids = [...greenhouseBoard(base).jobs, ...extra].map((j) => j.id);
-			const result = (target: string, title: string) =>
-				`<div class="result results_links results_links_deep web-result"><div class="links_main links_deep result__body"><h2 class="result__title"><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=${encodeURIComponent(target)}&amp;rut=x">${title}</a></h2></div></div>`;
 			res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-			res.end(
-				`<!doctype html><html><head><title>${url.searchParams.get("q")} at DuckDuckGo</title></head><body><div id="links" class="results">${[
-					...ids.map((id) =>
-						result(
-							`https://boards.greenhouse.io/acmerobotics/jobs/${id}`,
-							`Job ${id}`,
-						),
-					),
-					result("https://www.example.com/careers", "Not a posting"),
-				].join("")}</div></body></html>`,
-			);
+			res.end(duckduckgoPage(q, base, ids, options.moreBoards === true));
 			return;
 		}
 		// Web search's stand-in pages (robots.txt: none, so every page may be read).
@@ -162,11 +267,16 @@ export async function startFixtureBoards() {
 		base,
 		requests,
 		searches,
+		/**
+		 * Every board host a scan may read, the five added boards' always (a search that lists one
+		 * of their postings must never reach the real site): one entry per exact host.
+		 */
 		rewrite: {
 			"boards-api.greenhouse.io": base,
 			"api.lever.co": base,
 			"api.ashbyhq.com": base,
-		},
+			...Object.fromEntries(MORE_BOARDS.map((b) => [b.host, base])),
+		} as Record<string, string>,
 		/** The site tabs' stand-ins: DuckDuckGo's pages, and web search's result pages. */
 		siteOrigins: { duckduckgo: base, web: base } as Record<string, string>,
 		addJob: (id: number, title: string) =>
@@ -190,6 +300,33 @@ export async function startFixtureBoards() {
 		},
 		close: () => new Promise<void>((resolve) => server.close(() => resolve())),
 	};
+}
+
+/** The DuckDuckGo stand-in's results page for one query. */
+function duckduckgoPage(
+	q: string,
+	base: string,
+	ids: number[],
+	moreBoards: boolean,
+): string {
+	// Web search's queries name no site: results on careers pages and job sites.
+	if (!/\bsite:/.test(q)) return webResults(base);
+	const result = (target: string, title: string) =>
+		`<div class="result results_links results_links_deep web-result"><div class="links_main links_deep result__body"><h2 class="result__title"><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=${encodeURIComponent(target)}&amp;rut=x">${title}</a></h2></div></div>`;
+	const board = moreBoards
+		? MORE_BOARDS.find((b) => q.includes(b.site))
+		: undefined;
+	return `<!doctype html><html><head><title>${q} at DuckDuckGo</title></head><body><div id="links" class="results">${[
+		...(board
+			? [result(board.url, "A posting")]
+			: ids.map((id) =>
+					result(
+						`https://boards.greenhouse.io/acmerobotics/jobs/${id}`,
+						`Job ${id}`,
+					),
+				)),
+		result("https://www.example.com/careers", "Not a posting"),
+	].join("")}</div></body></html>`;
 }
 
 const LONG_POSTING =

@@ -1,12 +1,24 @@
 import type { SiteStop } from "../sites/read";
+import { recruiteeId } from "./recruitee";
 
 /**
- * Job-board search (PLAN A): postings on Ashby, Greenhouse and Lever at any company, found through
- * a web search (DuckDuckGo's results pages, read in the app's own tab: ./duckduckgo.ts), then
- * read from those boards' public data. No login, nothing to set up.
+ * Job-board search (PLAN A): postings on the public job boards below at any company, found
+ * through a web search (DuckDuckGo's results pages, read in the app's own tab: ./duckduckgo.ts),
+ * then read from those boards' public data. No login, nothing to set up.
  */
 
-type SearchBoard = "ashby" | "greenhouse" | "lever";
+/** The boards job-board search finds postings on, each with a public reader (`sources/`). */
+export const SEARCH_BOARDS = [
+	"greenhouse",
+	"lever",
+	"ashby",
+	"smartrecruiters",
+	"workable",
+	"recruitee",
+	"teamtailor",
+	"personio",
+] as const;
+export type SearchBoard = (typeof SEARCH_BOARDS)[number];
 
 export interface SearchHit {
 	url: string;
@@ -38,83 +50,136 @@ export class SearchBackendError extends Error {
 	}
 }
 
-/** A posting on one of the three boards, read from its URL. */
+/** A posting on one of the boards, read from its URL. */
 export interface FoundPosting {
 	board: SearchBoard;
-	/** The board's company key (Greenhouse board token, Lever and Ashby company name). */
+	/**
+	 * The board's company key: Greenhouse's board token, the company name in Lever's, Ashby's,
+	 * SmartRecruiters' and Workable's paths, the subdomain on Recruitee, Teamtailor and Personio.
+	 */
 	companyKey: string;
 	/** The posting's id on the board, as the board's API gives it. */
 	jobId: string;
 	url: string;
 }
 
-const BOARD_URLS: { board: SearchBoard; pattern: RegExp }[] = [
+/**
+ * One DNS label: a company's subdomain on Recruitee, Teamtailor and Personio. No dots, so
+ * "a.b.recruitee.com" is not read as company "a.b"; the readers check it again (`companyOrigin`).
+ */
+const LABEL = "([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)";
+const UUID = "([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})";
+/** The id ends the path segment, or a slug follows it after a dash. */
+const END = "(?=[-/?#]|$)";
+
+/**
+ * Each board's posting URLs, and the id as its API writes it: Lever's, Ashby's and Recruitee's
+ * in lower case, Workable's shortcodes in upper case, the rest digits. The host comes right after
+ * the scheme and the path right after the host (no user name, port or other host).
+ */
+const BOARD_URLS: {
+	board: SearchBoard;
+	pattern: RegExp;
+	id: (raw: string) => string;
+}[] = [
 	{
 		board: "greenhouse",
 		pattern:
 			/^https?:\/\/(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io\/([\w-]+)\/jobs\/(\d+)/i,
+		id: (raw) => raw,
 	},
 	{
 		board: "lever",
-		pattern:
-			/^https?:\/\/jobs(?:\.eu)?\.lever\.co\/([\w.-]+)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+		pattern: new RegExp(
+			`^https?://jobs(?:\\.eu)?\\.lever\\.co/([\\w.-]+)/${UUID}`,
+			"i",
+		),
+		id: (raw) => raw.toLowerCase(),
 	},
 	{
 		board: "ashby",
-		pattern:
-			/^https?:\/\/jobs\.ashbyhq\.com\/([^/?#]+)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+		pattern: new RegExp(
+			`^https?://jobs\\.ashbyhq\\.com/([^/?#]+)/${UUID}`,
+			"i",
+		),
+		id: (raw) => raw.toLowerCase(),
+	},
+	{
+		// jobs.smartrecruiters.com/{Company}/{id}-{slug}
+		board: "smartrecruiters",
+		pattern: new RegExp(
+			`^https?://jobs\\.smartrecruiters\\.com/([\\w.-]+)/(\\d{6,})${END}`,
+			"i",
+		),
+		id: (raw) => raw,
+	},
+	{
+		// apply.workable.com/{account}/j/{shortcode}
+		board: "workable",
+		pattern: new RegExp(
+			`^https?://apply\\.workable\\.com/([\\w-]+)/j/([0-9a-f]{6,12})${END}`,
+			"i",
+		),
+		id: (raw) => raw.toUpperCase(),
+	},
+	{
+		// {company}.recruitee.com/o/{slug}
+		board: "recruitee",
+		pattern: new RegExp(
+			`^https?://${LABEL}\\.recruitee\\.com/o/([a-z0-9][a-z0-9-]*)${END}`,
+			"i",
+		),
+		id: (raw) => raw.toLowerCase(),
+	},
+	{
+		// {company}.teamtailor.com/jobs/{id}-{slug}, also under a language (/en-GB/jobs/...)
+		board: "teamtailor",
+		pattern: new RegExp(
+			`^https?://${LABEL}\\.teamtailor\\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?jobs/(\\d+)${END}`,
+			"i",
+		),
+		id: (raw) => raw,
+	},
+	{
+		// {company}.jobs.personio.de/job/{id} (or .com)
+		board: "personio",
+		pattern: new RegExp(
+			`^https?://${LABEL}\\.jobs\\.personio\\.(?:de|com)/job/(\\d+)${END}`,
+			"i",
+		),
+		id: (raw) => raw,
 	},
 ];
 
+/** Boards that key the company in the subdomain. */
+const BY_SUBDOMAIN: ReadonlySet<SearchBoard> = new Set([
+	"recruitee",
+	"teamtailor",
+	"personio",
+]);
+/** Subdomains of the boards' own sites, never a company's. */
+const NOT_A_COMPANY = new Set(["www", "app", "api", "jobs", "careers"]);
+
 /** The posting a search result points at, or null for any other page. */
 export function postingFromUrl(url: string): FoundPosting | null {
-	for (const { board, pattern } of BOARD_URLS) {
+	for (const { board, pattern, id } of BOARD_URLS) {
 		const m = url.match(pattern);
-		if (m?.[1] && m[2])
-			return {
-				board,
-				companyKey: decodeURIComponent(m[1]),
-				jobId: board === "greenhouse" ? m[2] : m[2].toLowerCase(),
-				url,
-			};
+		if (!m?.[1] || !m[2]) continue;
+		let companyKey = decodeURIComponent(m[1]);
+		if (BY_SUBDOMAIN.has(board)) {
+			companyKey = companyKey.toLowerCase();
+			if (NOT_A_COMPANY.has(companyKey)) return null;
+		}
+		const jobId = id(m[2]);
+		return {
+			board,
+			companyKey,
+			// A Recruitee slug is unique only within its company (./recruitee.ts).
+			jobId: board === "recruitee" ? recruiteeId(companyKey, jobId) : jobId,
+			url,
+		};
 	}
 	return null;
-}
-
-const SITES: Record<SearchBoard, string> = {
-	ashby: "site:jobs.ashbyhq.com",
-	// One site per query: the form checked on DuckDuckGo (job-boards is where boards.greenhouse.io
-	// postings live now). An OR of two sites met DuckDuckGo's bot check on its first query.
-	greenhouse: "site:job-boards.greenhouse.io",
-	lever: "site:jobs.lever.co",
-};
-
-export interface SearchPreferences {
-	/** Words a job title should contain ("frontend engineer"). */
-	titles: string[];
-	/** Remote roles are wanted. */
-	remote: boolean;
-	/** Places an office role is fine in. */
-	places: string[];
-}
-
-/**
- * The searches for one scan: each title on each board, with "remote" or the first place, at most
- * `max` queries so a scan stays a handful of results pages.
- */
-export function searchQueries(prefs: SearchPreferences, max = 6): string[] {
-	const titles = prefs.titles
-		.map((t) => t.replace(/["\s]+/g, " ").trim())
-		.filter(Boolean)
-		.slice(0, 4);
-	const where = prefs.remote ? "remote" : (prefs.places[0] ?? "").trim();
-	const out: string[] = [];
-	for (const title of titles)
-		for (const board of ["greenhouse", "lever", "ashby"] as const)
-			out.push(
-				`${SITES[board]} "${title}"${where ? ` ${where.includes(" ") ? `"${where}"` : where}` : ""}`,
-			);
-	return out.slice(0, max);
 }
 
 /**

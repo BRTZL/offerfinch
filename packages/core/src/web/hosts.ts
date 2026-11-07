@@ -4,8 +4,8 @@ import { checkJobLink } from "../sources/link";
  * Which web search results are read. Only http(s) pages on public hosts (no user name or
  * password, not this Mac or a private network), and never a site another source already covers:
  * LinkedIn, Indeed and Glassdoor (with their regional sites, indeed.co.uk, de.indeed.com,
- * indeed.com.br, glassdoor.de, uk.linkedin.com, ...), and the Ashby, Greenhouse and Lever boards
- * (job-board search reads those).
+ * indeed.com.br, glassdoor.de, uk.linkedin.com, ...), and the boards job-board search reads
+ * (Ashby, Greenhouse, Lever, SmartRecruiters, Workable, Recruitee, Teamtailor, Personio).
  */
 
 /**
@@ -22,6 +22,11 @@ const BRANDS = new Set([
 	"ashbyhq",
 	"greenhouse",
 	"lever",
+	"smartrecruiters",
+	"workable",
+	"recruitee",
+	"teamtailor",
+	"personio",
 ]);
 
 /**

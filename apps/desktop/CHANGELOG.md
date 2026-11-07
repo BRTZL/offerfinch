@@ -10,6 +10,12 @@ at the top, above the newest version. Only what is merged into main belongs here
 
 ## Unreleased
 
+- Job-board search finds jobs on five more boards: SmartRecruiters, Workable, Recruitee,
+  Teamtailor and Personio, next to Greenhouse, Lever and Ashby. Links from these boards also
+  work with Add job from link. As on every board, you apply yourself; nothing is sent for you.
+- Each scan makes up to 10 searches instead of 6, so the eight boards are all covered.
+- Settings › Sources shows how many postings each board found in the last run, and how many
+  were new.
 - The Inbox shows only jobs still in play: ones you rejected or marked Not interested move to
   the Rejected page, with your reasons (Not interested, the reasons you ticked, or Company
   hidden).

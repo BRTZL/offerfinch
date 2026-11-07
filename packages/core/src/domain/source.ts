@@ -6,6 +6,17 @@ const BOARD_HOSTS: Readonly<Record<string, { label: string; host: RegExp }>> =
 		ashby: { label: "Ashby", host: /(?:^|\.)ashbyhq\.com$/i },
 		greenhouse: { label: "Greenhouse", host: /(?:^|\.)greenhouse\.io$/i },
 		lever: { label: "Lever", host: /(?:^|\.)lever\.co$/i },
+		smartrecruiters: {
+			label: "SmartRecruiters",
+			host: /(?:^|\.)smartrecruiters\.com$/i,
+		},
+		workable: { label: "Workable", host: /(?:^|\.)workable\.com$/i },
+		recruitee: { label: "Recruitee", host: /(?:^|\.)recruitee\.com$/i },
+		teamtailor: { label: "Teamtailor", host: /(?:^|\.)teamtailor\.com$/i },
+		personio: {
+			label: "Personio",
+			host: /(?:^|\.)jobs\.personio\.(?:de|com)$/i,
+		},
 		linkedin: { label: "LinkedIn", host: /(?:^|\.)linkedin\.com$/i },
 	});
 

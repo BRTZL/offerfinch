@@ -2,6 +2,12 @@ export const JOB_SOURCES = [
 	"ashby",
 	"greenhouse",
 	"lever",
+	// Public boards found by job-board search (2026-11-07); always handed off.
+	"smartrecruiters",
+	"workable",
+	"recruitee",
+	"teamtailor",
+	"personio",
 	"scrape",
 	"linkedin",
 	// Read from their search pages in the user's browser (core/sites); always handed off.

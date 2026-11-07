@@ -63,6 +63,16 @@ export const HANDOFF_SOURCES: Readonly<Record<string, string>> = Object.freeze({
 		"Found on Indeed: open the posting and apply yourself. Nothing is filled or sent automatically, and Indeed's own apply is never used.",
 	glassdoor:
 		"Found on Glassdoor: open the posting and apply yourself. Nothing is filled or sent automatically, and Glassdoor's own apply is never used.",
+	smartrecruiters:
+		"Found on SmartRecruiters: open the posting and apply on SmartRecruiters yourself. Nothing is filled or sent automatically.",
+	workable:
+		"Found on Workable: open the posting and apply on Workable yourself. Nothing is filled or sent automatically.",
+	recruitee:
+		"Found on Recruitee: open the posting and apply on the company's Recruitee page yourself. Nothing is filled or sent automatically.",
+	teamtailor:
+		"Found on Teamtailor: open the posting and apply on the company's Teamtailor page yourself. Nothing is filled or sent automatically.",
+	personio:
+		"Found on Personio: open the posting and apply on the company's Personio page yourself. Nothing is filled or sent automatically.",
 	web: "Found on the web: open the posting and apply on the employer's site yourself. Nothing is filled or sent automatically.",
 	remotive:
 		"Found on Remotive: open the posting on Remotive and apply yourself. Nothing is filled or sent automatically.",

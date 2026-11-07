@@ -526,11 +526,11 @@ async function readLink(app: WorkerApp, url: URL): Promise<Read> {
 		try {
 			const listed = await source.listJobs({
 				sourceKey: route.posting.companyKey,
+				postingIds: [route.posting.jobId],
 			});
-			const hit = listed.filter((j) =>
-				route.posting.board === "greenhouse"
-					? j.externalId === route.posting.jobId
-					: j.externalId.toLowerCase() === route.posting.jobId,
+			// Ids compare in any case: Workable's shortcodes are upper case, Lever's ids lower.
+			const hit = listed.filter(
+				(j) => j.externalId.toLowerCase() === route.posting.jobId.toLowerCase(),
 			);
 			const first = hit[0];
 			if (!first)
