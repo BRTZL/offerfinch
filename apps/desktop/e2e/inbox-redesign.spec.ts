@@ -4,6 +4,7 @@ import path from "node:path";
 import {
 	type ElectronApplication,
 	expect,
+	type Locator,
 	type Page,
 	test,
 } from "@playwright/test";
@@ -61,6 +62,10 @@ async function shot(page: Page, name: string, keepToasts = false) {
 	await page.waitForTimeout(400);
 	await page.screenshot({ path: path.join(SHOTS, `${name}.png`) });
 }
+
+/** A box's width in whole pixels. */
+const widthOf = async (locator: Locator) =>
+	Math.round((await locator.boundingBox())?.width ?? 0);
 
 const selectedRow = (page: Page) =>
 	page.locator("[data-testid=inbox-row][aria-selected=true]");
@@ -229,17 +234,70 @@ test("Inbox redesign: one list, unread dots, the action bar, Rejected chips and 
 		await expect(backdrop).toBeHidden();
 		await page.setViewportSize({ width: 1440, height: 900 });
 
-		// Not interested from the bar: the popover above its button; the row leaves, the next opens.
+		// Not interested from the bar: the bar grows upward into a tray with the form, the window
+		// dimmed behind it, and its button becomes the confirm; the row leaves, the next opens.
+		await page.setViewportSize({ width: 1280, height: 800 });
 		const leaving = await selectedRow(page).getAttribute("id");
 		const before = await rows.count();
+		const closedWidth = await widthOf(bar);
+		const trayBackdrop = page.getByTestId("tray-backdrop");
+		await expect(trayBackdrop).toBeHidden();
 		await notInterested.click();
 		const popover = page.getByTestId("not-interested-popover");
 		await expect(popover).toContainText("Not interested in this job?");
+		await expect(trayBackdrop).toBeVisible();
+		await expect(notInterested).toHaveAttribute("data-confirm");
+		await expect(notInterested).toBeFocused();
+		// Chat and Interested go quiet and out of reach; the caption fades.
+		await expect(interested).toHaveJSProperty("inert", true);
+		await expect(bar.getByTestId("chat-toggle")).toHaveJSProperty(
+			"inert",
+			true,
+		);
+		await expect(page.getByTestId("action-bar-caption")).toHaveCSS(
+			"opacity",
+			"0",
+		);
+		// As wide as the bar was, and whole on screen once it has grown.
+		await page.waitForTimeout(600);
+		expect(await widthOf(bar)).toBe(closedWidth);
+		expect(await widthOf(popover)).toBe(closedWidth);
+		expect((await popover.boundingBox())?.y).toBeGreaterThan(0);
+		await shot(page, "tray-open-dark");
+		await app.evaluate(({ nativeTheme }) => {
+			nativeTheme.themeSource = "light";
+		});
+		await expect
+			.poll(() =>
+				page.evaluate(() =>
+					document.documentElement.classList.contains("dark"),
+				),
+			)
+			.toBe(false);
+		await page.waitForTimeout(300);
+		await shot(page, "tray-open-light");
+		await dark(app, page);
+		// A click on the backdrop cancels, and the bar is a bar again.
+		await trayBackdrop.click({ position: { x: 100, y: 400 } });
+		await expect(popover).toBeHidden();
+		await expect(trayBackdrop).toBeHidden();
+		await expect(notInterested).not.toHaveAttribute("data-confirm");
+		await expect(interested).toHaveJSProperty("inert", false);
+		// From the list: X opens it with focus on the confirm, so X then ↩ dismisses with no reasons.
+		await page.getByTestId("inbox-scroll").focus();
+		await page.keyboard.press("x");
+		await expect(popover).toBeVisible();
+		await expect(notInterested).toBeFocused();
 		await shot(page, "not-interested-popover");
-		await page.getByTestId("dismiss-confirm").click();
+		await page.keyboard.press("Enter");
+		await expect(popover).toBeHidden();
+		await expect(trayBackdrop).toBeHidden();
+		await page.setViewportSize({ width: 1440, height: 900 });
 		await expect(page.locator(`[id="${leaving}"]`)).toHaveCount(0);
 		await expect(rows).toHaveCount(before - 1);
 		await expect(selectedRow(page)).toHaveCount(1);
+		// Focus is back on the list, so X ↩ X ↩ goes on down it.
+		await expect(page.getByTestId("inbox-scroll")).toBeFocused();
 		await expect(
 			page
 				.locator("[data-sonner-toast]")
@@ -415,11 +473,13 @@ test("Inbox redesign: one list, unread dots, the action bar, Rejected chips and 
 				await group.click();
 			const left = await page.getByTestId("inbox-row").count();
 			await page.getByTestId("inbox-row").first().click();
-			await page
+			const dismissButton = page
 				.getByTestId("action-bar")
-				.getByTestId("not-interested")
-				.click();
-			await page.getByTestId("dismiss-confirm").click();
+				.getByTestId("not-interested");
+			await dismissButton.click();
+			// Open, the bar's own button confirms.
+			await expect(dismissButton).toHaveAttribute("data-confirm");
+			await dismissButton.click();
 			await expect(page.getByTestId("inbox-row")).toHaveCount(left - 1);
 		}
 		await expect(lines).toHaveCount(0);
@@ -498,12 +558,12 @@ test("Inbox redesign: one list, unread dots, the action bar, Rejected chips and 
 				.first();
 			await match.click();
 			await page.waitForTimeout(800);
-			await page
+			const dismissButton = page
 				.getByTestId("action-bar")
-				.getByTestId("not-interested")
-				.click();
+				.getByTestId("not-interested");
+			await dismissButton.click();
 			await page.waitForTimeout(600);
-			await page.getByTestId("dismiss-confirm").click();
+			await dismissButton.click();
 			await page.waitForTimeout(1_500);
 		}
 		expect(errors).toEqual([]);

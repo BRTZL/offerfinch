@@ -10,16 +10,18 @@ export function FocusBackdrop({
 	open,
 	onClose,
 	className,
+	testId = "focus-backdrop",
 }: {
 	open: boolean;
 	onClose: () => void;
 	/** Position and stacking; replaces the default `fixed inset-0 z-30`. */
 	className?: string;
+	testId?: string;
 }) {
 	return (
 		<div
 			aria-hidden
-			data-testid="focus-backdrop"
+			data-testid={testId}
 			data-open={open || undefined}
 			onClick={open ? onClose : undefined}
 			className={cn(

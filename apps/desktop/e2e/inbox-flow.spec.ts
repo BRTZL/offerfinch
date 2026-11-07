@@ -161,17 +161,29 @@ test("Inbox: Matches grouped by company, Not interested with reasons, hide and u
 		await toastsGone(page, 15_000);
 		const trigger = page.getByTestId("not-interested");
 		await trigger.click();
+		// The bar grows into a tray with the form; the rest of the window dims behind it.
 		const popover = page.getByTestId("not-interested-popover");
+		const backdrop = page.getByTestId("tray-backdrop");
 		await expect(popover).toBeVisible();
-		// Focus starts on its confirm button and stays inside: Tab and ⇧Tab go round.
-		await expect(popover.getByTestId("dismiss-confirm")).toBeFocused();
+		await expect(backdrop).toBeVisible();
+		// Focus starts on the bar's button, now the confirm, and stays inside: Tab and ⇧Tab go round.
+		await expect(trigger).toHaveAttribute("data-confirm");
+		await expect(trigger).toBeFocused();
+		// From the confirm, Tab reaches the reasons first; ⇧Tab comes back.
+		await page.keyboard.press("Tab");
+		await expect(popover.getByTestId("dismiss-reason-location")).toBeFocused();
+		await page.keyboard.press("Shift+Tab");
+		await expect(trigger).toBeFocused();
 		const inside = () =>
-			page.evaluate(() =>
-				Boolean(
-					document
-						.querySelector("[data-testid=not-interested-popover]")
-						?.contains(document.activeElement),
-				),
+			page.evaluate(
+				() =>
+					Boolean(
+						document
+							.querySelector("[data-testid=not-interested-popover]")
+							?.contains(document.activeElement),
+					) ||
+					document.activeElement ===
+						document.querySelector("[data-testid=not-interested]"),
 			);
 		for (let i = 0; i < 14; i++) {
 			await page.keyboard.press("Tab");
@@ -183,12 +195,16 @@ test("Inbox: Matches grouped by company, Not interested with reasons, hide and u
 		}
 		// Esc closes it, and focus is back on the button that opened it.
 		await page.keyboard.press("Escape");
-		await expect(popover).toHaveCount(0);
+		await expect(popover).toBeHidden();
+		await expect(backdrop).toBeHidden();
+		await expect(trigger).not.toHaveAttribute("data-confirm");
 		await expect(trigger).toBeFocused();
-		// Cancel too.
+		// The X too.
 		await trigger.click();
+		await expect(popover).toBeVisible();
 		await popover.getByTestId("dismiss-cancel").click();
-		await expect(popover).toHaveCount(0);
+		await expect(popover).toBeHidden();
+		await expect(backdrop).toBeHidden();
 		await expect(trigger).toBeFocused();
 		await trigger.click();
 		await expect(popover).toBeVisible();
@@ -198,7 +214,8 @@ test("Inbox: Matches grouped by company, Not interested with reasons, hide and u
 		await popover.getByTestId("dismiss-hide-company").click();
 		await expect(popover).toContainText("Hide every job from Acme Robotics");
 		await page.screenshot({ path: path.join(SHOTS, "not-interested.png") });
-		await popover.getByTestId("dismiss-confirm").click();
+		await trigger.click();
+		await expect(backdrop).toBeHidden();
 		const toast = page
 			.locator("[data-sonner-toast]")
 			.filter({ hasText: "Hid Acme Robotics" });
@@ -244,11 +261,19 @@ test("Inbox: Matches grouped by company, Not interested with reasons, hide and u
 		await page.keyboard.press("j");
 		await expect(page).toHaveURL(/\/applications\//);
 		await expect(page.getByTestId("not-interested")).toBeEnabled();
+		// Under reduced motion the tray opens and folds at once.
+		await page.emulateMedia({ reducedMotion: "reduce" });
 		await page.keyboard.press("x");
 		await expect(popover).toBeVisible();
+		expect(
+			await popover.evaluate((el) => getComputedStyle(el).transitionDuration),
+		).toBe("0s");
 		await popover.getByTestId("dismiss-hide-company").click();
-		await popover.getByTestId("dismiss-confirm").click();
+		// ⌘↩ confirms from anywhere in the form.
+		await page.keyboard.press("ControlOrMeta+Enter");
+		await expect(page.getByTestId("tray-backdrop")).toBeHidden();
 		await expect.poll(() => acmeMatches().length, { timeout: 15_000 }).toBe(0);
+		await page.emulateMedia({ reducedMotion: "no-preference" });
 		expect(
 			readDb<{ n: number }>("select count(*) n from hidden_companies")[0]?.n,
 		).toBe(1);
