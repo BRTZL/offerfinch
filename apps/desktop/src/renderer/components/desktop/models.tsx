@@ -14,6 +14,7 @@ import {
 	signedInLine,
 	useProviders,
 } from "@/components/desktop/step-picker";
+import { SpendingLimit, UsageSection } from "@/components/desktop/usage";
 import {
 	QueryState,
 	SettingsPage,
@@ -299,6 +300,13 @@ function StepsSection({ ai }: { ai: Ai }) {
 		onSuccess: (result, role) => setTests((t) => ({ ...t, [role]: result })),
 		onError: (e, role) =>
 			setTests((t) => ({ ...t, [role]: { ok: false, message: e.message } })),
+		// A test is a model call too: This month counts it.
+		onSettled: () => {
+			void queryClient.invalidateQueries({
+				queryKey: orpc.spendingBreakdown.key(),
+			});
+			void queryClient.invalidateQueries({ queryKey: orpc.spending.key() });
+		},
 	});
 	const providers = models.data?.providers ?? [];
 	return (
@@ -364,7 +372,7 @@ function StepsSection({ ai }: { ai: Ai }) {
 
 /**
  * Settings › Models (docs/design/models/, version A): the model of each step, the accounts on
- * this computer, then the plans' usage and limits.
+ * this computer, the plans' usage and limits, then this month's calls by model and by step.
  */
 export function ModelSettings() {
 	const ai = useQuery(orpc.ai.get.queryOptions());
@@ -388,8 +396,10 @@ export function ModelSettings() {
 				<SubscriptionTerms />
 				<Disclosure title="Limits" data-testid="models-advanced">
 					<PlanLimits />
+					<SpendingLimit />
 				</Disclosure>
 			</Section>
+			<UsageSection />
 		</SettingsPage>
 	);
 }

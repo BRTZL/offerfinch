@@ -240,9 +240,9 @@ export default function HomePage() {
 	if (h.spend.reached)
 		fix(
 			"cap",
-			"/settings/spending",
-			"This month's cap is reached: new preparation is paused",
-			"Raise the cap in Spending, or wait for next month",
+			"/settings/models",
+			"This month's limit is reached: new preparation is paused",
+			"Raise the limit in Settings › Models, or wait for next month",
 			"home-needs-cap",
 		);
 	if (h.scan.unset.length > 0)

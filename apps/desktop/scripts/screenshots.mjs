@@ -257,9 +257,6 @@ await run(copy(), async ({ page, go, shot }) => {
 	await go("/settings/job-filter");
 	await page.waitForTimeout(800);
 	await shot("13b-settings-job-search");
-	await go("/settings/spending");
-	await page.waitForTimeout(800);
-	await shot("14-settings-spending");
 	await go("/settings/general");
 	await page.getByTestId("about-version").waitFor();
 	await shot("15-settings-general");

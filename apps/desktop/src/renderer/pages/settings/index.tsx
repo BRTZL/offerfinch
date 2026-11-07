@@ -14,10 +14,6 @@ const lazyNamed = <K extends string>(
 ) => preloadable(() => load().then((m) => m[name]));
 
 const SECTIONS: Record<string, ReturnType<typeof lazyNamed>> = {
-	spending: lazyNamed(
-		() => import("@/components/pipeline/settings/spending"),
-		"SpendingSettings",
-	),
 	models: lazyNamed(
 		() => import("@/components/desktop/models"),
 		"ModelSettings",

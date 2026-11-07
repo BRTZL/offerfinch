@@ -22,7 +22,6 @@ import {
 	Settings2,
 	SlidersHorizontal,
 	UserRound,
-	Wallet,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -95,7 +94,6 @@ const SETTINGS: { label: string; href: string; icon: ReactNode }[] = [
 	{ label: "Models", href: "/settings/models", icon: <SlidersHorizontal /> },
 	{ label: "Job search", href: "/settings/job-filter", icon: <Filter /> },
 	{ label: "Sources", href: "/settings/sources", icon: <Globe /> },
-	{ label: "Spending", href: "/settings/spending", icon: <Wallet /> },
 	{ label: "Notifications", href: "/settings/notifications", icon: <Bell /> },
 	{ label: "General", href: "/settings/general", icon: <Settings2 /> },
 	{ label: "Your data", href: "/settings/your-data", icon: <Database /> },

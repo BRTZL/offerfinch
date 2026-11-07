@@ -175,17 +175,6 @@
 		"formRowHeight": 63,
 		"bodySize": "16px"
 	},
-	"14-settings-spending": {
-		"header": 52,
-		"titleSize": "14px",
-		"titleOffset": 0,
-		"headerInset": 20,
-		"contentInset": 24,
-		"sectionGap": [32],
-		"rowHeight": 40,
-		"formRowHeight": 78,
-		"bodySize": "16px"
-	},
 	"15-settings-general": {
 		"header": 52,
 		"titleSize": "14px",

@@ -6,7 +6,6 @@ import {
 	Globe,
 	Settings2,
 	SlidersHorizontal,
-	Wallet,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { SubNav, SubNavGroup, SubNavLink } from "@/components/system/subnav";
@@ -31,7 +30,6 @@ const GROUPS: {
 				icon: <EyeOff />,
 			},
 			{ href: "/settings/sources", label: "Sources", icon: <Globe /> },
-			{ href: "/settings/spending", label: "Spending", icon: <Wallet /> },
 		],
 	},
 	{

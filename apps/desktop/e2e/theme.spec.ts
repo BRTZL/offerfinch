@@ -225,7 +225,7 @@ async function check(app: ElectronApplication, page: Page, combo: string) {
 		const { bg, ink } = await measure(
 			app,
 			file2,
-			await box(page, 'nav[aria-label="Settings"] a:has-text("Spending")'),
+			await box(page, 'nav[aria-label="Settings"] a:has-text("Notifications")'),
 			navEmpty,
 		);
 		results["settings column"] = Math.round(contrast(bg, ink) * 100) / 100;
