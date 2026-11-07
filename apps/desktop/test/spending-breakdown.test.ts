@@ -37,6 +37,18 @@ describe("Spending by model", () => {
 			label: "Codex (account default)",
 			via: "ChatGPT plan",
 		});
+		expect(
+			modelOf("opencode:openrouter/qwen-4-coder", "openrouter/qwen-4-coder"),
+		).toEqual({
+			key: "openrouter/qwen-4-coder",
+			label: "Qwen 4 Coder",
+			via: "OpenCode (OpenRouter)",
+		});
+		expect(modelOf("antigravity:gemini-3.8-flash", null)).toEqual({
+			key: "gemini-3.8-flash",
+			label: "Gemini 3.8 Flash",
+			via: "Gemini",
+		});
 	});
 
 	it("puts a model's plan calls in one row, whether or not its model was recorded", () => {

@@ -5,8 +5,20 @@ import { worker } from "./shared";
 const VIA: Record<string, string> = {
 	"claude-subscription": "Claude plan",
 	"codex-subscription": "ChatGPT plan",
+	opencode: "OpenCode",
+	antigravity: "Gemini",
 	anthropic: "Anthropic API key",
 	openai: "OpenAI API key",
+};
+
+/** OpenCode's billing sources (the part before "/" in its model ids) by name. */
+const OPENCODE_SOURCE: Record<string, string> = {
+	"opencode-go": "Go plan",
+	"zai-coding-plan": "Z.ai Coding Plan",
+	opencode: "OpenCode Zen",
+	openrouter: "OpenRouter",
+	anthropic: "Anthropic",
+	openai: "OpenAI",
 };
 
 /** "claude-opus-5-5" → "Claude Opus 5.5", "gpt-6.1-sol" → "GPT-6.1 Sol". */
@@ -39,16 +51,20 @@ export function modelOf(provider: string, model: string | null) {
 	const kind = colon === -1 ? provider : provider.slice(0, colon);
 	const fromProvider = colon === -1 ? "" : provider.slice(colon + 1);
 	const id = model || fromProvider || provider;
+	// OpenCode ids carry their billing source: "openrouter/qwen-4-coder".
+	const slash = id.lastIndexOf("/");
+	const source = slash === -1 ? "" : id.slice(0, id.indexOf("/"));
 	const label =
 		id === "default"
 			? kind === "codex-subscription"
 				? "Codex (account default)"
 				: "Default model"
-			: modelLabel(id);
+			: modelLabel(id.slice(slash + 1));
+	const via = VIA[kind] ?? kind;
 	return {
 		key: id === "default" ? `${kind}:default` : id,
 		label,
-		via: VIA[kind] ?? kind,
+		via: source ? `${via} (${OPENCODE_SOURCE[source] ?? source})` : via,
 	};
 }
 

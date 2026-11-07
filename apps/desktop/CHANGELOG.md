@@ -8,6 +8,13 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
+## Unreleased
+
+- Settings › Spending is gone: plans and free models cost nothing extra, so its dollar figures
+  were almost always $0. This month's calls by model and by step are now at the bottom of
+  Settings › Models. Dollars and the monthly limit show there only when a step uses a paid
+  model (OpenCode pay-per-use) or a call this month was paid.
+
 ## 0.3.1 (2026-11-07)
 
 - Claude no longer stops with "Subscription paused (extra_usage …): the Claude plan's usage
