@@ -332,24 +332,6 @@ export function authReport(account: AccountInfo): AuthReport {
 	};
 }
 
-/** True when a rate-limit report says this request drew, or would draw, on extra usage. */
-export function drawsOnExtraUsage(info: {
-	status?: string;
-	rateLimitType?: string;
-	overageStatus?: string;
-	isUsingOverage?: boolean;
-	overageInUse?: boolean;
-}): boolean {
-	return Boolean(
-		info.isUsingOverage ||
-			info.overageInUse ||
-			info.rateLimitType === "overage" ||
-			(info.status === "rejected" &&
-				(info.overageStatus === "allowed" ||
-					info.overageStatus === "allowed_warning")),
-	);
-}
-
 /** How long the usage probe may take before it counts as unread. */
 const USAGE_CHECK_MS = 30_000;
 /**
@@ -888,9 +870,12 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			const resetsAt = info.resetsAt
 				? new Date(info.resetsAt * 1000)
 				: undefined;
-			// Extra usage paid for it: the user's account setting allows that, so the call goes on.
-			if (drawsOnExtraUsage(info)) return null;
-			if (info.status === "rejected")
+			// Past the plan's limit, extra usage may pay for the call (the user's account setting):
+			// it goes on. Only a limit that nothing pays for pauses.
+			const extraPays =
+				info.overageStatus === "allowed" ||
+				info.overageStatus === "allowed_warning";
+			if (info.status === "rejected" && !extraPays)
 				return this.pause(
 					"usage_limit",
 					`the Claude plan's ${info.rateLimitType ? knownName(info.rateLimitType, RATE_LIMITS) : "usage"} limit is reached${resetsAt ? ` until ${resetsAt.toISOString()}` : ""}. Preparation waits; it resumes after a later scan once the limit resets, with status in Settings › Models.`,

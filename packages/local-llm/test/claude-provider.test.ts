@@ -269,6 +269,28 @@ describe("ClaudeSubscriptionProvider", () => {
 		expect(seen).toHaveLength(1);
 	});
 
+	it("pauses when extra usage is used up too (rejected overage)", async () => {
+		const { claude, seen } = provider({
+			runs: [
+				[
+					{
+						type: "rate_limit_event",
+						rate_limit_info: {
+							status: "rejected",
+							rateLimitType: "overage",
+							overageStatus: "rejected",
+							overageDisabledReason: "out_of_credits",
+						},
+					} as unknown as SDKMessage,
+				],
+			],
+		});
+		const error = await claude.generateObject(request()).catch((e) => e);
+		expect(error.kind).toBe("usage_limit");
+		await claude.generateObject(request()).catch(() => {});
+		expect(seen).toHaveLength(1);
+	});
+
 	it("pauses on the plan's usage limit until its reset time", async () => {
 		const resetsAt = Math.floor(Date.now() / 1000) + 3600;
 		const { claude, seen } = provider({
