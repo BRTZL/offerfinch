@@ -1052,7 +1052,15 @@ function InboxList({
 				const rows =
 					item.kind === "group"
 						? item.rows
-						: items.flatMap(rowsOf).filter((r) => multi.includes(r.id));
+						: [
+								// An open company is its line and its rows: each role once.
+								...new Map(
+									items
+										.flatMap(rowsOf)
+										.filter((r) => multi.includes(r.id))
+										.map((r) => [r.id, r]),
+								).values(),
+							];
 				const openCount = rows.filter(isOpenMatch).length;
 				onDismissNow(
 					rows,

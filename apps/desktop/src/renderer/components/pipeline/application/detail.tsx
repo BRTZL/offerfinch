@@ -1,4 +1,5 @@
 import { ArrowUpRight, ExternalLink, PanelLeft } from "lucide-react";
+import type { ReactNode } from "react";
 import { useDemoMode } from "@/components/desktop/demo";
 import { AddedProgress, linkHost } from "@/components/pipeline/added";
 import { Locations } from "@/components/pipeline/application/locations";
@@ -239,22 +240,45 @@ export function ApplicationDetail(props: ApplicationDetailProps) {
 					hasDocuments,
 				})}
 			</section>
-			{overlay ? (
-				<FocusBackdrop
-					open={rightOpen}
-					onClose={() => (chatOpen ? setChatOpen(false) : toggleDetails())}
-				/>
-			) : null}
-			{rightOpen ? (
+			<RightPanel
+				open={rightOpen}
+				overlay={overlay}
+				onClose={() => (chatOpen ? setChatOpen(false) : toggleDetails())}
+			>
+				{chatOpen ? chat : inspector}
+			</RightPanel>
+		</div>
+	);
+}
+
+/**
+ * The details or the chat beside the document; in a narrow window laid over it, with the window
+ * behind dimmed and blurred (a click there closes it).
+ */
+function RightPanel({
+	open,
+	overlay,
+	onClose,
+	children,
+}: {
+	open: boolean;
+	overlay: boolean;
+	onClose: () => void;
+	children: ReactNode;
+}) {
+	return (
+		<>
+			{overlay ? <FocusBackdrop open={open} onClose={onClose} /> : null}
+			{open ? (
 				<div
 					className={
 						overlay ? "absolute inset-y-0 right-0 z-40 flex shadow-2xl" : "flex"
 					}
 				>
-					{chatOpen ? chat : inspector}
+					{children}
 				</div>
 			) : null}
-		</div>
+		</>
 	);
 }
 

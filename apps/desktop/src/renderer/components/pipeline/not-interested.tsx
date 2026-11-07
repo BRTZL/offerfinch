@@ -391,12 +391,20 @@ function NotInterestedTray({
 		confirmed.current = true;
 		setConfirming(true);
 		onOpenChange(false);
-		form.reset();
 		const fold = window.matchMedia("(prefers-reduced-motion: reduce)").matches
 			? 0
 			: TRAY_MS;
+		// The choices stay until it is done: a failed dismissal reopens the tray with them.
 		window.setTimeout(
-			() => dismiss.mutate(input, { onSettled: () => setConfirming(false) }),
+			() =>
+				dismiss.mutate(input, {
+					onSuccess: () => form.reset(),
+					onError: () => {
+						confirmed.current = false;
+						onOpenChange(true);
+					},
+					onSettled: () => setConfirming(false),
+				}),
 			fold,
 		);
 	};
@@ -430,7 +438,8 @@ function NotInterestedTray({
 		if (!isOpen || !slot) return;
 		const onKey = (event: KeyboardEvent) => {
 			const button = buttonRef.current;
-			if (!button) return;
+			// Esc and ↩ while an input method composes belong to it, not to the tray.
+			if (!button || event.isComposing || event.keyCode === 229) return;
 			if (event.key === "Escape") {
 				event.preventDefault();
 				event.stopPropagation();
