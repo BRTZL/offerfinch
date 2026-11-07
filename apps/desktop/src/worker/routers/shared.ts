@@ -47,19 +47,6 @@ export const pastedSchema = z.object({
 		.max(60_000),
 });
 
-/** Where each vendor shows what was billed (not verified against the vendors' sites). */
-export function usagePage(vendor: string, subscription: boolean): string {
-	if (vendor === "anthropic")
-		return subscription
-			? "https://claude.ai/settings/usage"
-			: "https://console.anthropic.com/settings/usage";
-	if (vendor === "openai")
-		return subscription
-			? "https://chatgpt.com/codex/settings/usage"
-			: "https://platform.openai.com/usage";
-	return "";
-}
-
 /** Application states that wait for the user, in the order Home lists them. */
 export const WAITING_ON_YOU = [
 	"needs_human",

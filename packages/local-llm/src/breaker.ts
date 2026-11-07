@@ -28,18 +28,9 @@ export class Breaker {
 		if (until > now.getTime()) this.open = { error, until };
 	}
 
-	/**
-	 * Closes the breaker if its open pause is of `kind` (and, with `paidOnly`, a paid or
-	 * payment-unknown one); any other pause stays as it is.
-	 */
-	clear(
-		kind: SubscriptionUnavailableError["kind"],
-		options: { paidOnly?: boolean } = {},
-	): void {
-		const error = this.open?.error;
-		if (error?.kind !== kind) return;
-		if (options.paidOnly && error.paid === false) return;
-		this.open = null;
+	/** Closes the breaker if its open pause is of `kind`; any other pause stays as it is. */
+	clear(kind: SubscriptionUnavailableError["kind"]): void {
+		if (this.open?.error.kind === kind) this.open = null;
 	}
 
 	current(now: Date): SubscriptionUnavailableError | null {

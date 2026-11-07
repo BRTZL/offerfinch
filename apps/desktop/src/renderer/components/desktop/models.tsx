@@ -57,14 +57,13 @@ export function SubscriptionTerms() {
 			data-testid="subscription-terms"
 		>
 			Your plans fall under their providers' terms (Anthropic, OpenAI, OpenCode,
-			Google). Before each call, OfferFinch checks that it can't be paid for
-			with extra usage or credits where the provider reports it. If a call is
-			paid anyway, that plan stops until you resume it.
+			Google). Whether a plan may use extra usage or credits is your account's
+			own setting with each provider.
 		</p>
 	);
 }
 
-/** What protects the plans: the daily call budget, and Codex's usage headroom. */
+/** What protects the plans: the daily call budget. */
 export function PlanLimits() {
 	const queryClient = useQueryClient();
 	const subs = useQuery({
@@ -120,75 +119,6 @@ export function PlanLimits() {
 					</Button>
 				</form>
 			</FormRow>
-			<p
-				className="text-muted-foreground px-4 text-xs"
-				data-testid="codex-guards"
-			>
-				Codex starts a call only while each usage window of your ChatGPT plan is
-				under {d.codexHeadroomPercent}% used.
-			</p>
-		</div>
-	);
-}
-
-/**
- * A plan stopped after a paid call: "Claude used paid extra usage on <date>. Calls are stopped."
- * with Resume. Nothing while both plans run.
- */
-function PaidStops() {
-	const queryClient = useQueryClient();
-	const stops = useQuery({
-		...orpc.paidStops.list.queryOptions(),
-		refetchInterval: 15_000,
-	});
-	const resume = useMutation({
-		mutationFn: (vendor: string) => client.paidStops.resume({ vendor }),
-		onSuccess: (_r, vendor) => {
-			toast.success(
-				`${vendor === "anthropic" ? "Claude" : "Codex"} calls run again.`,
-			);
-			void queryClient.invalidateQueries({ queryKey: orpc.paidStops.key() });
-			void queryClient.invalidateQueries({ queryKey: orpc.ai.key() });
-			void queryClient.invalidateQueries({ queryKey: orpc.desktop.key() });
-		},
-		onError: (e) => toast.error(e.message),
-	});
-	if (!stops.data?.length) return null;
-	return (
-		<div className="flex flex-col gap-2" data-testid="paid-stops">
-			{stops.data.map((stop) => {
-				const name = stop.vendor === "anthropic" ? "Claude" : "Codex";
-				const what =
-					stop.vendor === "anthropic" ? "paid extra usage" : "paid credits";
-				return (
-					<Notice
-						key={stop.vendor}
-						tone="warning"
-						data-testid={`stopped-${stop.vendor}`}
-						actions={
-							<Button
-								variant="outline"
-								disabled={resume.isPending}
-								onClick={() => resume.mutate(stop.vendor)}
-								data-testid={`resume-${stop.vendor}`}
-							>
-								Resume
-							</Button>
-						}
-					>
-						{name} used {what} on {new Date(stop.at).toLocaleDateString()}.
-						Calls are stopped.{" "}
-						<a
-							href={stop.usagePage}
-							target="_blank"
-							rel="noreferrer"
-							className="text-primary hover:underline"
-						>
-							Check usage
-						</a>
-					</Notice>
-				);
-			})}
 		</div>
 	);
 }
@@ -448,7 +378,6 @@ export function ModelSettings() {
 			{ai.data?.keysRemoved ? (
 				<KeysRemovedNotice steps={ai.data.keysRemoved.steps} />
 			) : null}
-			<PaidStops />
 			{ai.data ? <StepsSection ai={ai.data} /> : null}
 			<AccountsSection />
 			<Section

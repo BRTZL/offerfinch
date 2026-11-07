@@ -8,12 +8,7 @@ import {
 import { and, eq, gte, inArray, isNotNull, lt, or, sql } from "drizzle-orm";
 
 import type { Database } from "./client";
-import {
-	applications,
-	llmUsage,
-	spendingSettings,
-	subscriptionPauses,
-} from "./schema/pipeline";
+import { applications, llmUsage, spendingSettings } from "./schema/pipeline";
 
 /** The cap a user has before changing it: $20 per calendar month (UTC), on. */
 export const DEFAULT_SPENDING_CAP_MICROS = 20_000_000;
@@ -30,9 +25,6 @@ export type SubscriptionVendor =
 	| "openai"
 	| "google"
 	| `opencode:${string}`;
-
-const isOpenCode = (vendor: string): vendor is `opencode:${string}` =>
-	vendor.startsWith("opencode:") && vendor.length > "opencode:".length;
 
 /** The subscription providers' name prefixes, per vendor. */
 export function subscriptionPrefix(vendor: SubscriptionVendor): string {
@@ -218,20 +210,6 @@ export class DrizzleSpendStore implements SpendStore {
 			// One reservation at a time, so parallel workflows cannot all pass the check: SQLite
 			// transactions run one at a time (client.ts), which replaces Postgres' advisory lock.
 			if (billing === "subscription") {
-				// A vendor stopped after a paid call takes no new call until the user resumes it,
-				// in this process or after a restart. Only that vendor: the other keeps running.
-				const vendor = subscriptionVendor(input.provider);
-				const stopped = vendor
-					? await this.stopped(tx, input.userId, vendor)
-					: null;
-				if (stopped)
-					return {
-						ok: false as const,
-						reason: "vendor_stopped" as const,
-						detail: stopped,
-					};
-				// No confirmation click: before each Claude call the provider reads the plan's usage
-				// report and sends nothing unless extra usage is off (fails closed when unknown).
 				// The plan's protection: this call must fit the last 24 hours' budget.
 				const budget = await this.budget(tx, input.userId);
 				if (budget.used + (input.modelCalls ?? 0) > budget.budget)
@@ -308,110 +286,6 @@ export class DrizzleSpendStore implements SpendStore {
 			});
 	}
 
-	/**
-	 * Why a vendor's subscription calls must wait, or null: a paid call stopped it and the user
-	 * has not resumed it.
-	 */
-	private async stopped(
-		t: Tx | Database,
-		userId: string,
-		vendor: SubscriptionVendor,
-	): Promise<string | null> {
-		const [pause] = await t
-			.select({ pausedAt: subscriptionPauses.pausedAt })
-			.from(subscriptionPauses)
-			.where(
-				and(
-					eq(subscriptionPauses.userId, userId),
-					eq(subscriptionPauses.vendor, vendor),
-				),
-			);
-		return pause ? paidStopText(vendor, pause.pausedAt) : null;
-	}
-
-	/** Each vendor's paid stop: when a paid call stopped it, or null while it runs. */
-	async paidStops(
-		userId: string,
-	): Promise<Record<SubscriptionVendor, Date | null>> {
-		const pauses = await this.db
-			.select()
-			.from(subscriptionPauses)
-			.where(eq(subscriptionPauses.userId, userId));
-		const at = (vendor: SubscriptionVendor) =>
-			pauses.find((p) => p.vendor === vendor)?.pausedAt ?? null;
-		const opencode = Object.fromEntries(
-			pauses
-				.filter((p) => isOpenCode(p.vendor))
-				.map((p) => [p.vendor, p.pausedAt]),
-		);
-		return {
-			...opencode,
-			anthropic: at("anthropic"),
-			openai: at("openai"),
-			google: at("google"),
-		};
-	}
-
-	/**
-	 * Lifts a vendor's paid stop. Resuming Claude also says extra usage is off again (the probe
-	 * still checks it before every call).
-	 */
-	async resumeSubscription(
-		userId: string,
-		vendor: SubscriptionVendor,
-	): Promise<void> {
-		await this.db.transaction(async (tx) => {
-			await tx
-				.delete(subscriptionPauses)
-				.where(
-					and(
-						eq(subscriptionPauses.userId, userId),
-						eq(subscriptionPauses.vendor, vendor),
-					),
-				);
-			if (vendor === "anthropic")
-				await tx
-					.insert(spendingSettings)
-					.values({
-						userId,
-						enabled: false,
-						extraUsageOffConfirmedAt: this.now(),
-					})
-					.onConflictDoUpdate({
-						target: spendingSettings.userId,
-						set: {
-							extraUsageOffConfirmedAt: this.now(),
-							updatedAt: this.now(),
-						},
-					});
-		});
-	}
-
-	/**
-	 * A call of `vendor` was paid: that vendor stops (kept in the database) until the user resumes
-	 * it; a paid Claude call also withdraws the Claude confirmation. The other vendor, and its
-	 * confirmation, are never touched.
-	 */
-	async recordPaidStop(userId: string, vendor: string): Promise<void> {
-		// Kept as the vendor it is: mapping an unknown vendor onto Claude would stop Claude and
-		// withdraw its extra-usage confirmation for another company's paid call.
-		const v = vendor as SubscriptionVendor;
-		await this.db
-			.insert(subscriptionPauses)
-			.values({
-				userId,
-				vendor: v,
-				pausedAt: this.now(),
-				reason: paidStopReason(v),
-			})
-			.onConflictDoNothing();
-		if (v !== "anthropic") return;
-		await this.db
-			.update(spendingSettings)
-			.set({ extraUsageOffConfirmedAt: null, updatedAt: this.now() })
-			.where(eq(spendingSettings.userId, userId));
-	}
-
 	async settleSpend(
 		id: string,
 		input: {
@@ -484,19 +358,4 @@ export class DrizzleSpendStore implements SpendStore {
 			micros: Number(row?.micros ?? 0),
 		};
 	}
-}
-
-function paidWhat(vendor: SubscriptionVendor): string {
-	if (vendor === "anthropic") return "paid extra usage";
-	if (vendor === "openai") return "paid ChatGPT credits";
-	return "its paid balance";
-}
-
-function paidStopReason(vendor: SubscriptionVendor): string {
-	return `a call used ${paidWhat(vendor)}`;
-}
-
-/** What a paid stop says, wherever it shows: "Claude used paid extra usage on <date>. …" */
-export function paidStopText(vendor: SubscriptionVendor, at: Date): string {
-	return `${vendorLabel(vendor)} used ${paidWhat(vendor)} on ${at.toISOString().slice(0, 10)}. Calls are stopped. Resume ${vendorLabel(vendor)} in Settings > Models.`;
 }

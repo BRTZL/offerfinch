@@ -4,7 +4,7 @@ import path from "node:path";
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-import { DrizzleSpendStore, openSqlite } from "../src/index";
+import { openSqlite } from "../src/index";
 import { migrate } from "../src/migrate";
 import { MIGRATIONS } from "../src/migrations/index";
 import { execute } from "./setup";
@@ -117,9 +117,13 @@ describe("settle subscription holds migration", () => {
 				error: "drew on paid extra usage",
 			},
 		]);
-		const stops = await new DrizzleSpendStore(old).paidStops("u1");
-		expect(stops.anthropic?.getTime()).toBe(t + 2 * hour + 60_000);
-		expect(stops.openai).toBeNull();
+		const stops = await execute<{ vendor: string; paused_at: number }>(
+			old,
+			sql`select vendor, paused_at from subscription_pauses order by vendor`,
+		);
+		expect(stops).toEqual([
+			{ vendor: "anthropic", paused_at: t + 2 * hour + 60_000 },
+		]);
 		old.$close();
 	});
 });

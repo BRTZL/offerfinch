@@ -675,7 +675,6 @@ describe("what a failed call means", () => {
 	it("waits for the free limit's reset, not billed", () => {
 		const pause = openCodePause(
 			failed("provider.free-limit", "Free usage limit reached.", 429, "3600"),
-			"subscription",
 			"opencode:opencode",
 			now,
 		);
@@ -690,7 +689,6 @@ describe("what a failed call means", () => {
 		expect(
 			openCodePause(
 				failed("provider.go-limit", "Go limit reached", 400),
-				"subscription",
 				"opencode:opencode-go",
 				now,
 			)?.kind,
@@ -698,7 +696,6 @@ describe("what a failed call means", () => {
 		expect(
 			openCodePause(
 				failed("provider.error", "account_rate_limit", 400),
-				"subscription",
 				"opencode:zai-coding-plan",
 				now,
 			)?.kind,
@@ -709,41 +706,15 @@ describe("what a failed call means", () => {
 		expect(
 			openCodePause(
 				failed("provider.auth", "unauthorized", 401),
-				"api",
 				"opencode:opencode",
 				now,
 			),
 		).toMatchObject({ kind: "logged_out", notBilled: true });
 	});
 
-	it("stops a plan model listed at $0 whose answer cost money, as paid; never Go on its listed price", () => {
+	it("never stops a model because its answer cost money", () => {
 		expect(
-			openCodePause(
-				{ ...base, cost: 0.012 },
-				"subscription",
-				"opencode:opencode",
-				now,
-				true,
-			),
-		).toMatchObject({ kind: "extra_usage", paid: true });
-		// Go lists its models at their per-token price: an answer's cost is not a charge.
-		expect(
-			openCodePause(
-				{ ...base, cost: 0.012 },
-				"subscription",
-				"opencode:opencode-go",
-				now,
-				false,
-			),
-		).toBeNull();
-		expect(
-			openCodePause(
-				{ ...base, cost: 0.012 },
-				"api",
-				"opencode:opencode",
-				now,
-				true,
-			),
+			openCodePause({ ...base, cost: 0.012 }, "opencode:opencode", now),
 		).toBeNull();
 	});
 
@@ -751,7 +722,6 @@ describe("what a failed call means", () => {
 		expect(
 			openCodePause(
 				failed("provider.error", "bad gateway", 502),
-				"api",
 				"opencode:opencode",
 				now,
 			),

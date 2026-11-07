@@ -1454,18 +1454,13 @@ export function retryAfterDate(
 
 /**
  * Maps a call's outcome to a pause, or null: a plan's limit (OpenCode's free limit, Go's limit,
- * a coding plan's rate limit) waits for its reset; a refused login waits for the user. A plan
- * model that OpenCode lists at $0 (a free model, a coding plan's) whose answer still cost money
- * drew on the paid balance and stops like Claude's extra usage. OpenCode Go lists its models at
- * their per-token price, so a Go answer's cost says nothing about the plan and is not used.
+ * a coding plan's rate limit) waits for its reset; a refused login waits for the user. An answer
+ * that cost money never stops the model: what the account may spend is the user's setting.
  */
 export function openCodePause(
 	result: Pick<OpenCodeCallResult, "failure" | "cost" | "sent" | "relay">,
-	billing: LlmBilling,
 	vendor: string,
 	now: Date,
-	/** The model is listed at $0, so any cost on its answer was charged. */
-	listedFree = false,
 ): OpenCodePause | null {
 	const upstream = result.relay?.upstreamStatus ?? null;
 	const notBilled =
@@ -1508,12 +1503,6 @@ export function openCodePause(
 			};
 		return null;
 	}
-	if (billing === "subscription" && listedFree && (result.cost ?? 0) > 0)
-		return {
-			kind: "extra_usage",
-			detail: `OpenCode charged this call to your paid balance ($${(result.cost ?? 0).toFixed(4)}) instead of the plan: it is recorded at its price, and ${vendor} calls are stopped until you resume them in Settings › Models.`,
-			paid: true,
-		};
 	return null;
 }
 
@@ -1568,11 +1557,6 @@ function breakerFor(vendor: string): Breaker {
 		BREAKERS.set(vendor, breaker);
 	}
 	return breaker;
-}
-
-/** The user resumed a source after a call it charged to the paid balance (Settings › Models). */
-export function resumeOpenCodeCalls(vendor: string): void {
-	breakerFor(vendor).clear("extra_usage", { paidOnly: true });
 }
 
 /** An OAuth login closer than this to expiry is not used: our server would refresh it. */
@@ -1809,19 +1793,7 @@ export class OpenCodeProvider implements LlmProvider {
 			throw this.pause("boundary", result.boundary, {
 				notBilled: !result.sent,
 			});
-		const price = this.options.entry()?.price;
-		const listedFree =
-			!!price &&
-			price.input === 0 &&
-			price.output === 0 &&
-			price.cachedInput === 0;
-		const pause = openCodePause(
-			result,
-			this.billing,
-			this.vendor,
-			this.now(),
-			listedFree,
-		);
+		const pause = openCodePause(result, this.vendor, this.now());
 		if (pause) throw this.pause(pause.kind, pause.detail, pause);
 		this.throwFailure(request, result);
 		if (result.text === null)

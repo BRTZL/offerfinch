@@ -1,9 +1,4 @@
-import {
-	DashboardRepository,
-	DrizzleSpendStore,
-	type SubscriptionVendor,
-	vendorLabel,
-} from "@offerfinch/db";
+import { DashboardRepository, DrizzleSpendStore } from "@offerfinch/db";
 import { flowRuns } from "@offerfinch/db/schema/jobs";
 import { applications, companies, jobs } from "@offerfinch/db/schema/pipeline";
 import {
@@ -203,12 +198,6 @@ export const desktopStatusRouter = {
 				spentMicros: spending.spentMicros + spending.reservedMicros,
 				capMicros: spending.capMicros,
 				reached: spending.reached,
-				/** Plans stopped after a paid call, until the user resumes them. */
-				paidStops: Object.entries(
-					await new DrizzleSpendStore(w.db).paidStops(userId),
-				)
-					.filter(([, at]) => at !== null)
-					.map(([vendor]) => vendorLabel(vendor as SubscriptionVendor)),
 				subscriptionCalls: spending.subscriptionCalls,
 				callBudget: subscriptionRoles.length
 					? await new DrizzleSpendStore(w.db).subscriptionBudget(userId)

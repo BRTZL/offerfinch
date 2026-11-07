@@ -11,11 +11,6 @@ export interface LlmLoginState {
 		| "unknown";
 	/** Plain words: plan, token source, what to do. Never a token, key or email. */
 	detail: string;
-	/**
-	 * Whether the Claude account can draw on paid extra usage, as its usage report says (a
-	 * logged-in Claude subscription only). Calls are refused unless `off`.
-	 */
-	extraUsage?: "off" | "on" | "unknown";
 }
 
 interface LlmRoleStatus {

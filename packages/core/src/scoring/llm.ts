@@ -115,11 +115,6 @@ export function billingOf(provider: LlmProvider): LlmBilling {
 	return provider.billing ?? "api";
 }
 
-/** "anthropic", "openai", "fake": the company whose model answers. */
-export function vendorOf(provider: LlmProvider): string {
-	return provider.vendor ?? provider.name.split(":")[0] ?? provider.name;
-}
-
 /**
  * A call that cannot run now and should wait instead of failing: the workflow step returns
  * (no retries, no `failed` application) and the application stays where it is until the sweep

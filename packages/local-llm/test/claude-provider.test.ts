@@ -19,7 +19,6 @@ import { Breaker } from "../src/breaker";
 import {
 	ClaudeSubscriptionProvider,
 	jsonSchemaOf,
-	resumeClaudeCalls,
 	USAGE_PROBE_SYSTEM,
 } from "../src/claude";
 import { SpendRecorder } from "./spend-recorder";
@@ -259,15 +258,15 @@ describe("ClaudeSubscriptionProvider", () => {
 	});
 
 	it("sends nothing when logged out, and later calls fail fast without starting the CLI", async () => {
-		const { claude, seen, probes } = provider({ account: {} });
+		const { claude, seen } = provider({ account: {} });
 		const first = await claude.generateObject(request()).catch((e) => e);
 		expect(first.kind).toBe("logged_out");
 		expect(first.message).toMatch(/Settings › Models/);
-		// The probe saw the logout: no prompt session was started at all.
-		expect(seen).toHaveLength(0);
+		// The session's initialize answer showed the logout: the prompt never went out.
+		expect(seen.flatMap((r) => r.prompts)).toEqual([]);
 		const second = await claude.generateObject(request()).catch((e) => e);
 		expect(second).toBe(first);
-		expect(probes).toHaveLength(1);
+		expect(seen).toHaveLength(1);
 	});
 
 	it("pauses on the plan's usage limit until its reset time", async () => {
@@ -295,9 +294,12 @@ describe("ClaudeSubscriptionProvider", () => {
 		expect(seen).toHaveLength(1);
 	});
 
-	it("sends nothing when extra usage is on for the Claude account", async () => {
-		const { claude, seen } = provider({
-			usage: {
+	it("sends the call whatever the account's extra-usage setting, or when it cannot be read", async () => {
+		for (const usage of [
+			"throw" as const,
+			{ rate_limits_available: false, rate_limits: null },
+			{ rate_limits_available: true, rate_limits: null },
+			{
 				rate_limits_available: true,
 				rate_limits: {
 					extra_usage: {
@@ -309,48 +311,18 @@ describe("ClaudeSubscriptionProvider", () => {
 					},
 				},
 			},
-			runs: [[result({ greeting: "hi" })]],
-		});
-		const error = await claude.generateObject(request()).catch((e) => e);
-		expect(error).toBeInstanceOf(SubscriptionUnavailableError);
-		expect(error.kind).toBe("extra_usage");
-		expect(error.paid).toBe(false);
-		expect(error.message).toMatch(/claude\.ai > Settings > Usage/);
-		expect(seen.flatMap((r) => r.prompts)).toEqual([]);
-	});
-
-	it("sends nothing when the plan's usage cannot be read (fails closed)", async () => {
-		for (const usage of [
-			"throw" as const,
-			{ rate_limits_available: false, rate_limits: null },
 		]) {
-			const { claude, seen } = provider({
+			const { claude, seen, probes } = provider({
 				usage,
 				runs: [[result({ greeting: "hi" })]],
 			});
-			const error = await claude.generateObject(request()).catch((e) => e);
-			expect(error.kind).toBe("extra_usage");
-			expect(seen.flatMap((r) => r.prompts)).toEqual([]);
-		}
-	});
-
-	it("reads extra usage in a probe session that gets no prompt and may fetch the usage report; the prompt session keeps every switch", async () => {
-		const { claude, seen, probes } = provider({
-			runs: [[result({ greeting: "hi" })], [result({ greeting: "hi" })]],
-		});
-		await claude.generateObject(request());
-		await claude.generateObject(request());
-		// One probe trusted for a minute, two prompt sessions.
-		expect(probes).toHaveLength(1);
-		expect(probes[0]?.env).not.toHaveProperty(
-			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
-		);
-		expect(probes[0]?.env).not.toHaveProperty("ANTHROPIC_API_KEY");
-		expect(seen).toHaveLength(2);
-		for (const run of seen)
-			expect(run.options.env).toMatchObject({
-				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+			await expect(claude.generateObject(request())).resolves.toEqual({
+				greeting: "hi",
 			});
+			expect(seen.flatMap((r) => r.prompts)).toHaveLength(1);
+			// No plan-usage sink: nothing to read before the call.
+			expect(probes).toHaveLength(0);
+		}
 	});
 
 	it("reads a plan with no extra-usage entry as off", async () => {
@@ -363,29 +335,29 @@ describe("ClaudeSubscriptionProvider", () => {
 		});
 	});
 
-	it("marks a call that drew on extra usage as paid, and stops every later caller", async () => {
+	it("keeps the answer of a call that drew on extra usage, and later calls go on", async () => {
 		for (const info of [
 			{ status: "allowed_warning", isUsingOverage: true },
 			{ status: "allowed", overageInUse: true },
 			{ status: "rejected", overageStatus: "allowed" },
 		]) {
+			const overage = {
+				type: "rate_limit_event",
+				rate_limit_info: info,
+			} as unknown as SDKMessage;
 			const { claude, seen } = provider({
 				runs: [
-					[
-						{
-							type: "rate_limit_event",
-							rate_limit_info: info,
-						} as unknown as SDKMessage,
-						result({ greeting: "hi" }),
-					],
+					[overage, result({ greeting: "hi" })],
+					[overage, result({ greeting: "again" })],
 				],
 			});
-			const error = await claude.generateObject(request()).catch((e) => e);
-			expect(error).toBeInstanceOf(SubscriptionUnavailableError);
-			expect(error.kind).toBe("extra_usage");
-			expect(error.paid).toBe(true);
-			await claude.generateObject(request()).catch(() => {});
-			expect(seen).toHaveLength(1);
+			await expect(claude.generateObject(request())).resolves.toEqual({
+				greeting: "hi",
+			});
+			await expect(claude.generateObject(request())).resolves.toEqual({
+				greeting: "again",
+			});
+			expect(seen).toHaveLength(2);
 		}
 	});
 
@@ -698,17 +670,20 @@ describe("what the real CLI emits", () => {
 			expect(warnings).toEqual([]);
 		});
 
-		it("a sign of paid extra usage wins wherever it is seen", async () => {
+		it("a sign of extra usage never makes a call paid or stops it", async () => {
 			for (const run of [
 				[overage, invalid],
 				[invalid, overage],
-				[overage, retry],
 				[result({ greeting: "hi" }), overage],
 			]) {
 				const { error } = await outcome({ runs: [run] });
-				expect(error).toBeInstanceOf(SubscriptionUnavailableError);
-				expect(error?.paid).toBe(true);
+				expect(error?.paid).toBeFalsy();
+				expect(error?.kind).not.toBe("extra_usage");
 			}
+			const ok = await outcome({
+				runs: [[overage, result({ greeting: "hi" })]],
+			});
+			expect(ok.answer).toEqual({ greeting: "hi" });
 		});
 
 		it("keeps the answer of a session still open after it, logs a warning, and never calls it paid", async () => {
@@ -1001,111 +976,6 @@ describe("what the real CLI emits", () => {
 					modelCalls: 1,
 				});
 			});
-
-			it("records a paid call as api at its estimated price and stops Claude", async () => {
-				const { rows, store, stops } = recordingStore();
-				const { claude, seen } = provider({
-					runs: [
-						[res("success", { ok: true }, 1_000), overage],
-						[result({ ok: true })],
-					],
-				});
-				const error = await call(claude, store);
-				expect((error as SubscriptionUnavailableError).paid).toBe(true);
-				expect(rows[0]).toMatchObject({ status: "settled", billing: "api" });
-				expect(rows[0]?.costMicros).toBeGreaterThan(0);
-				expect(rows[0]?.basis).toMatch(/Claude plan/);
-				expect(stops).toEqual(["anthropic"]);
-				// This process's breaker stops the next call before it is sent.
-				const next = await call(claude, store);
-				expect((next as SubscriptionUnavailableError).kind).toBe("extra_usage");
-				expect(seen).toHaveLength(1);
-			});
-		});
-
-		describe("resuming Claude after a paid call (Settings > Models)", () => {
-			it("lifts only the extra-usage pause: a usage limit or logout stays", () => {
-				const now = new Date();
-				for (const kind of ["usage_limit", "logged_out"] as const) {
-					const breaker = new Breaker();
-					breaker.trip(new SubscriptionUnavailableError(kind, "p", "x"), now);
-					resumeClaudeCalls(breaker);
-					expect(breaker.current(now)?.kind).toBe(kind);
-				}
-				const breaker = new Breaker();
-				breaker.trip(
-					new SubscriptionUnavailableError(
-						"extra_usage",
-						"p",
-						"x",
-						undefined,
-						true,
-					),
-					now,
-				);
-				resumeClaudeCalls(breaker);
-				expect(breaker.current(now)).toBeNull();
-			});
-
-			it("paid, stopped, resumed: the next call is sent, in the same process", async () => {
-				const { query, seen } = scripted({
-					runs: [
-						[result({ ok: true }), overage],
-						[result({ ok: true })],
-						[result({ ok: true })],
-					],
-				});
-				// The process-wide breaker, as the worker's provider has it.
-				const claude = new ClaudeSubscriptionProvider({
-					model: "claude-sonnet-5-5",
-					ownerUserId: "u1",
-					parentEnv: { PATH: "/usr/bin", HOME: "/Users/me" },
-					query,
-				});
-				// Gates like the SQLite store: a paid Claude call stops Claude until resumed.
-				let stopped = false;
-				const store = {
-					reserveSpend: async () =>
-						stopped
-							? {
-									ok: false as const,
-									reason: "vendor_stopped" as const,
-									detail: "Claude used paid extra usage. Calls are stopped.",
-								}
-							: { ok: true as const, id: "1" },
-					settleSpend: async () => {},
-					holdSpend: async () => {},
-					recordPaidStop: async () => {
-						stopped = true;
-					},
-					recordRefusal: async () => {},
-				} as unknown as SpendStore;
-				const call = () =>
-					meteredFor(claude, store, "u1", null)
-						.generateObject({
-							task: "fit-score",
-							system: "s",
-							prompt: "p",
-							schema: z.object({ ok: z.boolean() }),
-						})
-						.catch((e: unknown) => e as Error);
-				try {
-					expect((await call()) as SubscriptionUnavailableError).toMatchObject({
-						paid: true,
-					});
-					// Stopped: by the store, and by this process's breaker.
-					expect(await call()).toBeInstanceOf(SubscriptionUnavailableError);
-					// The user resumes Claude in the store only: the breaker still stops it.
-					stopped = false;
-					expect(await call()).toBeInstanceOf(SubscriptionUnavailableError);
-					expect(seen).toHaveLength(1);
-					resumeClaudeCalls();
-					expect(await call()).toEqual({ ok: true });
-					expect(seen).toHaveLength(2);
-				} finally {
-					resumeClaudeCalls();
-				}
-			});
 		});
 
 		it("a sign of paid after this side aborted is not seen", async () => {
@@ -1157,7 +1027,7 @@ describe("plan usage reads", () => {
 			query,
 			breaker: new Breaker(),
 			planUsage: {
-				baselineNeeded: () => false,
+				baselineNeeded: () => true,
 				sample: (s) =>
 					events.push(
 						`probe:${s.complete}:${s.windows.map((w) => `${w.id}=${w.usedPercent}`).join(",")}:${s.account?.plan}`,
@@ -1208,13 +1078,13 @@ describe("plan usage reads", () => {
 		await expect(claude.generateObject(request())).rejects.toBeInstanceOf(
 			SubscriptionUnavailableError,
 		);
-		// The probe read the plan (null-login probes report nothing); no call handle was opened.
-		expect(events).toEqual([]);
+		// The call's handle ends without a send: the prompt never went out.
+		expect(events).toEqual(["done"]);
 	});
 });
 
 describe("plan usage baseline", () => {
-	it("probes again before a call when the last read is stale, even while extra usage is trusted", async () => {
+	it("probes before a call only when the last plan-usage read is stale", async () => {
 		let stale = false;
 		const { query, probes } = scripted({
 			usage: EXTRA_OFF,
@@ -1238,11 +1108,16 @@ describe("plan usage baseline", () => {
 		});
 		await claude.generateObject(request());
 		await claude.generateObject(request());
-		// Within the minute: the second call trusted the first probe.
-		expect(probes).toHaveLength(1);
+		// A recent read: no probe.
+		expect(probes).toHaveLength(0);
 		stale = true;
 		await claude.generateObject(request());
-		expect(probes).toHaveLength(2);
+		expect(probes).toHaveLength(1);
+		// The probe may fetch the usage report; the prompt session keeps every switch.
+		expect(probes[0]?.env).not.toHaveProperty(
+			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+		);
+		expect(probes[0]?.env).not.toHaveProperty("ANTHROPIC_API_KEY");
 	});
 });
 
