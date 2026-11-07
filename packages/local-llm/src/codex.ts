@@ -494,12 +494,6 @@ export interface CodexRateLimits {
 	rateLimitsByLimitId: Record<string, RateLimitSnapshot | undefined> | null;
 }
 
-export const CODEX_CREDITS_HOWTO =
-	"Codex can spend ChatGPT credits once the plan's included usage runs out, and no request option keeps a call off them. codex-subscription runs only while every usage window has headroom, and records a call whose credit balance dropped as paid.";
-
-/** A call starts only while every usage window is below this share used (the user's choice). */
-export const CODEX_HEADROOM_PERCENT = 90;
-
 function snapshotsOf(limits: CodexRateLimits): RateLimitSnapshot[] {
 	return [
 		limits.rateLimits,
@@ -529,105 +523,6 @@ export function creditBalances(
 		out[id] = balance;
 	}
 	return Object.keys(out).length ? out : null;
-}
-
-/**
- * True when any bucket's credit balance went down between the two reads; null (unknown) when
- * the second read is missing or lacks any bucket the first one had.
- */
-export function creditsSpent(
-	before: Record<string, number>,
-	after: Record<string, number> | null,
-): boolean | null {
-	if (!after) return null;
-	let missing = false;
-	for (const [id, balance] of Object.entries(before)) {
-		const now = after[id];
-		if (now === undefined) missing = true;
-		else if (now < balance - 1e-6) return true;
-	}
-	return missing ? null : false;
-}
-
-/**
- * Whether a sent call was paid from ChatGPT credits, from the balances read before the prompt and
- * after the turn. `fine` only when it is provable: the second read has every bucket and none went
- * down, or no bucket held any credits to spend. `paid` when any bucket went down. Anything else
- * (no first read, no second read, a bucket missing) is `unknown`.
- */
-export function codexPayment(
-	before: Record<string, number> | null,
-	after: Record<string, number> | null,
-): "fine" | "paid" | "unknown" {
-	if (!before) return "unknown";
-	const spent = creditsSpent(before, after);
-	if (spent === true) return "paid";
-	if (spent === false) return "fine";
-	return Object.values(before).every((b) => b === 0) ? "fine" : "unknown";
-}
-
-/**
- * Whether a call may start, read from the plan's usage just before the prompt exists. Fails
- * closed. Included usage must be reported as allowed; no limit may be reached; every window
- * must have headroom (below `CODEX_HEADROOM_PERCENT` used), so a call is unlikely to cross into
- * credits; and the credit balance must be readable and finite (not unlimited), so a call that
- * did spend credits is seen afterwards by the balance going down (`creditsSpent`).
- */
-export function rateLimitProblem(
-	limits: CodexRateLimits,
-): { kind: SubscriptionPauseKind; detail: string; resetsAt?: Date } | null {
-	const snapshots = snapshotsOf(limits);
-	const reached = snapshots.find(
-		(s) => s.rateLimitReachedType || s.spendControlReached,
-	);
-	const windows = snapshots
-		.flatMap((s) => [s.primary, s.secondary])
-		.filter((w): w is RateLimitWindow => !!w);
-	// Headroom must be established, not assumed: every bucket reports at least one window (a plan
-	// may report only one of its two), and every window it reports has a finite, non-negative
-	// share used. Anything else (no snapshot, a bucket with no window, NaN, a string) pauses.
-	const usable = (w: RateLimitWindow) =>
-		typeof w.usedPercent === "number" &&
-		Number.isFinite(w.usedPercent) &&
-		w.usedPercent >= 0;
-	const unknownHeadroom =
-		!snapshots.length ||
-		snapshots.some((s) => !s.primary && !s.secondary) ||
-		windows.some((w) => !usable(w));
-	const full = windows.filter(
-		(w) => usable(w) && w.usedPercent >= CODEX_HEADROOM_PERCENT,
-	);
-	const resets = full.map((w) => w.resetsAt ?? 0).filter((t) => t > 0);
-	const resetsAt = resets.length
-		? new Date(Math.max(...resets) * 1000)
-		: undefined;
-	if (limits.ordinaryUsageAllowed === false || reached || full.length)
-		return {
-			kind: "usage_limit",
-			detail: `the ChatGPT plan's Codex usage is ${reached || limits.ordinaryUsageAllowed === false ? "at its limit" : `at ${CODEX_HEADROOM_PERCENT}% or more of a window`}${resetsAt ? ` until ${resetsAt.toISOString()}` : ""}, and the rest would come from credits. Preparation waits; it resumes after a later scan once the window resets, with status in Settings › Models.`,
-			resetsAt,
-		};
-	if (limits.ordinaryUsageAllowed !== true)
-		return {
-			kind: "extra_usage",
-			detail: `Codex did not say whether the plan's included usage is available; nothing was sent. ${CODEX_CREDITS_HOWTO}`,
-		};
-	if (unknownHeadroom)
-		return {
-			kind: "extra_usage",
-			detail: `Codex did not report a usable share used for every usage window, so the plan's headroom is unknown; nothing was sent. ${CODEX_CREDITS_HOWTO}`,
-		};
-	if (snapshots.some((s) => s.credits?.unlimited))
-		return {
-			kind: "extra_usage",
-			detail: `the ChatGPT account has unlimited credits, so a paid call could not be told apart; nothing was sent. ${CODEX_CREDITS_HOWTO}`,
-		};
-	if (!creditBalances(limits))
-		return {
-			kind: "extra_usage",
-			detail: `Codex did not report the account's credit balance; nothing was sent. ${CODEX_CREDITS_HOWTO}`,
-		};
-	return null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1207,15 +1102,6 @@ export interface CodexSubscriptionOptions {
 const CODEX_BREAKER = new Breaker();
 
 /**
- * The user resumed Codex after a call that spent credits (Settings > Models): lifts this
- * process's pause for it, so the next call is sent. Any other pause (a usage limit, a logout,
- * credits or headroom not readable) stays.
- */
-export function resumeCodexCalls(breaker: Breaker = CODEX_BREAKER): void {
-	breaker.clear("extra_usage", { paidOnly: true });
-}
-
-/**
  * A tool attempt fails this call: it comes from the posting, not from the setup. Its credits are
  * read again in a fresh process; a lower balance makes it a paid call instead.
  */
@@ -1368,42 +1254,11 @@ export class CodexSubscriptionProvider implements LlmProvider {
 							? `Codex would bill ${acct.type}, not the ChatGPT plan; nothing was sent.`
 							: `Codex did not accept the ChatGPT login; nothing was sent. ${LOGIN_HOWTO}`,
 					);
-				if (!rateLimits)
-					return this.pause(
-						"extra_usage",
-						`Codex did not report the plan's usage; nothing was sent. ${CODEX_CREDITS_HOWTO}`,
-					);
-				const problem = rateLimitProblem(rateLimits);
-				return problem
-					? this.pause(problem.kind, problem.detail, problem.resetsAt)
-					: null;
+				// No headroom or credits check: whether credits may pay is the user's account
+				// setting, as in T3 Code. A reached limit comes back as the turn's own error.
+				return null;
 			},
 		});
-		// The call's own process could not read the balance again (a tool attempt aborted it, the
-		// stream dropped): read it in a fresh process that gets no prompt. If that fails too, the
-		// payment stays unknown.
-		if (
-			auth.type === "chatgpt" &&
-			result.sent &&
-			result.creditsBefore &&
-			result.creditsAfter === null
-		) {
-			const fresh = await (this.options.runTurn ?? runCodexTurn)({
-				binary,
-				auth,
-				system: "",
-				prompt: "",
-				parentEnv,
-				timeoutMs: 30_000,
-				creditsOnly: true,
-			}).catch(() => null);
-			result.creditsAfter = fresh?.creditsBefore ?? null;
-			result.rateLimitsAfter = fresh?.rateLimitsBefore ?? null;
-			this.options.log?.("codex credits read again in a fresh process", {
-				provider: this.name,
-				read: result.creditsAfter !== null,
-			});
-		}
 		if (result.sent) plan.report(result.rateLimitsAfter, true);
 		this.options.log?.("codex subscription session", {
 			provider: this.name,
@@ -1429,27 +1284,6 @@ export class CodexSubscriptionProvider implements LlmProvider {
 			request.onUsage?.(usage);
 		}
 		if (result.refused) throw result.refused;
-		// One rule for every sent call, however the turn ended: a lower credit balance is paid, and
-		// stops Codex until the user resumes it.
-		const payment =
-			auth.type === "chatgpt" && result.sent
-				? codexPayment(result.creditsBefore, result.creditsAfter)
-				: "fine";
-		if (payment === "paid")
-			throw new SubscriptionUnavailableError(
-				"extra_usage",
-				this.name,
-				`Codex spent ChatGPT credits on this call (the balance went down): it is recorded at its estimated API price, and Codex calls are stopped until you resume them in Settings > Models. ${CODEX_CREDITS_HOWTO}`,
-				undefined,
-				true,
-			);
-		// The balances could not be compared (a read missing or incomplete): the call started with
-		// headroom in every window, so it is on the plan; logged, never held.
-		if (payment === "unknown")
-			this.options.log?.(
-				"warning: codex credit balance not readable after the call; settled on the plan",
-				{ provider: this.name, task: request.task },
-			);
 		if (result.boundary)
 			throw this.pause(
 				"boundary",

@@ -3,7 +3,7 @@ import path from "node:path";
 import type { LlmLoginState } from "@offerfinch/core/scoring/llm-status";
 import type { PlanSnapshot } from "@offerfinch/core/scoring/plan-usage";
 
-import { probeExtraUsage } from "./claude";
+import { probeUsage } from "./claude";
 import {
 	CODEX_MACOS_ONLY,
 	type CodexTurnInput,
@@ -30,7 +30,7 @@ export async function claudeLogin(
 ): Promise<LoginWithUsage> {
 	try {
 		// The same probe a call makes before its prompt: login and the plan's usage, nothing sent.
-		const { auth, extra, account, usage } = await probeExtraUsage(
+		const { auth, account, usage } = await probeUsage(
 			query,
 			"claude-sonnet-5-5",
 			subscriptionEnv(parentEnv).env,
@@ -55,8 +55,7 @@ export async function claudeLogin(
 		if (!auth)
 			return {
 				state: "logged_in",
-				detail: `Claude subscription (${plan}); ${extra.detail}`,
-				extraUsage: extra.state,
+				detail: `Claude subscription (${plan})`,
 				planUsage,
 			};
 		return {

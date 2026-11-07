@@ -332,65 +332,7 @@ export function authReport(account: AccountInfo): AuthReport {
 	};
 }
 
-/** Whether the Claude account can draw on paid extra usage, from the plan's usage report. */
-export interface ExtraUsageReport {
-	state: "off" | "on" | "unknown";
-	detail: string;
-}
-
-export const EXTRA_USAGE_OFF_HOWTO =
-	"Turn extra usage off at claude.ai > Settings > Usage; Claude calls continue by themselves once it is off.";
-
-/**
- * Read from the SDK's `get_usage` control before the prompt is sent. Neither the pinned SDK
- * nor its CLI has a per-request switch that keeps a call off extra usage (the CLI learns it
- * from the answer's headers, after the request is billed), so the only guard before sending is
- * the account's own setting: `is_enabled` true means extra usage could pay for this call. A
- * report without plan limits (or none at all) is unknown. A report with plan limits and no
- * `extra_usage` entry means the plan has none ("when the plan has it", in the SDK's types).
- */
-export function extraUsageReport(
-	usage: SDKControlGetUsageResponse | null,
-): ExtraUsageReport {
-	if (!usage?.rate_limits_available || !usage.rate_limits)
-		return {
-			state: "unknown",
-			detail:
-				"the Claude plan's usage could not be read, so it is not known whether extra usage could pay for this call.",
-		};
-	const extra = usage.rate_limits.extra_usage;
-	if (extra?.is_enabled)
-		return {
-			state: "on",
-			detail: `extra usage is on for this Claude account${extra.monthly_limit !== null ? ` (monthly limit ${extra.monthly_limit} ${extra.currency ?? "minor units"})` : ""}: a call past the plan's limits would be billed per token.`,
-		};
-	return {
-		state: "off",
-		detail: extra
-			? "extra usage is off for this Claude account."
-			: "this Claude plan reports no extra usage.",
-	};
-}
-
-/** True when a rate-limit report says this request drew, or would draw, on extra usage. */
-export function drawsOnExtraUsage(info: {
-	status?: string;
-	rateLimitType?: string;
-	overageStatus?: string;
-	isUsingOverage?: boolean;
-	overageInUse?: boolean;
-}): boolean {
-	return Boolean(
-		info.isUsingOverage ||
-			info.overageInUse ||
-			info.rateLimitType === "overage" ||
-			(info.status === "rejected" &&
-				(info.overageStatus === "allowed" ||
-					info.overageStatus === "allowed_warning")),
-	);
-}
-
-/** How long the extra-usage check may take before it counts as unknown. */
+/** How long the usage probe may take before it counts as unread. */
 const USAGE_CHECK_MS = 30_000;
 /**
  * How long a session may go on after its result or its first problem before it is closed. A
@@ -445,12 +387,9 @@ const RATE_LIMITS = new Set(
 		overage: 1,
 	} satisfies Record<NonNullable<SDKRateLimitInfo["rateLimitType"]>, 1>),
 );
-/** How long a probe's "extra usage is off" is trusted by the same provider. */
-const EXTRA_USAGE_TRUST_MS = 60_000;
 /**
- * A call needs a plan-usage read this recent before it starts, or the probe runs even while
- * the extra-usage answer is still trusted: what the plan did since (the user's own work)
- * would otherwise be read as the call's.
+ * A call needs a plan-usage read this recent before it starts, or a probe reads one: what the
+ * plan did since (the user's own work) would otherwise be read as the call's.
  */
 const USAGE_BASELINE_MS = 10_000;
 
@@ -462,13 +401,12 @@ export const USAGE_PROBE_SYSTEM = "usage probe; no prompt is sent";
  * nonessential traffic (the pinned CLI fetches the usage report only then); no prompt, so
  * nothing of the user's is in it.
  */
-export async function probeExtraUsage(
+export async function probeUsage(
 	query: ClaudeQuery,
 	model: string,
 	env: Record<string, string>,
 ): Promise<{
 	auth: { kind: SubscriptionPauseKind; detail: string } | null;
-	extra: ExtraUsageReport;
 	account: AuthReport | null;
 	/** The plan's usage report as read, for Settings › Models; null when it could not be. */
 	usage: SDKControlGetUsageResponse | null;
@@ -511,16 +449,14 @@ export async function probeExtraUsage(
 					detail:
 						"the Claude Code CLI did not start or did not report its login. Check Settings › Models.",
 				},
-				extra: extraUsageReport(null),
 				account: null,
 				usage: null,
 			};
 		const account = authReport(init.account);
 		const auth = authProblem(account, "none");
-		if (auth)
-			return { auth, extra: extraUsageReport(null), account, usage: null };
+		if (auth) return { auth, account, usage: null };
 		const usage = await timeout(Promise.resolve().then(() => session.usage()));
-		return { auth: null, extra: extraUsageReport(usage), account, usage };
+		return { auth: null, account, usage };
 	} finally {
 		stop();
 		session.close();
@@ -573,15 +509,6 @@ export interface ClaudeSubscriptionOptions {
 
 /** One process-wide breaker per vendor: a limit or logout stops every caller, not just one. */
 const CLAUDE_BREAKER = new Breaker();
-
-/**
- * The user resumed Claude after a paid call (Settings > Models): lifts this process's
- * extra-usage pause (a paid call, extra usage seen on), so the next call is sent. A usage-limit
- * or logout pause stays until it ends by itself.
- */
-export function resumeClaudeCalls(breaker: Breaker = CLAUDE_BREAKER): void {
-	breaker.clear("extra_usage");
-}
 
 /** What `inspect` reads a message against. */
 interface InspectContext {
@@ -637,13 +564,7 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 		// A limit or logout seen by another call: fail fast, no CLI started.
 		const open = this.breaker.current(this.now());
 		if (open) throw open;
-		try {
-			await this.checkExtraUsage();
-		} catch (error) {
-			if (error instanceof SubscriptionUnavailableError)
-				this.breaker.trip(error, this.now());
-			throw error;
-		}
+		await this.sampleBaseline();
 		const schema = jsonSchemaOf(request.schema as z.ZodType);
 		const usageCall = this.options.planUsage?.call();
 		try {
@@ -681,39 +602,23 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 		}
 	}
 
-	/** Until when the last probe's "extra usage is off" is trusted. */
-	private extraUsageOffUntil = 0;
-
 	/**
-	 * No vendor switch keeps a request off extra usage: before a prompt exists, a probe session
-	 * reads the plan's usage report and refuses unless the account's own setting says extra
-	 * usage cannot pay for a call (fails closed when unknown). The probe sends no prompt; it
-	 * runs without CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, because the pinned CLI fetches the
-	 * plan's usage only then (with it, `rate_limits` is null). An "off" holds for a minute.
+	 * Before a call, reads the plan's usage when no read is recent enough to be the call's
+	 * baseline (Settings › Models shows OfferFinch's share). Display only: it never pauses or
+	 * refuses a call. Whether extra usage may pay is the user's account setting, as in T3 Code.
+	 * The probe sends no prompt; it runs without CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
+	 * because the pinned CLI fetches the plan's usage only then.
 	 */
-	private async checkExtraUsage(): Promise<void> {
-		const now = this.now().getTime();
-		if (
-			now < this.extraUsageOffUntil &&
-			!this.options.planUsage?.baselineNeeded(USAGE_BASELINE_MS)
-		)
-			return;
-		const report = await probeExtraUsage(
+	private async sampleBaseline(): Promise<void> {
+		if (!this.options.planUsage?.baselineNeeded(USAGE_BASELINE_MS)) return;
+		const report = await probeUsage(
 			this.query,
 			this.options.model,
 			subscriptionEnv(this.options.parentEnv).env,
-		);
-		if (report.usage) {
-			const snapshot = claudeUsageSnapshot(report.usage, this.now());
-			if (snapshot) this.options.planUsage?.sample(snapshot);
-		}
-		if (report.auth) throw this.pause(report.auth.kind, report.auth.detail);
-		if (report.extra.state !== "off")
-			throw this.pause(
-				"extra_usage",
-				`${report.extra.detail} Nothing was sent. ${EXTRA_USAGE_OFF_HOWTO}`,
-			);
-		this.extraUsageOffUntil = now + EXTRA_USAGE_TRUST_MS;
+		).catch(() => null);
+		if (!report?.usage) return;
+		const snapshot = claudeUsageSnapshot(report.usage, this.now());
+		if (snapshot) this.options.planUsage?.sample(snapshot);
 	}
 
 	private pause(
@@ -730,10 +635,8 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 	 * skills) arrives with the first request; a violation there aborts and discards the answer,
 	 * a tripwire behind the pinned, wire-tested options.
 	 *
-	 * Billing is read from the session. A sign of paid extra usage anywhere (a `rate_limit_event`
-	 * drawing on overage) wins over every other outcome: the call is paid and Claude stops. Any
-	 * other ending is on the plan, as T3 Code treats it: extra usage was confirmed off by the probe
-	 * just before. A session that ended unclearly around its answer (an error or crash result, an
+	 * Every ending is on the plan, as T3 Code treats it; extra usage, when the user's account
+	 * allows it, never stops a call. A session that ended unclearly around its answer (an error or crash result, an
 	 * assistant error, an abort, a stream error, or still open `DRAIN_MS` after its result) keeps
 	 * the answer and is logged as a warning.
 	 */
@@ -806,8 +709,6 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 		let resultError: string | null = null;
 		let invalid: string | undefined;
 		let gotResult = false;
-		/** The vendor said this call drew on paid extra usage: wins over every other outcome. */
-		let paid: SubscriptionUnavailableError | null = null;
 		/** The stream itself failed (the CLI exits non-zero after an error result, or on abort). */
 		let streamError: Error | null = null;
 		/**
@@ -838,14 +739,6 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 				if (message.type === "assistant" && message.error) clean = false;
 				const problem = this.inspect(message, ctx);
 				if (problem) {
-					if (
-						problem instanceof SubscriptionUnavailableError &&
-						problem.paid === true
-					) {
-						paid ??= problem;
-						// Every other caller stops now, not when this session ends.
-						this.breaker.trip(problem, this.now());
-					}
 					stop(problem);
 					drainSoon();
 				}
@@ -881,12 +774,11 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			session.close();
 			await rm(cwd, { recursive: true, force: true });
 		}
-		if (paid) throw paid;
 		// The prompt went out but no answer came back (the stream was lost, the CLI exited without
 		// one, this side stopped it): the call settles on the plan at $0 all the same, logged.
 		if (promptSent && !gotResult) this.warnNoAnswer(failure, streamError);
 		// The answer arrived from a session that did not end cleanly: on the plan all the same
-		// (extra usage was probed off just before; a paid sign would have won above), but logged.
+		// but logged.
 		if (gotResult && !refusal(failure)) {
 			const unclear = [
 				resultError,
@@ -978,16 +870,12 @@ export class ClaudeSubscriptionProvider implements LlmProvider {
 			const resetsAt = info.resetsAt
 				? new Date(info.resetsAt * 1000)
 				: undefined;
-			// The answer's headers said so: the request is already billed per token.
-			if (drawsOnExtraUsage(info))
-				return new SubscriptionUnavailableError(
-					"extra_usage",
-					this.name,
-					"Claude drew on paid extra usage for this call (billed per token; recorded at its estimated API price). Claude calls are stopped until you resume them in Settings > Models; turn extra usage off at claude.ai > Settings > Usage first.",
-					resetsAt,
-					true,
-				);
-			if (info.status === "rejected")
+			// Past the plan's limit, extra usage may pay for the call (the user's account setting):
+			// it goes on. Only a limit that nothing pays for pauses.
+			const extraPays =
+				info.overageStatus === "allowed" ||
+				info.overageStatus === "allowed_warning";
+			if (info.status === "rejected" && !extraPays)
 				return this.pause(
 					"usage_limit",
 					`the Claude plan's ${info.rateLimitType ? knownName(info.rateLimitType, RATE_LIMITS) : "usage"} limit is reached${resetsAt ? ` until ${resetsAt.toISOString()}` : ""}. Preparation waits; it resumes after a later scan once the limit resets, with status in Settings › Models.`,
@@ -1058,7 +946,7 @@ const PAUSE_DETAIL: Record<SubscriptionPauseKind, string> = {
 	not_subscription:
 		"Claude Code would bill something other than the subscription.",
 	boundary: "the session was not a pure model call.",
-	extra_usage: `paid extra usage could pay for this call. ${EXTRA_USAGE_OFF_HOWTO}`,
+	extra_usage: "paid extra usage could pay for this call.",
 	not_owner: "another account's call.",
 	call_budget:
 		"the subscription's call budget for the last 24 hours is used up.",

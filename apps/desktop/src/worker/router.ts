@@ -10,7 +10,6 @@ import { inboxRouter } from "./routers/inbox";
 import { jobsRouter } from "./routers/jobs";
 import { notificationsRouter } from "./routers/notifications";
 import { onboardingRouter } from "./routers/onboarding";
-import { paidStopsRouter } from "./routers/paid-stops";
 import { pipelineRouter } from "./routers/pipeline";
 import { profileRouter } from "./routers/profile";
 import { worker } from "./routers/shared";
@@ -50,7 +49,6 @@ export const desktopAppRouter = {
 	inbox: inboxRouter,
 	ai: aiRouter,
 	/** A plan stopped after a paid call, and Resume. */
-	paidStops: paidStopsRouter,
 	notifications: notificationsRouter,
 	onboarding: onboardingRouter,
 	data: dataRouter,

@@ -1,9 +1,5 @@
 import { meteredFor } from "@offerfinch/core/scoring/metered";
 import { DrizzleSpendStore } from "@offerfinch/db";
-import {
-	CODEX_CREDITS_HOWTO,
-	CODEX_HEADROOM_PERCENT,
-} from "@offerfinch/local-llm/codex";
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 import {
@@ -121,12 +117,7 @@ export const aiRouter = {
 			claude,
 			codex,
 			usage: await planUsageViews(w.planUsage, store, context.session.user.id),
-			extraUsageOffConfirmedAt: await store.extraUsageOffConfirmedAt(
-				context.session.user.id,
-			),
 			callBudget: await store.subscriptionBudget(context.session.user.id),
-			codexHeadroomPercent: CODEX_HEADROOM_PERCENT,
-			codexCredits: CODEX_CREDITS_HOWTO,
 		};
 	}),
 	/**

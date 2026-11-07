@@ -836,3 +836,19 @@ Greenhouse, Lever and Ashby (`core/sources/<board>.ts`). Workday has its own iss
 | The company's name comes from each board's data (SmartRecruiters' company, Workable's account, Recruitee's company name, the Teamtailor feed's title, Personio's subcompany); only Lever and Ashby still read a posting page for it | One request less per company |
 | A job-board search run records each board's found postings (ones the app had included) and new jobs (`ProviderRun.boards`, kept in the provider's last run); Settings › Sources shows them under the last run for the boards with something found | The issue's "Sources shows counts per board" |
 | Tests use fabricated fixtures (`core/test/fixtures/boards/`) and, in e2e, local stand-ins on the boards' exact hosts (`fetchRewrite`, the five always rewritten). The real reads were throwaway scripts, not committed. Checked on 2026-11-07: SmartRecruiters (Wise), Workable (huggingface), Recruitee (bunq), Teamtailor (career), Personio (tado) each read, a listed posting checks open and a made-up id gone | No contact with a real board from a test run |
+
+## 2026-11-07: No paid-usage gate on any plan
+
+Every Claude call paused with "the Claude plan's usage could not be read": claude.ai's
+`/api/oauth/usage` answered 429 for the user's login, and the CLI does not ask again for about an
+hour, so the extra-usage check before each call failed closed. The user chose to drop the gate:
+whether a plan may spend paid usage is the user's own account setting, as in T3 Code.
+
+| Decision | Why |
+|---|---|
+| Claude: no extra-usage check before a call, and a `rate_limit_event` drawing on overage keeps the answer and stops nothing. The prompt-less probe runs only when the plan-usage baseline is stale (Settings › Models), and its result never pauses a call | The user's choice; the probe's usage read can fail (a 429) with nothing wrong |
+| Codex: no headroom (90%), included-usage or credit-balance check before a call, and a lower balance after it is not a paid stop. A reached limit still pauses, from the turn's own error | Same choice for every plan |
+| OpenCode: an answer that cost money on a $0-listed model does not stop the source | Same choice |
+| Paid stops are gone: no `vendor_stopped` refusal, no `recordPaidStop`, no Settings › Models stop notice or Resume, no Home "stopped after a paid call" item. Old `subscription_pauses` rows stay in the database and hold nothing back | Nothing creates a stop any more; a row left from before must not block calls |
+| Kept: the login checks, the daily call budget, the usage-limit pause, plan usage in Settings › Models, and the cap for pay-per-use calls | They do not decide on paid usage |
+| Supersedes the extra-usage, headroom and paid-stop rows of 2026-11-04 and 2026-11-06 | |

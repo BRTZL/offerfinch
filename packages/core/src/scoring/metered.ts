@@ -10,7 +10,6 @@ import {
 	type LlmUsage,
 	redactRequest,
 	SubscriptionUnavailableError,
-	vendorOf,
 } from "./llm";
 
 import { estimateCost, inputTokenBound, worstCaseMicros } from "./pricing";
@@ -42,18 +41,12 @@ export interface SpendStore {
 	}): Promise<
 		| { ok: true; id: string }
 		| { ok: false; reason: "cap"; spentMicros: number; capMicros: number }
-		/**
-		 * A call of this vendor was paid (Claude extra usage, ChatGPT credits) and the user has not
-		 * resumed it yet: its calls stop until they do. `detail` says so, in words.
-		 */
-		| { ok: false; reason: "vendor_stopped"; detail: string }
 		| ({ ok: false; reason: "call_budget" } & SubscriptionBudget)
 	>;
 	/** The user's subscription call budget and its use over the last 24 hours. */
 	subscriptionBudget(userId: string): Promise<SubscriptionBudget>;
 	/**
-	 * A subscription call refused before it started (another account, a stopped vendor, the call
-	 * budget): a settled $0 row carrying the message, so the application says why.
+	 * A subscription call refused before it started (another account, the call budget): a settled $0 row carrying the message, so the application says why.
 	 */
 	recordRefusal(input: {
 		userId: string;
@@ -62,12 +55,6 @@ export interface SpendStore {
 		provider: string;
 		error: string;
 	}): Promise<void>;
-	/**
-	 * A call of `vendor` ("anthropic", "openai") drew on paid extra usage: that vendor's calls stop
-	 * until the user resumes them. A paid Claude call also withdraws the Claude confirmation that
-	 * extra usage is off; the other vendor is never touched.
-	 */
-	recordPaidStop(userId: string, vendor: string): Promise<void>;
 	/**
 	 * Jobs whose application has sat in scored or preparing since before `before`: what the cap
 	 * may have paused. The sweep wakes them once the cap leaves room (a new month, a higher cap).
@@ -168,18 +155,6 @@ export class SpendingCapReachedError extends LlmPausedError {
 /** What a subscription call records: no per-token price, whatever the model. */
 export const SUBSCRIPTION_BASIS =
 	"subscription: included in the user's plan, not billed per token; tokens as the CLI reported them";
-
-/**
- * A subscription call that the vendor said drew on paid extra usage: Claude's extra usage, or
- * ChatGPT credits through Codex. Named per vendor, so the ledger says which plan it was.
- */
-export function paidBasis(vendor: string): string {
-	if (vendor.startsWith("opencode:"))
-		return "paid OpenCode balance beyond the plan: estimated at the model's listed price";
-	return vendor === "openai"
-		? "paid ChatGPT credits on the Codex plan: estimated at the API price"
-		: "paid extra usage on the Claude plan: billed per token, estimated at the API price";
-}
 
 /** The model a provider is named after ("anthropic:claude-opus-5-5" -> "claude-opus-5-5"). */
 function modelOf(provider: LlmProvider): string {
@@ -322,14 +297,7 @@ export class MeteredLlm implements LlmProvider {
 					reserved.spentMicros,
 					reserved.capMicros,
 				);
-			const error =
-				reserved.reason === "call_budget"
-					? budgetPause(this.inner.name, reserved)
-					: new SubscriptionUnavailableError(
-							"extra_usage",
-							this.inner.name,
-							reserved.detail,
-						);
+			const error = budgetPause(this.inner.name, reserved);
 			await this.store.recordRefusal({ ...refusal, error: error.message });
 			throw error;
 		}
@@ -373,26 +341,6 @@ export class MeteredLlm implements LlmProvider {
 				: error instanceof Error
 					? error.message
 					: String(error);
-		// The vendor said this sent call drew on paid extra usage: billed per token. (A breaker
-		// still open from an earlier paid call re-throws that call's error with nothing sent.)
-		if (
-			error instanceof SubscriptionUnavailableError &&
-			error.paid &&
-			modelCalls > 0
-		) {
-			const vendor = vendorOf(this.inner);
-			await this.store.recordPaidStop(this.scope.userId, vendor);
-			const cost = usage ? estimateCost(usage, this.inner.price) : null;
-			await this.store.settleSpend(reservation.id, {
-				usage,
-				costMicros: cost?.micros ?? reservation.estimateMicros,
-				basis: `${paidBasis(vendor)} (${cost?.basis ?? "no usage reported: charged at the reserved worst case"})`,
-				error: message,
-				billing: "api",
-				modelCalls,
-			});
-			return;
-		}
 		// Anything else is on the plan: answered, failed, timed out or refused. Extra usage is
 		// confirmed off and probed before every Claude call, and Codex starts only with headroom,
 		// so an unclear ending is almost surely on the plan; the provider logs it.

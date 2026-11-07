@@ -245,14 +245,6 @@ export default function HomePage() {
 			"Raise the cap in Spending, or wait for next month",
 			"home-needs-cap",
 		);
-	if (h.spend.paidStops.length > 0)
-		fix(
-			"paid-stop",
-			"/settings/models",
-			`${h.spend.paidStops.join(" and ")} stopped after a paid call`,
-			"Check your plan's usage, then resume it in Models",
-			"home-needs-paid-stop",
-		);
 	if (h.scan.unset.length > 0)
 		fix(
 			"sources",

@@ -139,7 +139,7 @@ describe("subscription calls in Postgres", () => {
 			billing: "subscription",
 		});
 
-	it("needs no confirmation click, and refuses them once a paid call paused Claude", async () => {
+	it("needs no confirmation click, and never refuses them for a paid call", async () => {
 		await execute(db, sql`delete from llm_usage`);
 		const repo = new DashboardRepository(db);
 		await repo.setSpendingCap("u1", {
@@ -147,19 +147,15 @@ describe("subscription calls in Postgres", () => {
 			monthlyCapMicros: 20_000_000,
 		});
 		const store = new DrizzleSpendStore(db);
-		// Not confirmed: the provider's own check before each call guards extra usage.
 		await store.confirmExtraUsageOff("u1", false);
 		expect((await reserveSub(store)).ok).toBe(true);
-		await store.recordPaidStop("u1", "anthropic");
-		expect(await store.extraUsageOffConfirmedAt("u1")).toBeNull();
-		// Confirming again is not enough: Claude stays stopped until it is resumed.
-		await store.confirmExtraUsageOff("u1", true);
-		expect(await reserveSub(store)).toMatchObject({
-			ok: false,
-			reason: "vendor_stopped",
-		});
-		await store.resumeSubscription("u1", "anthropic");
+		// A stop left by an earlier version holds nothing back.
+		await execute(
+			db,
+			sql`insert into subscription_pauses (user_id, vendor, paused_at, reason) values ('u1', 'anthropic', ${Date.now()}, 'a call used paid extra usage') on conflict do nothing`,
+		);
 		expect((await reserveSub(store)).ok).toBe(true);
+		await execute(db, sql`delete from subscription_pauses`);
 	});
 
 	it("never counts a subscription reservation against the cap, open or settled at $0", async () => {
@@ -359,66 +355,5 @@ describe("a reservation whose process died", () => {
 			micros: 2_880_000,
 		});
 		expect((await later.spendingStatus("u1")).reservedMicros).toBe(2_880_000);
-	});
-});
-
-describe("a paid call pauses its own vendor only", () => {
-	it("needs no confirmation for either vendor, and a paid Claude call pauses Claude, not Codex", async () => {
-		await execute(db, sql`delete from llm_usage`);
-		const store = new DrizzleSpendStore(db);
-		await store.confirmExtraUsageOff("u1", false);
-		await store.setSubscriptionDailyCalls("u1", 100);
-		const reserve = (provider: string) =>
-			store.reserveSpend({
-				userId: "u1",
-				applicationId: null,
-				task: "claims-check",
-				provider,
-				estimateMicros: 100_000,
-				billing: "subscription",
-				modelCalls: 1,
-			});
-		expect((await reserve("claude-subscription:claude-sonnet-5-5")).ok).toBe(
-			true,
-		);
-		expect((await reserve("codex-subscription:default")).ok).toBe(true);
-		await store.recordPaidStop("u1", "anthropic");
-		expect(
-			await reserve("claude-subscription:claude-sonnet-5-5"),
-		).toMatchObject({
-			ok: false,
-			reason: "vendor_stopped",
-		});
-		expect((await reserve("codex-subscription:default")).ok).toBe(true);
-		await store.resumeSubscription("u1", "anthropic");
-		await store.resumeSubscription("u1", "openai");
-	});
-
-	it("stops only Gemini on a paid Gemini call, never Claude or its confirmation", async () => {
-		await execute(db, sql`delete from llm_usage`);
-		const store = new DrizzleSpendStore(db);
-		await store.setSubscriptionDailyCalls("u1", 100);
-		await store.confirmExtraUsageOff("u1", true);
-		const reserve = (provider: string) =>
-			store.reserveSpend({
-				userId: "u1",
-				applicationId: null,
-				task: "claims-check",
-				provider,
-				estimateMicros: 100_000,
-				billing: "subscription",
-				modelCalls: 1,
-			});
-		await store.recordPaidStop("u1", "google");
-		expect(await reserve("antigravity:gemini-3.8-flash")).toMatchObject({
-			ok: false,
-			reason: "vendor_stopped",
-		});
-		expect(await store.extraUsageOffConfirmedAt("u1")).not.toBeNull();
-		expect((await reserve("claude-subscription:claude-sonnet-5-5")).ok).toBe(
-			true,
-		);
-		await store.resumeSubscription("u1", "google");
-		expect((await reserve("antigravity:gemini-3.8-flash")).ok).toBe(true);
 	});
 });

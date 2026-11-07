@@ -94,7 +94,6 @@ async function workerInit(): Promise<WorkerInit> {
 				noSchedule: process.env.OFFERFINCH_NO_SCHEDULE === "1",
 				fakeDelayMs: Number(process.env.OFFERFINCH_FAKE_DELAY_MS) || undefined,
 				linkedinOrigin: process.env.OFFERFINCH_LINKEDIN_ORIGIN || undefined,
-				fakeCodex: process.env.OFFERFINCH_FAKE_CODEX === "1",
 				fetchRewrite: process.env.OFFERFINCH_FETCH_REWRITE
 					? JSON.parse(process.env.OFFERFINCH_FETCH_REWRITE)
 					: undefined,

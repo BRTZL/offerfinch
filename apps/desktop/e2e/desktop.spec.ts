@@ -11,7 +11,6 @@ import { startFixtureBoards } from "./fixture-boards";
 import {
 	chirps,
 	fakeChrome,
-	fakeClis,
 	launchApp,
 	notices,
 	openRoute,
@@ -45,11 +44,6 @@ const settingsNav = (page: Page, name: string) =>
 	page
 		.getByRole("navigation", { name: "Settings" })
 		.getByRole("link", { name: new RegExp(`^${name}`) });
-/** Who does a step: the pop-up button, then the model (`fake`, or its reference). */
-async function chooseMode(page: Page, role: string, mode: string) {
-	await page.getByTestId(`role-${role}-mode`).click();
-	await page.getByTestId(`role-${role}-${mode}`).click();
-}
 /** A tab of the document pane (CV, Letter, Answers). */
 const docTab = (page: Page, name: RegExp) =>
 	page.getByRole("tablist", { name: "Document" }).getByRole("tab", { name });
@@ -1289,75 +1283,6 @@ test("a scan reads every source from the shared plan, LinkedIn's Top picks first
 	} finally {
 		await app.close();
 		await fixture.close();
-	}
-});
-
-test("a paid Codex call stops Codex across a worker kill until resumed", async () => {
-	const calls = () =>
-		fs.existsSync(path.join(userData, "fake-codex-calls"))
-			? fs
-					.readFileSync(path.join(userData, "fake-codex-calls"), "utf8")
-					.trim()
-					.split("\n").length
-			: 0;
-	// Codex signed in, so its models are offered; its calls go to the paid stand-in (fakeCodex).
-	fakeClis(userData, { claude: "missing", codex: "logged_in" });
-	const { app, page } = await launchApp({
-		userData,
-		rewrite: boards.rewrite,
-		siteOrigins: boards.siteOrigins,
-		fakeCodex: true,
-	});
-	try {
-		await sidebar(page, "Settings").click();
-		await settingsNav(page, "Models").click();
-		await chooseMode(page, "claims", "codex:");
-		await expect(page.getByTestId("role-claims-mode")).toHaveText(
-			/Account default/,
-		);
-		await expect(page.getByTestId("role-claims")).toHaveAttribute(
-			"data-ready",
-			"true",
-		);
-		await page.getByTestId("role-claims-test").click();
-		await expect(page.getByTestId("role-claims-test-result")).toContainText(
-			/credits/,
-		);
-		expect(calls()).toBe(1);
-
-		// The worker dies; main starts a new one, with no breaker in memory.
-		const pid = (await workerPid(app)) as number;
-		process.kill(pid, "SIGKILL");
-		await expect.poll(() => workerPid(app), { timeout: 30_000 }).not.toBe(pid);
-		await page.reload();
-		await expect(page.getByTestId("stopped-openai")).toContainText(
-			/Codex used paid credits on .+\. Calls are stopped\./,
-			{ timeout: 30_000 },
-		);
-		// Only Codex stopped; no held call, nothing to reconcile.
-		await expect(page.getByTestId("stopped-anthropic")).toHaveCount(0);
-		await expect(page.getByTestId("held-call")).toHaveCount(0);
-		await shot(page, "paid-codex-stop");
-
-		// Still stopped after the restart: refused before the call starts.
-		await page.getByTestId("role-claims-test").click();
-		await expect(page.getByTestId("role-claims-test-result")).toContainText(
-			/Calls are stopped/,
-		);
-		expect(calls()).toBe(1);
-
-		// Resumed: the next call runs (the stand-in now answers).
-		fs.writeFileSync(path.join(userData, "fake-codex-ok"), "");
-		await page.getByTestId("resume-openai").click();
-		await expect(page.getByTestId("stopped-openai")).toHaveCount(0);
-		await page.getByTestId("role-claims-test").click();
-		await expect(page.getByTestId("role-claims-test-result")).toContainText(
-			"Works",
-		);
-		expect(calls()).toBe(2);
-	} finally {
-		await app.close();
-		fs.rmSync(path.join(userData, "fake-clis.json"), { force: true });
 	}
 });
 

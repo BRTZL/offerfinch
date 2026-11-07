@@ -61,7 +61,6 @@ import { localChromeProvider } from "./browser";
 import type { CheckStop, SiteTabHost } from "./checks";
 import { DEMO_SITE_REFUSAL, demoSubscriptions, seedDemo } from "./demo";
 import { fakeSubscriptions } from "./fake-clis";
-import { FakeCodexSubscription } from "./fake-codex";
 import {
 	FOLLOW_UP_EVERY_MS,
 	FollowUpDelivery,
@@ -362,12 +361,7 @@ export class WorkerApp {
 	/** (Re)builds the pipeline after a settings change. Running steps keep their deps. */
 	async rebuild(): Promise<void> {
 		const built = buildPipeline({
-			local: this.init.test?.fakeCodex
-				? (input) =>
-						input.provider === "codex"
-							? new FakeCodexSubscription(input.ownerUserId, this.init.userData)
-							: this.subscriptions.factory(input)
-				: this.subscriptions.factory,
+			local: this.subscriptions.factory,
 			ownerUserId: LOCAL_USER_ID,
 			userData: this.init.userData,
 			siteHost: this.siteHost(),

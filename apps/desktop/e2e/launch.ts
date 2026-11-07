@@ -33,7 +33,6 @@ export async function launchApp(options: {
 	executablePath?: string;
 	fakeDelayMs?: number;
 	linkedinOrigin?: string;
-	fakeCodex?: boolean;
 	env?: Record<string, string>;
 	/** Take focus like a real launch (tests that check the focused window). Default: background. */
 	foreground?: boolean;
@@ -68,7 +67,6 @@ export async function launchApp(options: {
 			...(options.foreground ? {} : { OFFERFINCH_TEST_BACKGROUND: "1" }),
 			OFFERFINCH_FAKE_MODELS: "1",
 			OFFERFINCH_NO_SCHEDULE: "1",
-			...(options.fakeCodex ? { OFFERFINCH_FAKE_CODEX: "1" } : {}),
 			...options.env,
 			...(Object.keys(origins).length
 				? { OFFERFINCH_SITE_ORIGINS: JSON.stringify(origins) }
