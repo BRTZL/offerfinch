@@ -521,6 +521,10 @@ test("the Inbox by keyboard and right-click; nothing approves by key, menu or ‚å
 			await page.mouse.move(x + dx, y, { steps: 4 });
 			await page.mouse.up();
 		};
+		// Wide enough that the posting and the details dock beside the document: laid over it,
+		// the details dim the window behind them and a click there closes them.
+		const size = page.viewportSize();
+		await page.setViewportSize({ width: 1760, height: 900 });
 		const openedDetails = !(await page.getByTestId("inspector").isVisible());
 		if (openedDetails) await page.getByTestId("fit-card").click();
 		const listCol = () =>
@@ -554,6 +558,7 @@ test("the Inbox by keyboard and right-click; nothing approves by key, menu or ‚å
 		expect(await widthOf("aside[aria-label=Posting]")).toBe(posting0);
 		expect(await widthOf("[data-testid=inspector]")).toBe(details0);
 		if (openedDetails) await page.getByTestId("inspector-close").click();
+		if (size) await page.setViewportSize(size);
 		await page.getByTestId("posting-toggle").click();
 
 		// Right-click a row: the native menu (recorded here) offers no Approve; Copy works.
