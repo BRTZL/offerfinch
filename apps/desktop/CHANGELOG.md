@@ -8,7 +8,7 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
-## Unreleased
+## 0.3.1 (2026-11-07)
 
 - Claude no longer stops with "Subscription paused (extra_usage …): the Claude plan's usage
   could not be read". OfferFinch no longer checks whether a plan could pay for a call with
