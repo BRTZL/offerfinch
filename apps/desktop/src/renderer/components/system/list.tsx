@@ -3,6 +3,7 @@ import { ChevronRight } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { IS_MAC } from "../../../shared/platform";
 import { matches } from "../../../shared/shortcuts";
 
 /**
@@ -49,6 +50,10 @@ export function ListRow({
 					(
 						e.currentTarget.closest("[role=listbox]") as HTMLElement | null
 					)?.focus();
+					// A context click selects in its own handler. Selecting here too would re-render
+					// the line first (a company opens), and the menu would land on what replaced it.
+					if (onContextMenu && (e.button === 2 || (IS_MAC && e.ctrlKey)))
+						return;
 					onSelect(e);
 				}}
 				onContextMenu={onContextMenu}
