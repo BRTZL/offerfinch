@@ -8,7 +8,7 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
-## Unreleased
+## 0.3.2 (2026-11-07)
 
 - Settings › Spending is gone: plans and free models cost nothing extra, so its dollar figures
   were almost always $0. This month's calls by model and by step are now at the bottom of
