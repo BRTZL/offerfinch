@@ -292,6 +292,25 @@ function buildItems(
 /** The rows an item stands for: a group's roles, or the row itself. */
 const rowsOf = (item: Item) => (item.kind === "group" ? item.rows : [item.row]);
 
+/** Not interested's target for some rows: their open matches, and the one company they share. */
+function dismissTargetOf(
+	list: InboxRow[],
+	label: string,
+): DismissTarget | null {
+	const open = list.filter(isOpenMatch);
+	if (open.length === 0) return null;
+	const companies = new Set(open.map(companyOf));
+	const first = open[0];
+	return {
+		ids: open.map((r) => r.id),
+		company:
+			companies.size === 1 && first
+				? { id: first.companyId, name: first.companyName }
+				: null,
+		label,
+	};
+}
+
 /* ------------------------------------------------------------------- page */
 
 /** Rows leave with a short fade before the list closes the gap (and slides the rest up). */
@@ -457,20 +476,7 @@ export default function InboxPage() {
 
 	/** What Not interested acts on now: the selection, the company, or the one match. */
 	const target: DismissTarget | null = (() => {
-		const of = (list: InboxRow[], label: string): DismissTarget | null => {
-			const open = list.filter(isOpenMatch);
-			if (open.length === 0) return null;
-			const companies = new Set(open.map(companyOf));
-			const first = open[0];
-			return {
-				ids: open.map((r) => r.id),
-				company:
-					companies.size === 1 && first
-						? { id: first.companyId, name: first.companyName }
-						: null,
-				label,
-			};
-		};
+		const of = dismissTargetOf;
 		if (multiRows.length >= 2)
 			return of(multiRows, `${multiRows.filter(isOpenMatch).length} matches`);
 		if (group)
@@ -697,6 +703,16 @@ export default function InboxPage() {
 							onDismiss={() => {
 								if (target) setDismissOpen(true);
 							}}
+							onDismissNow={(picked, label) => {
+								const now = dismissTargetOf(picked, label);
+								if (now && !dismiss.isPending)
+									dismiss.mutate({
+										target: now,
+										reasons: [],
+										note: "",
+										hide: false,
+									});
+							}}
 							onReject={(id) => {
 								open(id);
 								setRejectRequest((n) => n + 1);
@@ -921,6 +937,7 @@ function InboxList({
 	onInterested,
 	onShowInMatches,
 	onDismiss,
+	onDismissNow,
 	onReject,
 	fetchMore,
 	loading,
@@ -939,7 +956,10 @@ function InboxList({
 	onToggle: (key: string, open?: boolean) => void;
 	onInterested: (row: InboxRow) => void;
 	onShowInMatches: (row: InboxRow) => void;
+	/** Keyboard X: opens Not interested's form on the selection. */
 	onDismiss: () => void;
+	/** The context menu's Not Interested: sets these rows aside at once, no form (Undo in the toast). */
+	onDismissNow: (rows: InboxRow[], label: string) => void;
 	onReject: (id: string) => void;
 	fetchMore: () => void;
 	loading: boolean;
@@ -1028,7 +1048,27 @@ function InboxList({
 					enabled: open || inSelection,
 				},
 			]);
-			if (choice === "dismiss") onDismiss();
+			if (choice === "dismiss") {
+				const rows =
+					item.kind === "group"
+						? item.rows
+						: [
+								// An open company is its line and its rows: each role once.
+								...new Map(
+									items
+										.flatMap(rowsOf)
+										.filter((r) => multi.includes(r.id))
+										.map((r) => [r.id, r]),
+								).values(),
+							];
+				const openCount = rows.filter(isOpenMatch).length;
+				onDismissNow(
+					rows,
+					item.kind === "group"
+						? `${openCount} roles at ${item.name}`
+						: `${openCount} matches`,
+				);
+			}
 			return;
 		}
 		const row = item.row;
@@ -1070,8 +1110,7 @@ function InboxList({
 		else if (choice === "reject") onReject(row.id);
 		else if (choice === "prepare") onInterested(row);
 		else if (choice === "show-in-matches") onShowInMatches(row);
-		// After the menu closes, so the popover opens on the action bar's button.
-		else if (choice === "dismiss") requestAnimationFrame(onDismiss);
+		else if (choice === "dismiss") onDismissNow([row], row.title);
 	};
 
 	if (error)

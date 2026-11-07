@@ -16,6 +16,13 @@ at the top, above the newest version. Only what is merged into main belongs here
   OpenCode). A plan still waits when its usage limit is reached.
 - Codex no longer waits once a usage window passes 90%, and no plan stops after a paid call,
   so there is no Resume in Settings › Models any more.
+- Not interested opens inside the bar at the bottom of a match: the bar grows into the form, and
+  the rest of the app dims and blurs while you choose. Press Not interested again to confirm, or
+  X, Esc or a click outside to cancel.
+- Not Interested from a job's right-click menu in the Inbox sets it aside right away, with Undo
+  in the message. It works the same on a company's line and on several selected jobs.
+- In a narrow window, Fit details and Chat dim and blur the app behind them. A click outside
+  closes them.
 
 ## 0.3.0 (2026-11-07)
 
