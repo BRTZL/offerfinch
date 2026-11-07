@@ -239,32 +239,9 @@ export async function startFixtureBoards(
 		if (host === "html") {
 			const q = url.searchParams.get("q") ?? "";
 			searches.push(q);
-			// Web search's queries name no site: results on careers pages and job sites.
-			if (!/\bsite:/.test(q)) {
-				res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-				res.end(webResults(base));
-				return;
-			}
 			const ids = [...greenhouseBoard(base).jobs, ...extra].map((j) => j.id);
-			const result = (target: string, title: string) =>
-				`<div class="result results_links results_links_deep web-result"><div class="links_main links_deep result__body"><h2 class="result__title"><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=${encodeURIComponent(target)}&amp;rut=x">${title}</a></h2></div></div>`;
-			const board = options.moreBoards
-				? MORE_BOARDS.find((b) => q.includes(b.site))
-				: undefined;
 			res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-			res.end(
-				`<!doctype html><html><head><title>${url.searchParams.get("q")} at DuckDuckGo</title></head><body><div id="links" class="results">${[
-					...(board
-						? [result(board.url, "A posting")]
-						: ids.map((id) =>
-								result(
-									`https://boards.greenhouse.io/acmerobotics/jobs/${id}`,
-									`Job ${id}`,
-								),
-							)),
-					result("https://www.example.com/careers", "Not a posting"),
-				].join("")}</div></body></html>`,
-			);
+			res.end(duckduckgoPage(q, base, ids, options.moreBoards === true));
 			return;
 		}
 		// Web search's stand-in pages (robots.txt: none, so every page may be read).
@@ -323,6 +300,33 @@ export async function startFixtureBoards(
 		},
 		close: () => new Promise<void>((resolve) => server.close(() => resolve())),
 	};
+}
+
+/** The DuckDuckGo stand-in's results page for one query. */
+function duckduckgoPage(
+	q: string,
+	base: string,
+	ids: number[],
+	moreBoards: boolean,
+): string {
+	// Web search's queries name no site: results on careers pages and job sites.
+	if (!/\bsite:/.test(q)) return webResults(base);
+	const result = (target: string, title: string) =>
+		`<div class="result results_links results_links_deep web-result"><div class="links_main links_deep result__body"><h2 class="result__title"><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=${encodeURIComponent(target)}&amp;rut=x">${title}</a></h2></div></div>`;
+	const board = moreBoards
+		? MORE_BOARDS.find((b) => q.includes(b.site))
+		: undefined;
+	return `<!doctype html><html><head><title>${q} at DuckDuckGo</title></head><body><div id="links" class="results">${[
+		...(board
+			? [result(board.url, "A posting")]
+			: ids.map((id) =>
+					result(
+						`https://boards.greenhouse.io/acmerobotics/jobs/${id}`,
+						`Job ${id}`,
+					),
+				)),
+		result("https://www.example.com/careers", "Not a posting"),
+	].join("")}</div></body></html>`;
 }
 
 const LONG_POSTING =
