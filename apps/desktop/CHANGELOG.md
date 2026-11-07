@@ -8,7 +8,7 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
-## Unreleased
+## 0.3.0 (2026-11-07)
 
 - Job-board search finds jobs on five more boards: SmartRecruiters, Workable, Recruitee,
   Teamtailor and Personio, next to Greenhouse, Lever and Ashby. Links from these boards also
