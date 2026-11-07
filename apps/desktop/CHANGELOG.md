@@ -21,6 +21,8 @@ at the top, above the newest version. Only what is merged into main belongs here
   hidden).
 - A job being drafted shows a soft light passing across its row in the Inbox. It stays still
   when macOS's Reduce motion is on.
+- Scan now moved from the foot of the sidebar to the top of the Scans page. It is still in the
+  command menu, the app menu and the menu bar icon.
 
 ## 0.2.0 (2026-11-06)
 
