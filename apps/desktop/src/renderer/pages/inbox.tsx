@@ -66,7 +66,7 @@ import {
 import { sendCommand } from "@/lib/commands";
 import { desktop } from "@/lib/desktop";
 import { client, orpc } from "@/lib/orpc";
-import { createReadState, readAfterDelay } from "@/lib/read-state";
+import { createReadState } from "@/lib/read-state";
 import { Link, useParams, useRouter, useSearchParams } from "@/lib/router";
 import { useStoredState } from "@/lib/use-stored-state";
 import { cn } from "@/lib/utils";
@@ -317,16 +317,17 @@ function dismissTargetOf(
 const LEAVE_MS = 180;
 
 /**
- * Read state (the unread dot): kept in localStorage, a row read once open for five seconds.
- * One store for the window; `version` re-renders the list when a row turns read.
+ * Read state (the unread dot): kept in localStorage, a row read as soon as it opens. A layout
+ * effect marks it before paint, so the dot and the selected line never show together. One
+ * store for the window; `version` re-renders the list when a row turns read.
  */
 function useReadState(selectedId: string | undefined, several: boolean) {
 	const [state] = useState(() => createReadState(localStorage));
 	const [, setVersion] = useState(0);
-	useEffect(() => {
+	useLayoutEffect(() => {
 		// Several rows chosen: none is being read.
-		if (!selectedId || several) return;
-		return readAfterDelay(selectedId, state, () => setVersion((v) => v + 1));
+		if (!selectedId || several || !state.markRead(selectedId)) return;
+		setVersion((v) => v + 1);
 	}, [selectedId, several, state]);
 	return state;
 }

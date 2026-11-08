@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
 	approveBlocked,
 	barKind,
@@ -10,11 +10,7 @@ import {
 	lineAfter,
 	rowToOpen,
 } from "../src/renderer/components/pipeline/inbox-status";
-import {
-	createReadState,
-	READ_AFTER_MS,
-	readAfterDelay,
-} from "../src/renderer/lib/read-state";
+import { createReadState } from "../src/renderer/lib/read-state";
 
 /** localStorage, in memory. */
 function memoryStorage(seed: Record<string, string> = {}) {
@@ -165,9 +161,6 @@ describe("Inbox status filter", () => {
 });
 
 describe("Unread dot", () => {
-	beforeEach(() => vi.useFakeTimers());
-	afterEach(() => vi.useRealTimers());
-
 	const NOW = Date.parse("2026-11-05T12:00:00Z");
 
 	it("counts every row from before the upgrade as read, and new ones as unread", () => {
@@ -186,33 +179,16 @@ describe("Unread dot", () => {
 		).toBe(true);
 	});
 
-	it("marks a row read after it stays open for five seconds, and keeps it", () => {
+	it("marks a row read once, and keeps it between launches", () => {
 		const storage = memoryStorage();
 		const reads = createReadState(storage, () => NOW);
 		const job = { id: "a", createdAt: new Date(NOW + 1_000) };
-		const onRead = vi.fn();
-		readAfterDelay(job.id, reads, onRead);
-		vi.advanceTimersByTime(READ_AFTER_MS - 100);
 		expect(reads.isUnread(job)).toBe(true);
-		expect(onRead).not.toHaveBeenCalled();
-		vi.advanceTimersByTime(100);
+		expect(reads.markRead(job.id)).toBe(true);
 		expect(reads.isUnread(job)).toBe(false);
-		expect(onRead).toHaveBeenCalledWith("a");
-		// Kept between launches.
+		// Already read: nothing to re-render.
+		expect(reads.markRead(job.id)).toBe(false);
 		expect(createReadState(storage, () => NOW).isUnread(job)).toBe(false);
-	});
-
-	it("keeps a row unread when the user moves on before five seconds", () => {
-		const reads = createReadState(memoryStorage(), () => NOW);
-		const first = { id: "a", createdAt: new Date(NOW + 1_000) };
-		const second = { id: "b", createdAt: new Date(NOW + 1_000) };
-		const cancel = readAfterDelay(first.id, reads, () => {});
-		vi.advanceTimersByTime(3_000);
-		cancel();
-		readAfterDelay(second.id, reads, () => {});
-		vi.advanceTimersByTime(READ_AFTER_MS);
-		expect(reads.isUnread(first)).toBe(true);
-		expect(reads.isUnread(second)).toBe(false);
 	});
 
 	it("reads the ids the dot stored before", () => {
