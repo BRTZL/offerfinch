@@ -29,6 +29,7 @@ export const SHORTCUT_GROUPS = [
 	"Questions, Applied and Rejected",
 	"Application",
 	"Questions",
+	"Find",
 	"Search",
 ] as const;
 type ShortcutGroup = (typeof SHORTCUT_GROUPS)[number];
@@ -234,6 +235,28 @@ export const SHORTCUTS = [
 		group: "Questions",
 		label: "Edit the picked answer",
 		keys: [{ key: "e" }],
+	},
+	// Find in an open application (components/system/find-bar.tsx).
+	{
+		id: "find",
+		group: "Find",
+		label: "Find in the posting, CV, letter or answers",
+		keys: [cmd("f")],
+		menu: true,
+	},
+	{
+		id: "find-next",
+		group: "Find",
+		label: "Next match (or ↩ in the field)",
+		keys: [cmd("g")],
+		menu: true,
+	},
+	{
+		id: "find-previous",
+		group: "Find",
+		label: "Previous match (or ⇧↩ in the field)",
+		keys: [cmd("g", { shift: true })],
+		menu: true,
 	},
 	// The command menu (components/shell/command-menu.tsx).
 	{
