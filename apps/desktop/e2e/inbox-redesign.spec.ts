@@ -28,7 +28,7 @@ import {
 /**
  * The Inbox as one list with a floating action bar, in the background against the fixture
  * boards: the first row opens by itself (also after a status is picked), new rows carry a dot
- * until open for five seconds, Not interested and Interested sit in the bar, a draft in review
+ * until opened, Not interested and Interested sit in the bar, a draft in review
  * has Resolve, More, Reject and Approve (off while a flag is open, with the reason under the
  * bar), Rejected filters by reason chips and Applied groups by stage with a chip that moves it.
  * Screenshots go to test-results/redesign-shots (or E2E_SHOTS); with E2E_VIDEO set, a short
@@ -139,7 +139,7 @@ test("Inbox redesign: one list, unread dots, the action bar, Rejected chips and 
 		await showStatus(page, /^All/);
 		await expect(selectedRow(page)).toHaveCount(1, { timeout: 30_000 });
 
-		// New rows carry a dot until opened for about five seconds; leaving sooner keeps it.
+		// New rows carry a dot until opened; the open row never shows one.
 		const rows = page.getByTestId("inbox-row");
 		const matchRows = rows.filter({
 			has: page.getByText("Match", { exact: true }),
@@ -148,15 +148,13 @@ test("Inbox redesign: one list, unread dots, the action bar, Rejected chips and 
 		const second = matchRows.nth(1);
 		const third = matchRows.nth(2);
 		await expect(third.getByTestId("unread-dot")).toHaveCount(1);
-		await third.click();
-		await page.waitForTimeout(1_500);
-		await second.click();
 		await expect(second.getByTestId("unread-dot")).toHaveCount(1);
-		await expect(third.getByTestId("unread-dot")).toHaveCount(1);
-		await expect(second.getByTestId("unread-dot")).toHaveCount(0, {
-			timeout: 9_000,
-		});
-		await expect(third.getByTestId("unread-dot")).toHaveCount(1);
+		await third.click();
+		await expect(third.getByTestId("unread-dot")).toHaveCount(0);
+		await expect(second.getByTestId("unread-dot")).toHaveCount(1);
+		await second.click();
+		await expect(second.getByTestId("unread-dot")).toHaveCount(0);
+		await expect(third.getByTestId("unread-dot")).toHaveCount(0);
 
 		// A match: the fit card under the title, and Chat, Not interested and Interested in the bar.
 		const bar = page.getByTestId("action-bar");

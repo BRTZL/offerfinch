@@ -1,12 +1,9 @@
 /**
  * Which Inbox rows the user has read, kept in localStorage as the unread dot always was. A row
- * is read once it has been open for READ_AFTER_MS; leaving it sooner keeps it unread. Rows that
+ * is read as soon as it opens, so the dot and the selected line never show together. Rows that
  * existed when this was first used (the upgrade) count as read, so nobody opens the app to a
- * wall of dots. No imports from the app: unit-tested in node with fake timers.
+ * wall of dots. No imports from the app: unit-tested in node.
  */
-
-/** How long a row stays open before it counts as read. */
-export const READ_AFTER_MS = 5_000;
 
 /** The ids opened, newest last (the key the dot has always used). */
 const SEEN_KEY = "offerfinch.inbox.seen";
@@ -24,7 +21,8 @@ interface ReadRow {
 
 interface ReadState {
 	isUnread: (row: ReadRow) => boolean;
-	markRead: (id: string) => void;
+	/** Marks `id` read; false when it already was. */
+	markRead: (id: string) => boolean;
 }
 
 export function createReadState(
@@ -50,29 +48,13 @@ export function createReadState(
 		isUnread: (row) =>
 			!set.has(row.id) && new Date(row.createdAt).getTime() > since,
 		markRead: (id) => {
-			if (set.has(id)) return;
+			if (set.has(id)) return false;
 			set.add(id);
 			seen = [...seen, id].slice(-KEEP);
 			try {
 				storage.setItem(SEEN_KEY, JSON.stringify(seen));
 			} catch {}
+			return true;
 		},
 	};
-}
-
-/**
- * Marks `id` read after it has stayed open for `delay`; the returned function cancels it (the
- * user moved on first).
- */
-export function readAfterDelay(
-	id: string,
-	state: ReadState,
-	onRead: (id: string) => void,
-	delay = READ_AFTER_MS,
-): () => void {
-	const timer = setTimeout(() => {
-		state.markRead(id);
-		onRead(id);
-	}, delay);
-	return () => clearTimeout(timer);
 }
