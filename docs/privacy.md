@@ -41,7 +41,7 @@ free models, and pay-per-use sources) and Gemini (Google's Antigravity). Any mod
 
 - **Finding matches**: your profile and the job posting, to score the fit.
 - **Drafting**: your profile, the posting, the fit assessment and your answers, to write the CV,
-  letter and answers.
+  letter and answers, with your writing style (Settings › Writing) when you set one.
 - **Checking drafts**: your profile and the drafted documents, to check every claim against your
   profile. It may be the same model that drafted, if you choose so.
 - Chat, importing a resume, the daily search plan and reading a posting page that has no job

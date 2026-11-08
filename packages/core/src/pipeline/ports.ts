@@ -23,6 +23,7 @@ import type { RuleIssue } from "../tailor/profile-rules";
 import type { AskedQuestion } from "../tailor/questions";
 import type { RedraftDocument, RedraftRequest } from "../tailor/redraft";
 import type { CitedUnit } from "../tailor/stale";
+import type { WritingStyle } from "../tailor/writing-style";
 import type { ApplicationWorkflowParams } from "../workflow/types";
 import type { ProviderRun, ScanProvider } from "./providers";
 
@@ -441,6 +442,11 @@ export interface PipelineDeps {
 	tailorLlm?: LlmProvider;
 	/** The independent claims check: a different provider from `llm`. Required to prepare applications. */
 	claimsLlm?: LlmProvider;
+	/**
+	 * The user's saved writing style (Settings › Writing), read at each draft and redraft so a
+	 * save applies at once. Unset: the default style (today's prompt).
+	 */
+	writingStyle?: (userId: string) => Promise<WritingStyle>;
 	notifier: Notifier;
 	workflows: WorkflowStarter;
 	/**

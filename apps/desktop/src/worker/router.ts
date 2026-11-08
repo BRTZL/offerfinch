@@ -19,6 +19,7 @@ import { spendingBreakdownRouter } from "./routers/spending-breakdown";
 import { storageRouter } from "./routers/storage";
 import { trackingRouter } from "./routers/tracking";
 import { whatsNewRouter } from "./routers/whats-new";
+import { writingStyleRouter } from "./routers/writing-style";
 import { scanHistoryRouter } from "./scan-history";
 
 export { bindApp } from "./routers/shared";
@@ -53,6 +54,8 @@ export const desktopAppRouter = {
 	notifications: notificationsRouter,
 	/** Settings › Documents: the look of exported CVs and letters. */
 	documentLook: documentLookRouter,
+	/** Settings › Writing: the style every draft is written in. */
+	writingStyle: writingStyleRouter,
 	onboarding: onboardingRouter,
 	data: dataRouter,
 	whatsNew: whatsNewRouter,

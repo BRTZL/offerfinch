@@ -79,6 +79,7 @@ async function helperInput(
 				: null,
 			profile,
 			draft,
+			writingStyle: await w.settings.get("writingStyle"),
 		},
 	};
 }

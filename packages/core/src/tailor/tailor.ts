@@ -16,6 +16,7 @@ import {
 	ruleSet,
 } from "./profile-rules";
 import type { AskedQuestion } from "./questions";
+import { type WritingStyle, writingStyleBlock } from "./writing-style";
 
 /**
  * Port of my-profile's `tailor-application` skill: fit notes, an ATS-safe CV, a 220-400 word
@@ -95,6 +96,8 @@ export interface TailorInput {
 	askedQuestions?: AskedQuestion[];
 	/** How many questions this draft may ask (0 when the application's question round is spent). */
 	questionsAllowed?: number;
+	/** The user's saved writing style (Settings › Writing): a preference below every rule. */
+	writingStyle?: WritingStyle;
 }
 
 export interface Contact {
@@ -313,7 +316,7 @@ Workplace: ${untrusted(input.job.workplaceType)}
 
 ${untrusted(input.job.descriptionText)}
 </job>
-${retry}${asked}
+${retry}${asked}${writingStyleBlock(input.writingStyle, known)}
 <questions_allowed>${Math.max(0, Math.floor(input.questionsAllowed ?? 3))}</questions_allowed>
 
 Today is ${input.today}. ${ending}`,

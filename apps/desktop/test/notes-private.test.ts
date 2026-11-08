@@ -17,6 +17,7 @@ import { migrate } from "@offerfinch/db/migrate";
 import { describe, expect, it } from "vitest";
 
 import { runChatTurn } from "../src/worker/chat";
+import { SettingsStore } from "../src/worker/settings";
 
 /**
  * Private notes and stage notes (#41) are never sent to a model. Proved two ways: a chat turn
@@ -103,6 +104,7 @@ describe("private notes never reach a model", () => {
 		const w = {
 			db,
 			deps: { llm: recording, tailorLlm: recording, log: () => {} },
+			settings: new SettingsStore(db),
 		} as never;
 		await runChatTurn(w, {
 			userId: "u1",

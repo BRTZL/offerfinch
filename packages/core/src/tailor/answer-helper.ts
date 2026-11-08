@@ -10,6 +10,7 @@ import type { LlmProvider } from "../scoring/llm";
 import { BLANK, bracketBlanks } from "./blanks";
 import { citableText, evidenceProfile } from "./profile-rules";
 import { profileBlock } from "./tailor";
+import { type WritingStyle, writingStyleBlock } from "./writing-style";
 
 /**
  * The answer helper on the Questions page, in two modes.
@@ -37,6 +38,8 @@ export interface AnswerHelperInput {
 	profile: ProfileSnapshot;
 	/** What the user has typed so far; empty asks for a suggestion from the profile only. */
 	draft: string;
+	/** The user's saved writing style (Settings › Writing): tone and words, never evidence. */
+	writingStyle?: WritingStyle;
 }
 
 /** How much of the posting the prompt carries: enough for its requirements, not a whole page. */
@@ -182,7 +185,7 @@ export function answerHelperPromptParts(input: AnswerHelperInput): {
 
 <question>${safe(input.question)}</question>
 
-<why_asked>${safe(input.why ?? "not given")}</why_asked>`;
+<why_asked>${safe(input.why ?? "not given")}</why_asked>${writingStyleBlock(input.writingStyle, contactValues(input.profile), "answer")}`;
 	return {
 		// The profile first, as every other call sends it: the cached prefix stays the same.
 		promptPrefix: profileBlock(input.profile),
@@ -388,6 +391,8 @@ function contextText(input: AnswerHelperInput, withQuestion: boolean): string {
 		input.posting?.text,
 		input.why,
 		withQuestion ? input.question : null,
+		// The style guidance is the user's preference, not evidence: a name only it gives is a guess.
+		input.writingStyle?.guidance,
 	]
 		.filter(Boolean)
 		.join("\n");

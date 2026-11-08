@@ -64,6 +64,64 @@ describe("document look", () => {
 	});
 });
 
+describe("writing style", () => {
+	/** Writes `writingStyle` as stored by another version, around the schema. */
+	async function stored(value: unknown) {
+		const settings = await store();
+		const db = (settings as unknown as { db: Database }).db;
+		db.$client
+			.prepare(
+				"insert into app_settings (key, value, updated_at) values ('writingStyle', ?, ?)",
+			)
+			.run(JSON.stringify(value), Date.now());
+		return settings;
+	}
+
+	it("reads the default when unset, and saves what Settings › Writing sends", async () => {
+		const settings = await store();
+		expect(await settings.get("writingStyle")).toEqual({
+			tone: "plain",
+			coverLetterLength: "standard",
+			avoidWords: [],
+			guidance: "",
+		});
+		await settings.set("writingStyle", {
+			tone: "warm",
+			coverLetterLength: "fuller",
+			avoidWords: [" synergy ", "Synergy"],
+			guidance: " Never say rockstar. ",
+		});
+		expect(await settings.get("writingStyle")).toEqual({
+			tone: "warm",
+			coverLetterLength: "fuller",
+			avoidWords: ["synergy"],
+			guidance: "Never say rockstar.",
+		});
+		await expect(
+			settings.set("writingStyle", {
+				tone: "warm",
+				coverLetterLength: "fuller",
+				avoidWords: [],
+				guidance: "x".repeat(1001),
+			}),
+		).rejects.toThrow(/at most 1000 characters/);
+	});
+
+	it("keeps the stored choices when a field is missing or unknown to this version", async () => {
+		const settings = await stored({
+			tone: "formal",
+			coverLetterLength: "a-future-length",
+			avoidWords: ["synergy"],
+		});
+		expect(await settings.get("writingStyle")).toEqual({
+			tone: "formal",
+			coverLetterLength: "standard",
+			avoidWords: ["synergy"],
+			guidance: "",
+		});
+	});
+});
+
 describe("model settings of earlier versions", () => {
 	/** Writes `ai` as an earlier version stored it, around the schema. */
 	async function storedAi(value: unknown) {

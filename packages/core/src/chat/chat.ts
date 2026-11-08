@@ -24,6 +24,7 @@ import {
 	profileBlock,
 	type TailorJob,
 } from "../tailor/tailor";
+import { type WritingStyle, writingStyleBlock } from "../tailor/writing-style";
 
 /**
  * The chat beside an application and beside the profile. The model answers in text and may
@@ -258,6 +259,8 @@ export interface ApplicationChatInput {
 	/** The conversation, oldest first, ending with the user's new message. */
 	history: ChatTurnMessage[];
 	today: string;
+	/** The user's saved writing style (Settings › Writing), for the edits: below every rule. */
+	writingStyle?: WritingStyle;
 }
 
 export interface ProfileChatInput {
@@ -387,7 +390,7 @@ ${promptText(input.job.descriptionText)}
 <application state="${promptAttr(input.state)}">
 ${docs}
 </application>
-
+${writingStyleBlock(input.writingStyle, known, "chat")}
 ${conversationBlock(input.history, known)}
 
 Today is ${input.today}. Answer the user's last message.`,

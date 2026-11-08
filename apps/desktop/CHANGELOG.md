@@ -18,6 +18,10 @@ at the top, above the newest version. Only what is merged into main belongs here
   real-text layout ATS parsers read. Word documents get the font, page size and accent too, and
   their headings are no longer Word's default blue. Documents already exported keep their look;
   the new one applies from the next export.
+- Settings › Writing sets how your drafts read: a plain, formal or warm tone, a shorter or
+  fuller cover letter (always 220 to 400 words), words never to use, and your own "always /
+  never" guidance. It applies to new drafts, redrafts, the chat and the answer helper; facts
+  still come only from your profile, and every draft is checked as before.
 
 ## 0.4.0 (2026-11-08)
 
