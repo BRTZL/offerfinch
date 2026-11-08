@@ -92,6 +92,10 @@ export function settingsFor(latest: boolean) {
 			pageSize: "Letter",
 		},
 		paused: true,
+		scanSchedule: {
+			every: 6,
+			quietHours: { enabled: true, start: "23:00", end: "06:30" },
+		},
 		shellPath: "/opt/fixture/bin:/usr/bin:/bin",
 		linkedinEnabled: true,
 		movedSearches: "An earlier note the user has not dismissed.",

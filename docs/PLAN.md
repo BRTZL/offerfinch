@@ -5,7 +5,7 @@
 ## Desktop app
 
 - **Shell:** Electron, macOS first, downloaded from GitHub Releases. Signed with a Developer ID, notarized, and updated over the air from GitHub Releases (electron-updater).
-- **Runs:** menu bar app that starts at login, keeps running with the window closed, scans hourly while the Mac is awake and catches up after sleep. Native notifications for new matches and anything needing the user.
+- **Runs:** menu bar app that starts at login, keeps running with the window closed, scans on a schedule (hourly by default, quiet hours optional) while the Mac is awake and catches up after sleep. Native notifications for new matches and anything needing the user.
 - **UI:** React with Vite (replacing Next.js), keeping today's screens and design language.
 - **Data:** a local SQLite file; one local user, no login or invites.
 - **Jobs:** resumable job queue in SQLite, replacing Cloudflare Workflows and Cron, same flow bodies.

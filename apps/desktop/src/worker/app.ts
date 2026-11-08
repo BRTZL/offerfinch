@@ -74,9 +74,16 @@ import { NoticeBatcher } from "./notices";
 import { buildPipeline, type RoleState } from "./pipeline";
 import { scanLogFor, scanRunRepo } from "./scan-history";
 import {
+	nextScan,
+	quietUntil,
+	SCHEDULE_TICK_MS,
+	scheduledScanAllowed,
+} from "./schedule";
+import {
 	LOCAL_USER_EMAIL,
 	LOCAL_USER_ID,
 	type NotificationSettings,
+	type ScanSchedule,
 	SettingsStore,
 } from "./settings";
 import type { SiteCaller } from "./site-tab";
@@ -105,7 +112,6 @@ export interface WorkerHooks {
 	) => void;
 }
 
-const SCHEDULE_EVERY_MS = 5 * 60_000;
 const QUEUE_START_DELAY_MS = 1_500;
 
 const SITE_LABEL: Record<SiteTabId, string> = {
@@ -121,7 +127,7 @@ const quietNotifier: Notifier = { notifyStrongMatch: async () => {} };
 
 /**
  * Everything the worker process runs: the database (with a backup before each migration), the
- * durable runner with the scan and application flows, the hourly scheduler, notifications and
+ * durable runner with the scan and application flows, the scan scheduler, notifications and
  * the state the tray shows. The oRPC API reads `deps` and `db` from here.
  */
 export class WorkerApp {
@@ -133,6 +139,8 @@ export class WorkerApp {
 	deps!: PipelineDeps;
 	roles: RoleState[] = [];
 	private notifications!: NotificationSettings;
+	/** The scan interval and quiet hours, as saved (`setScanSchedule` keeps it current). */
+	private scanSchedule!: ScanSchedule;
 	private readonly batcher: NoticeBatcher;
 	private readonly followUpDelivery: FollowUpDelivery;
 	private scheduleTimer: NodeJS.Timeout | null = null;
@@ -215,6 +223,8 @@ export class WorkerApp {
 					? void this.followUpDelivery.emit(notice, items)
 					: hooks.notify(notice),
 			settings: () => this.notifications,
+			// Quiet hours hold every batched notification (follow-ups included) until they end.
+			holdUntil: () => this.quietUntil()?.getTime() ?? null,
 		});
 		this.runner = new FlowRunner({
 			db,
@@ -302,6 +312,7 @@ export class WorkerApp {
 				steps: app.keySteps,
 			});
 		app.notifications = await app.settings.get("notifications");
+		app.scanSchedule = await app.settings.get("scanSchedule");
 		// Last start's login-shell PATH, so `claude` and `codex` are found without waiting for
 		// the shell (seconds); start() reads it again in the background.
 		const cachedPath = init.demo ? "" : await app.settings.get("shellPath");
@@ -355,6 +366,7 @@ export class WorkerApp {
 	async reopen(): Promise<void> {
 		await this.ensureLocalUser();
 		this.notifications = await this.settings.get("notifications");
+		this.scanSchedule = await this.settings.get("scanSchedule");
 		await this.settings.set("noticeWatermark", Date.now());
 		await this.rebuild();
 	}
@@ -406,6 +418,48 @@ export class WorkerApp {
 		this.notifications = value;
 	}
 
+	getScanSchedule(): ScanSchedule {
+		return this.scanSchedule;
+	}
+
+	/** Saves the interval and quiet hours; notifications they no longer hold go out now. */
+	async setScanSchedule(value: ScanSchedule): Promise<ScanSchedule> {
+		await this.settings.set("scanSchedule", value);
+		this.scanSchedule = await this.settings.get("scanSchedule");
+		if (!this.quietUntil()) {
+			await this.collectNotices();
+			this.batcher.recheck();
+		}
+		await this.pushStatus();
+		return this.scanSchedule;
+	}
+
+	/** When the quiet hours `now` is in end; null outside them (or when they are off). */
+	quietUntil(now = new Date()): Date | null {
+		return quietUntil(this.scanSchedule.quietHours, now);
+	}
+
+	/** When the latest scan started (timer, launch or Scan now); null before the first. */
+	async lastScanStartedAt(): Promise<Date | null> {
+		const [last] = await recentScans(this.db, LOCAL_USER_ID, 1);
+		return last?.createdAt ?? null;
+	}
+
+	/** When the next scheduled scan is due, and why (paused, quiet hours, no profile, tests). */
+	async nextScan(
+		now = new Date(),
+	): Promise<{ at: string | null; note: string }> {
+		const repo = new DashboardRepository(this.db);
+		return nextScan({
+			now,
+			paused: await this.settings.get("paused"),
+			hasProfile: Boolean(await repo.profileFiles(LOCAL_USER_ID)),
+			scheduleOff: Boolean(this.init.test?.noSchedule),
+			schedule: this.scanSchedule,
+			lastStartedAt: await this.lastScanStartedAt(),
+		});
+	}
+
 	log(level: "info" | "warn" | "error", message: string, data?: unknown) {
 		this.hooks.log(level, message, data);
 	}
@@ -436,6 +490,9 @@ export class WorkerApp {
 				if (stop.kind === "login_wall")
 					await this.markSession(site, { needsSignIn: true });
 				if (!this.notifications.stopped) return;
+				// Not held in quiet hours: the run waits on the user now (at most 10 minutes), so the
+				// notice would be stale by their end. Only a run already going, or one the user
+				// started, reads a site then: no scheduled scan starts in quiet hours.
 				const label = SITE_LABEL[site];
 				this.hooks.notify({
 					kind: "check",
@@ -574,7 +631,7 @@ export class WorkerApp {
 				.catch((error) =>
 					this.hooks.log("warn", "API key steps not filled", String(error)),
 				);
-		// The window's first queries go first: the queue (recovery, replays, the hourly scan)
+		// The window's first queries go first: the queue (recovery, replays, the scheduled scan)
 		// starts a moment later, so a busy queue does not hold the first screen back.
 		this.background = new Promise<void>((resolve) => {
 			const timer = setTimeout(async () => {
@@ -644,7 +701,7 @@ export class WorkerApp {
 	}
 
 	/**
-	 * The hourly scans, after the queue started. Try-it mode instead searches the sample jobs
+	 * The scheduled scans, after the queue started. Try-it mode instead searches the sample jobs
 	 * once, at once (a new demo), and never on a timer.
 	 */
 	private async startScans(): Promise<void> {
@@ -657,7 +714,7 @@ export class WorkerApp {
 		await this.scheduleTick("start");
 		this.scheduleTimer = setInterval(
 			() => void this.scheduleTick("timer"),
-			SCHEDULE_EVERY_MS,
+			SCHEDULE_TICK_MS,
 		);
 	}
 
@@ -670,9 +727,21 @@ export class WorkerApp {
 		this.db.$close();
 	}
 
-	/** Hourly scan: this hour's scan unless paused, not onboarded, or already run. */
+	/**
+	 * A scheduled scan (the timer, launch, waking): none while paused, in quiet hours, under
+	 * `every` hours since the last scan started (Scan now's included), or before a profile.
+	 * `ensureHourlyScan` still dedupes by the clock hour and skips while a scan is busy.
+	 */
 	async scheduleTick(reason: string): Promise<void> {
 		if (await this.settings.get("paused")) return;
+		if (
+			!scheduledScanAllowed({
+				now: new Date(),
+				schedule: this.scanSchedule,
+				lastStartedAt: await this.lastScanStartedAt(),
+			})
+		)
+			return;
 		const repo = new DashboardRepository(this.db);
 		if (!(await repo.profileFiles(LOCAL_USER_ID))) return;
 		// A profile imported since the last start: where the user lives, before the scan filters.
@@ -723,8 +792,13 @@ export class WorkerApp {
 		await this.starter.sendEvent(event);
 	};
 
-	/** New strong matches, questions, reviews and stopped boards since the last look. */
+	/**
+	 * New strong matches, questions, reviews and stopped boards since the last look. In quiet
+	 * hours nothing is read and the watermark stays: what happens then is found, and announced,
+	 * once they end (a restart meanwhile loses none of it).
+	 */
 	async collectNotices(): Promise<void> {
+		if (this.quietUntil()) return;
 		const since = new Date(await this.settings.get("noticeWatermark"));
 		const now = new Date();
 		const matches = await this.db

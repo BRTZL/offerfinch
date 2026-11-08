@@ -187,9 +187,7 @@ export default function CommandMenu({ onClose }: { onClose: () => void }) {
 	const pause = useMutation({
 		mutationFn: (paused: boolean) => client.desktop.setPaused({ paused }),
 		onSuccess: (r) => {
-			toast.success(
-				r.paused ? "Hourly scans paused." : "Hourly scans resumed.",
-			);
+			toast.success(r.paused ? "Scans paused." : "Scans resumed.");
 			void queryClient.invalidateQueries({ queryKey: orpc.desktop.key() });
 		},
 		onError: (e) => toast.error(e.message),
@@ -249,7 +247,7 @@ export default function CommandMenu({ onClose }: { onClose: () => void }) {
 			{
 				id: "pause",
 				group: "Scans",
-				label: paused ? "Resume hourly scans" : "Pause hourly scans",
+				label: paused ? "Resume scans" : "Pause scans",
 				icon: paused ? <Play /> : <Pause />,
 				run: () => pause.mutate(!paused),
 			},

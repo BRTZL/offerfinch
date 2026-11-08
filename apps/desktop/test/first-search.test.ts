@@ -694,7 +694,7 @@ describe("the first search's status line", () => {
 				{ ...phase, settled: true },
 			),
 		).toBe(
-			"Done: 8 jobs read, 3 set aside. No matches this time. OfferFinch keeps looking every hour, and new ones show up in the Inbox.",
+			"Done: 8 jobs read, 3 set aside. No matches this time. OfferFinch keeps looking on its schedule, and new ones show up in the Inbox.",
 		);
 	});
 

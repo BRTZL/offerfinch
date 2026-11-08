@@ -180,7 +180,7 @@ function LoopStep() {
 			<NotificationSettings compact />
 			<Section
 				title="Open at login"
-				description="Optional. OfferFinch starts in the tray and keeps looking every hour."
+				description="Optional. OfferFinch starts in the tray and keeps looking on its schedule."
 			>
 				<Group>
 					<GeneralSettings compact />

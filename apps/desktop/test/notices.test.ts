@@ -11,13 +11,17 @@ import {
 } from "../src/worker/settings";
 
 /** A batcher on a fake clock with manual timers. */
-function setup(settings = { ...DEFAULT_NOTIFICATIONS }) {
+function setup(
+	settings = { ...DEFAULT_NOTIFICATIONS },
+	holdUntil?: (now: number) => number | null,
+) {
 	let now = 0;
 	const timers: { at: number; fn: () => void }[] = [];
 	const sent: ReturnType<typeof summarize>[] = [];
 	const batcher = new NoticeBatcher({
 		emit: (n) => sent.push(n),
 		settings: () => settings,
+		holdUntil: holdUntil ? () => holdUntil(now) : undefined,
 		now: () => now,
 		debounceMs: 1_000,
 		minGapMs: 60_000,
@@ -99,6 +103,73 @@ describe("notification batching", () => {
 		advance(1_000);
 		expect(sent.map((n) => n.kind)).toEqual(["question"]);
 		expect(sent[0]?.path).toBe("/questions");
+	});
+});
+
+describe("quiet hours", () => {
+	// Quiet until 10 minutes in, in the batcher's clock.
+	const QUIET_END = 600_000;
+	const quiet = (now: number) => (now < QUIET_END ? QUIET_END : null);
+
+	it("hold every kind, follow-ups included, then send them together when they end", () => {
+		const { batcher, sent, advance } = setup(undefined, quiet);
+		batcher.add(match(1));
+		batcher.add(match(2));
+		batcher.add({ kind: "question", applicationId: "q", title: "Q" });
+		batcher.add({
+			kind: "followup",
+			applicationId: "f",
+			stageId: "s",
+			title: "F",
+			detail: "F at Acme: no news for 7 days.",
+		});
+		batcher.add({ kind: "stopped", title: "The scan stopped", detail: "D" });
+		advance(QUIET_END - 1);
+		expect(sent).toEqual([]);
+		expect(batcher.pending()).toBe(5);
+		// Looked at again at most a minute apart while held, so the end is never missed by long.
+		advance(60_000);
+		expect(sent.map((n) => n.title).sort()).toEqual([
+			"2 new strong matches",
+			"Question waiting",
+			"Scan stopped",
+			"Time to follow up",
+		]);
+		expect(batcher.pending()).toBe(0);
+	});
+
+	it("hold matches past the end of a scan too", () => {
+		const { batcher, sent, advance } = setup(undefined, quiet);
+		batcher.setScanning(true);
+		batcher.add(match(1));
+		batcher.setScanning(false);
+		advance(0);
+		expect(sent).toEqual([]);
+		advance(QUIET_END);
+		expect(sent).toHaveLength(1);
+	});
+
+	it("release at once on recheck when they are turned off", () => {
+		let holding = true;
+		const { batcher, sent, advance } = setup(undefined, () =>
+			holding ? QUIET_END : null,
+		);
+		batcher.add(match(1));
+		advance(1_000);
+		expect(sent).toEqual([]);
+		holding = false;
+		batcher.recheck();
+		advance(0);
+		expect(sent).toHaveLength(1);
+	});
+
+	it("still drop a kind the user turned off while it was held", () => {
+		const { batcher, sent, advance, settings } = setup(undefined, quiet);
+		batcher.add(match(1));
+		settings.match = false;
+		advance(QUIET_END);
+		expect(sent).toEqual([]);
+		expect(batcher.pending()).toBe(0);
 	});
 });
 

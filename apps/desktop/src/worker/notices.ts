@@ -20,6 +20,11 @@ export interface BatcherOptions {
 	/** Sends one notification, with the items it carries (a follow-up waits for main's answer). */
 	emit: (notice: NativeNotice, items: NoticeItem[]) => void;
 	settings: () => NotificationSettings;
+	/**
+	 * While this returns a time (quiet hours: when they end, in ms), nothing goes out: items wait
+	 * and go out together, one notification per kind, once it returns null.
+	 */
+	holdUntil?: () => number | null;
 	now?: () => number;
 	/** Quiet time after the last item before a batch goes out. */
 	debounceMs?: number;
@@ -28,6 +33,12 @@ export interface BatcherOptions {
 	setTimer?: (fn: () => void, ms: number) => unknown;
 	clearTimer?: (handle: unknown) => void;
 }
+
+/**
+ * The longest wait between looks while held: timers stall while the Mac sleeps, so a wake after
+ * the quiet hours' end is seen within this, not hours later.
+ */
+const HOLD_RECHECK_MS = 60_000;
 
 const PLURAL: Record<NoticeKind, [string, string]> = {
 	match: ["new strong match", "new strong matches"],
@@ -100,7 +111,7 @@ export function summarize(kind: NoticeKind, items: NoticeItem[]): NativeNotice {
  * Groups notifications so a busy moment (the first scan finding forty matches) is one
  * notification per kind, not forty. Items wait for a quiet `debounceMs`, and while a scan runs
  * matches are held until it ends. Each kind is sent at most once per `minGapMs`. Kinds the user
- * turned off are dropped.
+ * turned off are dropped. In quiet hours (`holdUntil`) every kind waits for their end.
  */
 export class NoticeBatcher {
 	private readonly queues = new Map<NoticeKind, NoticeItem[]>();
@@ -148,6 +159,11 @@ export class NoticeBatcher {
 		if (ended) this.arm(0);
 	}
 
+	/** Looks again at once (quiet hours turned off or moved: what they held goes out). */
+	recheck(): void {
+		if (this.pending() > 0) this.arm(0);
+	}
+
 	private arm(ms: number) {
 		if (this.timer !== null) this.clearTimer(this.timer);
 		this.timer = this.setTimer(() => {
@@ -158,6 +174,14 @@ export class NoticeBatcher {
 
 	/** Sends what is due; returns how many notifications went out. */
 	flush(): number {
+		const holdUntil = this.options.holdUntil?.() ?? null;
+		if (holdUntil !== null) {
+			if (this.pending() > 0)
+				this.arm(
+					Math.max(1_000, Math.min(holdUntil - this.now(), HOLD_RECHECK_MS)),
+				);
+			return 0;
+		}
 		let sent = 0;
 		let wait = Number.POSITIVE_INFINITY;
 		for (const [kind, items] of this.queues) {

@@ -6,12 +6,34 @@ import { SettingsPage, Toggle } from "@/components/pipeline/settings/shared";
 import { Group, Section } from "@/components/system/layout";
 import { FormRow } from "@/components/system/rows";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { sendCommand } from "@/lib/commands";
 import { desktop } from "@/lib/desktop";
 import { client, orpc } from "@/lib/orpc";
 import { updateLine, useUpdateState } from "@/lib/updates";
 
-/** Launch at login, the hourly scan's pause, the browser it uses, and the version. */
+type ScanSchedule = Awaited<ReturnType<typeof client.desktop.scanSchedule>>;
+
+const EVERY: { value: string; label: string }[] = [
+	{ value: "1", label: "Every hour" },
+	{ value: "3", label: "Every 3 hours" },
+	{ value: "6", label: "Every 6 hours" },
+	{ value: "12", label: "Every 12 hours" },
+	{ value: "24", label: "Every 24 hours" },
+];
+
+/**
+ * Launch at login, the scan schedule (pause, interval, quiet hours), the browser it uses, and
+ * the version.
+ */
 export function GeneralSettings({ compact = false }: { compact?: boolean }) {
 	const queryClient = useQueryClient();
 	const login = useQuery({
@@ -52,7 +74,7 @@ export function GeneralSettings({ compact = false }: { compact?: boolean }) {
 			hint={
 				login.data?.status === "requires-approval"
 					? "Waiting for your approval in System Settings > General > Login Items."
-					: "Starts in the tray when you log in, so hourly scans keep running. No window opens."
+					: "Starts in the tray when you log in, so scans keep running. No window opens."
 			}
 			checked={Boolean(login.data?.openAtLogin)}
 			onChange={(v) => setLogin.mutate(v)}
@@ -64,18 +86,19 @@ export function GeneralSettings({ compact = false }: { compact?: boolean }) {
 		<SettingsPage
 			id="general"
 			title="General"
-			description="OfferFinch lives in the tray: closing the window keeps it running and scanning every hour while your computer is awake."
+			description="OfferFinch lives in the tray: closing the window keeps it running and scanning on this schedule while your computer is awake."
 		>
 			<Section title="Running">
 				<Group>
 					{loginToggle}
 					<Toggle
-						label="Pause hourly scans"
+						label="Pause scans"
 						hint="Nothing is scanned until you resume. Scan now still works."
 						checked={Boolean(status.data?.paused)}
 						onChange={(v) => pause.mutate(v)}
 						testId="pause-scans"
 					/>
+					<ScanScheduleRows />
 				</Group>
 			</Section>
 			<Section title="Browser">
@@ -169,5 +192,114 @@ export function GeneralSettings({ compact = false }: { compact?: boolean }) {
 				</Group>
 			</Section>
 		</SettingsPage>
+	);
+}
+
+/** The scan interval and quiet hours, saved as they change (rows of Running). */
+function ScanScheduleRows() {
+	const queryClient = useQueryClient();
+	const scheduleKey = orpc.desktop.scanSchedule.queryKey();
+	const schedule = useQuery(orpc.desktop.scanSchedule.queryOptions());
+	const setSchedule = useMutation({
+		mutationFn: (next: ScanSchedule) => client.desktop.setScanSchedule(next),
+		// Shown at once; the next scan's time (status) is read again once saved.
+		onMutate: (next) => queryClient.setQueryData(scheduleKey, next),
+		onSuccess: (saved) => {
+			queryClient.setQueryData(scheduleKey, saved);
+			void queryClient.invalidateQueries({ queryKey: orpc.desktop.key() });
+		},
+		onError: (e) => {
+			toast.error(e.message);
+			void queryClient.invalidateQueries({ queryKey: scheduleKey });
+		},
+	});
+	const quiet = schedule.data?.quietHours;
+	const saveQuiet = (patch: Partial<ScanSchedule["quietHours"]>) => {
+		if (!schedule.data || !quiet) return;
+		setSchedule.mutate({
+			...schedule.data,
+			quietHours: { ...quiet, ...patch },
+		});
+	};
+	return (
+		<>
+			<FormRow
+				label="Scan interval"
+				hint="The next scan starts this long after the last one, Scan now included."
+			>
+				<Select
+					value={String(schedule.data?.every ?? 1)}
+					onValueChange={(next) => {
+						if (next && schedule.data)
+							setSchedule.mutate({
+								...schedule.data,
+								every: Number(next) as ScanSchedule["every"],
+							});
+					}}
+					items={EVERY}
+					disabled={!schedule.data}
+				>
+					<SelectTrigger
+						aria-label="Scan interval"
+						className="w-36"
+						data-testid="scan-every"
+					>
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						{EVERY.map((option) => (
+							<SelectItem
+								key={option.value}
+								value={option.value}
+								data-testid={`scan-every-${option.value}`}
+							>
+								{option.label}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+			</FormRow>
+			<FormRow
+				label="Quiet hours"
+				hint={
+					quiet?.enabled
+						? "No scheduled scans and no notifications in this window (your Mac's time). Notifications wait and arrive when it ends; Scan now still works."
+						: "A nightly window with no scheduled scans and no notifications."
+				}
+			>
+				{quiet?.enabled ? (
+					<>
+						<Input
+							type="time"
+							aria-label="Quiet hours start"
+							className="w-24"
+							value={quiet.start}
+							onChange={(e) => {
+								if (e.target.value) saveQuiet({ start: e.target.value });
+							}}
+							data-testid="quiet-start"
+						/>
+						<span className="text-muted-foreground text-xs">to</span>
+						<Input
+							type="time"
+							aria-label="Quiet hours end"
+							className="w-24"
+							value={quiet.end}
+							onChange={(e) => {
+								if (e.target.value) saveQuiet({ end: e.target.value });
+							}}
+							data-testid="quiet-end"
+						/>
+					</>
+				) : null}
+				<Switch
+					aria-label="Quiet hours"
+					checked={Boolean(quiet?.enabled)}
+					onCheckedChange={(v) => saveQuiet({ enabled: v === true })}
+					disabled={!quiet}
+					data-testid="quiet-hours"
+				/>
+			</FormRow>
+		</>
 	);
 }

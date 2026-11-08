@@ -127,6 +127,35 @@ export const DEFAULT_NOTIFICATIONS: NotificationSettings = {
 	followup: true,
 };
 
+/** The intervals a scheduled scan may run at, in hours. */
+const SCAN_EVERY_HOURS = [1, 3, 6, 12, 24] as const;
+
+/** A local clock time, "HH:MM" (24-hour), as `<input type="time">` gives it. */
+const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Not HH:MM");
+
+/**
+ * When scheduled scans run: at most once every `every` hours, never in quiet hours (the Mac's
+ * local time; the window may cross midnight). Quiet hours also hold notifications until they end.
+ * Every field has a default, so a field added later keeps the user's other choices (as
+ * `notifications.followup` does).
+ */
+export const scanScheduleSchema = z.object({
+	every: z.literal(SCAN_EVERY_HOURS).default(1),
+	quietHours: z
+		.object({
+			enabled: z.boolean().default(false),
+			start: clockTime.default("22:00"),
+			end: clockTime.default("07:00"),
+		})
+		.default({ enabled: false, start: "22:00", end: "07:00" }),
+});
+export type ScanSchedule = z.infer<typeof scanScheduleSchema>;
+export type QuietHours = ScanSchedule["quietHours"];
+export const DEFAULT_SCAN_SCHEDULE: ScanSchedule = {
+	every: 1,
+	quietHours: { enabled: false, start: "22:00", end: "07:00" },
+};
+
 const onboardingSchema = z.object({
 	/**
 	 * Steps finished or skipped; the wizard resumes at the first one left. Either version's keys:
@@ -182,6 +211,11 @@ const KEYS = {
 		fallback: DEFAULT_LOOK,
 	},
 	paused: { key: "scansPaused", schema: z.boolean(), fallback: false },
+	scanSchedule: {
+		key: "scanSchedule",
+		schema: scanScheduleSchema,
+		fallback: DEFAULT_SCAN_SCHEDULE,
+	},
 	/** The login shell's PATH from the last start, used at once while it is read again. */
 	shellPath: { key: "shellPath", schema: z.string(), fallback: "" },
 	/**
