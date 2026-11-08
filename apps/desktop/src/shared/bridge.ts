@@ -102,7 +102,10 @@ export type AppCommand =
 	| "add-job"
 	| "shortcuts"
 	| "export-diagnostics"
-	| "whats-new";
+	| "whats-new"
+	| "find"
+	| "find-next"
+	| "find-previous";
 export const APP_COMMANDS: readonly AppCommand[] = [
 	"command-menu",
 	"toggle-inspector",
@@ -111,6 +114,9 @@ export const APP_COMMANDS: readonly AppCommand[] = [
 	"shortcuts",
 	"export-diagnostics",
 	"whats-new",
+	"find",
+	"find-next",
+	"find-previous",
 ];
 
 /**

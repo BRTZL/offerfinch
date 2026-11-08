@@ -127,7 +127,7 @@ describe("keyboard shortcuts", () => {
 
 	it("leaves no key handler or key hint written by hand in the page", () => {
 		// Keys in fields (↩ sends a chat message, Esc cancels a reject, ↩ adds a typed word, the
-		// model picker's ↑ ↓ ↩ in its search field), the resize handle's and the
+		// model picker's ↑ ↓ ↩ in its search field, ↩ ⇧↩ Esc in the find field), the resize handle's and the
 		// action bar's arrows belong to their control, not to a screen; the rest read
 		// shared/shortcuts.ts.
 		const FIELD_KEYS = new Set([
@@ -135,6 +135,7 @@ describe("keyboard shortcuts", () => {
 			"components/pipeline/not-interested.tsx",
 			"components/pipeline/chat/chat-panel.tsx",
 			"components/pipeline/application/detail.tsx",
+			"components/system/find-bar.tsx",
 			"components/system/resize-handle.tsx",
 			"components/system/action-bar.tsx",
 			"components/ui/tag-input.tsx",

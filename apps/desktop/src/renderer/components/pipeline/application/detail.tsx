@@ -13,6 +13,7 @@ import { ChatPanel } from "@/components/pipeline/chat/chat-panel";
 import { ACTION_BAR_SPACE } from "@/components/system/action-bar";
 import { ErrorLine } from "@/components/system/bits";
 import { ReadingColumn, ReadingPage } from "@/components/system/document";
+import { FindBar } from "@/components/system/find-bar";
 import { FocusBackdrop } from "@/components/system/focus-backdrop";
 import { ResizeHandle } from "@/components/system/resize-handle";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,9 @@ import {
 	useApplicationActions,
 } from "./use-application-actions";
 import { DocumentReading } from "./versions";
+
+/** The detail's row; ⌘F searches what it marks findable (components/system/find-bar.tsx). */
+const ROOT = "relative flex min-h-0 min-w-0 flex-1";
 
 export function ApplicationDetail(props: ApplicationDetailProps) {
 	const actions = useApplicationActions(props);
@@ -124,6 +128,7 @@ export function ApplicationDetail(props: ApplicationDetailProps) {
 				className={cn("min-h-0 flex-1 overflow-auto px-5", ACTION_BAR_SPACE)}
 				data-testid="posting"
 				data-selectable
+				data-findable
 			>
 				<PostingText
 					text={loaded.job.descriptionText}
@@ -165,7 +170,7 @@ export function ApplicationDetail(props: ApplicationDetailProps) {
 	);
 
 	return (
-		<div ref={rootRef} className="relative flex min-h-0 min-w-0 flex-1">
+		<div ref={rootRef} className={ROOT} data-find-scope>
 			{postingOpen && hasDocuments ? posting : null}
 			<section
 				id="application-detail"
@@ -174,6 +179,7 @@ export function ApplicationDetail(props: ApplicationDetailProps) {
 				className="relative flex min-h-0 min-w-0 flex-1 flex-col outline-none"
 				aria-label={`${loaded.job.title} at ${loaded.company.name}`}
 			>
+				<FindBar />
 				<header className="mx-auto flex w-full max-w-192 flex-col gap-3 px-6 pt-6 pb-4">
 					<DetailTitle
 						app={loaded}
