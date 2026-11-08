@@ -30,6 +30,40 @@ describe("app settings", () => {
 	});
 });
 
+describe("document look", () => {
+	it("is the classic look until one is chosen; a stored look missing a field keeps the rest", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "offerfinch-settings-"));
+		const db: Database = openSqlite(path.join(dir, "test.sqlite"));
+		await migrate(db);
+		const settings = new SettingsStore(db);
+		expect(await settings.get("documentLook")).toEqual({
+			template: "classic",
+			font: "helvetica",
+			accent: "ink",
+			pageSize: "A4",
+		});
+		// A look stored before a field existed (here: the page size) reads with its default.
+		db.$client
+			.prepare(
+				"insert into app_settings (key, value, updated_at) values ('documentLook', ?, ?)",
+			)
+			.run(
+				JSON.stringify({
+					template: "compact",
+					font: "georgia",
+					accent: "navy",
+				}),
+				Date.now(),
+			);
+		expect(await settings.get("documentLook")).toEqual({
+			template: "compact",
+			font: "georgia",
+			accent: "navy",
+			pageSize: "A4",
+		});
+	});
+});
+
 describe("model settings of earlier versions", () => {
 	/** Writes `ai` as an earlier version stored it, around the schema. */
 	async function storedAi(value: unknown) {

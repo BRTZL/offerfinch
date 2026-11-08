@@ -1,3 +1,4 @@
+import { DEFAULT_LOOK, documentLookSchema } from "@offerfinch/core/export/look";
 import type { Database } from "@offerfinch/db";
 import { appSettings } from "@offerfinch/db/schema/jobs";
 import { eq } from "drizzle-orm";
@@ -157,6 +158,12 @@ const KEYS = {
 		key: "onboarding",
 		schema: onboardingSchema,
 		fallback: DEFAULT_ONBOARDING,
+	},
+	/** Settings › Documents: how exported CVs and letters look (`core/export/look.ts`). */
+	documentLook: {
+		key: "documentLook",
+		schema: documentLookSchema,
+		fallback: DEFAULT_LOOK,
 	},
 	paused: { key: "scansPaused", schema: z.boolean(), fallback: false },
 	/** The login shell's PATH from the last start, used at once while it is read again. */

@@ -853,3 +853,20 @@ whether a plan may spend paid usage is the user's own account setting, as in T3 
 | Paid stops are gone: no `vendor_stopped` refusal, no `recordPaidStop`, no Settings › Models stop notice or Resume, no Home "stopped after a paid call" item. Old `subscription_pauses` rows stay in the database and hold nothing back | Nothing creates a stop any more; a row left from before must not block calls |
 | Kept: the login checks, the daily call budget, the usage-limit pause, plan usage in Settings › Models, and the cap for pay-per-use calls | They do not decide on paid usage |
 | Supersedes the extra-usage, headroom and paid-stop rows of 2026-11-04 and 2026-11-06 | |
+
+## 2026-11-09: CV templates, font, accent and page size
+
+Settings › Documents sets how exports look: a template, a font, an accent and a page size
+(`core/export/look.ts`, the `documentLook` setting). The ATS check (`ats.ts`) is unchanged and
+every look has to pass it.
+
+| Decision | Why |
+|---|---|
+| Three templates (Classic, Modern, Compact) that differ only in type sizes, spacing, the header and where the accent goes. Every template is one column of plain text in source order, with no sidebars, columns, floats, flex, positioning or images. Letter-spacing stays at 0.06em or less and ligatures stay off | That is what keeps reading order, the contact line and keyword extraction as the ATS check reads them. Wider tracking and fi/fl ligatures make pdf.js drop or split words |
+| Classic with the default font, accent and page size prints the skill's stylesheet byte for byte (`PRINT_CSS`, pinned by a test fixture) | PDFs do not change unless the user chooses another look. Word documents do change for everyone: their headings move from Word's default blue to the accent, which is near-black by default |
+| Fonts: Helvetica Neue, Avenir Next, Georgia and Charter, each a stack that ends in a generic family. Accents: five dark colors, each at least 7:1 on white | They are system fonts headless Chrome has on macOS, and on Linux CI they fall back cleanly. The accents stay readable in print and in grayscale |
+| Page size is A4 or US Letter. `pageLimit` stays a page count and the check counts the printed PDF's pages, so the limit holds on either size. A browser test checks every template on both sizes against a one-page limit and asserts the PDF's MediaBox | Letter is shorter than A4, so a look has to be proven on both. The MediaBox check proves the CSS page size was actually applied |
+| Word gets the font (Arial for the sans fonts, Georgia for the serifs, since every Word has them), the page size, and the accent on headings 1 to 4. It does not get the templates' spacing | The DOCX builder sets styles, not layout. Word's default blue headings gave way to the accent |
+| A new look applies to the next export, and files already exported are left alone. The storage key carries the look (`cv-v3-modern-georgia-navy-letter.pdf`; the default look adds nothing), and the export's `meta` records it. No re-export when the setting changes | An export is the file its ATS check and the user's review were based on, and a new look could change the check's result. Keying by look means a later export of the same version in another look never overwrites it. The newest export of a version is the one shown and submitted, which is already how exports are read |
+| The look is read from settings at each export (`PipelineDeps.documentLook`), not when the pipeline is built | Saving the setting needs no rebuild |
+| The settings preview renders a made-up CV with the export's own stylesheet and sanitizing renderer, inside a shadow root. The renderer's CSP (`frame-src 'none'`) stays as it is | The preview matches the PDF without an iframe, and the paper stays white in dark mode |

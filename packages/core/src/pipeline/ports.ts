@@ -473,6 +473,8 @@ export interface PipelineDeps {
 	apply?: ApplyDeps;
 	/** Cost tracking and the spending cap; every LLM call for a user goes through it when set. */
 	spend?: SpendStore;
+	/** How exports look (Settings › Documents), read at each export; unset: the default look. */
+	documentLook?: () => Promise<import("../export/look").DocumentLook>;
 	/** Replaces browser + blob export (tests). */
 	exporter?: (input: ExportInput) => Promise<ExportResult>;
 	/** Clock for letter dates; tests pin it. */

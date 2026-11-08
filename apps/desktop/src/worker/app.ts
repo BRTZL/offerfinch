@@ -388,6 +388,8 @@ export class WorkerApp {
 			...built.deps,
 			// Jobs added by link: read as the first step of their run (see add-job.ts).
 			postingReader: (userId, jobId) => readPostingForJob(this, userId, jobId),
+			// Read at each export, so a change in Settings › Documents needs no rebuild.
+			documentLook: () => this.settings.get("documentLook"),
 			// The scan's re-check of listed board matches for closed postings (it reads the
 			// boards: never with sample data).
 			...(this.init.demo

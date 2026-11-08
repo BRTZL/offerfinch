@@ -344,6 +344,7 @@ export async function reviewStep(
 					content: byKind.cover_letter.content,
 				},
 			],
+			look: await deps.documentLook?.(),
 		});
 		for (const record of exported.records)
 			await deps.repo.saveExport(userId, app.applicationId, record);
