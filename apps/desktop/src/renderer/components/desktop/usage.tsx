@@ -20,6 +20,7 @@ const STEP_LABEL: Record<string, string> = {
 	"chat-application": "Chat about applications",
 	"chat-profile": "Profile chat",
 	"answer-helper": "Answer helper on Questions",
+	// Past calls of the removed Help me remember.
 	"answer-choices": "Help me remember on Questions",
 	"connection-test": "Test buttons on this page",
 };

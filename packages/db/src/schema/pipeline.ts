@@ -18,6 +18,7 @@ import type { ProfileDocument } from "@offerfinch/core/profile/types";
 import type { FitResult } from "@offerfinch/core/scoring/fit";
 import type { PlanUsageJson } from "@offerfinch/core/scoring/plan-usage";
 import type { RankPenalty } from "@offerfinch/core/scoring/rank";
+import type { StoredSuggestion } from "@offerfinch/core/tailor/answer-helper";
 import type {
 	CheckedSegment,
 	ReviewFlag,
@@ -470,6 +471,11 @@ export const questions = sqliteTable(
 			kind: string;
 			board: string;
 		}>(),
+		/**
+		 * Suggest's answer, made in the background when the question opens so the user finds it
+		 * ready. A proposal only: it reaches the profile only through Save answer.
+		 */
+		suggestion: text("suggestion", { mode: "json" }).$type<StoredSuggestion>(),
 		answeredAt: integer("answered_at", { mode: "timestamp_ms" }),
 		createdAt: createdAt(),
 	},

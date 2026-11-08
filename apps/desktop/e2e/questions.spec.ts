@@ -8,7 +8,8 @@ import { launchApp, openRoute } from "./launch";
 
 /**
  * Answering a question opens the next one, its answer field ready, instead of an empty pane;
- * the last answer leaves the "no open questions" state.
+ * the last answer leaves the "no open questions" state. With no profile there are no suggested
+ * answers, so Write my own is open and focused.
  */
 test("saving an answer opens the next question", async () => {
 	const userData = fs.mkdtempSync(path.join(os.tmpdir(), "offerfinch-q-"));
@@ -46,7 +47,7 @@ test("saving an answer opens the next question", async () => {
 		).toContain(first);
 		expect(
 			await page
-				.getByRole("button", { name: "Save answer" })
+				.getByRole("button", { name: "Save & next" })
 				.evaluate((el) => getComputedStyle(el).userSelect),
 		).toBe("none");
 		await page.getByRole("textbox").first().focus();
@@ -57,7 +58,7 @@ test("saving an answer opens the next question", async () => {
 			const box = page.getByRole("textbox").first();
 			await expect(box).toBeFocused();
 			await box.fill(`Answer ${i + 1}.`);
-			await page.getByRole("button", { name: "Save answer" }).click();
+			await page.getByRole("button", { name: "Save & next" }).click();
 			if (i < asked.length - 1)
 				// The next one opens by itself, ready to type into.
 				await expect(question).toContainText(titleOf(order[i + 1] ?? ""));

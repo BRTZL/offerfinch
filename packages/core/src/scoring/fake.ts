@@ -6,10 +6,7 @@ import { countriesIn } from "../filter/places";
 import { fakeStructureResponder } from "../profile/structure";
 import type { ProfileSnapshot } from "../profile/types";
 import { fakeSearchPlanResponder } from "../search/plan";
-import {
-	fakeAnswerChoicesResponder,
-	fakeAnswerHelperResponder,
-} from "../tailor/answer-helper-fake";
+import { fakeAnswerHelperResponder } from "../tailor/answer-helper-fake";
 import { fakeClaimsResponder, fakeTailorResponder } from "../tailor/fake";
 import type { FitAssessment, FitContext } from "./fit";
 import {
@@ -43,7 +40,6 @@ export class FakeLlmProvider implements LlmProvider {
 			"chat-profile": fakeProfileChatResponder,
 			"search-plan": fakeSearchPlanResponder,
 			"answer-helper": fakeAnswerHelperResponder,
-			"answer-choices": fakeAnswerChoicesResponder,
 		},
 	) {}
 

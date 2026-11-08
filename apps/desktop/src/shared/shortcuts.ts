@@ -220,8 +220,20 @@ export const SHORTCUTS = [
 	{
 		id: "question-save",
 		group: "Questions",
-		label: "Save the answer",
+		label: "Save the answer and open the next question",
 		keys: [cmd("Enter")],
+	},
+	{
+		id: "question-pick",
+		group: "Questions",
+		label: "Pick a suggested answer (4 writes your own)",
+		keys: [{ key: "1" }, { key: "2" }, { key: "3" }, { key: "4" }],
+	},
+	{
+		id: "question-edit",
+		group: "Questions",
+		label: "Edit the picked answer",
+		keys: [{ key: "e" }],
 	},
 	// The command menu (components/shell/command-menu.tsx).
 	{

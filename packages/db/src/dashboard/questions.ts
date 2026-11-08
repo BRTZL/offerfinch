@@ -1,3 +1,4 @@
+import type { StoredSuggestion } from "@offerfinch/core/tailor/answer-helper";
 import { and, desc, eq, isNull, ne, or, sql } from "drizzle-orm";
 import {
 	applications,
@@ -17,6 +18,7 @@ export const questionsMethods = {
 				context: questions.context,
 				status: questions.status,
 				answer: questions.answer,
+				suggestion: questions.suggestion,
 				answeredAt: questions.answeredAt,
 				createdAt: questions.createdAt,
 				applicationId: questions.applicationId,
@@ -46,6 +48,24 @@ export const questionsMethods = {
 				),
 			)
 			.orderBy(desc(questions.createdAt), desc(sql`${questions}.rowid`));
+	},
+
+	/** Stores Suggest's latest answer on an open question; an answered one is left alone. */
+	async setQuestionSuggestion(
+		userId: string,
+		questionId: string,
+		suggestion: StoredSuggestion,
+	): Promise<void> {
+		await this.database
+			.update(questions)
+			.set({ suggestion })
+			.where(
+				and(
+					eq(questions.id, questionId),
+					eq(questions.userId, userId),
+					eq(questions.status, "open"),
+				),
+			);
 	},
 
 	/**
