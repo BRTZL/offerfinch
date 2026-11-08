@@ -8,7 +8,7 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
-## Unreleased
+## 0.4.0 (2026-11-08)
 
 - Each question on the Questions page opens with a suggested answer already written, made in
   the background as soon as the question appears. It is a finished answer you can save as it
