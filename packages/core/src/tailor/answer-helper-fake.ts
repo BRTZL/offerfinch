@@ -5,7 +5,8 @@ import type { AnswerHelperInput } from "./answer-helper";
  * A deterministic stand-in for the answer helper's model, for tests and e2e runs without one
  * (OFFERFINCH_FAKE_MODELS=1). It follows the real rules in miniature: "all of them" becomes the
  * tools the question lists, "and more" stays vague and is reported missing, and every part of
- * the question the draft does not touch is listed as missing. It never adds a fact.
+ * the question the draft does not touch is listed as missing. It never adds a fact. With an
+ * empty draft it suggests as the real one does: complete answers, no blanks, the guesses listed.
  */
 
 /** The examples a question lists: "(for example Lighthouse, Chrome DevTools, and X)". */
@@ -35,17 +36,58 @@ const joinList = (items: string[]) =>
 		? (items[0] ?? "")
 		: `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 
+type FakeSuggestion = {
+	options: { label: string; answer: string }[];
+	assumed: string[];
+};
+
+/** Suggest: the question's own examples guessed as used, then a narrower and a "no" option. */
+function fakeSuggestion(question: string): FakeSuggestion {
+	const examples = examplesOf(question);
+	const budget = partsOf(question).length > 1;
+	const tail = (yes: boolean) =>
+		budget
+			? yes
+				? " I have worked to a bundle-size budget."
+				: " I have not worked to a bundle-size budget."
+			: "";
+	if (!examples.length)
+		return {
+			options: [
+				{ label: "Yes", answer: "Yes, I have." },
+				{ label: "No", answer: "No, I have not." },
+			],
+			assumed: ["Whether you have"],
+		};
+	return {
+		options: [
+			{
+				label: "Used them all, with a budget",
+				answer: `I have used ${joinList(examples)}.${tail(true)}`,
+			},
+			{
+				label: `Mostly ${examples[0]}, no budget`,
+				answer: `I have mostly used ${examples[0]}.${tail(false)}`,
+			},
+			{
+				label: "Not used them",
+				answer: `I have not used ${joinList(examples)}.${tail(false)}`,
+			},
+		],
+		assumed: [
+			"Which of the tools you have used",
+			...(budget ? ["Whether you worked to a bundle-size budget"] : []),
+		],
+	};
+}
+
 export function fakeAnswerHelperResponder(
 	request: GenerateObjectRequest<unknown>,
-): { answer: string; missing: string[] } {
+): { answer: string; missing: string[] } | FakeSuggestion {
 	const { input } = request.context as { input: AnswerHelperInput };
 	const draft = input.draft.trim();
 	const parts = partsOf(input.question);
-	if (!draft)
-		return {
-			answer: parts.map((p) => `[${p}?]`).join(" "),
-			missing: parts.map((p) => `Not in your profile yet: ${p}?`),
-		};
+	if (!draft) return fakeSuggestion(input.question);
 	const examples = examplesOf(input.question);
 	const all = /\ball (?:of )?(?:them|those)\b/i.test(draft);
 	const more = /\band (?:more|others)\b/i.test(draft);
@@ -67,24 +109,4 @@ export function fakeAnswerHelperResponder(
 			missing.push(`Not answered yet: ${part}?`);
 	}
 	return { answer: sentences.join(" "), missing };
-}
-
-/**
- * The fake for "Help me remember": one group per part of the question. A part with examples
- * offers them plus one common tool the question doesn't list (a memory jog, never a claim); any
- * other part is yes or no.
- */
-export function fakeAnswerChoicesResponder(
-	request: GenerateObjectRequest<unknown>,
-): { groups: { ask: string; multi: boolean; options: string[] }[] } {
-	const { input } = request.context as { input: AnswerHelperInput };
-	const examples = examplesOf(input.question);
-	return {
-		groups: partsOf(input.question).map((part, i) => {
-			const ask = `${part.replace(/^\w/, (c) => c.toUpperCase())}?`;
-			return i === 0 && examples.length
-				? { ask, multi: true, options: [...examples, "WebPageTest"] }
-				: { ask, multi: false, options: ["Yes", "No"] };
-		}),
-	};
 }

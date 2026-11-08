@@ -15,11 +15,12 @@ import {
 } from "./launch";
 
 /**
- * The answer helper on the Questions page, with fake models in the background: Improve turns
- * "All of them and more" into an answer naming the question's own tools and lists what is still
- * missing; Use this fills the box; a [ blank ] left in it blocks Save; Save stores the final
- * text as a profile fact. Screenshots of the proposal (light and dark) go to
- * test-results/answer-helper-shots, or to E2E_SHOTS.
+ * The Questions page with fake models in the background: a question opens with its answers
+ * already written, as numbered cards with the first picked and guesses underlined; 2 picks
+ * another, E edits it in place; 4 is Write my own, where Improve turns "All of them and more"
+ * into an answer naming the question's own tools and lists what is still missing; Use this
+ * fills the box; a [ blank ] blocks Save; ⌘↩ stores the final text as a profile fact.
+ * Screenshots (light and dark) go to test-results/answer-helper-shots, or to E2E_SHOTS.
  */
 const SHOTS = path.resolve(
 	process.env.E2E_SHOTS ??
@@ -51,7 +52,7 @@ async function shot(page: Page, name: string) {
 	await page.screenshot({ path: path.join(SHOTS, `${name}.png`) });
 }
 
-test("answer helper: Help me remember composes ticks, Improve proposes from the user's words, Use this fills the box, blanks block Save", async () => {
+test("answer helper: suggested answers are ready as cards, keys pick and edit, Improve proposes from the user's words, blanks block Save, ⌘↩ saves", async () => {
 	const { app, page, errors } = await launchApp({ userData });
 	try {
 		// A profile and test models, as onboarding does; the rest of setup is put off.
@@ -82,90 +83,67 @@ test("answer helper: Help me remember composes ticks, Improve proposes from the 
 			timeout: 30_000,
 		});
 
-		const box = question.getByRole("textbox", { name: QUESTION });
-		const width = async (testId: string) =>
-			(await page.getByTestId(testId).boundingBox())?.width ?? 0;
-
-		// Help me remember: the question as choices; only what is ticked reaches the box.
-		await page.getByTestId("answer-choices").click();
-		const card = page.getByTestId("answer-choices-card");
-		await expect(card).toBeVisible({ timeout: 30_000 });
-		const groups = card.getByTestId("answer-choice-group");
-		await expect(groups).toHaveCount(2);
-		const tools = groups.nth(0);
-		for (const tool of ["Lighthouse", "Chrome DevTools", "WebPageTest"])
-			await expect(tools.getByTestId("answer-choice")).toContainText([tool]);
-		// Nothing here is in the profile (it names React, not React Profiler): no chip is marked
-		// as the user's. The mark itself is unit-tested against the profile's evidence.
-		await expect(tools.getByText("in profile")).toHaveCount(0);
-		const use = card.getByTestId("answer-choices-use");
-		await expect(use).toBeDisabled();
-		// Ticking never changes a chip's width.
-		const chip = tools
-			.getByTestId("answer-choice")
-			.filter({ hasText: "Lighthouse" });
-		const chipWidth = (await chip.boundingBox())?.width;
-		await chip.click();
-		await expect(chip).toHaveAttribute("aria-pressed", "true");
-		expect((await chip.boundingBox())?.width).toBe(chipWidth);
-		// Asking again starts the new asks empty: a tick never carries over to another ask.
-		await page.getByTestId("answer-choices").click();
-		await expect(groups).toHaveCount(2, { timeout: 30_000 });
+		// The answers were written in the background: numbered cards, the first one picked, guesses
+		// underlined, no [ blanks ] and no questions back.
+		const cards = question.getByTestId("answer-card");
+		await expect(cards).toHaveCount(3, { timeout: 30_000 });
+		await expect(cards.locator("p.font-semibold")).toHaveText([
+			"Used them all, with a budget",
+			"Mostly Lighthouse, no budget",
+			"Not used them",
+		]);
+		await expect(cards.nth(0)).toHaveAttribute("data-picked", "true");
+		await expect(cards.nth(0)).toContainText(
+			"I have used Lighthouse, Chrome DevTools, React Profiler and bundle analyzers. I have worked to a bundle-size budget.",
+		);
+		await expect(question).not.toContainText("[");
+		// Every guessed tool is underlined: the profile names none of them.
 		await expect(
-			card
-				.getByTestId("answer-choice")
-				.and(page.locator('[aria-pressed="true"]')),
-		).toHaveCount(0);
-		await expect(use).toBeDisabled();
-		await chip.click();
-		await expect(chip).toHaveAttribute("aria-pressed", "true");
-		await tools
-			.getByTestId("answer-choice")
-			.filter({ hasText: "WebPageTest" })
-			.click();
-		await groups
-			.nth(1)
-			.getByTestId("answer-choice")
-			.filter({ hasText: "No" })
-			.click();
-		await box.blur();
-		await app.evaluate(({ nativeTheme }) => {
-			nativeTheme.themeSource = "light";
-		});
-		await expect(page.locator("html")).not.toHaveClass(/dark/);
-		await shot(page, "choices-light");
-		await app.evaluate(({ nativeTheme }) => {
-			nativeTheme.themeSource = "dark";
-		});
-		await expect(page.locator("html")).toHaveClass(/dark/);
-		await shot(page, "choices-dark");
+			cards
+				.nth(0)
+				.getByTestId("answer-guess")
+				.filter({ hasText: "Lighthouse" }),
+		).toHaveCount(1);
+		await expect(page.getByTestId("answer-choices")).toHaveCount(0);
+		await page.getByTestId("question-row").first().click();
+		for (const theme of ["light", "dark"] as const) {
+			await app.evaluate(({ nativeTheme }, t) => {
+				nativeTheme.themeSource = t;
+			}, theme);
+			await expect(page.locator("html")).toHaveClass(
+				theme === "dark" ? /dark/ : /^(?!.*dark)/,
+			);
+			// Colours ease between themes: let them settle.
+			await page.waitForTimeout(800);
+			await shot(page, `cards-${theme}`);
+		}
 		await app.evaluate(({ nativeTheme }) => {
 			nativeTheme.themeSource = "system";
 		});
-		await use.click();
-		await expect(card).toHaveCount(0);
-		const picked =
-			"Which profiling tools have you used to diagnose frontend performance? Lighthouse and WebPageTest.\nHave you worked to a JS bundle-size budget? No.";
-		await expect(box).toHaveValue(picked);
-		// Improve runs on the picks at once; nothing is saved until Save answer.
-		await expect(page.getByTestId("answer-proposal")).toBeVisible({
-			timeout: 30_000,
-		});
-		await page.getByTestId("answer-dismiss").click();
+
+		// 2 picks the second answer; E opens it for editing in its card; Esc closes it again.
+		await page.keyboard.press("2");
+		await expect(cards.nth(1)).toHaveAttribute("data-picked", "true");
+		await expect(cards.nth(0)).not.toHaveAttribute("data-picked");
+		await page.keyboard.press("e");
+		const editor = question.getByTestId("answer-editor");
+		await expect(editor).toBeFocused();
+		await expect(editor).toHaveValue(
+			"I have mostly used Lighthouse. I have not worked to a bundle-size budget.",
+		);
+		await editor.press("Escape");
+		await expect(editor).toHaveCount(0);
 		expect(
 			readDb("select 1 from profile_facts where question = ?", QUESTION),
 		).toEqual([]);
-		await box.fill("");
 
-		// An empty box offers Suggest; typing turns it into Improve, at the same width.
-		await expect(page.getByTestId("answer-suggest")).toBeVisible();
-		const suggestWidth = await width("answer-suggest");
+		// 4 is Write my own: an empty box, focused, with Improve.
+		await page.keyboard.press("4");
+		const box = question.getByTestId("answer-editor");
+		await expect(box).toBeFocused();
+		await expect(box).toHaveValue("");
 		await box.fill("All of them and more");
-		await expect(page.getByTestId("answer-suggest")).toHaveCount(0);
-		expect(await width("answer-improve")).toBe(suggestWidth);
-		// Pressed, it shows a spinner and keeps its width.
 		await page.getByTestId("answer-improve").click();
-		expect(await width("answer-improve")).toBe(suggestWidth);
 
 		const proposal = page.getByTestId("answer-proposal");
 		await expect(proposal).toBeVisible({ timeout: 30_000 });
@@ -177,17 +155,17 @@ test("answer helper: Help me remember composes ticks, Improve proposes from the 
 		// Nothing is saved, and the box is untouched, until the user acts.
 		await expect(box).toHaveValue("All of them and more");
 		await box.blur();
-		// Both appearances, whatever this Mac's own is.
-		await app.evaluate(({ nativeTheme }) => {
-			nativeTheme.themeSource = "light";
-		});
-		await expect(page.locator("html")).not.toHaveClass(/dark/);
-		await shot(page, "improve-light");
-		await app.evaluate(({ nativeTheme }) => {
-			nativeTheme.themeSource = "dark";
-		});
-		await expect(page.locator("html")).toHaveClass(/dark/);
-		await shot(page, "improve-dark");
+		for (const theme of ["light", "dark"] as const) {
+			await app.evaluate(({ nativeTheme }, t) => {
+				nativeTheme.themeSource = t;
+			}, theme);
+			await expect(page.locator("html")).toHaveClass(
+				theme === "dark" ? /dark/ : /^(?!.*dark)/,
+			);
+			// Colours ease between themes: let them settle.
+			await page.waitForTimeout(800);
+			await shot(page, `improve-${theme}`);
+		}
 		await app.evaluate(({ nativeTheme }) => {
 			nativeTheme.themeSource = "system";
 		});
@@ -208,7 +186,7 @@ test("answer helper: Help me remember composes ticks, Improve proposes from the 
 		await expect(box).toBeFocused();
 
 		// A blank in [ brackets ] blocks Save, by button and by ⌘↩.
-		const save = page.getByRole("button", { name: "Save answer" });
+		const save = page.getByRole("button", { name: "Save & next" });
 		await box.fill(`${proposed} My budget was [size?].`);
 		await expect(page.getByTestId("answer-blank")).toHaveText(
 			"Fill in or remove [ … ] first.",
@@ -225,7 +203,8 @@ test("answer helper: Help me remember composes ticks, Improve proposes from the 
 		const final = `${proposed} I have not worked to a bundle-size budget.`;
 		await box.fill(final);
 		await expect(page.getByTestId("answer-blank")).toHaveCount(0);
-		await save.click();
+		// ⌘↩ saves and opens the next; this was the last one.
+		await box.press("Meta+Enter");
 		await expect(page.getByText("No open questions")).toBeVisible();
 		expect(
 			readDb<{ answer: string }>(
@@ -233,15 +212,13 @@ test("answer helper: Help me remember composes ticks, Improve proposes from the 
 				QUESTION,
 			).map((r) => r.answer),
 		).toEqual([final]);
-		// Each call metered like every other model call: Improve twice (once on the picks), and
-		// Help me remember twice (asked again once).
+		// Each call metered like every other model call: the background suggestion and Improve.
 		const calls = (task: string) =>
 			readDb<{ n: number }>(
 				"select count(*) n from llm_usage where task = ?",
 				task,
 			)[0]?.n;
 		expect(calls("answer-helper")).toBe(2);
-		expect(calls("answer-choices")).toBe(2);
 		expect(errors).toEqual([]);
 	} finally {
 		await app.close();

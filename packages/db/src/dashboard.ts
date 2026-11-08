@@ -178,6 +178,11 @@ export class DashboardRepository extends DrizzlePipelineRepository {
 	listQuestions(...args: Parameters<typeof questionsMethods.listQuestions>) {
 		return questionsMethods.listQuestions.apply(this, args);
 	}
+	setQuestionSuggestion(
+		...args: Parameters<typeof questionsMethods.setQuestionSuggestion>
+	) {
+		return questionsMethods.setQuestionSuggestion.apply(this, args);
+	}
 
 	answerQuestion(...args: Parameters<typeof questionsMethods.answerQuestion>) {
 		return questionsMethods.answerQuestion.apply(this, args);

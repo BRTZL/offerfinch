@@ -56,6 +56,7 @@ import {
 	type WorkerInit,
 } from "../shared/worker-protocol";
 import { cleanStoredPostings, readPostingForJob } from "./add-job";
+import { sweepSuggestions } from "./answer-helper";
 import { antigravityService } from "./antigravity";
 import { localChromeProvider } from "./browser";
 import type { CheckStop, SiteTabHost } from "./checks";
@@ -625,6 +626,10 @@ export class WorkerApp {
 		this.statusTimer = setInterval(() => {
 			void this.collectNotices();
 			void this.pushStatus();
+			// New questions get a suggestion ready before the user opens them. Tests leave it to
+			// the Questions page's own listing, so no model call runs unasked.
+			if (!this.init.test?.noSchedule)
+				void sweepSuggestions(this, LOCAL_USER_ID);
 		}, 10_000);
 		void this.followUps();
 		this.followUpTimer = setInterval(

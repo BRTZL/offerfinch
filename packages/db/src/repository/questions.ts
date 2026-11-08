@@ -222,7 +222,13 @@ export const questionsMethods = {
 							answeredAt: new Date(),
 							profilePath: ANSWERS_PATH,
 						}
-					: { status: "open" as const, answer: null, answeredAt: null };
+					: {
+							status: "open" as const,
+							answer: null,
+							answeredAt: null,
+							// Made for the old wording or context: the next sweep suggests afresh.
+							suggestion: null,
+						};
 				if (q.reuse) reused++;
 				if (existing)
 					await tx

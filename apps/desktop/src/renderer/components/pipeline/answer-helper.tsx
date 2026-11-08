@@ -1,26 +1,21 @@
-import {
-	type ChoiceGroup,
-	type ChoicePicks,
-	composeChoices,
-	NONE,
-	NOT_SURE,
-	togglePick,
-} from "@offerfinch/core/tailor/answer-compose";
+import type { StoredSuggestion } from "@offerfinch/core/tailor/answer-helper";
 import { bracketBlanks } from "@offerfinch/core/tailor/blanks";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ListChecks, Sparkles, WandSparkles } from "lucide-react";
-import { useState } from "react";
+import { Check, PenLine, WandSparkles } from "lucide-react";
+import { type ReactNode, type Ref, useState } from "react";
 import { DiffView } from "@/components/pipeline/chat/proposal-card";
 import { Notice } from "@/components/system/bits";
-import { Button, SwapLabel } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { client } from "@/lib/orpc";
+import { cn } from "@/lib/utils";
 
 type HelpResult = Awaited<ReturnType<typeof client.questions.help>>;
 type Proposal = Extract<HelpResult, { status: "ok" }> & {
 	/** The box text the proposal was built from. */
 	basis: string;
 };
+type HelperNotice = { tone: "warning" | "destructive"; text: string };
 
 /**
  * Why Save is blocked: blanks the helper left ("[which bundle analyzer?]") must be filled in or
@@ -30,28 +25,17 @@ export function blankProblem(text: string): string | null {
 	return bracketBlanks(text).length ? "Fill in or remove [ … ] first." : null;
 }
 
-/** "Prometheus", "Prometheus and Loki", "A, B, C, D, E and 2 more". */
-function listTerms(terms: string[]): string {
-	const shown = terms.slice(0, 5).map((t) => `"${t}"`);
-	if (terms.length > 5) shown.push(`${terms.length - 5} more`);
-	return shown.length > 1
-		? `${shown.slice(0, -1).join(", ")} and ${shown.at(-1)}`
-		: (shown[0] ?? "something");
-}
-
 /**
- * The answer helper beside Save answer. Suggest (empty box) drafts from the profile; Improve
- * rewrites what the user typed. Either shows a proposal under the box with what is still
- * missing; Use this puts it in the box, still editable, and nothing is saved until Save answer.
- * Names or numbers nobody stated are flagged on the proposal, never hidden. A paused model or an
- * error is said plainly; the box is untouched.
+ * The answer helper's one call. Suggest (empty draft) hands its fresh answers to `onSuggestion`,
+ * which the page shows as the answer cards; Improve (a draft) becomes a proposal under the
+ * editor. A paused model or an error is said plainly; nothing on the page changes.
  */
-export function useAnswerHelper(questionId: string) {
+export function useAnswerHelper(
+	questionId: string,
+	onSuggestion: (suggestion: StoredSuggestion) => void,
+) {
 	const [proposal, setProposal] = useState<Proposal | null>(null);
-	const [notice, setNotice] = useState<{
-		tone: "warning" | "destructive";
-		text: string;
-	} | null>(null);
+	const [notice, setNotice] = useState<HelperNotice | null>(null);
 	const help = useMutation({
 		mutationFn: (draft: string) =>
 			client.questions.help({ id: questionId, draft }),
@@ -60,8 +44,10 @@ export function useAnswerHelper(questionId: string) {
 			setNotice(null);
 		},
 		onSuccess: (result, draft) => {
-			if (result.status === "ok") setProposal({ ...result, basis: draft });
-			else if (result.status === "empty")
+			if (result.status === "ok") {
+				if (result.mode === "suggest") onSuggestion(result);
+				else setProposal({ ...result, basis: draft });
+			} else if (result.status === "empty")
 				setNotice({
 					tone: "warning",
 					text: "The model had nothing to suggest.",
@@ -83,42 +69,232 @@ export function useAnswerHelper(questionId: string) {
 
 type Helper = ReturnType<typeof useAnswerHelper>;
 
-/** Suggest when the box is empty, Improve when it has text. */
-export function HelperButton({
-	helper,
-	text,
-	disabled,
-}: {
-	helper: Helper;
-	text: string;
-	disabled?: boolean;
-}) {
-	const improve = Boolean(text.trim());
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The text with every guessed term underlined, so a guess is seen where it stands. */
+function Guessed({ text, terms }: { text: string; terms: string[] }) {
+	const words = terms.filter(Boolean);
+	if (!words.length) return <>{text}</>;
+	const pattern = new RegExp(
+		`(?<![\\p{L}\\p{N}])(${words.map(escapeRegExp).join("|")})(?![\\p{L}\\p{N}])`,
+		"giu",
+	);
+	const parts: ReactNode[] = [];
+	let at = 0;
+	for (const m of text.matchAll(pattern)) {
+		const i = m.index ?? 0;
+		if (i > at) parts.push(text.slice(at, i));
+		parts.push(
+			<span
+				key={i}
+				className="decoration-warning underline decoration-dotted decoration-2 underline-offset-2"
+				data-testid="answer-guess"
+				title="Guessed: not in your profile"
+			>
+				{m[0]}
+			</span>,
+		);
+		at = i + m[0].length;
+	}
+	parts.push(text.slice(at));
+	return <>{parts}</>;
+}
+
+/** The number key on a card: filled when the card is picked. */
+function KeyCap({ n, on }: { n: number; on: boolean }) {
 	return (
-		<Button
-			variant="outline"
-			onClick={() => helper.help.mutate(text)}
-			disabled={disabled}
-			pending={helper.help.isPending}
-			data-testid={improve ? "answer-improve" : "answer-suggest"}
-			title={
-				improve
-					? "Rewrite your answer clearly, keeping only what you said"
-					: "Draft an answer from your profile, with blanks where it has nothing"
-			}
+		<span
+			aria-hidden
+			className={cn(
+				"ease-standard text-2xs grid size-5 shrink-0 place-items-center rounded-sm border font-semibold transition-colors duration-200",
+				on
+					? "bg-primary text-primary-foreground border-transparent"
+					: "border-border bg-muted text-muted-foreground",
+			)}
 		>
-			{improve ? <WandSparkles /> : <Sparkles />}
-			<SwapLabel
-				labels={["Suggest", "Improve"]}
-				show={improve ? "Improve" : "Suggest"}
-			/>
-		</Button>
+			{n}
+		</span>
 	);
 }
 
 /**
- * The proposal under the box: the change, what's missing, Use this and Dismiss. If the box was
- * edited after the proposal was made, Use this is off, so it never overwrites the newer text.
+ * One suggested answer as a card: its number key, a short label and the full answer, guesses
+ * underlined. Picked, it carries the primary ring; editing, its answer becomes the text box.
+ */
+export function AnswerCard({
+	n,
+	label,
+	answer,
+	terms,
+	picked,
+	editing,
+	value,
+	onChange,
+	onPick,
+	onEditorKeyDown,
+	editorRef,
+}: {
+	n: number;
+	label: string;
+	answer: string;
+	terms: string[];
+	picked: boolean;
+	editing: boolean;
+	value: string;
+	onChange: (text: string) => void;
+	onPick: () => void;
+	onEditorKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+	editorRef: Ref<HTMLTextAreaElement>;
+}) {
+	// A label with its own radio, so a click or the arrow keys pick it; editing, the box is the
+	// card's only control.
+	const Shell = picked && editing ? "div" : "label";
+	return (
+		<Shell
+			data-testid="answer-card"
+			data-picked={picked || undefined}
+			className={cn(
+				"bg-card ease-standard flex cursor-default items-start gap-3 rounded-xl border px-4 py-3 text-left transition-colors duration-200",
+				picked
+					? "border-primary bg-primary-surface/50"
+					: "border-border hover:bg-hover",
+			)}
+		>
+			{Shell === "label" ? (
+				<input
+					type="radio"
+					name="answer"
+					className="sr-only"
+					checked={picked}
+					onChange={onPick}
+					aria-label={label}
+				/>
+			) : null}
+			<KeyCap n={n} on={picked} />
+			<div className="flex min-w-0 flex-1 flex-col gap-1">
+				<p className="text-foreground text-sm font-semibold">{label}</p>
+				{picked && editing ? (
+					<Textarea
+						ref={editorRef}
+						value={value}
+						onChange={(e) => onChange(e.target.value)}
+						onKeyDown={onEditorKeyDown}
+						aria-label={`Answer ${n}, editing`}
+						className="bg-background min-h-24 text-sm"
+						data-testid="answer-editor"
+					/>
+				) : (
+					<p
+						className="text-foreground/80 text-sm whitespace-pre-wrap"
+						data-selectable
+					>
+						<Guessed text={picked ? value : answer} terms={terms} />
+					</p>
+				)}
+			</div>
+		</Shell>
+	);
+}
+
+/** "Write my own": the last card. Picked, it is an empty text box. */
+export function OwnCard({
+	n,
+	picked,
+	value,
+	onChange,
+	onPick,
+	onEditorKeyDown,
+	editorRef,
+	helper,
+}: {
+	n: number;
+	picked: boolean;
+	value: string;
+	onChange: (text: string) => void;
+	onPick: () => void;
+	onEditorKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+	editorRef: Ref<HTMLTextAreaElement>;
+	helper: Helper;
+}) {
+	const Shell = picked ? "div" : "label";
+	return (
+		<Shell
+			data-testid="answer-own"
+			data-picked={picked || undefined}
+			className={cn(
+				"ease-standard flex items-start gap-3 rounded-xl border px-4 py-3 transition-colors duration-200",
+				picked
+					? "border-primary bg-primary-surface/50"
+					: "border-border text-muted-foreground hover:bg-hover",
+			)}
+		>
+			{picked ? null : (
+				<input
+					type="radio"
+					name="answer"
+					className="sr-only"
+					checked={false}
+					onChange={onPick}
+					aria-label="Write my own"
+				/>
+			)}
+			<KeyCap n={n} on={picked} />
+			<div className="flex min-w-0 flex-1 flex-col gap-2">
+				<p
+					className={cn(
+						"flex items-center gap-2 text-sm",
+						picked && "text-foreground font-semibold",
+					)}
+				>
+					<PenLine className="size-4" />
+					Write my own
+				</p>
+				{picked ? (
+					<>
+						<Textarea
+							ref={editorRef}
+							value={value}
+							onChange={(e) => onChange(e.target.value)}
+							onKeyDown={onEditorKeyDown}
+							placeholder="Your answer, in your words. Only what is true."
+							aria-label="Your own answer"
+							className="bg-background min-h-24 text-sm"
+							data-testid="answer-editor"
+						/>
+						<div className="flex justify-end">
+							<Button
+								size="xs"
+								variant="outline"
+								disabled={!value.trim()}
+								pending={helper.help.isPending}
+								onClick={() => helper.help.mutate(value)}
+								data-testid="answer-improve"
+								title="Rewrite your answer clearly, keeping only what you said"
+							>
+								<WandSparkles />
+								Improve
+							</Button>
+						</div>
+					</>
+				) : null}
+			</div>
+		</Shell>
+	);
+}
+
+/** "Prometheus", "Prometheus and Loki", "A, B, C, D, E and 2 more". */
+function listTerms(terms: string[]): string {
+	const shown = terms.slice(0, 5).map((t) => `"${t}"`);
+	if (terms.length > 5) shown.push(`${terms.length - 5} more`);
+	return shown.length > 1
+		? `${shown.slice(0, -1).join(", ")} and ${shown.at(-1)}`
+		: (shown[0] ?? "something");
+}
+
+/**
+ * A notice from the helper, or Improve's proposal: the change, what's missing, Use this and
+ * Dismiss. If the text was edited after the proposal was made, Use this is off, so it never
+ * overwrites the newer text.
  */
 export function HelperResult({
 	helper,
@@ -146,28 +322,15 @@ export function HelperResult({
 		);
 	if (!proposal) return null;
 	const stale = proposal.basis.trim() !== text.trim();
-	// A suggestion replaces an empty box: its "removed" side is one empty line, not worth showing.
-	const lines =
-		proposal.mode === "suggest"
-			? proposal.diff.filter((l) => l.op !== "del")
-			: proposal.diff;
 	return (
 		<div
 			className="border-border bg-card flex flex-col gap-3 rounded-xl border p-3"
 			data-testid="answer-proposal"
 		>
 			<div className="flex items-center gap-2">
-				<span className="text-muted-foreground">
-					{proposal.mode === "suggest" ? (
-						<Sparkles className="size-4" />
-					) : (
-						<WandSparkles className="size-4" />
-					)}
-				</span>
+				<WandSparkles className="text-muted-foreground size-4" />
 				<p className="text-foreground min-w-0 flex-1 text-sm font-medium">
-					{proposal.mode === "suggest"
-						? "Suggested from your profile"
-						: "Your answer, rewritten"}
+					Your answer, rewritten
 				</p>
 			</div>
 			{proposal.unchecked.length ? (
@@ -181,7 +344,7 @@ export function HelperResult({
 					fill in anything in [ brackets ].
 				</p>
 			)}
-			<DiffView lines={lines} />
+			<DiffView lines={proposal.diff} />
 			<div className="flex flex-col gap-1" data-testid="answer-missing">
 				<p className="text-foreground text-xs font-medium">What's missing</p>
 				{proposal.missing.length ? (
@@ -224,254 +387,9 @@ export function HelperResult({
 						className="text-muted-foreground text-xs"
 						data-testid="answer-proposal-stale"
 					>
-						You changed your answer since.{" "}
-						{proposal.mode === "suggest" ? "Suggest" : "Improve"} again to
-						include it.
+						You changed your answer since. Improve again to include it.
 					</p>
 				) : null}
-			</div>
-		</div>
-	);
-}
-
-/* ------------------------------------------------------- help me remember */
-
-type HelperNotice = { tone: "warning" | "destructive"; text: string };
-
-/**
- * Help me remember: the question as a few multiple-choice asks, for when the answer is hard to
- * recall from a blank box. The options only jog memory; what the user ticks is composed into the
- * box (answer-compose), and nothing is saved until Save answer.
- */
-export function useAnswerChoices(questionId: string) {
-	const [groups, setGroups] = useState<ChoiceGroup[] | null>(null);
-	const [notice, setNotice] = useState<HelperNotice | null>(null);
-	const load = useMutation({
-		mutationFn: () => client.questions.choices({ id: questionId }),
-		onMutate: () => {
-			setGroups(null);
-			setNotice(null);
-		},
-		onSuccess: (result) => {
-			if (result.status === "ok") setGroups(result.groups);
-			else if (result.status === "empty")
-				setNotice({
-					tone: "warning",
-					text: "The model had no choices to offer for this question.",
-				});
-			else
-				setNotice({
-					tone: result.status === "paused" ? "warning" : "destructive",
-					text: result.message,
-				});
-		},
-		onError: (error) => setNotice({ tone: "destructive", text: error.message }),
-	});
-	const dismiss = () => {
-		setGroups(null);
-		setNotice(null);
-	};
-	return { load, groups, notice, dismiss };
-}
-
-type Choices = ReturnType<typeof useAnswerChoices>;
-
-export function ChoicesButton({
-	choices,
-	disabled,
-}: {
-	choices: Choices;
-	disabled?: boolean;
-}) {
-	return (
-		<Button
-			variant="outline"
-			onClick={() => choices.load.mutate()}
-			disabled={disabled}
-			pending={choices.load.isPending}
-			data-testid="answer-choices"
-			title="Answer by picking from a few options, to help you remember"
-		>
-			<ListChecks />
-			Help me remember
-		</Button>
-	);
-}
-
-/** One option chip: a toggle, marked when the profile already names it. */
-function Chip({
-	label,
-	on,
-	inProfile,
-	onToggle,
-	testId,
-}: {
-	label: string;
-	on: boolean;
-	inProfile?: boolean;
-	onToggle: () => void;
-	testId: string;
-}) {
-	return (
-		<Button
-			size="xs"
-			variant={on ? "secondary" : "outline"}
-			aria-pressed={on}
-			className="aria-pressed:border-primary aria-pressed:text-primary"
-			onClick={onToggle}
-			data-testid={testId}
-			title={inProfile ? "Your profile already mentions this" : undefined}
-		>
-			{/* Always laid out, so ticking never changes the chip's width. */}
-			<Check className={on ? undefined : "invisible"} />
-			{label}
-			{inProfile ? (
-				<span className="text-muted-foreground font-normal">in profile</span>
-			) : null}
-		</Button>
-	);
-}
-
-/**
- * The asks with their options, None of these, Not sure and Other, and "Write my answer", which
- * puts the picks in the box (after what is there) for the user to edit, Improve or save.
- */
-export function ChoicesCard({
-	choices,
-	onCompose,
-}: {
-	choices: Choices;
-	onCompose: (draft: string) => void;
-}) {
-	const { groups, notice } = choices;
-	// Picks belong to one set of asks: when Help me remember runs again, the new groups start
-	// empty, so a tick can never land under a different ask by position.
-	const [chosen, setChosen] = useState<{
-		groups: ChoiceGroup[] | null;
-		picks: ChoicePicks[];
-	}>({ groups: null, picks: [] });
-	const picks = chosen.groups === groups ? chosen.picks : [];
-	if (notice)
-		return (
-			<Notice
-				tone={notice.tone}
-				data-testid="answer-choices-notice"
-				actions={
-					<Button size="xs" variant="ghost" onClick={choices.dismiss}>
-						Dismiss
-					</Button>
-				}
-			>
-				{notice.text}
-			</Notice>
-		);
-	if (!groups) return null;
-	const at = (i: number): ChoicePicks => picks[i] ?? { picked: [], other: "" };
-	const update = (i: number, next: Partial<ChoicePicks>) =>
-		setChosen((current) => {
-			const all = current.groups === groups ? current.picks : [];
-			const copy = groups.map((_, j) => all[j] ?? { picked: [], other: "" });
-			copy[i] = { ...copy[i], ...next } as ChoicePicks;
-			return { groups, picks: copy };
-		});
-	const draft = composeChoices(groups, picks);
-	const close = () => {
-		setChosen({ groups: null, picks: [] });
-		choices.dismiss();
-	};
-	return (
-		<div
-			className="border-border bg-card flex flex-col gap-4 rounded-xl border p-3"
-			data-testid="answer-choices-card"
-		>
-			<div className="flex flex-col gap-1">
-				<div className="flex items-center gap-2">
-					<ListChecks className="text-muted-foreground size-4" />
-					<p className="text-foreground text-sm font-medium">
-						Help me remember
-					</p>
-				</div>
-				<p className="text-muted-foreground text-xs">
-					Options are reminders, not facts about you. Tick only what is true;
-					skip or pick Not sure for anything you can't recall.
-				</p>
-			</div>
-			{groups.map((group, i) => {
-				const p = at(i);
-				const toggle = (label: string) =>
-					update(i, { picked: togglePick(group, p.picked, label) });
-				return (
-					<fieldset
-						key={i}
-						className="flex flex-col gap-2"
-						data-testid="answer-choice-group"
-					>
-						<legend className="text-foreground mb-2 text-xs font-medium">
-							{group.ask}
-							<span className="text-muted-foreground font-normal">
-								{group.multi ? " · pick any" : " · pick one"}
-							</span>
-						</legend>
-						<div className="flex flex-wrap gap-1.5">
-							{group.options.map((o) => (
-								<Chip
-									key={o.label}
-									label={o.label}
-									inProfile={o.inProfile}
-									on={p.picked.includes(o.label)}
-									onToggle={() => toggle(o.label)}
-									testId="answer-choice"
-								/>
-							))}
-							{group.multi ? (
-								<Chip
-									label={NONE}
-									on={p.picked.includes(NONE)}
-									onToggle={() => toggle(NONE)}
-									testId="answer-choice-none"
-								/>
-							) : null}
-							<Chip
-								label={NOT_SURE}
-								on={p.picked.includes(NOT_SURE)}
-								onToggle={() => toggle(NOT_SURE)}
-								testId="answer-choice-not-sure"
-							/>
-						</div>
-						<Input
-							value={p.other}
-							onChange={(e) => update(i, { other: e.target.value })}
-							placeholder="Other, in your words (optional)"
-							aria-label={`${group.ask} Other`}
-							maxLength={300}
-							className="h-7 text-xs"
-							data-testid="answer-choice-other"
-						/>
-					</fieldset>
-				);
-			})}
-			<div className="flex flex-wrap items-center gap-2">
-				<Button
-					size="xs"
-					disabled={!draft}
-					onClick={() => {
-						onCompose(draft);
-						close();
-					}}
-					data-testid="answer-choices-use"
-					title="Put your picks in the answer box, then improve them into sentences"
-				>
-					<Check />
-					Write my answer
-				</Button>
-				<Button
-					size="xs"
-					variant="ghost"
-					onClick={close}
-					data-testid="answer-choices-dismiss"
-				>
-					Dismiss
-				</Button>
 			</div>
 		</div>
 	);

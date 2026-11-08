@@ -8,6 +8,19 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
+## Unreleased
+
+- Each question on the Questions page opens with a suggested answer already written, made in
+  the background as soon as the question appears. It is a finished answer you can save as it
+  is: no [ brackets ] and no questions back. Where your profile doesn't say, it makes its best
+  guess, and flags every guessed tool or number so you can check it.
+- The Questions page is now a queue. Each question shows its suggested answers as numbered
+  cards with the likeliest picked: press 1–4 to pick, E to edit the picked answer in place, and
+  ⌘↩ to save it and open the next. 4 (or the last card) writes your own. Guessed words are
+  underlined, the list groups questions by job and shows which have answers ready, and a bar on
+  top counts how many are left.
+- Help me remember is gone: the answer cards replace it.
+
 ## 0.3.2 (2026-11-07)
 
 - Settings › Spending is gone: plans and free models cost nothing extra, so its dollar figures

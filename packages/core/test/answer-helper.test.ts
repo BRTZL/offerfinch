@@ -227,6 +227,7 @@ describe("answer helper request", () => {
 		);
 		expect(parts.prompt).toContain("Mode: suggest");
 		expect(parts.prompt).toContain("No posting");
+		expect(parts.prompt).not.toContain("<draft>");
 	});
 
 	it("shows a proposal that adds a fact, flagging the words nobody stated", async () => {
@@ -243,9 +244,63 @@ describe("answer helper request", () => {
 		expect(requests).toHaveLength(1);
 	});
 
-	it("tells a suggestion to keep a tool the profile lacks inside a blank", () => {
-		const parts = answerHelperPromptParts(input({ draft: "" }));
-		expect(parts.prompt).toContain("may appear only inside a bracket blank");
+	it("suggests complete answers: guesses flagged, options with a blank dropped", async () => {
+		const requests: GenerateObjectRequest<unknown>[] = [];
+		const llm: LlmProvider = {
+			name: "suggest",
+			async generateObject<T>(request: GenerateObjectRequest<T>): Promise<T> {
+				requests.push(request as GenerateObjectRequest<unknown>);
+				return request.schema.parse({
+					options: [
+						{ label: "Asks back", answer: "I used [which tool?]." },
+						{
+							label: "Profiler and Lighthouse",
+							answer:
+								"I profiled renders with React Profiler at Bluefin Labs and audited pages with Lighthouse.",
+						},
+						{
+							label: "Only Profiler",
+							answer: "I profiled renders with React Profiler at Bluefin Labs.",
+						},
+					],
+					assumed: ["That you used Lighthouse"],
+				});
+			},
+		};
+		const result = await runAnswerHelper(llm, input({ draft: "" }));
+		expect(result).toMatchObject({
+			status: "ok",
+			mode: "suggest",
+			answer:
+				"I profiled renders with React Profiler at Bluefin Labs and audited pages with Lighthouse.",
+			missing: ["That you used Lighthouse"],
+			unchecked: ["Lighthouse"],
+		});
+		if (result.status === "ok") {
+			expect(result.variants.map((v) => v.label)).toEqual([
+				"Profiler and Lighthouse",
+				"Only Profiler",
+			]);
+			expect(result.variants[1]?.unchecked).toEqual([]);
+		}
+		expect(requests[0]?.system).toContain("best guess");
+		expect(requests[0]?.system).toContain("Never leave a blank");
+	});
+
+	it("reports a suggestion whose every option holds a blank as empty", async () => {
+		const llm: LlmProvider = {
+			name: "blanks",
+			async generateObject<T>(request: GenerateObjectRequest<T>): Promise<T> {
+				return request.schema.parse({
+					options: [{ label: "Blank", answer: "I used [which tool?]." }],
+					assumed: [],
+				});
+			},
+		};
+		expect(await runAnswerHelper(llm, input({ draft: "" }))).toEqual({
+			status: "empty",
+			mode: "suggest",
+		});
 	});
 
 	it("reports an empty answer", async () => {
@@ -279,6 +334,7 @@ describe("answer helper request", () => {
 				'Which tools "and more" covers, by name',
 				"Not answered yet: have you worked to a JS bundle-size budget?",
 			],
+			variants: [],
 			unchecked: [],
 		});
 		const suggestion = await runAnswerHelper(
@@ -286,7 +342,11 @@ describe("answer helper request", () => {
 			input({ draft: "" }),
 		);
 		expect(suggestion.status).toBe("ok");
-		if (suggestion.status === "ok")
-			expect(bracketBlanks(suggestion.answer)).toHaveLength(2);
+		if (suggestion.status === "ok") {
+			expect(bracketBlanks(suggestion.answer)).toEqual([]);
+			expect(suggestion.variants).toHaveLength(3);
+			for (const v of suggestion.variants)
+				expect(bracketBlanks(v.answer)).toEqual([]);
+		}
 	});
 });
