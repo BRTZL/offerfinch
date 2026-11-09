@@ -151,6 +151,56 @@ describe("answer matching", () => {
 				).toHaveLength(1);
 		});
 
+		it("refuses a typed email or link whose punctuation changed (Codex review)", () => {
+			const email = { ...phone, label: "Email", name: "email" };
+			const link = { ...phone, label: "LinkedIn", name: "linkedin" };
+			expect(
+				verifyFilled(
+					fill("ada+tag@example.test"),
+					[email],
+					[{ ...email, current: ["ada-tag@example.test"] }],
+				),
+			).toHaveLength(1);
+			expect(
+				verifyFilled(
+					fill("https://www.linkedin.com/in/ada-example"),
+					[link],
+					[{ ...link, current: ["https://www.linkedin.com/in/ada/example"] }],
+				),
+			).toHaveLength(1);
+			expect(
+				verifyFilled(
+					fill("Ada@example.test"),
+					[email],
+					[{ ...email, current: ["ada@example.test"] }],
+				),
+			).toHaveLength(1);
+		});
+
+		it("accepts the approved text with only whitespace, case of a domain or host, or composition changed", () => {
+			const email = { ...phone, label: "Email", name: "email" };
+			const link = { ...phone, label: "LinkedIn", name: "linkedin" };
+			const why = { ...phone, label: "Why us?", name: "why" };
+			for (const [f, approved, held] of [
+				[email, "ada+tag@example.test", "  ada+tag@Example.TEST "],
+				[
+					link,
+					"https://www.linkedin.com/in/ada-example",
+					"HTTPS://WWW.LinkedIn.com/in/ada-example",
+				],
+				[
+					why,
+					"The robotics  work\r\nmatches.",
+					" The robotics work\nmatches. ",
+				],
+				[why, "Café", "Café"],
+			] as const)
+				expect(
+					verifyFilled(fill(approved), [f], [{ ...f, current: [held] }]),
+					`${approved} / ${held}`,
+				).toEqual([]);
+		});
+
 		it("refuses a non-phone value that lost its leading digits", () => {
 			const plan = fill("+1000000");
 			expect(

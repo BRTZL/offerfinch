@@ -1083,7 +1083,42 @@ function samePhone(field: FormField, held: string, approved: string): boolean {
 }
 
 const fieldKey = (f: FormField) => `${f.kind}|${f.name}|${f.label}`;
+/** An option chosen from the page's own list: its text may differ in case and punctuation. */
 const same = (a: string, b: string) => questionKeyOf(a) === questionKeyOf(b);
+
+/** Only what never changes meaning: outer and repeated whitespace, and Unicode composition. */
+const tidy = (text: string) =>
+	text.normalize("NFC").replace(/\s+/g, " ").trim();
+
+const EMAIL = /^([^\s@]+)@([^\s@]+)$/;
+const LINK = /^([a-z][a-z0-9+.-]*:\/\/)?([^/?#\s]+\.[^/?#\s]+)([/?#].*)?$/i;
+
+/**
+ * True when a typed value holds exactly the approved text. Every character counts ("+" and "-"
+ * in an email, "/" and "-" in a link), except the case of an email's domain and of a link's
+ * scheme and host, which never change where it leads.
+ */
+function sameText(held: string, approved: string): boolean {
+	const a = tidy(held);
+	const b = tidy(approved);
+	if (a === b) return true;
+	const mailA = a.match(EMAIL);
+	const mailB = b.match(EMAIL);
+	if (mailA && mailB)
+		return (
+			mailA[1] === mailB[1] &&
+			(mailA[2] ?? "").toLowerCase() === (mailB[2] ?? "").toLowerCase()
+		);
+	const linkA = a.match(LINK);
+	const linkB = b.match(LINK);
+	if (linkA && linkB)
+		return (
+			(linkA[1] ?? "").toLowerCase() === (linkB[1] ?? "").toLowerCase() &&
+			(linkA[2] ?? "").toLowerCase() === (linkB[2] ?? "").toLowerCase() &&
+			(linkA[3] ?? "") === (linkB[3] ?? "")
+		);
+	return false;
+}
 
 /** Why a control's value is not the planned one, or null when it is. */
 function mismatch(
@@ -1098,7 +1133,7 @@ function mismatch(
 		case "fill": {
 			const ok =
 				one !== null &&
-				(same(one, action.value) || samePhone(field, one, action.value));
+				(sameText(one, action.value) || samePhone(field, one, action.value));
 			return ok ? null : `"${label}" holds ${holds}, not the approved value.`;
 		}
 		case "select":
