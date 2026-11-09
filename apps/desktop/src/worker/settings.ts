@@ -136,18 +136,15 @@ const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Not HH:MM");
 /**
  * When scheduled scans run: at most once every `every` hours, never in quiet hours (the Mac's
  * local time; the window may cross midnight). Quiet hours also hold notifications until they end.
- * Every field has a default, so a field added later keeps the user's other choices (as
- * `notifications.followup` does).
+ * What the app writes and the API accepts: every field, each valid.
  */
 export const scanScheduleSchema = z.object({
-	every: z.literal(SCAN_EVERY_HOURS).default(1),
-	quietHours: z
-		.object({
-			enabled: z.boolean().default(false),
-			start: clockTime.default("22:00"),
-			end: clockTime.default("07:00"),
-		})
-		.default({ enabled: false, start: "22:00", end: "07:00" }),
+	every: z.literal(SCAN_EVERY_HOURS),
+	quietHours: z.object({
+		enabled: z.boolean(),
+		start: clockTime,
+		end: clockTime,
+	}),
 });
 export type ScanSchedule = z.infer<typeof scanScheduleSchema>;
 export type QuietHours = ScanSchedule["quietHours"];
@@ -155,6 +152,47 @@ export const DEFAULT_SCAN_SCHEDULE: ScanSchedule = {
 	every: 1,
 	quietHours: { enabled: false, start: "22:00", end: "07:00" },
 };
+
+/**
+ * The schedule as read back: each field on its own, so one missing or bad field (a field added
+ * later, a hand-edited time) falls back to its default and the user's other choices stay.
+ */
+const storedScanScheduleSchema = z
+	.object({
+		every: z.literal(SCAN_EVERY_HOURS).catch(DEFAULT_SCAN_SCHEDULE.every),
+		quietHours: z
+			.object({
+				enabled: z.boolean().catch(DEFAULT_SCAN_SCHEDULE.quietHours.enabled),
+				start: clockTime.catch(DEFAULT_SCAN_SCHEDULE.quietHours.start),
+				end: clockTime.catch(DEFAULT_SCAN_SCHEDULE.quietHours.end),
+			})
+			.catch(DEFAULT_SCAN_SCHEDULE.quietHours),
+	})
+	.catch(DEFAULT_SCAN_SCHEDULE);
+
+/**
+ * A notification waiting to go out (`NoticeBatcher`), kept across a restart. Follow-ups are not
+ * kept: their stage entries say whether they went out, so they are found again.
+ */
+const heldNoticeSchema = z.object({
+	kind: z.enum(["match", "question", "review", "stopped"]),
+	applicationId: z.string().optional(),
+	title: z.string(),
+	company: z.string().optional(),
+	score: z.number().optional(),
+	detail: z.string().optional(),
+});
+export type HeldNotice = z.infer<typeof heldNoticeSchema>;
+/** Read: an item that no longer fits is dropped, the others kept. */
+const storedHeldNoticesSchema = z
+	.array(z.unknown())
+	.catch([])
+	.transform((items) =>
+		items.flatMap((item) => {
+			const parsed = heldNoticeSchema.safeParse(item);
+			return parsed.success ? [parsed.data] : [];
+		}),
+	);
 
 const onboardingSchema = z.object({
 	/**
@@ -211,9 +249,11 @@ const KEYS = {
 		fallback: DEFAULT_LOOK,
 	},
 	paused: { key: "scansPaused", schema: z.boolean(), fallback: false },
+	/** Read: field by field (see `storedScanScheduleSchema`). Written: every field, valid. */
 	scanSchedule: {
 		key: "scanSchedule",
-		schema: scanScheduleSchema,
+		schema: storedScanScheduleSchema,
+		write: scanScheduleSchema,
 		fallback: DEFAULT_SCAN_SCHEDULE,
 	},
 	/** The login shell's PATH from the last start, used at once while it is read again. */
@@ -292,6 +332,17 @@ const KEYS = {
 			})
 			.nullable(),
 		fallback: null as { steps: Role[]; dismissed: boolean } | null,
+	},
+	/**
+	 * Notifications read from the database (past the watermark) that had not gone out yet, as of
+	 * the last change: quiet hours, a scan still running or the gap between notifications held
+	 * them. They wait again after a restart.
+	 */
+	heldNotices: {
+		key: "heldNotices",
+		schema: storedHeldNoticesSchema,
+		write: z.array(heldNoticeSchema),
+		fallback: [] as HeldNotice[],
 	},
 	/** Notification watermark: transitions after this time have not been announced. */
 	noticeWatermark: {

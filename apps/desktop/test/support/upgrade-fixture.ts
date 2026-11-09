@@ -107,6 +107,8 @@ export function settingsFor(latest: boolean) {
 		// Older databases were filtered with version 0 (the start re-filters them once).
 		jobSearchVersion: latest ? 2 : 0,
 		noticeWatermark: at(5),
+		// Nothing waiting: a notice here would go out on the upgrade's first start.
+		heldNotices: [],
 		// Set already: the start notes removed keys only once, and never undoes a dismissal.
 		keysRemoved: { steps: ["claims"], dismissed: true },
 		whatsNewSeen: "0.0.9",

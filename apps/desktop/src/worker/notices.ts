@@ -25,6 +25,11 @@ export interface BatcherOptions {
 	 * and go out together, one notification per kind, once it returns null.
 	 */
 	holdUntil?: () => number | null;
+	/**
+	 * Called with every item still waiting whenever that changes (added, sent, dropped), so the
+	 * caller can keep them across a restart (`restore`).
+	 */
+	persist?: (items: NoticeItem[]) => void;
 	now?: () => number;
 	/** Quiet time after the last item before a batch goes out. */
 	debounceMs?: number;
@@ -118,6 +123,7 @@ export class NoticeBatcher {
 	private readonly lastSent = new Map<NoticeKind, number>();
 	private timer: unknown = null;
 	private scanning = false;
+	private disposed = false;
 	private readonly now: () => number;
 	private readonly debounceMs: number;
 	private readonly minGapMs: number;
@@ -140,16 +146,52 @@ export class NoticeBatcher {
 	}
 
 	add(item: NoticeItem): void {
-		if (!this.options.settings()[item.kind]) return;
+		if (this.disposed || !this.queue(item)) return;
+		this.changed();
+		this.arm(this.debounceMs);
+	}
+
+	/** Items that were waiting when the app last stopped: they wait again, as if just added. */
+	restore(items: NoticeItem[]): void {
+		if (this.disposed) return;
+		let added = 0;
+		for (const item of items) if (this.queue(item)) added++;
+		if (added === 0) return;
+		this.changed();
+		this.arm(this.debounceMs);
+	}
+
+	/** Forgets every waiting item (the user's data was erased). */
+	clear(): void {
+		if (this.timer !== null) this.clearTimer(this.timer);
+		this.timer = null;
+		this.queues.clear();
+		this.changed();
+	}
+
+	/** Stops for good: the timer is cleared and nothing arms it again. What waits stays persisted. */
+	dispose(): void {
+		this.disposed = true;
+		if (this.timer !== null) this.clearTimer(this.timer);
+		this.timer = null;
+	}
+
+	private queue(item: NoticeItem): boolean {
+		if (!this.options.settings()[item.kind]) return false;
 		const queue = this.queues.get(item.kind) ?? [];
 		if (
 			item.applicationId &&
 			queue.some((q) => q.applicationId === item.applicationId)
 		)
-			return;
+			return false;
 		queue.push(item);
 		this.queues.set(item.kind, queue);
-		this.arm(this.debounceMs);
+		return true;
+	}
+
+	private changed() {
+		if (this.disposed) return;
+		this.options.persist?.([...this.queues.values()].flat());
 	}
 
 	/** While true, matches wait; when the scan ends they go out together. */
@@ -165,6 +207,7 @@ export class NoticeBatcher {
 	}
 
 	private arm(ms: number) {
+		if (this.disposed) return;
 		if (this.timer !== null) this.clearTimer(this.timer);
 		this.timer = this.setTimer(() => {
 			this.timer = null;
@@ -174,6 +217,7 @@ export class NoticeBatcher {
 
 	/** Sends what is due; returns how many notifications went out. */
 	flush(): number {
+		if (this.disposed) return 0;
 		const holdUntil = this.options.holdUntil?.() ?? null;
 		if (holdUntil !== null) {
 			if (this.pending() > 0)
@@ -183,12 +227,14 @@ export class NoticeBatcher {
 			return 0;
 		}
 		let sent = 0;
+		let dropped = 0;
 		let wait = Number.POSITIVE_INFINITY;
 		for (const [kind, items] of this.queues) {
 			if (items.length === 0) continue;
 			// Turned off while it waited: dropped, never sent (nor marked as sent).
 			if (!this.options.settings()[kind]) {
 				this.queues.set(kind, []);
+				dropped++;
 				continue;
 			}
 			if (kind === "match" && this.scanning) continue;
@@ -203,6 +249,7 @@ export class NoticeBatcher {
 			this.queues.set(kind, []);
 			sent++;
 		}
+		if (sent + dropped > 0) this.changed();
 		if (Number.isFinite(wait)) this.arm(wait);
 		return sent;
 	}

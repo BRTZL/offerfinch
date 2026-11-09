@@ -374,7 +374,7 @@ function ScanStatus({ s }: { s: S }) {
 		s.scan === "searching"
 			? "Searching 9 job boards"
 			: s.scan === "idle"
-				? "Checks every hour"
+				? "Checks on a schedule"
 				: s.folded
 					? "2 to review"
 					: `${s.found} new`;

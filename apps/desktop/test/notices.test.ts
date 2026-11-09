@@ -18,9 +18,12 @@ function setup(
 	let now = 0;
 	const timers: { at: number; fn: () => void }[] = [];
 	const sent: ReturnType<typeof summarize>[] = [];
+	/** Every list `persist` was given, latest last. */
+	const persisted: NoticeItem[][] = [];
 	const batcher = new NoticeBatcher({
 		emit: (n) => sent.push(n),
 		settings: () => settings,
+		persist: (items) => persisted.push(items),
 		holdUntil: holdUntil ? () => holdUntil(now) : undefined,
 		now: () => now,
 		debounceMs: 1_000,
@@ -43,7 +46,7 @@ function setup(
 				t.fn();
 			}
 	};
-	return { batcher, sent, advance, settings };
+	return { batcher, sent, advance, settings, timers, persisted };
 }
 
 const match = (n: number): NoticeItem => ({
@@ -277,5 +280,65 @@ describe("notification actions", () => {
 			expect(
 				summarize(kind, [{ ...oneMatch("a1"), kind }]).actions,
 			).toBeUndefined();
+	});
+});
+
+describe("waiting notifications across a restart", () => {
+	it("are persisted as they change: added, then empty once sent", () => {
+		const { batcher, advance, persisted } = setup();
+		batcher.add(match(1));
+		expect(persisted.at(-1)).toEqual([match(1)]);
+		advance(1_000);
+		expect(persisted.at(-1)).toEqual([]);
+	});
+
+	it("wait again once restored, and are held by quiet hours like any other", () => {
+		let quietEnd: number | null = 100_000;
+		const { batcher, sent, advance } = setup(undefined, () => quietEnd);
+		batcher.restore([match(1), match(2), match(1)]);
+		expect(batcher.pending()).toBe(2);
+		advance(60_000);
+		expect(sent).toEqual([]);
+		quietEnd = null;
+		advance(60_000);
+		expect(sent.map((n) => n.title)).toEqual(["2 new strong matches"]);
+	});
+
+	it("are forgotten by clear, and the empty list persisted", () => {
+		const { batcher, sent, advance, timers, persisted } = setup();
+		batcher.add(match(1));
+		batcher.clear();
+		expect(timers).toHaveLength(0);
+		expect(persisted.at(-1)).toEqual([]);
+		advance(10_000);
+		expect(sent).toEqual([]);
+	});
+});
+
+describe("dispose", () => {
+	it("clears a held notice's timer, and nothing arms it again", () => {
+		const { batcher, sent, advance, timers, persisted } = setup(
+			undefined,
+			() => 10_000_000,
+		);
+		batcher.add(match(1));
+		advance(1_000);
+		// Held: it re-checks on a timer.
+		expect(timers).toHaveLength(1);
+		const writes = persisted.length;
+		batcher.dispose();
+		expect(timers).toHaveLength(0);
+		expect(batcher.flush()).toBe(0);
+		batcher.recheck();
+		batcher.setScanning(true);
+		batcher.setScanning(false);
+		batcher.add(match(2));
+		batcher.restore([match(3)]);
+		expect(timers).toHaveLength(0);
+		advance(10_000_000);
+		expect(sent).toEqual([]);
+		// What waited stays as last persisted: a restart sends it.
+		expect(persisted).toHaveLength(writes);
+		expect(persisted.at(-1)).toEqual([match(1)]);
 	});
 });

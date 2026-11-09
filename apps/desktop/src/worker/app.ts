@@ -70,7 +70,7 @@ import {
 import { movedSearchesNote, upgradeJobSearch } from "./job-search";
 import { linkedinScanDeps } from "./linkedin";
 import { fillKeySteps, noteRemovedKeys } from "./model-choice";
-import { NoticeBatcher } from "./notices";
+import { NoticeBatcher, type NoticeItem } from "./notices";
 import { buildPipeline, type RoleState } from "./pipeline";
 import { scanLogFor, scanRunRepo } from "./scan-history";
 import {
@@ -80,6 +80,7 @@ import {
 	scheduledScanAllowed,
 } from "./schedule";
 import {
+	type HeldNotice,
 	LOCAL_USER_EMAIL,
 	LOCAL_USER_ID,
 	type NotificationSettings,
@@ -142,6 +143,10 @@ export class WorkerApp {
 	/** The scan interval and quiet hours, as saved (`setScanSchedule` keeps it current). */
 	private scanSchedule!: ScanSchedule;
 	private readonly batcher: NoticeBatcher;
+	/** The last write of the waiting notifications (`heldNotices`); each waits for the one before. */
+	private heldWrite: Promise<void> = Promise.resolve();
+	/** Set by stop(): no notice is read or kept after it. */
+	private stopping = false;
 	private readonly followUpDelivery: FollowUpDelivery;
 	private scheduleTimer: NodeJS.Timeout | null = null;
 	private statusTimer: NodeJS.Timeout | null = null;
@@ -225,6 +230,8 @@ export class WorkerApp {
 			settings: () => this.notifications,
 			// Quiet hours hold every batched notification (follow-ups included) until they end.
 			holdUntil: () => this.quietUntil()?.getTime() ?? null,
+			// What waits is kept, so a restart (overnight, in quiet hours) loses none of it.
+			persist: (items) => this.keepHeld(items),
 		});
 		this.runner = new FlowRunner({
 			db,
@@ -313,6 +320,8 @@ export class WorkerApp {
 			});
 		app.notifications = await app.settings.get("notifications");
 		app.scanSchedule = await app.settings.get("scanSchedule");
+		// What waited when the app last stopped waits again (quiet hours still hold it).
+		app.batcher.restore(await app.settings.get("heldNotices"));
 		// Last start's login-shell PATH, so `claude` and `codex` are found without waiting for
 		// the shell (seconds); start() reads it again in the background.
 		const cachedPath = init.demo ? "" : await app.settings.get("shellPath");
@@ -367,6 +376,9 @@ export class WorkerApp {
 		await this.ensureLocalUser();
 		this.notifications = await this.settings.get("notifications");
 		this.scanSchedule = await this.settings.get("scanSchedule");
+		// Erased: what waited was about the erased jobs.
+		this.batcher.clear();
+		await this.heldWrite;
 		await this.settings.set("noticeWatermark", Date.now());
 		await this.rebuild();
 	}
@@ -416,6 +428,18 @@ export class WorkerApp {
 	async setNotifications(value: NotificationSettings) {
 		await this.settings.set("notifications", value);
 		this.notifications = value;
+	}
+
+	/** Writes the waiting notifications, in order; follow-ups are found again, so not kept. */
+	private keepHeld(items: NoticeItem[]) {
+		const kept: HeldNotice[] = items.flatMap(({ stageId: _, ...item }) =>
+			item.kind === "followup" ? [] : [{ ...item, kind: item.kind }],
+		);
+		this.heldWrite = this.heldWrite
+			.then(() => this.settings.set("heldNotices", kept))
+			.catch((error) =>
+				this.hooks.log("warn", "waiting notifications not kept", String(error)),
+			);
 	}
 
 	getScanSchedule(): ScanSchedule {
@@ -724,6 +748,10 @@ export class WorkerApp {
 		if (this.statusTimer) clearInterval(this.statusTimer);
 		if (this.followUpTimer) clearInterval(this.followUpTimer);
 		await this.runner.stop(3_000);
+		// No notice timer after the database closes; what still waits is already written.
+		this.stopping = true;
+		this.batcher.dispose();
+		await this.heldWrite;
 		this.db.$close();
 	}
 
@@ -875,6 +903,10 @@ export class WorkerApp {
 				detail: `${b.name}'s board asked for a person (or robots.txt refused). Nothing was bypassed; the scan history says more.`,
 			});
 		await this.announceAdded();
+		// Past the watermark only once what was read is kept (`heldNotices`): a restart before
+		// it goes out finds it there, not lost and not sent twice.
+		await this.heldWrite;
+		if (this.stopping) return;
 		await this.settings.set("noticeWatermark", now.getTime());
 	}
 

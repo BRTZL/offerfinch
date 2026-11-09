@@ -24,7 +24,7 @@ export interface WorkerInit {
 	test?: {
 		fakeModels?: boolean;
 		boardBases?: Record<string, string>;
-		/** Skips the hourly timer (e2e drives scans by hand). */
+		/** Skips the scan timer (e2e drives scans by hand). */
 		noSchedule?: boolean;
 		/** Slows every fake model call (kill tests need a step that is still running). */
 		fakeDelayMs?: number;

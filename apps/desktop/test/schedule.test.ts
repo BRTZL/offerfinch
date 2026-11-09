@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
 	nextScan,
 	quietUntil,
+	SCHEDULE_TICK_MS,
 	scheduledScanAllowed,
 } from "../src/worker/schedule";
 import {
@@ -128,23 +129,98 @@ describe("nextScan", () => {
 	});
 });
 
-describe("scanScheduleSchema", () => {
-	it("fills every field left out, so an older or partial setting keeps the rest", () => {
-		expect(scanScheduleSchema.parse({})).toEqual(DEFAULT_SCAN_SCHEDULE);
-		expect(
-			scanScheduleSchema.parse({ every: 6, quietHours: { enabled: true } }),
-		).toEqual({
-			every: 6,
-			quietHours: { enabled: true, start: "22:00", end: "07:00" },
+describe("nextScan and scheduledScanAllowed agree", () => {
+	it("waits for the quiet hours after the interval, not the ones it is in now", () => {
+		// Every 24 hours, Scan now Monday 23:00, quiet 22:00–07:00: at Tuesday 01:00 the interval
+		// still has until Tuesday 23:00, inside the next quiet hours, so Wednesday 07:00.
+		const next = nextScan({
+			now: local(1, 0, 10),
+			paused: false,
+			hasProfile: true,
+			scheduleOff: false,
+			schedule: schedule(24, night),
+			lastStartedAt: local(23, 0, 9),
+		});
+		expect(next).toEqual({
+			at: local(7, 0, 11).toISOString(),
+			note: "Every 24 hours while your Mac is awake, outside 22:00–07:00",
 		});
 	});
-	it("refuses an interval or a time it does not offer", () => {
-		expect(scanScheduleSchema.safeParse({ every: 2 }).success).toBe(false);
+
+	/** Checks one case: the time given is allowed, and not later than it has to be. */
+	function agrees(now: Date, plan: ScanSchedule, lastStartedAt: Date | null) {
+		const input = { now, schedule: plan, lastStartedAt };
+		const next = nextScan({
+			...input,
+			paused: false,
+			hasProfile: true,
+			scheduleOff: false,
+		});
+		const at = new Date(next.at as string);
+		const label = `${plan.every}h, ${plan.quietHours.start}–${plan.quietHours.end}, now ${now.toString()}, last ${lastStartedAt?.toString()}`;
+		expect(at.getTime(), label).toBeGreaterThanOrEqual(now.getTime());
+		expect(scheduledScanAllowed({ ...input, now: at }), label).toBe(true);
+		// A minute earlier (past the next 5-minute look), the scheduler would not start one either.
+		const before = new Date(at.getTime() - 60_000);
+		if (before.getTime() > now.getTime() + SCHEDULE_TICK_MS)
+			expect(scheduledScanAllowed({ ...input, now: before }), label).toBe(
+				false,
+			);
+	}
+
+	it("gives a time the scheduler allows, and none it allows earlier", () => {
+		const windows: ScanSchedule["quietHours"][] = [
+			DEFAULT_SCAN_SCHEDULE.quietHours,
+			night,
+			{ enabled: true, start: "09:30", end: "17:15" },
+			{ enabled: true, start: "00:00", end: "06:00" },
+			{ enabled: true, start: "23:59", end: "00:01" },
+			{ enabled: true, start: "12:00", end: "12:00" },
+		];
+		const everies: ScanSchedule["every"][] = [1, 3, 6, 12, 24];
+		const agos = [null, 0.25, 0.9, 1.5, 5, 11.9, 23, 30];
+		let checked = 0;
+		// Every 7 minutes over two days, so the minutes just before each start are hit.
+		for (let t = 0; t < 48 * 60; t += 7) {
+			const now = new Date(local(0, 0).getTime() + t * 60_000);
+			for (const quietHours of windows)
+				for (const every of everies)
+					for (const ago of agos) {
+						agrees(
+							now,
+							{ every, quietHours },
+							ago === null ? null : new Date(now.getTime() - ago * HOUR),
+						);
+						checked++;
+					}
+		}
+		expect(checked).toBeGreaterThan(10_000);
+	});
+});
+
+describe("scanScheduleSchema (what is written)", () => {
+	it("takes a whole, valid schedule", () => {
+		expect(scanScheduleSchema.parse(DEFAULT_SCAN_SCHEDULE)).toEqual(
+			DEFAULT_SCAN_SCHEDULE,
+		);
+	});
+	it("refuses an interval or a time it does not offer, or a field left out", () => {
+		const ok = { every: 6, quietHours: night };
+		expect(scanScheduleSchema.safeParse({ ...ok, every: 2 }).success).toBe(
+			false,
+		);
 		expect(
-			scanScheduleSchema.safeParse({ quietHours: { start: "24:00" } }).success,
+			scanScheduleSchema.safeParse({
+				...ok,
+				quietHours: { ...night, start: "24:00" },
+			}).success,
 		).toBe(false);
 		expect(
-			scanScheduleSchema.safeParse({ quietHours: { end: "7:00" } }).success,
+			scanScheduleSchema.safeParse({
+				...ok,
+				quietHours: { ...night, end: "7:00" },
+			}).success,
 		).toBe(false);
+		expect(scanScheduleSchema.safeParse({ every: 6 }).success).toBe(false);
 	});
 });

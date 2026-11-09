@@ -52,9 +52,10 @@ function everyLabel(every: number): string {
 }
 
 /**
- * When the scheduler starts the next scan: `every` hours after the last one started, checked
- * every 5 minutes (and on waking), moved to the end of quiet hours when it falls in them, never
- * while paused or before a profile is saved.
+ * When the scheduler starts the next scan: `every` hours after the last one started (or the next
+ * 5-minute look, once that has passed), then moved to the end of the quiet hours that time falls
+ * in. Never while paused or before a profile is saved. The time given always passes
+ * `scheduledScanAllowed`.
  */
 export function nextScan(input: {
 	now: Date;
@@ -70,27 +71,33 @@ export function nextScan(input: {
 	if (!input.hasProfile)
 		return { at: null, note: "Scans start once your profile is saved" };
 	const { every, quietHours } = input.schedule;
+	const now = input.now.getTime();
+	// When the interval allows the next scan (the next 5-minute look, if that is already past),
+	// then moved past the quiet hours it falls in: an interval that ends in them waits for their
+	// end, even when quiet hours are not on yet.
+	const due = input.lastStartedAt
+		? input.lastStartedAt.getTime() + every * HOUR_MS
+		: now;
+	const candidate = due <= now ? now + SCHEDULE_TICK_MS : due;
+	const quietThen = quietUntil(quietHours, new Date(candidate));
+	const at = quietThen ? quietThen.getTime() : candidate;
 	const quietNow = quietUntil(quietHours, input.now);
-	if (quietNow)
+	if (quietNow && at === quietNow.getTime())
 		return {
-			at: quietNow.toISOString(),
+			at: new Date(at).toISOString(),
 			note: `Quiet hours until ${quietHours.end}`,
 		};
-	const now = input.now.getTime();
-	const due = input.lastStartedAt
-		? Math.max(now, input.lastStartedAt.getTime() + every * HOUR_MS)
-		: now;
-	const quietThen = quietUntil(quietHours, new Date(due));
-	const regular = `${everyLabel(every)} while your Mac is awake${
-		quietHours.enabled && quietHours.start !== quietHours.end
-			? `, outside ${quietHours.start}–${quietHours.end}`
-			: ""
-	}`;
-	if (quietThen) return { at: quietThen.toISOString(), note: regular };
-	if (due <= now)
+	if (!quietThen && due <= now)
 		return {
-			at: new Date(now + SCHEDULE_TICK_MS).toISOString(),
+			at: new Date(at).toISOString(),
 			note: "Due now: within 5 minutes while your Mac is awake",
 		};
-	return { at: new Date(due).toISOString(), note: regular };
+	return {
+		at: new Date(at).toISOString(),
+		note: `${everyLabel(every)} while your Mac is awake${
+			quietHours.enabled && quietHours.start !== quietHours.end
+				? `, outside ${quietHours.start}–${quietHours.end}`
+				: ""
+		}`,
+	};
 }
