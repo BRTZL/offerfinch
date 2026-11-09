@@ -10,13 +10,14 @@ import { DB_FILE } from "../src/main/database-file";
 import type { NativeNotice } from "../src/shared/worker-protocol";
 import { WorkerApp } from "../src/worker/app";
 import { seedDemo } from "../src/worker/demo";
-import { NoticeBatcher } from "../src/worker/notices";
+import { NoticeBatcher, type NoticeItem } from "../src/worker/notices";
 import {
 	DEFAULT_NOTIFICATIONS,
 	type ScanSchedule,
 } from "../src/worker/settings";
 
 const HOUR = 3_600_000;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const open: WorkerApp[] = [];
 
 afterEach(async () => {
@@ -89,6 +90,84 @@ async function finishScans(app: WorkerApp, hoursAgo: number) {
 			createdAt: new Date(Date.now() - hoursAgo * HOUR),
 		})
 		.where(eq(flowRuns.kind, SCAN_KIND));
+}
+
+/**
+ * Notifications on, and whatever the sample data alerted at open read and cleared, so only what
+ * a test adds is left.
+ */
+async function prime(app: WorkerApp) {
+	await app.setNotifications(DEFAULT_NOTIFICATIONS);
+	await app.collectNotices();
+	await app.settings.set("heldNotices", []);
+	await sleep(5);
+}
+
+let subjects = 0;
+/** A board, a job on it and an application for it, as the test needs them. */
+async function subject(
+	app: WorkerApp,
+	name: string,
+	values: {
+		state?: (typeof applications.$inferInsert)["state"];
+		alertedAt?: Date | null;
+		health?: (typeof companies.$inferInsert)["health"];
+	} = {},
+) {
+	const n = ++subjects;
+	const [company] = await app.db
+		.insert(companies)
+		.values({
+			userId: "local",
+			name: `${name} Co`,
+			nameKey: `${name.toLowerCase()}-${n}`,
+			source: "greenhouse",
+			sourceKey: `${name.toLowerCase()}-${n}`,
+			health: values.health ?? "ok",
+		})
+		.returning({ id: companies.id });
+	const [job] = await app.db
+		.insert(jobs)
+		.values({
+			userId: "local",
+			companyId: company?.id as string,
+			source: "greenhouse",
+			externalId: String(n),
+			url: `https://example.com/jobs/${n}`,
+			urlNormalized: `https://example.com/jobs/${n}`,
+			title: name,
+		})
+		.returning({ id: jobs.id });
+	const [row] = await app.db
+		.insert(applications)
+		.values({
+			userId: "local",
+			jobId: job?.id as string,
+			state: values.state ?? "scored",
+			score: 90,
+			alertedAt: values.alertedAt === undefined ? new Date() : values.alertedAt,
+		})
+		.returning({ id: applications.id });
+	if (!company || !row) throw new Error("not inserted");
+	return { companyId: company.id, applicationId: row.id };
+}
+
+/** Every write of `heldNotices` fails (a full disk); the other settings are written. */
+function failHeldWrites(app: WorkerApp) {
+	const real = app.settings.set.bind(app.settings);
+	return vi
+		.spyOn(app.settings, "set")
+		.mockImplementation(((key: string, value: unknown) =>
+			key === "heldNotices"
+				? Promise.reject(new Error("disk full"))
+				: real(key as never, value as never)) as typeof real);
+}
+
+/** Stops a worker and opens a new one on its data, as a quit and a start do. */
+async function restart(app: WorkerApp, notified: NativeNotice[] = []) {
+	await app.stop();
+	open.splice(open.indexOf(app), 1);
+	return worker(app.init.userData, notified);
 }
 
 describe("scan schedule", () => {
@@ -304,4 +383,179 @@ describe("scan schedule", () => {
 			}),
 		).rejects.toThrow();
 	});
+});
+
+describe("a held notice whose write failed", () => {
+	it("leaves the watermark, so the match is read again and sent after a restart", async () => {
+		const notified: NativeNotice[] = [];
+		const app = await worker(undefined, notified);
+		await prime(app);
+		const before = await app.settings.get("noticeWatermark");
+		failHeldWrites(app);
+		const { applicationId } = await subject(app, "Engineer");
+		await app.collectNotices();
+		// Not kept, so not marked seen.
+		expect(await app.settings.get("noticeWatermark")).toBe(before);
+		expect(await app.settings.get("heldNotices")).toEqual([]);
+		// The app quits before it went out (the 15 s wait); stop()'s retry fails too.
+		const after: NativeNotice[] = [];
+		const again = await restart(app, after);
+		expect(notified).toEqual([]);
+		expect(await again.settings.get("heldNotices")).toEqual([]);
+		expect(await again.settings.get("noticeWatermark")).toBe(before);
+		// Read again from the database, and sent.
+		await again.setScanSchedule({ every: 1, quietHours: off });
+		await sleep(50);
+		expect(after).toHaveLength(1);
+		expect(after[0]).toMatchObject({
+			kind: "match",
+			path: `/applications/${applicationId}`,
+		});
+	});
+
+	it("is sent once while the writes keep failing, not again at each look", async () => {
+		const notified: NativeNotice[] = [];
+		const app = await worker(undefined, notified);
+		await prime(app);
+		const before = await app.settings.get("noticeWatermark");
+		const failing = failHeldWrites(app);
+		const adds = vi.spyOn(NoticeBatcher.prototype, "add");
+		const { applicationId } = await subject(app, "Engineer");
+		const added = () =>
+			adds.mock.calls.filter(
+				([item]) => (item as NoticeItem).applicationId === applicationId,
+			).length;
+		await app.collectNotices();
+		await app.setScanSchedule({ every: 1, quietHours: off });
+		await sleep(50);
+		expect(notified).toHaveLength(1);
+		expect(await app.settings.get("noticeWatermark")).toBe(before);
+		// The watermark is stuck, so the match is read again, but not queued again.
+		adds.mockClear();
+		await app.collectNotices();
+		await app.collectNotices();
+		expect(added()).toBe(0);
+		// Writes work again: the watermark moves past it, and it is not read again.
+		failing.mockRestore();
+		await app.collectNotices();
+		expect(await app.settings.get("noticeWatermark")).toBeGreaterThan(before);
+		await app.collectNotices();
+		expect(added()).toBe(0);
+		adds.mockRestore();
+		await sleep(50);
+		expect(notified).toHaveLength(1);
+	});
+});
+
+describe("a held notice about something no longer so", () => {
+	type Case = {
+		kind: NoticeItem["kind"];
+		/** Makes the fresh subject and the stale one; returns the held items about them. */
+		make: (app: WorkerApp) => Promise<NoticeItem[]>;
+	};
+	const held = (
+		kind: NoticeItem["kind"],
+		s: { applicationId: string; companyId: string },
+		name: string,
+	): NoticeItem =>
+		kind === "stopped"
+			? {
+					kind,
+					companyId: s.companyId,
+					title: `${name} Co: stopped`,
+					detail: `${name} Co's board asked for a person.`,
+				}
+			: {
+					kind,
+					applicationId: s.applicationId,
+					title: name,
+					company: `${name} Co`,
+				};
+	const cases: Case[] = [
+		{
+			kind: "match",
+			make: async (app) => {
+				const fresh = await subject(app, "Fresh");
+				const stale = await subject(app, "Stale");
+				// Deleted since it was held.
+				await app.db
+					.delete(applications)
+					.where(eq(applications.id, stale.applicationId));
+				return [held("match", stale, "Stale"), held("match", fresh, "Fresh")];
+			},
+		},
+		{
+			kind: "question",
+			make: async (app) => {
+				const fresh = await subject(app, "Fresh", {
+					state: "needs_answers",
+					alertedAt: null,
+				});
+				// Answered since: the application moved on to review.
+				const stale = await subject(app, "Stale", {
+					state: "ready_for_review",
+					alertedAt: null,
+				});
+				return [
+					held("question", stale, "Stale"),
+					held("question", fresh, "Fresh"),
+				];
+			},
+		},
+		{
+			kind: "review",
+			make: async (app) => {
+				const fresh = await subject(app, "Fresh", {
+					state: "ready_for_review",
+					alertedAt: null,
+				});
+				// Reviewed since: approved.
+				const stale = await subject(app, "Stale", {
+					state: "approved",
+					alertedAt: null,
+				});
+				return [held("review", stale, "Stale"), held("review", fresh, "Fresh")];
+			},
+		},
+		{
+			kind: "stopped",
+			make: async (app) => {
+				const fresh = await subject(app, "Fresh", {
+					health: "needs_human",
+					alertedAt: null,
+				});
+				// Its board works again.
+				const stale = await subject(app, "Stale", {
+					health: "ok",
+					alertedAt: null,
+				});
+				return [
+					held("stopped", stale, "Stale"),
+					held("stopped", fresh, "Fresh"),
+				];
+			},
+		},
+	];
+
+	it.each(cases)(
+		"is dropped after a restart: $kind",
+		async ({ kind, make }) => {
+			const app = await worker();
+			await prime(app);
+			const items = await make(app);
+			await app.settings.set(
+				"heldNotices",
+				items.map((i) => ({ ...i, kind: i.kind as never })),
+			);
+			const after: NativeNotice[] = [];
+			const again = await restart(app, after);
+			await again.setScanSchedule({ every: 1, quietHours: off });
+			await sleep(50);
+			expect(after.map((n) => n.kind)).toEqual([kind]);
+			expect(after[0]?.body).toContain("Fresh");
+			expect(after[0]?.body).not.toContain("Stale");
+			// The stale one is not kept either.
+			expect(await again.settings.get("heldNotices")).toEqual([]);
+		},
+	);
 });

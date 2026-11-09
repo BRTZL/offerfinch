@@ -14,6 +14,27 @@ export interface NoticeItem {
 	detail?: string;
 	/** For "followup": the stage entry it is about, marked reminded once it went out. */
 	stageId?: string;
+	/** For a stopped board: the company, so a notice about it is checked and kept once. */
+	companyId?: string;
+	/** When it first waited (ms), kept across a restart: past `HELD_FOR_MS` it is dropped. */
+	heldAt?: number;
+}
+
+/** At most this many waiting items per kind; the oldest go first. A summary counts up to it. */
+export const MAX_HELD_PER_KIND = 50;
+/** A waiting item older than this (a week) is dropped, not sent. */
+export const HELD_FOR_MS = 7 * 24 * 3_600_000;
+
+/**
+ * What an item is about: its application, its company, or (an errored scan, a stop with no
+ * company) its text. Two items of a kind with one subject are one notice.
+ */
+function noticeKey(item: NoticeItem): string {
+	const subject =
+		item.applicationId ??
+		item.companyId ??
+		`${item.title}\n${item.detail ?? ""}`;
+	return `${item.kind}:${subject}`;
 }
 
 export interface BatcherOptions {
@@ -30,6 +51,12 @@ export interface BatcherOptions {
 	 * caller can keep them across a restart (`restore`).
 	 */
 	persist?: (items: NoticeItem[]) => void;
+	/**
+	 * Before anything goes out: the items still worth sending (the same objects), checked against
+	 * the database (an application deleted, a question answered while it waited). The others are
+	 * dropped. If it fails, everything goes out: a stale notice beats a lost one.
+	 */
+	review?: (items: NoticeItem[]) => Promise<NoticeItem[]>;
 	now?: () => number;
 	/** Quiet time after the last item before a batch goes out. */
 	debounceMs?: number;
@@ -116,7 +143,8 @@ export function summarize(kind: NoticeKind, items: NoticeItem[]): NativeNotice {
  * Groups notifications so a busy moment (the first scan finding forty matches) is one
  * notification per kind, not forty. Items wait for a quiet `debounceMs`, and while a scan runs
  * matches are held until it ends. Each kind is sent at most once per `minGapMs`. Kinds the user
- * turned off are dropped. In quiet hours (`holdUntil`) every kind waits for their end.
+ * turned off are dropped. In quiet hours (`holdUntil`) every kind waits for their end. Each kind
+ * keeps one item per subject (`noticeKey`), at most `MAX_HELD_PER_KIND`, for at most `HELD_FOR_MS`.
  */
 export class NoticeBatcher {
 	private readonly queues = new Map<NoticeKind, NoticeItem[]>();
@@ -124,6 +152,9 @@ export class NoticeBatcher {
 	private timer: unknown = null;
 	private scanning = false;
 	private disposed = false;
+	private reviewing = false;
+	/** Subjects sent since `forgetSent` (`wasSent`). */
+	private readonly sentKeys = new Set<string>();
 	private readonly now: () => number;
 	private readonly debounceMs: number;
 	private readonly minGapMs: number;
@@ -154,11 +185,11 @@ export class NoticeBatcher {
 	/** Items that were waiting when the app last stopped: they wait again, as if just added. */
 	restore(items: NoticeItem[]): void {
 		if (this.disposed) return;
-		let added = 0;
-		for (const item of items) if (this.queue(item)) added++;
-		if (added === 0) return;
-		this.changed();
-		this.arm(this.debounceMs);
+		for (const item of items) this.queue(item);
+		this.expire();
+		// What is kept now: repeats, items past `HELD_FOR_MS` and kinds turned off are gone.
+		if (items.length > 0) this.changed();
+		if (this.pending() > 0) this.arm(this.debounceMs);
 	}
 
 	/** Forgets every waiting item (the user's data was erased). */
@@ -176,17 +207,41 @@ export class NoticeBatcher {
 		this.timer = null;
 	}
 
+	/**
+	 * Whether a notice about this subject went out since `forgetSent`. The caller reading the
+	 * database skips those, so a watermark that could not move does not send them again.
+	 */
+	wasSent(item: NoticeItem): boolean {
+		return this.sentKeys.has(noticeKey(item));
+	}
+
+	/** The watermark moved past what was sent: those subjects are not read again. */
+	forgetSent(): void {
+		this.sentKeys.clear();
+	}
+
 	private queue(item: NoticeItem): boolean {
 		if (!this.options.settings()[item.kind]) return false;
 		const queue = this.queues.get(item.kind) ?? [];
-		if (
-			item.applicationId &&
-			queue.some((q) => q.applicationId === item.applicationId)
-		)
-			return false;
-		queue.push(item);
+		const key = noticeKey(item);
+		if (queue.some((q) => noticeKey(q) === key)) return false;
+		queue.push({ ...item, heldAt: item.heldAt ?? this.now() });
+		if (queue.length > MAX_HELD_PER_KIND)
+			queue.splice(0, queue.length - MAX_HELD_PER_KIND);
 		this.queues.set(item.kind, queue);
 		return true;
+	}
+
+	/** Drops what waited longer than `HELD_FOR_MS`; returns how many. */
+	private expire(): number {
+		const oldest = this.now() - HELD_FOR_MS;
+		let dropped = 0;
+		for (const [kind, items] of this.queues) {
+			const kept = items.filter((i) => (i.heldAt ?? oldest) >= oldest);
+			dropped += items.length - kept.length;
+			this.queues.set(kind, kept);
+		}
+		return dropped;
 	}
 
 	private changed() {
@@ -215,26 +270,61 @@ export class NoticeBatcher {
 		}, ms);
 	}
 
-	/** Sends what is due; returns how many notifications went out. */
+	/**
+	 * Sends what is due; returns how many notifications went out. With `review`, the first look
+	 * only starts the check and returns 0; what passes goes out when it answers.
+	 */
 	flush(): number {
+		return this.send(false);
+	}
+
+	private send(reviewed: boolean): number {
 		if (this.disposed) return 0;
+		let dropped = this.expire();
 		const holdUntil = this.options.holdUntil?.() ?? null;
 		if (holdUntil !== null) {
+			if (dropped > 0) this.changed();
 			if (this.pending() > 0)
 				this.arm(
 					Math.max(1_000, Math.min(holdUntil - this.now(), HOLD_RECHECK_MS)),
 				);
 			return 0;
 		}
+		const { due, wait, off } = this.dueKinds();
+		dropped += off;
+		if (due.length > 0 && this.options.review && !reviewed) {
+			if (dropped > 0) this.changed();
+			this.startReview(this.options.review);
+			return 0;
+		}
 		let sent = 0;
-		let dropped = 0;
+		for (const kind of due) {
+			const items = this.queues.get(kind) ?? [];
+			this.options.emit(summarize(kind, items), items);
+			for (const item of items) this.sentKeys.add(noticeKey(item));
+			this.lastSent.set(kind, this.now());
+			this.queues.set(kind, []);
+			sent++;
+		}
+		if (sent + dropped > 0) this.changed();
+		if (Number.isFinite(wait)) this.arm(wait);
+		return sent;
+	}
+
+	/**
+	 * The kinds that can go out now, how long until the next one may (the gap between
+	 * notifications), and how many kinds were dropped because the user turned them off.
+	 */
+	private dueKinds(): { due: NoticeKind[]; wait: number; off: number } {
 		let wait = Number.POSITIVE_INFINITY;
+		let off = 0;
+		const due: NoticeKind[] = [];
 		for (const [kind, items] of this.queues) {
 			if (items.length === 0) continue;
 			// Turned off while it waited: dropped, never sent (nor marked as sent).
 			if (!this.options.settings()[kind]) {
 				this.queues.set(kind, []);
-				dropped++;
+				off++;
 				continue;
 			}
 			if (kind === "match" && this.scanning) continue;
@@ -244,14 +334,36 @@ export class NoticeBatcher {
 				wait = Math.min(wait, this.minGapMs - since);
 				continue;
 			}
-			this.options.emit(summarize(kind, items), items);
-			this.lastSent.set(kind, this.now());
-			this.queues.set(kind, []);
-			sent++;
+			due.push(kind);
 		}
-		if (sent + dropped > 0) this.changed();
-		if (Number.isFinite(wait)) this.arm(wait);
-		return sent;
+		return { due, wait, off };
+	}
+
+	/** Checks every waiting item, drops the stale ones (persisted), then sends what is due. */
+	private startReview(review: NonNullable<BatcherOptions["review"]>) {
+		if (this.reviewing) return;
+		this.reviewing = true;
+		const items = [...this.queues.values()].flat();
+		review(items)
+			.then(
+				(kept) => new Set(kept),
+				// Unchecked: all of it goes out. A stale notice beats a lost one.
+				() => new Set(items),
+			)
+			.then((kept) => {
+				this.reviewing = false;
+				if (this.disposed) return;
+				const checked = new Set(items);
+				let stale = 0;
+				for (const [kind, queue] of this.queues) {
+					// Added while it ran: just read, so not checked again.
+					const left = queue.filter((i) => !checked.has(i) || kept.has(i));
+					stale += queue.length - left.length;
+					this.queues.set(kind, left);
+				}
+				if (stale > 0) this.changed();
+				this.send(true);
+			});
 	}
 
 	pending(): number {

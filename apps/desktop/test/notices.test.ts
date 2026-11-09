@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+	HELD_FOR_MS,
+	MAX_HELD_PER_KIND,
 	NoticeBatcher,
 	type NoticeItem,
 	summarize,
@@ -14,6 +16,7 @@ import {
 function setup(
 	settings = { ...DEFAULT_NOTIFICATIONS },
 	holdUntil?: (now: number) => number | null,
+	review?: (items: NoticeItem[]) => Promise<NoticeItem[]>,
 ) {
 	let now = 0;
 	const timers: { at: number; fn: () => void }[] = [];
@@ -25,6 +28,7 @@ function setup(
 		settings: () => settings,
 		persist: (items) => persisted.push(items),
 		holdUntil: holdUntil ? () => holdUntil(now) : undefined,
+		review,
 		now: () => now,
 		debounceMs: 1_000,
 		minGapMs: 60_000,
@@ -287,7 +291,7 @@ describe("waiting notifications across a restart", () => {
 	it("are persisted as they change: added, then empty once sent", () => {
 		const { batcher, advance, persisted } = setup();
 		batcher.add(match(1));
-		expect(persisted.at(-1)).toEqual([match(1)]);
+		expect(persisted.at(-1)).toEqual([{ ...match(1), heldAt: 0 }]);
 		advance(1_000);
 		expect(persisted.at(-1)).toEqual([]);
 	});
@@ -339,6 +343,145 @@ describe("dispose", () => {
 		expect(sent).toEqual([]);
 		// What waited stays as last persisted: a restart sends it.
 		expect(persisted).toHaveLength(writes);
-		expect(persisted.at(-1)).toEqual([match(1)]);
+		expect(persisted.at(-1)).toEqual([{ ...match(1), heldAt: 0 }]);
+	});
+});
+
+const board = (companyId: string): NoticeItem => ({
+	kind: "stopped",
+	companyId,
+	title: `${companyId}: stopped`,
+	detail: `${companyId}'s board asked for a person.`,
+});
+/** Lets a review's promise answer, and the send after it run. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe("one waiting notice per subject, at most fifty a kind, for a week", () => {
+	it("keeps a stopped board once, by company, and a stop with no company once, by its text", () => {
+		const { batcher } = setup();
+		batcher.add(board("c1"));
+		batcher.add(board("c1"));
+		batcher.add({ ...board("c1"), title: "Acme renamed: stopped" });
+		batcher.add(board("c2"));
+		const scan = {
+			kind: "stopped",
+			title: "The scan stopped",
+			detail: "x",
+		} as const;
+		batcher.add(scan);
+		batcher.add({ ...scan });
+		batcher.add({ ...scan, detail: "y" });
+		expect(batcher.pending()).toBe(4);
+	});
+
+	it("keeps the newest fifty of a kind", () => {
+		const { batcher, sent, advance, persisted } = setup();
+		for (let n = 1; n <= MAX_HELD_PER_KIND + 5; n++) batcher.add(match(n));
+		batcher.add(board("c1"));
+		expect(batcher.pending()).toBe(MAX_HELD_PER_KIND + 1);
+		const kept = persisted.at(-1)?.filter((i) => i.kind === "match") ?? [];
+		expect(kept).toHaveLength(MAX_HELD_PER_KIND);
+		expect(kept[0]?.applicationId).toBe("app-6");
+		advance(1_000);
+		expect(sent.map((n) => n.title)).toEqual([
+			`${MAX_HELD_PER_KIND} new strong matches`,
+			"Scan stopped",
+		]);
+	});
+
+	it("drops what waited longer than a week, restored or held", () => {
+		const end = HELD_FOR_MS + 3_600_000;
+		const { batcher, sent, advance, persisted } = setup(undefined, (now) =>
+			now < end ? end : null,
+		);
+		advance(HELD_FOR_MS);
+		// Written before heldAt existed: it waits from now.
+		batcher.restore([
+			{ ...match(1), heldAt: -1 },
+			match(2),
+			{ ...match(3), heldAt: 10 },
+		]);
+		expect(batcher.pending()).toBe(2);
+		expect(persisted.at(-1)?.map((i) => i.applicationId)).toEqual([
+			"app-2",
+			"app-3",
+		]);
+		// Held by quiet hours: a week old by now, so dropped at the next look.
+		advance(1_000);
+		expect(persisted.at(-1)?.map((i) => i.applicationId)).toEqual(["app-2"]);
+		expect(sent).toEqual([]);
+		advance(3_600_000);
+		expect(sent.map((n) => n.body)).toEqual(["Engineer 2 at Acme · fit 80"]);
+	});
+});
+
+describe("a waiting notice checked before it goes out", () => {
+	it("is dropped, and the removal persisted, when quiet hours end and it is no longer true", async () => {
+		let quietEnd: number | null = 100_000;
+		const reviewed: NoticeItem[][] = [];
+		const { batcher, sent, advance, persisted } = setup(
+			undefined,
+			() => quietEnd,
+			async (items) => {
+				reviewed.push(items);
+				return items.filter((i) => i.applicationId !== "app-1");
+			},
+		);
+		batcher.add(match(1));
+		batcher.add(match(2));
+		advance(60_000);
+		// Held: nothing is checked yet.
+		expect(reviewed).toEqual([]);
+		quietEnd = null;
+		advance(60_000);
+		expect(sent).toEqual([]);
+		await settle();
+		expect(reviewed).toHaveLength(1);
+		expect(sent.map((n) => n.body)).toEqual(["Engineer 2 at Acme · fit 80"]);
+		expect(persisted).toContainEqual([{ ...match(2), heldAt: 0 }]);
+		expect(persisted.at(-1)).toEqual([]);
+	});
+
+	it("goes out unchecked when the check fails: stale beats lost", async () => {
+		const { batcher, sent, advance } = setup(undefined, undefined, () =>
+			Promise.reject(new Error("database closed")),
+		);
+		batcher.add(match(1));
+		advance(1_000);
+		await settle();
+		expect(sent.map((n) => n.title)).toEqual(["New strong match"]);
+	});
+
+	it("is not sent when the batcher was disposed while the check ran", async () => {
+		let answer: (items: NoticeItem[]) => void = () => {};
+		const { batcher, sent, advance, persisted } = setup(
+			undefined,
+			undefined,
+			(items) =>
+				new Promise((resolve) => {
+					answer = () => resolve(items);
+				}),
+		);
+		batcher.add(match(1));
+		advance(1_000);
+		const writes = persisted.length;
+		batcher.dispose();
+		answer([]);
+		await settle();
+		expect(sent).toEqual([]);
+		expect(persisted).toHaveLength(writes);
+	});
+});
+
+describe("subjects already sent", () => {
+	it("are known until forgotten (the watermark moved)", () => {
+		const { batcher, advance } = setup();
+		batcher.add(match(1));
+		expect(batcher.wasSent(match(1))).toBe(false);
+		advance(1_000);
+		expect(batcher.wasSent(match(1))).toBe(true);
+		expect(batcher.wasSent(match(2))).toBe(false);
+		batcher.forgetSent();
+		expect(batcher.wasSent(match(1))).toBe(false);
 	});
 });

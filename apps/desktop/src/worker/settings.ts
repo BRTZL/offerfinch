@@ -181,6 +181,9 @@ const heldNoticeSchema = z.object({
 	company: z.string().optional(),
 	score: z.number().optional(),
 	detail: z.string().optional(),
+	companyId: z.string().optional(),
+	/** When it first waited (ms); missing in a list written before it existed: now. */
+	heldAt: z.number().optional(),
 });
 export type HeldNotice = z.infer<typeof heldNoticeSchema>;
 /** Read: an item that no longer fits is dropped, the others kept. */

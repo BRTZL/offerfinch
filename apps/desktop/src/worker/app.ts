@@ -115,6 +115,12 @@ export interface WorkerHooks {
 
 const QUEUE_START_DELAY_MS = 1_500;
 
+/** A board's health that stops its scans until the user looks: a stopped-board notice. */
+const STOPPED_HEALTH: ["needs_human", "robots_disallowed"] = [
+	"needs_human",
+	"robots_disallowed",
+];
+
 const SITE_LABEL: Record<SiteTabId, string> = {
 	linkedin: "LinkedIn",
 	indeed: "Indeed",
@@ -145,6 +151,13 @@ export class WorkerApp {
 	private readonly batcher: NoticeBatcher;
 	/** The last write of the waiting notifications (`heldNotices`); each waits for the one before. */
 	private heldWrite: Promise<void> = Promise.resolve();
+	/** The waiting notifications as last given, and which change that is (`heldSaved`). */
+	private held: { items: HeldNotice[]; version: number } = {
+		items: [],
+		version: 0,
+	};
+	/** The latest change written to `heldNotices`. */
+	private heldSavedVersion = 0;
 	/** Set by stop(): no notice is read or kept after it. */
 	private stopping = false;
 	private readonly followUpDelivery: FollowUpDelivery;
@@ -232,6 +245,8 @@ export class WorkerApp {
 			holdUntil: () => this.quietUntil()?.getTime() ?? null,
 			// What waits is kept, so a restart (overnight, in quiet hours) loses none of it.
 			persist: (items) => this.keepHeld(items),
+			// A held notice goes out only while what it is about is still so.
+			review: (items) => this.stillDue(items),
 		});
 		this.runner = new FlowRunner({
 			db,
@@ -378,7 +393,7 @@ export class WorkerApp {
 		this.scanSchedule = await this.settings.get("scanSchedule");
 		// Erased: what waited was about the erased jobs.
 		this.batcher.clear();
-		await this.heldWrite;
+		await this.heldSaved();
 		await this.settings.set("noticeWatermark", Date.now());
 		await this.rebuild();
 	}
@@ -435,11 +450,111 @@ export class WorkerApp {
 		const kept: HeldNotice[] = items.flatMap(({ stageId: _, ...item }) =>
 			item.kind === "followup" ? [] : [{ ...item, kind: item.kind }],
 		);
+		this.held = { items: kept, version: this.held.version + 1 };
+		void this.writeHeld();
+	}
+
+	/** Queues a write of the latest waiting notifications; a failure is logged, not thrown. */
+	private writeHeld(): Promise<void> {
 		this.heldWrite = this.heldWrite
-			.then(() => this.settings.set("heldNotices", kept))
+			.then(async () => {
+				// Several changes in a row: the latest is written once.
+				const { items, version } = this.held;
+				if (this.heldSavedVersion >= version) return;
+				await this.settings.set("heldNotices", items);
+				this.heldSavedVersion = Math.max(this.heldSavedVersion, version);
+			})
 			.catch((error) =>
 				this.hooks.log("warn", "waiting notifications not kept", String(error)),
 			);
+		return this.heldWrite;
+	}
+
+	/**
+	 * Whether the waiting notifications, as of change `version`, are in `heldNotices`. A write
+	 * that failed is tried again once here.
+	 */
+	private async heldSaved(version = this.held.version): Promise<boolean> {
+		await this.heldWrite;
+		if (this.heldSavedVersion >= version) return true;
+		await this.writeHeld();
+		return this.heldSavedVersion >= version;
+	}
+
+	/**
+	 * The held notices still true now, as `collectNotices` would read them: a match not deleted
+	 * or dismissed, a question still waiting for answers, an application still ready for review,
+	 * a board still stopped. Follow-ups and stops with no company pass.
+	 */
+	private async stillDue(items: NoticeItem[]): Promise<NoticeItem[]> {
+		const appIds = [
+			...new Set(
+				items.flatMap((i) =>
+					i.kind !== "followup" && i.kind !== "stopped" && i.applicationId
+						? [i.applicationId]
+						: [],
+				),
+			),
+		];
+		const companyIds = [
+			...new Set(
+				items.flatMap((i) =>
+					i.kind === "stopped" && i.companyId ? [i.companyId] : [],
+				),
+			),
+		];
+		const apps = new Map(
+			(appIds.length === 0
+				? []
+				: await this.db
+						.select({
+							id: applications.id,
+							state: applications.state,
+							alertedAt: applications.alertedAt,
+						})
+						.from(applications)
+						.where(
+							and(
+								eq(applications.userId, LOCAL_USER_ID),
+								inArray(applications.id, appIds),
+							),
+						)
+			).map((a) => [a.id, a]),
+		);
+		const stopped = new Set(
+			(companyIds.length === 0
+				? []
+				: await this.db
+						.select({ id: companies.id })
+						.from(companies)
+						.where(
+							and(
+								eq(companies.userId, LOCAL_USER_ID),
+								inArray(companies.id, companyIds),
+								inArray(companies.health, STOPPED_HEALTH),
+							),
+						)
+			).map((c) => c.id),
+		);
+		return items.filter((item) => {
+			const app = item.applicationId ? apps.get(item.applicationId) : undefined;
+			switch (item.kind) {
+				case "match":
+					return (
+						app !== undefined &&
+						app.alertedAt !== null &&
+						app.state !== "dismissed"
+					);
+				case "question":
+					return app?.state === "needs_answers";
+				case "review":
+					return app?.state === "ready_for_review";
+				case "stopped":
+					return !item.companyId || stopped.has(item.companyId);
+				default:
+					return true;
+			}
+		});
 	}
 
 	getScanSchedule(): ScanSchedule {
@@ -751,7 +866,7 @@ export class WorkerApp {
 		// No notice timer after the database closes; what still waits is already written.
 		this.stopping = true;
 		this.batcher.dispose();
-		await this.heldWrite;
+		await this.heldSaved();
 		this.db.$close();
 	}
 
@@ -826,6 +941,8 @@ export class WorkerApp {
 	 * once they end (a restart meanwhile loses none of it).
 	 */
 	async collectNotices(): Promise<void> {
+		// A write that failed is tried again on each look, quiet hours included.
+		await this.heldSaved();
 		if (this.quietUntil()) return;
 		const since = new Date(await this.settings.get("noticeWatermark"));
 		const now = new Date();
@@ -847,8 +964,12 @@ export class WorkerApp {
 					gt(applications.alertedAt, since),
 				),
 			);
+		/** What was read: skipped when it already went out and the watermark has not moved since. */
+		const offer = (item: NoticeItem) => {
+			if (!this.batcher.wasSent(item)) this.batcher.add(item);
+		};
 		for (const m of matches)
-			this.batcher.add({
+			offer({
 				kind: "match",
 				applicationId: m.id,
 				title: m.title,
@@ -880,34 +1001,37 @@ export class WorkerApp {
 				),
 			);
 		for (const m of moved)
-			this.batcher.add({
+			offer({
 				kind: m.to === "needs_answers" ? "question" : "review",
 				applicationId: m.id,
 				title: m.title,
 				company: m.company,
 			});
 		const blocked = await this.db
-			.select({ name: companies.name, reason: companies.healthReason })
+			.select({ id: companies.id, name: companies.name })
 			.from(companies)
 			.where(
 				and(
 					eq(companies.userId, LOCAL_USER_ID),
-					inArray(companies.health, ["needs_human", "robots_disallowed"]),
+					inArray(companies.health, STOPPED_HEALTH),
 					gt(companies.updatedAt, since),
 				),
 			);
 		for (const b of blocked)
-			this.batcher.add({
+			offer({
 				kind: "stopped",
+				companyId: b.id,
 				title: `${b.name}: stopped`,
 				detail: `${b.name}'s board asked for a person (or robots.txt refused). Nothing was bypassed; the scan history says more.`,
 			});
 		await this.announceAdded();
 		// Past the watermark only once what was read is kept (`heldNotices`): a restart before
-		// it goes out finds it there, not lost and not sent twice.
-		await this.heldWrite;
-		if (this.stopping) return;
+		// it goes out finds it there, not lost and not sent twice. Not kept (the write failed):
+		// the watermark stays, so it is read again, here or after a restart.
+		const read = this.held.version;
+		if (!(await this.heldSaved(read)) || this.stopping) return;
 		await this.settings.set("noticeWatermark", now.getTime());
+		this.batcher.forgetSent();
 	}
 
 	/**
