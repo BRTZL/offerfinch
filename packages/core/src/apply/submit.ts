@@ -362,6 +362,13 @@ export async function submitStep(
 	// The hard gate: on a hand-off board no browser opens, whatever moved it to applying.
 	const mode = modeOf(context);
 	if (mode.mode === "handoff") return stop(mode.reason, context.board ?? "");
+	// A pause after approval stops before the browser opens: typing on a live form can send
+	// answers through the page's own scripts, long before the upload or the click.
+	if (await db.submissionsPaused(userId)) {
+		const reason = "Submissions were paused before the form was opened.";
+		await stop(reason, context.board ?? "");
+		return { outcome: "paused" as const, reason };
+	}
 	let attemptId: string | null = null;
 	let pausedAtClaim = false;
 	try {
@@ -544,6 +551,9 @@ export type DryRunOutcome =
  * Fills the approved application's form and screenshots it, never clicking submit. The page
  * loads read-only and the network closes before the first keystroke, so typed data and files
  * cannot leave the browser even on a live board. Changes no application state.
+ *
+ * It needs no approval, pause or host check on purpose: the closed network is its gate, and it
+ * is how a real board's form is checked before anything is sent (docs/auto-apply-plan.md, step 4).
  */
 export async function dryRunApplication(
 	deps: PipelineDeps,

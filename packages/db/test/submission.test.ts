@@ -353,6 +353,21 @@ describe("submission on approval", () => {
 		});
 	});
 
+	it("stops before opening the form when paused after approval", async () => {
+		const id = await approvedApp();
+		const { pipeline, runs } = deps(submits({ n: 0 }));
+		await repo.setSubmissionsPaused("u1", false);
+		await beginSubmissionStep(pipeline, "u1", id);
+		await repo.setSubmissionsPaused("u1", true);
+		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
+			outcome: "paused",
+		});
+		expect(runs).toHaveLength(0);
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "not_sent", mode: "auto" },
+		]);
+	});
+
 	it("stops before opening a browser on a real host that is not allowed", async () => {
 		const id = await approvedApp();
 		const { pipeline, runs } = deps(submits({ n: 0 }));

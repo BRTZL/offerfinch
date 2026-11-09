@@ -319,9 +319,10 @@ export function AfterApproveSection({ app }: { app: AppDetail }) {
 				</p>
 			) : (
 				<p className="text-muted-foreground text-xs">
-					Approving submits it. A challenge, an unknown question or an unclear
-					result stops the run and hands it to you; it never clicks submit
-					twice.
+					Approving submits it once automatic submission is open for this
+					board's site; until then the run stops before any browser opens and
+					hands it to you. A challenge, an unknown question or an unclear result
+					also stops the run; it never clicks submit twice.
 				</p>
 			)}
 		</InspectorSection>
