@@ -37,6 +37,9 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  *   posting-next  email and full name shown, phone and location in a hidden step; its "Next" is a
  *                 native submit button: clicking it posts the first step (and redirects to /thanks)
  *   formless      name and email with no <form> around them, and a lone untyped "Go" button
+ *   script-button email and full name; the only button is a plain one ("Submit application") whose
+ *                 script posts the form and shows a thank-you
+ *   form-attr     email and full name; the submit button sits after the form, naming it with `form=`
  *   silent        name and email; the submit sends nothing and swaps the form for a thank-you
  *   assets        name, email and location; loads a logo from localhost, and on input asks localhost
  *                 for images whose paths carry pieces of what was typed (base64 pieces, the first word)
@@ -271,6 +274,26 @@ ${text("Email address", "email", { type: "email" })}${text("Full name", "full_na
 <p><button>Go</button></p></div>`;
 }
 
+/** Codex's re-review case: the only button is a plain one; its script posts the form. */
+function scriptButtonBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<p><button type="button" id="send">Submit application</button></p></form>`;
+}
+
+const SCRIPT_BUTTON = `document.getElementById('send').addEventListener('click', async () => {
+	const form = document.getElementById('apply');
+	const res = await fetch('/web/script-button/apply', { method: 'POST', body: new URLSearchParams(new FormData(form)) });
+	if (res.ok) form.outerHTML = '<div class="thanks"><h2>Thank you for applying!</h2></div>';
+});`;
+
+/** The submit button sits outside the form and names it with its form attribute. */
+function formAttrBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply" method="post" action="/web/form-attr/apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+</form><p><button type="submit" form="apply">Submit application</button></p>`;
+}
+
 function silentBody(): string {
 	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply">
 ${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
@@ -334,6 +357,7 @@ function postAnswer(
 			"shifted",
 			"contact-swap",
 			"echo",
+			"script-button",
 		].includes(variant) ||
 		action === "upload"
 	)
@@ -404,6 +428,10 @@ function formPage(
 			return page(formlessBody());
 		case "silent":
 			return page(silentBody(), SILENT);
+		case "script-button":
+			return page(scriptButtonBody(), SCRIPT_BUTTON);
+		case "form-attr":
+			return page(formAttrBody());
 		case "assets":
 			return page(assetsBody(awayOrigin), ASSETS, awayOrigin);
 		default:

@@ -164,15 +164,49 @@ describe("reading an employer's form before review", () => {
 		expect(forms.count("two-step")).toBe(0);
 	});
 
-	it("a button outside any form is never its submit (Codex, 2026-11-09)", async () => {
-		const { result } = await read("formless", null);
-		if (!result.ok) throw new Error(result.reason);
-		expect(result.schema.fields.map((f) => f.key)).toEqual([
-			"text:email",
-			"text:full_name",
-		]);
-		expect(result.schema.submit).toBeNull();
-	});
+	it.each([
+		// No <form>: a lone untyped "Go" button sends nothing the page shows.
+		"formless",
+		// The only button is a plain one, whatever its words (Codex re-review, 2026-11-09).
+		"script-button",
+		"preview",
+	])(
+		"%s: a form with no submit button of its own is a hand-off at read time",
+		async (variant) => {
+			const { result } = await read(variant);
+			expect(result).toMatchObject({
+				ok: false,
+				reason:
+					"This form has no submit button of its own; finish it yourself.",
+			});
+			expect(forms.count(variant)).toBe(0);
+		},
+	);
+
+	it("at submit, a plain button that says submit is never clicked: the run stops before the claim (Codex re-review, 2026-11-09)", async () => {
+		// A read saved before this fix, of a form with the same two questions.
+		const { deps, calls } = harness(
+			"script-button",
+			await readAs("silent", "script-button"),
+		);
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(/^Could not tell which control sends/),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["stop"]);
+		expect(forms.count("script-button")).toBe(0);
+	}, 60_000);
+
+	it("a submit button outside the form that names it with form= is its submit", async () => {
+		const schema = await schemaOf("form-attr");
+		expect(schema.submit).toBe("Submit application");
+		const { deps, calls } = harness("form-attr", schema);
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({ outcome: "applied" });
+		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+		expect(forms.count("form-attr")).toBe(1);
+	}, 60_000);
 
 	it("is read in preparation only where submission may go, in its own session", async () => {
 		const context = {
@@ -757,8 +791,6 @@ describe("files from another host are fixed before the first keystroke (Codex, 2
 
 describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09)", () => {
 	it.each([
-		// The button only changed the query string: nothing was sent, the form stayed.
-		["preview", 0, /the form is still on the page/],
 		// Posted and the form went, but the thank-you words were on the page before the click.
 		["echo", 1, /does not bear out/],
 		// A new thank-you replaced the form, but nothing was sent.

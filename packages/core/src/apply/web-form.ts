@@ -285,21 +285,15 @@ function wordsRole(control: WebControl): ControlRole | null {
 }
 
 /**
- * The controls with deterministic evidence that they send the form: a submit button of the form
- * (`<button>` without another type, `<input type=submit>`), or, on a form that sends by script,
- * its only plain button whose words say submit. Only these can ever be the submit.
+ * The controls with deterministic evidence that they send the form: a submit button that belongs
+ * to the form (`<button>` without another type or `<input type=submit>` inside it, or one whose
+ * `form` attribute names it; web-scan.ts types these "submit"). Only these can ever be the submit;
+ * a plain button, whatever its words, never is.
  */
 function submitCapable(controls: WebControl[]): Set<string> {
-	const worded = controls.filter(
-		(c) => c.type === "button" && wordsRole(c) === "submit",
-	);
 	return new Set(
 		controls
-			.filter(
-				(c) =>
-					(c.type === "submit" && wordsRole(c) !== "other") ||
-					(worded.length === 1 && c === worded[0]),
-			)
+			.filter((c) => c.type === "submit" && wordsRole(c) !== "other")
 			.map((c) => c.ref),
 	);
 }
@@ -468,6 +462,7 @@ export async function readWebFormOnPage(
 	const keys = new Set<string>();
 	let scan = opened.scan;
 	let submit: WebControl | null = null;
+	let canSubmit = scan.canSubmit;
 	for (let step = 1; step <= MAX_STEPS; step++) {
 		const unlabelled = unlabelledProblem(scan.fields);
 		if (unlabelled) return { ok: false, reason: unlabelled.message };
@@ -482,10 +477,18 @@ export async function readWebFormOnPage(
 		const next = await scanOf(page);
 		if (!next || next.fields.length === 0) break;
 		scan = next;
+		canSubmit ||= scan.canSubmit;
 		// A later step that names another host as where it sends: the user finishes the form.
 		const away = elsewhere(page, scan, formHost);
 		if (away) return { ok: false, reason: away.message };
 	}
+	// Nothing on the form is known to send it (no submit button of its own, shown or kept for a
+	// later step): the user finishes it (review shows why).
+	if (!submit && !canSubmit)
+		return {
+			ok: false,
+			reason: "This form has no submit button of its own; finish it yourself.",
+		};
 	const labelled = await modelLabels(
 		fields.map((f) => f.field),
 		model,

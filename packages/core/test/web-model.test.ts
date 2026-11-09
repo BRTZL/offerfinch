@@ -137,15 +137,22 @@ describe("which button is which", () => {
 		expect(roles.submit?.ref).toBe("3");
 	});
 
-	it("a script form's only button that says submit is its submit", async () => {
+	it("a plain button is never the submit, whatever its words (Codex re-review, 2026-11-09)", async () => {
+		// Codex's case: a lone plain button that says submit, no evidence it sends the form.
+		expect(
+			await controlRoles(
+				[{ ref: "1", text: "Submit application", type: "button" }],
+				null,
+			),
+		).toEqual({ next: null, submit: null });
 		const roles = await controlRoles(
 			[
 				{ ref: "1", text: "Preview details", type: "button" },
 				{ ref: "2", text: "Submit application", type: "button" },
 			],
-			null,
+			model({ "2": "submit" }),
 		);
-		expect(roles.submit?.ref).toBe("2");
+		expect(roles.submit).toBeNull();
 	});
 
 	it("without words or a model, only a lone submit button is the submit", async () => {
