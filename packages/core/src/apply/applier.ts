@@ -269,53 +269,60 @@ function coveredScript(submit: string): string {
 }
 
 /**
- * Page script: for a radio or checkbox the board hides and draws itself (Recruitee), stamps the
- * visible control that toggles it (its label, or the element naming it) and says whether it is
- * ticked now. Null when the input itself can be clicked.
+ * Page script: how to set a radio or checkbox the board hides or draws over (Workable,
+ * Recruitee). "set" when it already holds the wanted state.
+ * - "control": an ARIA radio or checkbox drawn around it takes the click (Workable). It is used
+ *   only when it cannot submit: not a button without type="button", not an input or a link,
+ *   and nothing inside it that submits or navigates. It is stamped for the caller to click.
+ * - "native": the input is shown and on top; the caller ticks it the ordinary way.
+ * - "set": otherwise the input element itself is clicked in the page. A radio's or checkbox's
+ *   own click never submits a form, even inside a submit button. Labels and elements that merely
+ *   name the input are never clicked.
  */
-function drawnChoiceScript(ref: string, index: number): string {
+function hiddenChoiceScript(ref: string, index: number, on: boolean): string {
 	return `(() => {
 	const input = document.querySelectorAll('[data-jp="${ref}"]')[${index}];
-	if (!input) return null;
-	const shown = (el) => { if (!el) return false; const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 2 && r.height > 2 && s.visibility !== "hidden" && s.display !== "none"; };
-	// An ARIA radio or checkbox drawn around the input is the control people click (Workable).
-	const aria = input.closest("[role=radio], [role=checkbox]");
-	if (shown(aria)) {
-		for (const el of document.querySelectorAll("[data-jp-click]")) el.removeAttribute("data-jp-click");
-		aria.setAttribute("data-jp-click", "1");
-		return { checked: input.checked };
-	}
-	if (shown(input)) {
-		// Shown but covered by the board's own drawing (Workable): only a click on top reaches it.
-		input.scrollIntoView({ block: "center" });
-		const r = input.getBoundingClientRect();
-		const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-		if (!hit || hit === input || input.contains(hit)) return null;
-	}
+	if (!input || (input.type !== "radio" && input.type !== "checkbox")) return "native";
+	const shown = (el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 2 && r.height > 2 && s.visibility !== "hidden" && s.display !== "none"; };
+	if (input.checked === ${on}) return "set";
 	for (const el of document.querySelectorAll("[data-jp-click]")) el.removeAttribute("data-jp-click");
-	const named = (input.getAttribute("aria-labelledby") || "").split(/\\s+/).filter(Boolean).map((id) => document.getElementById(id));
-	const target = [...(input.labels || []), input.closest("label"), input.closest("[role=radio], [role=checkbox]"), ...named].find(shown);
-	if (!target) return null;
-	target.setAttribute("data-jp-click", "1");
-	return { checked: input.checked };
+	// A drawn ARIA control handles the click itself (Workable ignores clicks on its inputs).
+	const control = input.closest("[role=radio], [role=checkbox]");
+	const submits = (el) => (el.tagName === "BUTTON" && (el.getAttribute("type") || "submit").toLowerCase() !== "button") || el.tagName === "INPUT" || (el.tagName === "A" && el.hasAttribute("href"));
+	const safe = control && shown(control) && !submits(control) && ![...control.querySelectorAll("button, input, a[href]")].some((el) => el !== input && submits(el));
+	if (safe) { control.setAttribute("data-jp-click", "1"); return "control"; }
+	if (shown(input)) {
+		input.scrollIntoView({ block: "center" });
+		const box = input.getBoundingClientRect();
+		const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+		if (hit && (hit === input || input.contains(hit))) return "native";
+	}
+	input.click();
+	return "set";
 })()`;
 }
 
-/** Ticks or unticks one option; a hidden, self-drawn control is toggled through its label. */
+/**
+ * Ticks or unticks one option. verifyFilled reads every control again afterwards, so a click the
+ * board ignored is caught before the claim.
+ */
 async function setChoice(
 	page: BrowserPage,
 	field: FormField,
 	index: number,
 	on: boolean,
 ): Promise<void> {
-	const drawn = await safeEvaluate<{ checked: boolean } | null>(
+	const how = await safeEvaluate<string>(
 		page,
-		drawnChoiceScript(field.ref, index),
+		hiddenChoiceScript(field.ref, index, on),
 	);
+	if (how === "set") return;
+	if (how === "control") {
+		await page.click("[data-jp-click]");
+		return;
+	}
 	const selector = `${at(field.ref)} >> nth=${index}`;
-	if (!drawn) await (on ? page.check(selector) : page.uncheck(selector));
-	// verifyFilled reads every control again afterwards, so a click that did nothing is caught.
-	else if (drawn.checked !== on) await page.click("[data-jp-click]");
+	await (on ? page.check(selector) : page.uncheck(selector));
 }
 
 /** Ticks exactly the approved options; a checkbox the form had ticked otherwise is unticked. */

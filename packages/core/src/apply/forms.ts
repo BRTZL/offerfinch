@@ -31,12 +31,15 @@ export interface BoardConfig {
 	/**
 	 * The board's confirmation after a submit. `path` maps the form's path to the exact path the
 	 * board moves to (none: the confirmation replaces the form on the same page); `selector` is
-	 * where the confirmation text must be; `text` is what it says.
+	 * where the confirmation text must be; `text` is what it says. Text alone never confirms: a
+	 * board with neither `path` nor `selector` (its confirmation not yet seen) ends every
+	 * submission as an unknown outcome. `refused` is the board's own "already applied" state.
 	 */
 	success: {
 		path?: (formPath: string) => string;
 		text: string;
 		selector?: string;
+		refused?: string;
 	};
 	/** Visible validation errors. */
 	errors: string;
@@ -124,7 +127,10 @@ export const BOARD_CONFIGS: Record<Board, BoardConfig> = {
 		label: "[id$=_label]",
 		submit: "form[data-ui=application-form] button[data-ui=apply-button]",
 		success: {
-			text: "thank you for (?:applying|your application)|application (?:has been |was )?(?:submitted|received|sent)",
+			// The success component in Workable's careers bundle (2026-11-09):
+			// `data-ui="successful-submit"`, "Your application has been submitted successfully."
+			text: "thank you for applying|application has been submitted successfully",
+			selector: "[data-ui=successful-submit]",
 		},
 		errors: "[role=alert]:not(:empty), [data-ui$=-error]:not(:empty)",
 		hosts: [
@@ -151,7 +157,11 @@ export const BOARD_CONFIGS: Record<Board, BoardConfig> = {
 		label: "legend, label",
 		submit: "form#offer-application-form button[type=submit]",
 		success: {
+			// Recruitee's tab panels, in the page before submit: the success one and the
+			// "already applied" one (`…-content-offer-application-rate-limited`).
 			text: "all done|thank you for (?:applying|your application)|application (?:has been |was )?(?:submitted|received|sent)",
+			selector: "[id$=-content-offer-application-success]",
+			refused: "[id$=-content-offer-application-rate-limited]",
 		},
 		errors: "[role=alert]:not(:empty)",
 		hosts: [
@@ -357,7 +367,23 @@ export function scanScript(config: BoardConfig): string {
 		}
 		if (kind === "select") return [...el.selectedOptions].filter((o) => o.value !== "").map((o) => clean(o.textContent));
 		if (kind === "combobox") return comboValue(el);
-		return el.value && el.value.trim() ? [el.value] : [];
+		if (!el.value || !el.value.trim()) return [];
+		return [isPhone(el) && !el.value.trim().startsWith("+") ? pickerCode(el) + el.value : el.value];
+	};
+	const isPhone = (el) => el.type === "tel" || /phone/i.test(el.name || el.id || "");
+	// A phone widget that moved the country code into its picker (Workable): the code it shows,
+	// read from the picker beside the box, goes in front, so the whole number is compared.
+	const pickerCode = (el) => {
+		let p = el.parentElement;
+		for (let i = 0; i < 4 && p; i++, p = p.parentElement) {
+			for (const c of p.querySelectorAll("button, select, [role=combobox]")) {
+				if (c === el) continue;
+				const shown = c.tagName === "SELECT" ? (c.selectedOptions[0] || {}).textContent : c.textContent + " " + (c.getAttribute("aria-label") || "");
+				const m = (shown || "").match(/\\+(\\d{1,4})\\b/);
+				if (m) return "+" + m[1] + " ";
+			}
+		}
+		return "";
 	};
 	const headings = root.querySelectorAll("h2, h3, h4, [class*=section-header], [class*=section-title]");
 	const sectionOf = (el) => {
@@ -466,7 +492,11 @@ export function errorsScript(config: BoardConfig): string {
 
 /** Words that make a would-be confirmation a refusal. */
 const REFUSAL =
-	"\\b(?:rejected|declined|not (?:been )?(?:submitted|received|accepted)|unsuccessful|could ?n[o']t|failed|error|try again|already applied)\\b";
+	"\\b(?:rejected|declined|not (?:been )?(?:submitted|received|accepted)|unsuccessful|could ?n[o']t|failed|error|try again|already (?:applied|submitted|received|sent)|duplicate)\\b";
+
+/** A page that says the candidate applied before: never a confirmation of this submission. */
+const DUPLICATE =
+	"\\balready (?:applied|submitted|received|sent)\\b|\\bduplicate application\\b";
 
 /**
  * Page script: the confirmation text when the board shows its confirmation, else null. All of
@@ -475,7 +505,9 @@ const REFUSAL =
  * element (Ashby), the confirmation text there, and no refusal wording.
  */
 export function successScript(config: BoardConfig, formUrl: string): string {
-	const { text, selector, path } = config.success;
+	const { text, selector, path, refused } = config.success;
+	// Text alone is no evidence: without the board's path or element nothing is confirmed.
+	if (!path && !selector) return "null";
 	const form = new URL(formUrl);
 	const expected = {
 		host: form.host,
@@ -492,6 +524,9 @@ export function successScript(config: BoardConfig, formUrl: string): string {
 	const scope = ${JSON.stringify(selector ?? null)} ? document.querySelector(${JSON.stringify(selector ?? "")}) : document.body;
 	// Hidden nodes count for nothing: some boards ship their confirmation in the page before submit.
 	if (!scope || !shown(scope)) return null;
+	// The board's own "already applied" state, or a duplicate anywhere on the page, is a refusal.
+	if (${JSON.stringify(refused ?? null)} && [...document.querySelectorAll(${JSON.stringify(refused ?? "")})].some(shown)) return null;
+	if (new RegExp(${JSON.stringify(DUPLICATE)}, "i").test((document.body.innerText || "").slice(0, 20000))) return null;
 	const body = (scope.innerText || "").slice(0, 5000);
 	if (new RegExp(${JSON.stringify(REFUSAL)}, "i").test(body)) return null;
 	const m = body.match(new RegExp(${JSON.stringify(text)}, "i"));
@@ -930,22 +965,13 @@ function declineAction(field: FormField, option: string): FillAction {
 }
 
 /**
- * The same phone number: the same digits, or the national number alone when the approved one
- * starts with "+" and a country code a phone widget moved into its country picker (Workable).
+ * The same phone number, on a phone field only: every digit equal, country code included. A
+ * widget that moves the code into its picker is read with the picker's code in front (scanScript).
  */
-function samePhone(held: string, approved: string): boolean {
+function samePhone(field: FormField, held: string, approved: string): boolean {
+	if (systemRole(field) !== "phone") return false;
 	if (!/^\+?[\d\s().-]+$/.test(approved)) return false;
-	const have = held.replace(/\D/g, "");
-	const want = approved.replace(/\D/g, "");
-	if (have === want) return true;
-	const code = want.length - have.length;
-	return (
-		approved.trim().startsWith("+") &&
-		have.length >= 6 &&
-		code >= 1 &&
-		code <= 3 &&
-		want.endsWith(have)
-	);
+	return held.replace(/\D/g, "") === approved.replace(/\D/g, "");
 }
 
 const fieldKey = (f: FormField) => `${f.kind}|${f.name}|${f.label}`;
@@ -993,7 +1019,7 @@ export function verifyFilled(
 					current.length !== 1 ||
 					!(
 						same(current[0] ?? "", action.value) ||
-						samePhone(current[0] ?? "", action.value)
+						samePhone(field, current[0] ?? "", action.value)
 					)
 				)
 					problems.push(`"${label}" holds ${holds}, not the approved value.`);

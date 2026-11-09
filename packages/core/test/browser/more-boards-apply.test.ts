@@ -29,6 +29,13 @@ import {
 
 const NEW_BOARDS = ["workable", "recruitee", "teamtailor", "personio"] as const;
 
+/**
+ * Boards whose confirmation element is known (Workable's `successful-submit`, Recruitee's success
+ * panel). Teamtailor's and Personio's confirmation pages were never seen, so their submissions end
+ * as unknown outcomes until a watched submission records them.
+ */
+const CONFIRMS = new Set<string>(["workable", "recruitee"]);
+
 let boards: MoreFixtureBoards;
 beforeAll(async () => {
 	boards = await startMoreFixtureBoards();
@@ -228,7 +235,14 @@ describe.each(NEW_BOARDS)("%s fixture form", (board) => {
 		const jobId = `${board}-auto-submit`;
 		const { deps, calls, blobs } = harness(board, jobId);
 		const outcome = await submitStep(deps, "u1", "app-1");
-		expect(outcome.outcome, JSON.stringify(calls)).toBe("applied");
+		// Without the board's own confirmation element or path, a submission is never "applied".
+		expect(outcome.outcome, JSON.stringify(calls)).toBe(
+			CONFIRMS.has(board) ? "applied" : "needs_human",
+		);
+		if (!CONFIRMS.has(board))
+			expect(calls[1]?.reason).toMatch(
+				/^Outcome unknown after the submit click/,
+			);
 		expect(boards.count(jobId)).toBe(1);
 		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
 		for (const c of calls) {
@@ -278,7 +292,7 @@ describe.each(NEW_BOARDS)("%s fixture form", (board) => {
 		expect(
 			outcome.outcome,
 			JSON.stringify(outcome.outcome === "stopped" ? outcome.stop : ""),
-		).toBe("submitted");
+		).toBe(CONFIRMS.has(board) ? "submitted" : "unknown");
 	}, 90_000);
 
 	it("dry run fills everything and posts nothing", async () => {
@@ -355,5 +369,46 @@ describe("SmartRecruiters stays hand-off", () => {
 		expect(boards.count(jobId)).toBe(0);
 		expect(calls.map((c) => c.method)).toEqual(["stop"]);
 		expect(calls[0]?.reason).toMatch(/DataDome/);
+	}, 60_000);
+});
+
+/** Codex review of step 5 (2026-11-09): findings 1, 3 and 4. */
+describe("review regressions", () => {
+	it("never clicks a submit-capable control to tick a box: nothing is posted before the claim", async () => {
+		const jobId = "recruitee-button-toggle";
+		const result = await withPage("open", (page) =>
+			runApplication(page, {
+				...run("recruitee", jobId),
+				claim: async () => ({ go: false, reason: "not cleared" }),
+			}),
+		);
+		expect(boards.count(jobId)).toBe(0);
+		expect(
+			result.outcome,
+			JSON.stringify(result.outcome === "stopped" ? result.stop : ""),
+		).toBe("not_claimed");
+	}, 60_000);
+
+	it("stops when the phone widget shows another country code than the approved number", async () => {
+		const jobId = "workable-wrong-country";
+		const result = await withPage("open", (page) =>
+			runApplication(page, run("workable", jobId)),
+		);
+		expect(boards.count(jobId)).toBe(0);
+		expect(result.outcome === "stopped" && result.stop.kind).toBe("validation");
+		if (result.outcome === "stopped")
+			expect(result.stop.message).toMatch(/Phone/);
+	}, 60_000);
+
+	it('does not take an email-verification page saying "All done!" for Recruitee\'s confirmation', async () => {
+		const jobId = "recruitee-verify-email";
+		const result = await withPage("open", (page) =>
+			runApplication(page, run("recruitee", jobId)),
+		);
+		expect(boards.count(jobId)).toBe(1);
+		expect(
+			result.outcome,
+			result.outcome === "submitted" ? result.confirmation : "",
+		).toBe("unknown");
 	}, 60_000);
 });

@@ -112,7 +112,12 @@ describe("answer matching", () => {
 				);
 	});
 
-	it("reads a phone number whose country code moved into the widget's picker", () => {
+	describe("a filled number counts only with every digit, country code included", () => {
+		const fill = (value: string) => ({
+			actions: [{ ref: "1", label: "x", kind: "fill" as const, value }],
+			unknown: [],
+			blank: [],
+		});
 		const phone = {
 			ref: "1",
 			kind: "text" as const,
@@ -122,24 +127,33 @@ describe("answer matching", () => {
 			options: [],
 			visible: true,
 		};
-		const plan = {
-			actions: [
-				{
-					ref: "1",
-					label: "Phone",
-					kind: "fill" as const,
-					value: "+90 555 000 00 00",
-				},
-			],
-			unknown: [],
-			blank: [],
-		};
-		expect(
-			verifyFilled(plan, [phone], [{ ...phone, current: ["555 000 00 00"] }]),
-		).toEqual([]);
-		expect(
-			verifyFilled(plan, [phone], [{ ...phone, current: ["000 00 00"] }]),
-		).toHaveLength(1);
+		const salary = { ...phone, label: "Expected salary", name: "salary" };
+
+		it("accepts the number as the scan reads it, picker code in front", () => {
+			const plan = fill("+90 555 000 00 00");
+			expect(
+				verifyFilled(
+					plan,
+					[phone],
+					[{ ...phone, current: ["+90 5550000000"] }],
+				),
+			).toEqual([]);
+		});
+
+		it("refuses a number whose country code was dropped or changed", () => {
+			const plan = fill("+90 555 000 00 00");
+			for (const held of ["5550000000", "555 000 00 00", "+31 555 000 00 00"])
+				expect(
+					verifyFilled(plan, [phone], [{ ...phone, current: [held] }]),
+				).toHaveLength(1);
+		});
+
+		it("refuses a non-phone value that lost its leading digits", () => {
+			const plan = fill("+1000000");
+			expect(
+				verifyFilled(plan, [salary], [{ ...salary, current: ["000000"] }]),
+			).toHaveLength(1);
+		});
 	});
 });
 

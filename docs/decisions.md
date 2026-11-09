@@ -911,3 +911,11 @@ Inspected read-only and dry-run on one real posting each (`docs/form-inspection.
 | The success texts of the four boards are strict guesses; anything else after the click is an unknown outcome | No real submission was made |
 | The covered-submit stop and the filter for hidden checkbox twins apply to Ashby, Greenhouse and Lever too | Same safety on every board; not yet run on their real forms (plan step 4) |
 | Supersedes, for these four boards, the 2026-11-09 step-1 row that kept SmartRecruiters, Workable, Recruitee, Teamtailor and Personio hand-off until their filler landed | |
+
+### Review fixes (Codex, 2026-11-09)
+
+| Decision | Why |
+|---|---|
+| A hidden radio or checkbox is set through a drawn ARIA control only when that control cannot submit (no submit button, input or link, nothing inside that submits); otherwise the input itself is clicked in the page. Labels and elements that merely name the input are never clicked | A `<button role="checkbox">` without `type="button"` submitted the form during filling, before the claim |
+| A filled value counts by digits only on a phone field, and only whole: a widget that moved the country code into its picker is read with the picker's code in front | Dropping 1 to 3 leading digits let a wrong country code or a cut-off salary pass, on every board |
+| Text alone never confirms a submission: the board's confirmation element or path is required, a duplicate ("already applied", "already submitted") anywhere on the page is a refusal, and Recruitee's "already applied" panel is one. Workable: `[data-ui=successful-submit]` (its careers bundle); Recruitee: its `…-content-offer-application-success` panel. Teamtailor and Personio have neither yet, so every submission there ends as an unknown outcome until a watched one records their confirmation | An email-verification page saying "All done!" and a "Thank you" page saying "You have already submitted an application" both counted as confirmed |

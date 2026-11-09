@@ -163,7 +163,8 @@ for (const o of list.querySelectorAll("[role=option]")) o.addEventListener("mous
 const box = document.querySelector("[data-ui=gdpr] [role=checkbox]");
 box.addEventListener("click", (e) => { e.preventDefault(); const i = box.querySelector("input"); i.checked = !i.checked; box.setAttribute("aria-checked", String(i.checked)); });
 const phone = document.getElementById("input_phone");
-phone.addEventListener("input", () => { const m = phone.value.match(/^\\+(\\d{2})\\s*(.*)$/); if (m) { phone.previousElementSibling.textContent = "+" + m[1]; phone.value = m[2]; } });
+const CODE = ${JSON.stringify(v.has("wrong-country") ? "+31" : "")};
+phone.addEventListener("input", () => { const m = phone.value.match(/^\\+(\\d{2})\\s*(.*)$/); if (m) { phone.previousElementSibling.textContent = CODE || "+" + m[1]; phone.value = m[2]; } });
 const file = document.querySelector("[data-ui=resume]");
 file.addEventListener("change", () => { document.querySelector('label[role=button][for="' + file.id + '"]').textContent = "Replace file"; });
 const form = document.querySelector("form");
@@ -175,7 +176,7 @@ form.addEventListener("submit", async (e) => {
 	if (miss.length) { form.insertAdjacentHTML("afterbegin", '<p role="alert">Required: ' + miss.join(", ") + "</p>"); return; }
 	// The real form uploads the CV as soon as it is chosen; here it goes along with the post.
 	const r = await post(form, location.pathname + "submit", [["resume", file.files[0]]]);
-	if (r.ok) form.outerHTML = '<div><h2>' + r.text + '</h2></div>';
+	if (r.ok) form.outerHTML = '<div data-ui="successful-submit"><h3>Thank you for applying!</h3><div role="status">' + r.text + '</div></div>';
 	else form.insertAdjacentHTML("afterbegin", '<p role="alert">Something went wrong</p>');
 });`,
 		v.has("tracker") ? "__TRACKER__" : "",
@@ -227,25 +228,27 @@ function recruitee(v: Set<string>): string {
 				]
 			: []),
 		"</fieldset></section>",
-		`<fieldset><legend>Your personal data</legend><div><input type="hidden" name="candidate.agreements.0.agreementId" value="7"><input required type="checkbox" class="vh" aria-labelledby="consent-${r}" name="candidate.agreements.0.consent" value="true"><div id="consent-${r}" style="cursor:pointer">I agree that Acme Robotics keeps my data for 90 days.</div></div></fieldset>`,
+		`<fieldset><legend>Your personal data</legend><div><input type="hidden" name="candidate.agreements.0.agreementId" value="7">${v.has("button-toggle") ? '<button role="checkbox" aria-checked="false" style="display:inline-block;width:18px;height:18px">' : ""}<input required type="checkbox" class="vh" aria-labelledby="consent-${r}" name="candidate.agreements.0.consent" value="true">${v.has("button-toggle") ? "</button>" : ""}<div id="consent-${r}" style="cursor:pointer">I agree that Acme Robotics keeps my data for 90 days.</div></div></fieldset>`,
 		v.has("captcha") ? HCAPTCHA_FRAME : "",
 		`<button type="submit" data-testid="submit-application-form-button">Send</button>`,
 	];
 	return page(
 		"Recruitee",
-		`<h1>Platform Engineer</h1><form id="offer-application-form" novalidate>${fields.join("")}</form><div id="done" hidden><h3>All done!</h3><p>Your application has been sent.</p></div><div id="dup" hidden><h3>You've already applied for this job</h3></div>${cookieDialog('data-testid="agree-to-all-cookies"', 'data-testid="agree-to-selected-cookies"')}`,
+		`<h1>Platform Engineer</h1><form id="offer-application-form" novalidate>${fields.join("")}</form><div role="tabpanel" id="radix-${r}-content-offer-application-success" hidden><h3>All done!</h3><p>Your application has been sent.</p></div><div role="tabpanel" id="radix-${r}-content-offer-application-rate-limited" hidden><h3>You've already applied for this job</h3></div>${cookieDialog('data-testid="agree-to-all-cookies"', 'data-testid="agree-to-selected-cookies"')}`,
 		`${POST_JS}
 for (const box of document.querySelectorAll("[aria-labelledby^=consent-]")) document.getElementById(box.getAttribute("aria-labelledby")).addEventListener("click", () => { box.checked = !box.checked; });
 const form = document.getElementById("offer-application-form");
 form.addEventListener("submit", async (e) => {
 	e.preventDefault();
 	for (const a of form.querySelectorAll("[role=alert]")) a.textContent = "";
-	const miss = missing(form);
+	// button-toggle: a careless board that posts whatever it has.
+	const miss = ${v.has("button-toggle")} ? [] : missing(form);
 	if (miss.length) { form.querySelector("[role=alert]").textContent = "This field is required: " + miss.join(", "); return; }
 	const r = await post(form, location.pathname + "/submit");
 	if (!r.ok) { form.querySelector("[role=alert]").textContent = "Something went wrong"; return; }
 	form.remove();
-	document.getElementById(r.text === "duplicate" ? "dup" : "done").hidden = false;
+	if (r.text === "verify") { document.body.insertAdjacentHTML("beforeend", "<div><h3>All done!</h3><p>Confirm your email address to finish your application.</p></div>"); return; }
+	document.querySelector(r.text === "duplicate" ? "[id$=-content-offer-application-rate-limited]" : "[id$=-content-offer-application-success]").hidden = false;
 });`,
 		v.has("tracker") ? "__TRACKER__" : "",
 	);
@@ -402,7 +405,15 @@ async function readBody(req: IncomingMessage): Promise<string> {
 	return Buffer.concat(chunks).toString("latin1");
 }
 
-const VARIANTS = ["unknown", "captcha", "already", "tracker"];
+const VARIANTS = [
+	"unknown",
+	"captcha",
+	"already",
+	"tracker",
+	"wrong-country",
+	"verify-email",
+	"button-toggle",
+];
 
 /** Records a POST and answers it the way the board does (a thank-you or a duplicate). */
 function parsePost(board: string, path: string, body: string): Submission {
@@ -420,6 +431,7 @@ function postAnswer(
 	co: string,
 	job: string,
 	already: boolean,
+	verify = false,
 ): { status: number; headers: Record<string, string>; body: string } {
 	if (board === "teamtailor")
 		return {
@@ -433,9 +445,11 @@ function postAnswer(
 		board === "recruitee"
 			? already
 				? "duplicate"
-				: "ok"
+				: verify
+					? "verify"
+					: "ok"
 			: already
-				? "You have already applied for this job."
+				? "You have already submitted an application for this position."
 				: "Thank you for applying! Your application has been submitted.";
 	return { status: 200, headers: { "content-type": "text/plain" }, body: text };
 }
@@ -493,7 +507,13 @@ export async function startMoreFixtureBoards(): Promise<MoreFixtureBoards> {
 		const variant = new Set(VARIANTS.filter((v) => job.includes(v)));
 		if (req.method === "POST") {
 			submissions.push(parsePost(board, url.pathname, await readBody(req)));
-			const answer = postAnswer(board, co, job, variant.has("already"));
+			const answer = postAnswer(
+				board,
+				co,
+				job,
+				variant.has("already"),
+				variant.has("verify-email"),
+			);
 			res.writeHead(answer.status, answer.headers);
 			res.end(answer.body);
 			return;
