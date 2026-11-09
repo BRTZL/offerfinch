@@ -77,7 +77,7 @@ describe("the stop sheet", () => {
 		expect(view?.reason).toMatch(/CAPTCHA/);
 	});
 
-	it("a board not opened in Settings offers Retry after opening it, with or without its kind", () => {
+	it("a board not opened in Settings offers Read the form again after opening it, with or without its kind", () => {
 		for (const reason of [
 			"Greenhouse isn't opened in Settings › Applying. Nothing was submitted.",
 			"Employers' own forms aren't opened in Settings › Applying. Nothing was submitted.",
@@ -91,7 +91,7 @@ describe("the stop sheet", () => {
 				);
 				expect(view?.case).toBe("host_not_allowed");
 				expect(view?.title).toBe("This job site isn't opened yet");
-				expect(view?.actions).toEqual(["finish", "mark", "retry"]);
+				expect(view?.actions).toEqual(["reread", "finish", "mark", "retry"]);
 			}
 	});
 

@@ -434,11 +434,38 @@ describe("submission on approval", () => {
 		expect(await repo.openedBoards("u1")).toEqual([]);
 	});
 
+	it("sends an opened real board's form only from a field list read before review", async () => {
+		const id = await approvedApp();
+		const { pipeline, runs } = deps(submits({ n: 0 }));
+		(pipeline.apply as ApplyDeps).boardBases = {};
+		await repo.setBoardOpen("u1", "greenhouse", true);
+		await repo.setSubmissionsPaused("u1", false);
+		await beginSubmissionStep(pipeline, "u1", id);
+		// Approved while Greenhouse was closed: its form was never read, so nothing opens.
+		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(/^The form was not read before review/),
+		});
+		expect(runs).toHaveLength(0);
+		await repo.setBoardOpen("u1", "greenhouse", false);
+	});
+
 	it("opens only the opened board's own form host for a run, never another's", async () => {
 		const id = await approvedApp();
 		const { pipeline, runs } = deps(submits({ n: 0 }));
 		// The run itself is a stub (`apply.run`) and the browser throws: no site is contacted.
 		(pipeline.apply as ApplyDeps).boardBases = {};
+		// The form read before review, while Greenhouse was open.
+		const schema = {
+			board: "greenhouse",
+			url: "https://job-boards.greenhouse.io/acme/jobs/1",
+			submit: "Submit application",
+			fields: [],
+		};
+		await execute(
+			db,
+			sql`insert into application_forms (id, user_id, application_id, status, board, url, schema, read_at) values (${crypto.randomUUID()}, 'u1', ${id}, 'read', 'greenhouse', ${schema.url}, ${JSON.stringify(schema)}, ${Date.now()})`,
+		);
 		await repo.setBoardOpen("u1", "lever", true);
 		await repo.setBoardOpen("u1", "greenhouse", true);
 		expect((await repo.submissionContext("u1", id))?.boardOpened).toBe(true);

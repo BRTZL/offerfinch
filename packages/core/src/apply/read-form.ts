@@ -141,7 +141,7 @@ export async function readApplicationForm(
 			url,
 			note:
 				context.boardOpened === false
-					? `The form was not read before review: ${boardClosedReason(board)} Open it there, then Read the form again.`
+					? `The form was not read before review: ${boardClosedReason(board)} Nothing will be filled there until it is opened.`
 					: `The form was not read before review: automatic submission to ${new URL(url).hostname} is not turned on, so nothing will be filled there.`,
 			readAt,
 		};

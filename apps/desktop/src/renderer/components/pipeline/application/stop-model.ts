@@ -259,9 +259,9 @@ const COPY: Record<
 	},
 	host_not_allowed: {
 		title: "This job site isn't opened yet",
-		body: "Real job sites stay closed until you open each one in Settings › Applying, so no browser was opened and nothing was sent. Open the site there and Retry, or send it yourself with your answers below.",
-		actions: ["finish", "mark", "retry"],
-		note: "While the site is closed, Retry stops here again, before any browser opens.",
+		body: "Real job sites stay closed until you open each one in Settings › Applying, so no browser was opened and nothing was sent. Open the site there, then Read the form again, or send it yourself with your answers below.",
+		actions: ["reread", "finish", "mark", "retry"],
+		note: "Read the form again lists the opened site's fields and sends the application back to review; nothing is sent. Retry sends it as approved, only if its form was read before review. While the site is closed, both stop here again.",
 	},
 	paused: {
 		title: "Submissions were paused",

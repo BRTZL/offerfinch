@@ -415,6 +415,17 @@ async function prepareRun(
 		return {
 			stop: "The employer's form was not read before review, so no list of what will be sent was approved for it; apply on the employer's site yourself.",
 		};
+	// A real board's form is filled only from a field list review showed, like an employer's: a
+	// form not read before review (its board was closed then) goes back to review first. The
+	// local fixture boards keep filling from the scan, as before step 2.
+	if (
+		context.board !== "web" &&
+		read?.status !== "read" &&
+		!hostAllowed(url, LOCAL_HOSTS)
+	)
+		return {
+			stop: "The form was not read before review, so no list of what will be sent was approved for it. Read the form again to review it.",
+		};
 	// A read saved before redirects to another host became a hand-off may hold a form page on
 	// another host than the job's link: never opened, never sent to.
 	const moved =

@@ -132,7 +132,7 @@ describe("the form read before review", () => {
 		const read = await readApplicationForm(apply(reads), context(false));
 		expect(read).toMatchObject({
 			status: "skipped",
-			note: "The form was not read before review: Greenhouse isn't opened in Settings › Applying. Open it there, then Read the form again.",
+			note: "The form was not read before review: Greenhouse isn't opened in Settings › Applying. Nothing will be filled there until it is opened.",
 		});
 		expect(reads).toEqual([]);
 	});
