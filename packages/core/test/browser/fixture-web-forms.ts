@@ -45,6 +45,11 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  *   rejected      the same, posting the application; the server answers HTTP 500
  *   json          the same, posting the application as JSON ({"candidate": {...}})
  *   silent        name and email; the submit sends nothing and swaps the form for a thank-you
+ *   hidden-away   email and full name with the form's own submit button, plus a submit button kept
+ *                 hidden (display:none) whose formaction is on localhost
+ *   textless-away the same, with a visible submit button that has no text and a formaction on localhost
+ *   outside-away  the same, with a hidden button after the form that names it with form= and posts to
+ *                 localhost
  *   assets        name, email and location; loads a logo from localhost, and on input asks localhost
  *                 for images whose paths carry pieces of what was typed (base64 pieces, the first word)
  */
@@ -298,6 +303,24 @@ ${text("Email address", "email", { type: "email" })}${text("Full name", "full_na
 </form><p><button type="submit" form="apply">Submit application</button></p>`;
 }
 
+/** Email and full name with the form's own submit button, and another one that sends to `away`. */
+function awayButtonBody(variant: string, away: string): string {
+	const to = `${away}/web/${variant}/collect`;
+	const inside =
+		variant === "hidden-away"
+			? `<button type="submit" style="display:none" formaction="${to}">Send</button>`
+			: variant === "textless-away"
+				? `<button type="submit" formaction="${to}" aria-hidden="true"></button>`
+				: "";
+	const outside =
+		variant === "outside-away"
+			? `<button type="submit" form="apply" hidden formaction="${to}">Send</button>`
+			: "";
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply" method="post" action="/web/${variant}/apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<p><button type="submit">Submit application</button>${inside}</p></form>${outside}`;
+}
+
 /**
  * Email and full name with the form's own submit button; on submit the page's script sends what
  * `SENDS[variant]` says, then swaps the form for a thank-you, whatever the answer.
@@ -476,6 +499,10 @@ function formPage(
 			return page(scriptButtonBody(), SCRIPT_BUTTON);
 		case "form-attr":
 			return page(formAttrBody());
+		case "hidden-away":
+		case "textless-away":
+		case "outside-away":
+			return page(awayButtonBody(variant, awayOrigin));
 		case "assets":
 			return page(assetsBody(awayOrigin), ASSETS, awayOrigin);
 		default:

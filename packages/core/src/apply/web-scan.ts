@@ -44,7 +44,10 @@ export interface WebScan {
 	/** Words saying the page wants a sign-in before applying, when there is no form. */
 	signIn: string | null;
 	errors: string[];
-	/** Where the form says it sends: its `action` and its buttons' `formaction`, as absolute URLs. */
+	/**
+	 * Where the form says it sends, as absolute URLs: its `action` and the `formaction` of every
+	 * button or input that belongs to it, shown or not.
+	 */
 	endpoints: string[];
 	/**
 	 * The form has a submit button of its own, shown or kept hidden in a later step (a `<button>`
@@ -201,6 +204,10 @@ export const WEB_SCAN_SCRIPT = String.raw`(() => {
 	const owned = root.tagName === "FORM" ? [...root.elements].filter((el) => el.matches(BUTTONS) && !root.contains(el)) : [];
 	const nativeSubmit = (b) => (b.tagName === "BUTTON" && (b.getAttribute("type") || "submit").toLowerCase() === "submit") || (b.tagName === "INPUT" && /^(?:submit|image)$/i.test(b.type));
 	result.canSubmit = root.tagName === "FORM" && [...root.elements].some((b) => nativeSubmit(b) && !b.disabled);
+	// Where any control of the form may send it: every formaction of a button or input that
+	// belongs to it (inside it, or outside it naming it with form=), hidden, disabled or text-less
+	// ones too, before the filters below.
+	if (root.tagName === "FORM") for (const el of root.elements) if (el.hasAttribute("formaction") && el.formAction) result.endpoints.push(el.formAction);
 	let c = 0;
 	for (const b of [...root.querySelectorAll(BUTTONS), ...owned]) {
 		if (!shown(b)) continue;
@@ -215,7 +222,6 @@ export const WEB_SCAN_SCRIPT = String.raw`(() => {
 		if (type === "link") continue;
 		const ref = String(++c);
 		b.setAttribute("data-jp-control", ref);
-		if (b.hasAttribute("formaction") && b.formAction) result.endpoints.push(b.formAction);
 		result.controls.push({ ref, text: text.slice(0, 80), type });
 	}
 	result.errors = [...document.querySelectorAll(${JSON.stringify(WEB_ERRORS)})].filter(shown).map((e) => textOf(e)).filter(Boolean).slice(0, 10);

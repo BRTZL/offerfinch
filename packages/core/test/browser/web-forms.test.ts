@@ -198,6 +198,44 @@ describe("reading an employer's form before review", () => {
 		expect(forms.count("script-button")).toBe(0);
 	}, 60_000);
 
+	it.each([
+		// A submit button kept hidden, one with no text, and a hidden one outside the form that
+		// names it with form=, each with a formaction on another host (Codex review, 2026-11-09).
+		"hidden-away",
+		"textless-away",
+		"outside-away",
+	])(
+		"%s: a button of the form that sends elsewhere makes it a hand-off, shown or not",
+		async (variant) => {
+			const { result } = await read(variant);
+			expect(result).toMatchObject({
+				ok: false,
+				reason: "This form sends to localhost; finish it yourself.",
+				handoff: true,
+			});
+			expect(forms.count(variant)).toBe(0);
+			expect(forms.away.filter((a) => a.method === "POST")).toEqual([]);
+		},
+	);
+
+	it("at submit, a hidden button that sends elsewhere stops the run before the claim", async () => {
+		// A read of a form with the same two questions; the live page has the hidden button.
+		const { deps, calls } = harness(
+			"hidden-away",
+			await readAs("silent", "hidden-away"),
+		);
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(
+				/^This form sends to localhost; finish it yourself\./,
+			),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["stop"]);
+		expect(forms.count("hidden-away")).toBe(0);
+		expect(forms.away.filter((a) => a.method === "POST")).toEqual([]);
+	}, 60_000);
+
 	it("a submit button outside the form that names it with form= is its submit", async () => {
 		const schema = await schemaOf("form-attr");
 		expect(schema.submit).toBe("Submit application");
