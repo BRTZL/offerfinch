@@ -2,6 +2,7 @@ import { openFormQuestions, planFormFields } from "../apply/field-answers";
 import type { FormRead } from "../apply/form-schema";
 import { readApplicationForm } from "../apply/read-form";
 import { applicantData } from "../apply/submit";
+import { webFormModelFor } from "../apply/web-model";
 import { parseFormAnswers } from "../tailor/tailor";
 import type { PipelineDeps } from "./ports";
 
@@ -42,6 +43,10 @@ export async function readFormStep(
 			apply,
 			context,
 			deps.now?.() ?? new Date(),
+			// An employer's own form: the model labels what its page names nothing for.
+			context.board === "web"
+				? webFormModelFor(deps, userId, applicationId)
+				: null,
 		);
 		await apply.store.saveFormRead(userId, applicationId, read);
 		deps.log?.("form read", {
@@ -127,7 +132,7 @@ export async function fieldAnswersStep(
 		applicationId,
 		plan.ask.map((q) => ({
 			question: q.label,
-			why: `Asked by the ${read.schema.board} application form (required)${q.answered ? `; the drafted answer "${q.answered}" is not one of its options` : ""}. Nothing on file answers it.`,
+			why: `Asked by the ${read.schema.board === "web" ? "employer's" : read.schema.board} application form (required)${q.answered ? `; the drafted answer "${q.answered}" is not one of its options` : ""}. Nothing on file answers it.`,
 			formField: {
 				label: q.label,
 				options: q.options,

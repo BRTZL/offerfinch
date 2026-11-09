@@ -67,6 +67,7 @@ afterAll(async () => {
 /** An application approved for exactly its current documents, with a CV PDF stored. */
 async function approvedApp(
 	source: NormalizedJob["source"] = "greenhouse",
+	applyUrl?: string,
 ): Promise<string> {
 	n++;
 	const job: NormalizedJob = {
@@ -77,6 +78,7 @@ async function approvedApp(
 		locations: ["Remote"],
 		workplaceType: "remote",
 		descriptionText: "TypeScript",
+		...(applyUrl ? { applyUrl } : {}),
 	};
 	const { jobId } = await repo.upsertJob("u1", companyId, job);
 	const id = (await repo.getApplicationByJob("u1", jobId))?.applicationId ?? "";
@@ -406,6 +408,42 @@ describe("submission on approval", () => {
 		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
 			outcome: "needs_human",
 			reason: expect.stringMatching(/Easy Apply is never used/),
+		});
+		expect(runs).toHaveLength(0);
+	});
+
+	// Plan step 6: a LinkedIn job whose employer link is a Greenhouse posting fills that posting.
+	it("fills the board a hand-off source's apply link names, with that posting's keys", async () => {
+		const link = "https://job-boards.greenhouse.io/acmerobotics/jobs/4012345";
+		const id = await approvedApp("linkedin", link);
+		expect(await repo.submissionContext("u1", id)).toMatchObject({
+			source: "linkedin",
+			board: "greenhouse",
+			boardFrom: "url",
+			companyKey: "acmerobotics",
+			externalId: "4012345",
+			jobUrl: link,
+		});
+		const { pipeline } = deps(submits({ n: 0 }));
+		await repo.setSubmissionsPaused("u1", false);
+		expect(await beginSubmissionStep(pipeline, "u1", id)).toEqual({
+			outcome: "started",
+		});
+	});
+
+	it("hands off an employer's own form whose fields were never read", async () => {
+		const link = "https://careers.acme-robotics.example/jobs/42/apply";
+		const id = await approvedApp("linkedin", link);
+		expect(await repo.submissionContext("u1", id)).toMatchObject({
+			board: "web",
+			boardFrom: "url",
+			jobUrl: link,
+		});
+		const { pipeline, runs } = deps(submits({ n: 0 }));
+		await repo.setSubmissionsPaused("u1", false);
+		expect(await beginSubmissionStep(pipeline, "u1", id)).toMatchObject({
+			outcome: "handoff",
+			reason: expect.stringMatching(/has not been read/),
 		});
 		expect(runs).toHaveLength(0);
 	});

@@ -14,6 +14,7 @@ import {
 	exactOption,
 	type FillAction,
 	type FillPlan,
+	type FormBoard,
 	type FormField,
 	optionsScript,
 	planFill,
@@ -25,6 +26,7 @@ import {
 	VISIBLE_CHALLENGE_SCRIPT,
 	verifyFilled,
 } from "./forms";
+import type { WebFormModel } from "./web-model";
 
 /**
  * Drives one board's hosted application form: open, check for a challenge, fill from approved
@@ -40,6 +42,12 @@ export type StopKind =
 	| "form_changed"
 	| "validation"
 	| "unrecognized_page"
+	/** The page asks for a password or a sign-in before its form (Rule 5: none is stored). */
+	| "account_wall"
+	/** The page asks for a code sent by email or SMS. */
+	| "verification_code"
+	/** The form sits on another site than the page that was opened (a frame from elsewhere). */
+	| "other_site"
 	| "error";
 
 export interface Stop {
@@ -59,7 +67,8 @@ export interface FilledField {
 }
 
 export interface ApplicationRun {
-	board: Board;
+	/** "web": an employer's own form, run by `runWebApplication` (web-form.ts). */
+	board: FormBoard;
 	url: string;
 	mode: "submit" | "dry_run";
 	data: ApplicantData;
@@ -97,6 +106,13 @@ export interface ApplicationRun {
 	 * allowlist guard records those attempts).
 	 */
 	allowedHosts?: string[];
+	/**
+	 * An employer's own form: the drafting model, for which button is which and what the page
+	 * after the click says. Null or unset: those stay deterministic (and an unread outcome unknown).
+	 */
+	model?: WebFormModel | null;
+	/** An employer's multi-step form: called before the first "Next"; a reason stops the run. */
+	beforeStep?: () => Promise<string | null>;
 }
 
 /** A stop when the page left the allowed hosts or tried to; null when it stayed. */
@@ -369,7 +385,7 @@ async function suggestions(
 }
 
 /** Runs one planned action; a stop when a combobox or location has no exact option. */
-async function perform(
+export async function perform(
 	page: BrowserPage,
 	action: FillAction,
 	field: FormField,
@@ -730,7 +746,8 @@ export async function runApplication(
 	page: BrowserPage,
 	run: ApplicationRun,
 ): Promise<RunResult> {
-	const config = BOARD_CONFIGS[run.board];
+	// An employer's own form ("web") runs through `runWebApplication` (web-form.ts); submit.ts picks.
+	const config = BOARD_CONFIGS[run.board as Board];
 	let filled: FilledField[] = [];
 	try {
 		const opened = await openForm(page, run.url, config, run.allowedHosts);
