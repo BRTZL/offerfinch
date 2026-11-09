@@ -244,11 +244,18 @@ describe.each(NEW_BOARDS)("%s fixture form", (board) => {
 
 	it("reads the form before review, and a later load with new ids lines up with it", async () => {
 		const jobId = `${board}-read`;
+		const started = Date.now();
 		const { result, log } = await withPage("read_only", async (page) => ({
 			result: await readFormOnPage(page, board, urlFor(board, jobId)),
 			log: page.networkLog(),
 		}));
+		// Workable's combobox sits behind its cookie backdrop: declined first, read at once.
+		expect(Date.now() - started).toBeLessThan(15_000);
 		expect(result.ok, JSON.stringify(result)).toBe(true);
+		if (board === "workable" && result.ok)
+			expect(
+				result.schema.fields.find((f) => f.kind === "combobox")?.options,
+			).toEqual(["A friend", "LinkedIn"]);
 		expect(log.filter((r) => r.allowed && r.method !== "GET")).toEqual([]);
 		if (!result.ok) return;
 		const labels = result.schema.fields.map((f) => f.label);

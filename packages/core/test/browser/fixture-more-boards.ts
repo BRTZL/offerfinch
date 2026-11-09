@@ -136,6 +136,7 @@ function workable(v: Set<string>): string {
 		),
 		text("QA_502", "What is your notice period?", true),
 		radios("QA_503", "Will you require visa sponsorship?"),
+		`<div data-ui="CA_601" data-input-type="select"><label><span id="CA_601_label"><strong>How did you hear about us?</strong><span> (Optional)</span></span><div><input id="input_CA_601_input" role="combobox" aria-controls="input_CA_601_listbox" aria-labelledby="CA_601_label" readonly value="" placeholder="Select an option"></div></label><input name="CA_601" aria-hidden="true" value=""><ul id="input_CA_601_listbox" role="listbox" hidden><li role="option">A friend</li><li role="option">LinkedIn</li></ul></div>`,
 		...(v.has("unknown")
 			? [radios("QA_504", "Are you willing to relocate to Ankara?")]
 			: []),
@@ -154,6 +155,11 @@ for (const opt of document.querySelectorAll("[data-ui=option]")) opt.addEventLis
 	for (const o of opt.parentElement.querySelectorAll("[data-ui=option]")) o.setAttribute("aria-checked", "false");
 	opt.setAttribute("aria-checked", "true"); input.checked = true;
 });
+const combo = document.getElementById("input_CA_601_input");
+const list = document.getElementById("input_CA_601_listbox");
+combo.addEventListener("click", () => { list.hidden = false; });
+combo.addEventListener("keydown", (e) => { if (e.key === "Escape") list.hidden = true; });
+for (const o of list.querySelectorAll("[role=option]")) o.addEventListener("mousedown", (e) => { e.preventDefault(); combo.value = o.textContent; document.querySelector("[name=CA_601]").value = o.textContent; list.hidden = true; });
 const box = document.querySelector("[data-ui=gdpr] [role=checkbox]");
 box.addEventListener("click", (e) => { e.preventDefault(); const i = box.querySelector("input"); i.checked = !i.checked; box.setAttribute("aria-checked", String(i.checked)); });
 const phone = document.getElementById("input_phone");

@@ -448,7 +448,7 @@ function againstSchema(
 }
 
 /** The board's own cookie banner covers the form (Workable's backdrop): declines it once. */
-async function declineBoardCookies(
+export async function declineBoardCookies(
 	page: BrowserPage,
 	config: BoardConfig,
 ): Promise<void> {
