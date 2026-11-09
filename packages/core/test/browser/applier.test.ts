@@ -5,7 +5,7 @@ import {
 import { applyUrl, type Board } from "@offerfinch/core/apply/forms";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { localBrowser } from "./browser";
+import { localBrowser, siteBrowser } from "./browser";
 import { type FixtureBoards, startFixtureBoards } from "./fixture-boards";
 
 let boards: FixtureBoards;
@@ -184,6 +184,45 @@ describe.each(["ashby", "greenhouse", "lever"] as const)(
  * chosen for it (gender "Male", marketing ticked), and an approved checkbox answer kept extra
  * ticked options. What is sent must be exactly the approved answers and nothing else.
  */
+// A real dry run's session (apply/submit.ts): read-only, no allowed hosts, private networks
+// refused. The board answers on a public-looking name, so the guard fetches every read itself.
+describe.each(["ashby", "greenhouse", "lever"] as const)(
+	"%s fixture form, dry run as a real one",
+	(board) => {
+		it("fills everything and posts nothing in a hostless read-only session", async () => {
+			const jobId = `${board}-dry-real`;
+			const port = new URL(boards.url).port;
+			const session = await siteBrowser(Number(port)).openSession({
+				network: "read_only",
+				refusePrivateNetwork: true,
+			});
+			try {
+				const page = await session.newPage();
+				const result = await runApplication(page, {
+					...run(board, jobId, "dry_run"),
+					url: applyUrl(
+						board,
+						{ url: "", externalId: jobId, companyKey: "acme-robotics" },
+						{ [board]: `http://jobs.acme.test:${port}/${board}` },
+					),
+					lookupsOffline: true,
+					beforeFill: () => page.restrictNetwork("none"),
+				});
+				const log = page.networkLog();
+				expect(
+					result.outcome,
+					JSON.stringify(result.outcome === "stopped" ? result.stop : ""),
+				).toBe("dry_run");
+				expect(page.url()).toContain("jobs.acme.test");
+				expect(boards.count(jobId)).toBe(0);
+				expect(log.filter((r) => r.allowed && r.method !== "GET")).toEqual([]);
+			} finally {
+				await session.close();
+			}
+		}, 60_000);
+	},
+);
+
 describe("controls that arrive answered", () => {
 	const withRelocation = (board: Board, jobId: string): ApplicationRun => {
 		const base = run(board, jobId);

@@ -1188,7 +1188,10 @@ class PlaywrightPage implements BrowserPage {
 	 * off, and each redirect checked and followed here (`followChecked`): `continue` would let the
 	 * browser follow them unseen. A hop must meet the same rules as a new request: not this Mac or
 	 * a private network, and still a read (`readHopRefusal`). A refused hop is aborted quietly and
-	 * logged; the page's main frame stays on its hosts (`refusedNavigation`).
+	 * logged; the page's main frame stays on its hosts (`refusedNavigation`). A GET redirect of the
+	 * page's main frame is never fulfilled under the first URL (the next origin's page would run as
+	 * the first): once checked, the navigation ends there and the hop loads as a new navigation
+	 * (`mainFrameHop`, `loadHop`), which the filter decides again, as in every guarded session.
 	 */
 	private async readWithoutRedirects(
 		route: PlaywrightRouteLike,
@@ -1197,16 +1200,20 @@ class PlaywrightPage implements BrowserPage {
 		const mainFrame =
 			request.isNavigationRequest() &&
 			request.frame() === this.page.mainFrame();
+		const check = (hop: Hop) =>
+			readHopRefusal(hop, request.postData(), contentTypeOf(request));
 		let result: Followed;
+		let mainHop: Hop | null = null;
 		try {
 			const first = await route.fetch({ maxRedirects: 0 });
-			result = await followChecked(
-				route,
-				first,
-				(hop) =>
-					readHopRefusal(hop, request.postData(), contentTypeOf(request)),
-				{ mainFrame },
-			);
+			mainHop = this.mainFrameHop(request, first);
+			const refusal = mainHop && check(mainHop);
+			result =
+				mainHop && refusal
+					? { refused: refusal, hop: mainHop, followed: [] }
+					: mainHop
+						? { response: first, followed: [] }
+						: await followChecked(route, first, check, { mainFrame });
 		} catch (error) {
 			// Closing the session ends it in `routeUntilClosed`; a host that cannot be reached (an
 			// unknown name, a refused connection) fails this read only, as the browser would.
@@ -1225,6 +1232,8 @@ class PlaywrightPage implements BrowserPage {
 			});
 			return route.abort("blockedbyclient");
 		}
+		if (mainHop) return this.loadHop(route, request, mainHop);
+		if (mainFrame) this.pageHops = 0;
 		return fulfillFollowed(route, result);
 	}
 

