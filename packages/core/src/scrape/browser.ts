@@ -226,6 +226,111 @@ export function privateUrl(url: string): boolean {
 /** The reason recorded for a request to this Mac or a private network a real run refused. */
 export const PRIVATE_NETWORK_REFUSED = "private network refused";
 
+/** One request of a redirect chain the guard follows itself (`followChecked`). */
+interface Hop {
+	url: string;
+	method: string;
+	/** True while the first request's body is sent again (307 and 308 keep it). */
+	keepsBody: boolean;
+}
+
+/** The reason recorded for a redirect to something that is not an http(s) URL. */
+const OFF_THE_WEB = "redirect off the web, refused";
+
+/**
+ * Where a 3xx answer to `from` leads, as the browser would follow it, or null for any other
+ * answer: 307 and 308 send the same method and body again; 301, 302 and 303 turn a POST into a
+ * GET without a body. An unreadable `Location` is kept as is (and refused as off the web).
+ */
+function nextHop(response: PlaywrightFetchResponseLike, from: Hop): Hop | null {
+	const status = response.status();
+	const location = response.headers().location;
+	if (status < 300 || status >= 400 || !location) return null;
+	let url = location;
+	try {
+		url = new URL(location, from.url).href;
+	} catch {}
+	const resent = status === 307 || status === 308;
+	const method = resent || from.method === "HEAD" ? from.method : "GET";
+	return { url, method, keepsBody: resent && from.keepsBody };
+}
+
+/**
+ * Follows the redirects of a request the guard fetched (`first`, its answer to `route`'s own
+ * request) here, one hop at a time with redirects off: the browser follows a fulfilled 3xx by
+ * itself and never asks the route again, so a second hop (public, then this Mac) would go
+ * unseen. Each hop is checked first (`check` returns why it is refused, or null); an off-the-web
+ * hop and the eleventh are refused. Ends with the last answer, or the refused hop.
+ */
+async function followChecked(
+	route: PlaywrightRouteLike,
+	first: PlaywrightFetchResponseLike,
+	check: (hop: Hop) => string | null,
+): Promise<
+	| { response: PlaywrightFetchResponseLike; followed: Hop[] }
+	| { refused: string; hop: Hop; followed: Hop[] }
+> {
+	const request = route.request();
+	let from: Hop = {
+		url: request.url(),
+		method: request.method(),
+		keepsBody: true,
+	};
+	let response = first;
+	const followed: Hop[] = [];
+	for (;;) {
+		const hop = nextHop(response, from);
+		if (!hop) return { response, followed };
+		const refused = !/^https?:/.test(hop.url)
+			? OFF_THE_WEB
+			: followed.length >= MAX_REDIRECTS
+				? `more than ${MAX_REDIRECTS} redirects, refused`
+				: check(hop);
+		if (refused) return { refused, hop, followed };
+		const headers = { ...(request.headers?.() ?? {}) };
+		for (const name of Object.keys(headers))
+			if (
+				/^(?:host|cookie|content-length)$/i.test(name) ||
+				(!hop.keepsBody && /^content-type$/i.test(name))
+			)
+				delete headers[name];
+		response = await route.fetch({
+			url: hop.url,
+			method: hop.method,
+			headers,
+			maxRedirects: 0,
+			// Unset sends the first request's body again; a hop that drops it sends none.
+			...(hop.keepsBody ? {} : { postData: Buffer.alloc(0) }),
+		});
+		followed.push(hop);
+		from = hop;
+	}
+}
+
+/**
+ * Why a read-only session refuses to follow a redirect `hop` of a request whose body is `body`,
+ * or null when it may: to this Mac or a private network, or no longer a read (`readOnlyDecision`).
+ */
+function readHopRefusal(hop: Hop, body: string | null): string | null {
+	if (privateUrl(hop.url)) return PRIVATE_NETWORK_REFUSED;
+	const read = readOnlyDecision(hop.method, hop.keepsBody ? body : null);
+	return read.allow ? null : read.reason;
+}
+
+/** `url` without its fragment, as a request's URL is; `url` itself when it is not a URL. */
+function withoutHash(url: string): string {
+	try {
+		const parsed = new URL(url);
+		parsed.hash = "";
+		return parsed.href;
+	} catch {
+		return url;
+	}
+}
+
+/** The reason logged for a redirect hop the guard checked and followed itself. */
+export const REDIRECT_FOLLOWED = "redirect followed";
+
 /** `boardHostDecision`'s reasons for a file read from a host that is not a destination. */
 const FILE_READS = new Set(["board asset, read", "board static file, read"]);
 
@@ -284,6 +389,10 @@ interface PlaywrightRouteLike {
 	continue(): Promise<void>;
 	abort(errorCode?: string): Promise<void>;
 	fetch(options?: {
+		url?: string;
+		method?: string;
+		headers?: Record<string, string>;
+		postData?: Buffer;
 		maxRedirects?: number;
 	}): Promise<PlaywrightFetchResponseLike>;
 	/** `response` is the object `fetch` returned, passed back opaquely. */
@@ -511,6 +620,15 @@ class PlaywrightPage implements BrowserPage {
 	private readonly needles: string[];
 	/** "pinned": the main frame has its document; later navigations are refused. */
 	private landed = false;
+	/**
+	 * Guarded sessions: the URL `goto` is loading. A redirect of that navigation is checked and
+	 * then loaded by `goto` as a new navigation (`gotoRedirect`), so the page ends on its real
+	 * URL and every hop passes the filter.
+	 */
+	private gotoUrl: string | null = null;
+	private gotoRedirect: string | null = null;
+	/** Redirects of the page's own main-frame navigations loaded in a row (`loadHop`). */
+	private pageHops = 0;
 
 	private readonly allowedHosts: string[];
 	private readonly fetcher?: PinnedFetcher;
@@ -667,33 +785,42 @@ class PlaywrightPage implements BrowserPage {
 			}
 			reason = decision.reason;
 		}
-		const response = await route.fetch({ maxRedirects: 0 });
-		const location = response.headers().location;
-		if (response.status() >= 300 && response.status() < 400 && location) {
-			const target = new URL(location, url).href;
-			// A hop to another host meets the same rules as a new request from the same frame.
-			const hop = this.onHosts(target)
-				? null
-				: destination
-					? { allow: false, reason: DESTINATION_REFUSED }
-					: this.otherHostDecision(request, target);
-			const refusal = hop && !hop.allow ? hop.reason : null;
-			if (refusal) {
-				this.state.log.push({
-					method,
-					url: target,
-					allowed: false,
-					reason: refusal,
-					seq,
-				});
-				return route.abort("blockedbyclient");
-			}
-		}
+		const first = await route.fetch({ maxRedirects: 0 });
 		const navigation =
 			request.isNavigationRequest() &&
 			request.frame() === this.page.mainFrame();
+		// A hop to another host meets the same rules as a new request from the same frame; a
+		// destination's must stay on the destinations.
+		const check = (hop: Hop): string | null => {
+			if (this.onHosts(hop.url)) return null;
+			if (destination) return DESTINATION_REFUSED;
+			const decision = this.otherHostDecision(request, hop.url);
+			return decision.allow ? null : decision.reason;
+		};
+		const refuseHop = (hop: Hop, refusal: string) => {
+			this.state.log.push({
+				method: hop.method,
+				url: hop.url,
+				allowed: false,
+				reason: refusal,
+				seq,
+			});
+			return route.abort("blockedbyclient");
+		};
+		const mainHop = this.mainFrameHop(request, first);
+		if (mainHop) {
+			const refused = check(mainHop);
+			if (refused) return refuseHop(mainHop, refused);
+		}
+		const result = mainHop
+			? { response: first, followed: [] }
+			: await followChecked(route, first, check);
+		if ("refused" in result) {
+			this.logFollowed(result.followed, seq);
+			return refuseHop(result.hop, result.refused);
+		}
 		const sent = destination && (navigation || !/^(?:GET|HEAD)$/i.test(method));
-		const answerHtml = sent ? await answerHtmlOf(response) : null;
+		const answerHtml = sent ? await answerHtmlOf(first) : null;
 		this.state.log.push({
 			method,
 			url,
@@ -701,10 +828,56 @@ class PlaywrightPage implements BrowserPage {
 			reason,
 			seq,
 			...(navigation ? { navigation: true as const } : {}),
-			...(sent ? sentOf(request, response.status()) : {}),
+			...(sent ? sentOf(request, first.status()) : {}),
 			...(answerHtml ? { answerHtml } : {}),
 		});
-		return route.fulfill({ response: response as never });
+		this.logFollowed(result.followed, seq);
+		if (mainHop) return this.loadHop(route, request, mainHop);
+		if (navigation) this.pageHops = 0;
+		return route.fulfill({ response: result.response as never });
+	}
+
+	/**
+	 * The redirect `first` answers to a navigation of the page's main frame with, as a GET, or
+	 * null: any other request, any other answer, or a 307 or 308 that sends a body again (that one
+	 * is followed by the guard, `followChecked`). Once checked, the page loads it as a new
+	 * navigation (`loadHop`), so the page ends on its real URL and the filter sees every hop.
+	 */
+	private mainFrameHop(
+		request: ReturnType<PlaywrightRouteLike["request"]>,
+		first: PlaywrightFetchResponseLike,
+	): Hop | null {
+		if (
+			!request.isNavigationRequest() ||
+			request.frame() !== this.page.mainFrame()
+		)
+			return null;
+		const hop = nextHop(first, {
+			url: request.url(),
+			method: request.method(),
+			keepsBody: true,
+		});
+		return hop && /^https?:/.test(hop.url) && hop.method === "GET" ? hop : null;
+	}
+
+	/**
+	 * Ends a main-frame navigation at its checked redirect `hop` and loads `hop` as a new one:
+	 * `goto`'s own by `goto` (`guardedGoto`), the page's own (a form's POST answered 303) here.
+	 */
+	private async loadHop(
+		route: PlaywrightRouteLike,
+		request: ReturnType<PlaywrightRouteLike["request"]>,
+		hop: Hop,
+	): Promise<void> {
+		if (this.gotoUrl !== null && request.url() === this.gotoUrl) {
+			this.gotoRedirect = hop.url;
+			return route.abort("aborted");
+		}
+		await route.abort("aborted");
+		// A loop of redirects ends where the browser would end it.
+		if (++this.pageHops > MAX_REDIRECTS) return;
+		// Not awaited: this request's handler ends here; the new navigation passes the filter.
+		void this.page.goto(hop.url).catch(() => {});
 	}
 
 	/**
@@ -777,19 +950,53 @@ class PlaywrightPage implements BrowserPage {
 			return true;
 		}
 		if (!readOnlyDecision(method, request.postData()).allow) return false;
-		const response = await route.fetch({ maxRedirects: 0 });
-		const location = response.headers().location;
-		if (response.status() >= 300 && response.status() < 400 && location) {
-			const target = new URL(location, url).href;
-			if (!this.onHosts(target)) {
-				this.refuse(method, target);
-				await route.abort("blockedbyclient");
-				return true;
-			}
+		const first = await route.fetch({ maxRedirects: 0 });
+		// Every hop stays on the hosts and stays a read.
+		const check = (hop: Hop): string | null =>
+			!this.onHosts(hop.url)
+				? DESTINATION_REFUSED
+				: readHopRefusal(hop, request.postData());
+		const mainHop = this.mainFrameHop(request, first);
+		const hopRefusal = mainHop && check(mainHop);
+		const result = mainHop
+			? { response: first, followed: [] }
+			: await followChecked(route, first, check);
+		const refused =
+			mainHop && hopRefusal
+				? { refused: hopRefusal, hop: mainHop }
+				: "refused" in result
+					? result
+					: null;
+		this.logFollowed(result.followed);
+		if (refused) {
+			this.state.log.push({
+				method: refused.hop.method,
+				url: refused.hop.url,
+				allowed: false,
+				reason: refused.refused,
+			});
+			await route.abort("blockedbyclient");
+			return true;
 		}
 		this.state.log.push({ method, url, allowed: true, reason: "allowed host" });
-		await route.fulfill({ response: response as never });
+		if (mainHop) await this.loadHop(route, request, mainHop);
+		else if ("response" in result) {
+			this.pageHops = 0;
+			await route.fulfill({ response: result.response as never });
+		}
 		return true;
+	}
+
+	/** Logs the redirect hops the guard checked and followed itself (`followChecked`). */
+	private logFollowed(hops: Hop[], seq?: number): void {
+		for (const hop of hops)
+			this.state.log.push({
+				method: hop.method,
+				url: hop.url,
+				allowed: true,
+				reason: REDIRECT_FOLLOWED,
+				...(seq === undefined ? {} : { seq }),
+			});
 	}
 
 	/**
@@ -826,8 +1033,50 @@ class PlaywrightPage implements BrowserPage {
 			allowed: decision.allow,
 			reason: decision.reason,
 		});
-		if (decision.allow) return route.continue();
-		return route.abort("blockedbyclient");
+		if (!decision.allow) return route.abort("blockedbyclient");
+		// `continue` would let the browser follow a redirect unseen (a public host's 302 or 307 to
+		// this Mac): with private networks refused, every read is fetched with redirects off.
+		if (this.state.refusePrivate && /^https?:/.test(request.url()))
+			return this.readWithoutRedirects(route);
+		return route.continue();
+	}
+
+	/**
+	 * A permitted read of a session that refuses private networks: fetched here with redirects
+	 * off, and each redirect checked and followed here (`followChecked`): `continue` would let the
+	 * browser follow them unseen. A hop must meet the same rules as a new request: not this Mac or
+	 * a private network, and still a read (`readHopRefusal`). A refused hop is aborted quietly and
+	 * logged; the page's main frame stays on its hosts (`refusedNavigation`).
+	 */
+	private async readWithoutRedirects(
+		route: PlaywrightRouteLike,
+	): Promise<void> {
+		const request = route.request();
+		let result: Awaited<ReturnType<typeof followChecked>>;
+		try {
+			const first = await route.fetch({ maxRedirects: 0 });
+			result = await followChecked(route, first, (hop) =>
+				readHopRefusal(hop, request.postData()),
+			);
+		} catch (error) {
+			// Closing the session ends it in `routeUntilClosed`; a host that cannot be reached (an
+			// unknown name, a refused connection) fails this read only, as the browser would.
+			const message = error instanceof Error ? error.message : String(error);
+			if (this.state.closing || /disposed|has been closed/i.test(message))
+				throw error;
+			return route.abort("failed");
+		}
+		this.logFollowed(result.followed);
+		if ("refused" in result) {
+			this.state.log.push({
+				method: result.hop.method,
+				url: result.hop.url,
+				allowed: false,
+				reason: result.refused,
+			});
+			return route.abort("blockedbyclient");
+		}
+		return route.fulfill({ response: result.response as never });
 	}
 
 	freezeAssets(): void {
@@ -882,6 +1131,43 @@ class PlaywrightPage implements BrowserPage {
 			.catch(() => {});
 	}
 
+	/**
+	 * `goto` in a guarded session: the filter checks a redirect of this navigation and ends it
+	 * (`loadAfterGoto`); the checked hop is then loaded here as a new navigation, which the filter
+	 * decides again. The page ends on its real URL, and no hop is followed unseen.
+	 */
+	private async guardedGoto(
+		url: string,
+		gotoOptions: {
+			timeout: number;
+			waitUntil: "load" | "domcontentloaded" | "networkidle";
+		},
+	) {
+		let target = url;
+		for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+			this.gotoUrl = withoutHash(target);
+			this.gotoRedirect = null;
+			let response: PlaywrightResponseLike | null = null;
+			try {
+				response = await this.page.goto(target, gotoOptions);
+			} catch (error) {
+				if (!this.gotoRedirect) throw error;
+			} finally {
+				this.gotoUrl = null;
+			}
+			const next = this.gotoRedirect;
+			this.gotoRedirect = null;
+			if (!next)
+				return {
+					status: response?.status() ?? null,
+					url: this.page.url(),
+					responseUrl: response?.url?.() ?? null,
+				};
+			target = next;
+		}
+		throw new Error(`More than ${MAX_REDIRECTS} redirects from ${url}`);
+	}
+
 	async goto(url: string, options: GotoOptions = {}) {
 		const gotoOptions = {
 			timeout: options.timeoutMs ?? 30_000,
@@ -892,6 +1178,11 @@ class PlaywrightPage implements BrowserPage {
 		// requests past it; guarded sessions check every hop in their filter instead.
 		if (beforeRedirect && this.state.mode !== "open")
 			throw new Error("beforeRedirect is only for open sessions");
+		if (
+			!beforeRedirect &&
+			(this.state.mode === "allowlist" || this.state.mode === "read_only")
+		)
+			return this.guardedGoto(url, gotoOptions);
 		if (!beforeRedirect) {
 			const response = await this.page.goto(url, gotoOptions);
 			return {

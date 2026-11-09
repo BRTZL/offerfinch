@@ -157,6 +157,8 @@ describe.skipIf(urls.length === 0)("live dry run (no submit)", () => {
 			const reader = await localBrowser().openSession({
 				network: "read_only",
 				allowedHosts,
+				// As a real run's read: every redirect is checked and followed by the guard.
+				refusePrivateNetwork: true,
 			});
 			let schema: FormSchema;
 			let readLog: NetworkLogEntry[];
@@ -189,6 +191,8 @@ describe.skipIf(urls.length === 0)("live dry run (no submit)", () => {
 			const filler = await localBrowser().openSession({
 				network: "read_only",
 				allowedHosts,
+				// As a real run's read: every redirect is checked and followed by the guard.
+				refusePrivateNetwork: true,
 			});
 			let closedAt = -1;
 			let fillLog: NetworkLogEntry[];
