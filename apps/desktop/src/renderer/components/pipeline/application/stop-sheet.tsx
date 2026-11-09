@@ -133,7 +133,12 @@ function FinishPanel({
 				/>
 				<Button
 					size="sm"
-					onClick={() => actions.markSubmitted.mutate({ appliedOn })}
+					onClick={() =>
+						actions.markSubmitted.mutate({
+							appliedOn,
+							attemptId: app.currentAttempt?.id ?? null,
+						})
+					}
 					pending={actions.markSubmitted.isPending}
 					disabled={!appliedOn}
 					data-testid="stop-mark-submitted"
@@ -193,6 +198,8 @@ function StopActions({
 		onError: (error) => toast.error(error.message),
 	});
 	const confirmed = actions.confirmedNotSent;
+	// The attempt this sheet shows: every confirmation names it, and is refused once it changed.
+	const attemptId = app.currentAttempt?.id ?? null;
 	const run = (action: StopAction) => {
 		if (action === "finish" || action === "finish_confirmed") onFinish();
 		else if (action === "answer" && view.question)
@@ -202,8 +209,9 @@ function StopActions({
 			actions.markSubmitted.mutate({
 				appliedOn: today(),
 				gotEmail: action === "got_email",
+				attemptId,
 			});
-		else actions.retry.mutate();
+		else actions.retry.mutate({ attemptId });
 	};
 	return (
 		<div className="flex flex-col items-end gap-2">

@@ -20,6 +20,7 @@ export {
 	EditConflictError,
 	INBOX_VIEWS,
 	type PendingEvent,
+	StaleAttemptError,
 	subscriptionPauseOf,
 } from "./dashboard/shared";
 

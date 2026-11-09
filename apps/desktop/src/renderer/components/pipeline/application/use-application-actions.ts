@@ -119,10 +119,6 @@ export function useApplicationActions({
 
 	const actionKey = useRef(crypto.randomUUID());
 
-	const submitKey = useRef(crypto.randomUUID());
-
-	const [confirmedNotSent, setConfirmedNotSent] = useState(false);
-
 	const [rootRef, rootWidth] = useWidth();
 
 	useInspectorToggle(toggleDetails);
@@ -248,41 +244,8 @@ export function useApplicationActions({
 		onError: (error) => toast.error(error.message),
 	});
 
-	const retry = useMutation({
-		mutationFn: () =>
-			client.submission.retry({
-				id,
-				confirmedNotSent,
-				idempotencyKey: submitKey.current,
-			}),
-		onSuccess: () => {
-			toast.success("Retrying the submission.");
-			submitKey.current = crypto.randomUUID();
-			setConfirmedNotSent(false);
-			void refresh();
-		},
-		onError: (error) => toast.error(error.message),
-	});
-
-	const markSubmitted = useMutation({
-		/**
-		 * I submitted this, or Got the email (`gotEmail`: the sent attempt went through). Sent by
-		 * hand after "It didn't go through" was ticked, the clicked attempt is recorded not sent.
-		 */
-		mutationFn: (input: { appliedOn: string; gotEmail?: boolean }) =>
-			client.submission.markSubmitted({
-				id,
-				idempotencyKey: submitKey.current,
-				appliedOn: input.appliedOn,
-				confirmedNotSent: !input.gotEmail && confirmedNotSent,
-			}),
-		onSuccess: () => {
-			toast.success("Marked as applied.");
-			submitKey.current = crypto.randomUUID();
-			void refreshLists();
-		},
-		onError: (error) => toast.error(error.message),
-	});
+	const { retry, markSubmitted, confirmedNotSent, setConfirmedNotSent } =
+		useSubmissionActions(id, refresh, refreshLists);
 
 	const dryRun = useMutation({
 		mutationFn: () => client.submission.dryRun({ id }),
@@ -393,6 +356,76 @@ export function useApplicationActions({
 	};
 }
 export type ApplicationActions = ReturnType<typeof useApplicationActions>;
+
+/**
+ * Retry, I submitted this and Got the email. Each names the attempt the page showed
+ * (`currentAttempt`, passed by the button pressed); the worker refuses it once that changed.
+ */
+function useSubmissionActions(
+	id: string,
+	refresh: () => Promise<unknown>,
+	refreshLists: () => Promise<unknown>,
+) {
+	const submitKey = useRef(crypto.randomUUID());
+
+	const [confirmedNotSent, setConfirmedNotSent] = useState(false);
+
+	/**
+	 * A confirmation named an attempt that changed since the page showed it (another run, another
+	 * window): the page reads again and the box is unticked, so the user looks again.
+	 */
+	const submissionRefused = (error: Error) => {
+		toast.error(error.message);
+		setConfirmedNotSent(false);
+		void refreshLists();
+	};
+
+	const retry = useMutation({
+		/** `attemptId`: the attempt the page showed (`currentAttempt`), from the button pressed. */
+		mutationFn: (input: { attemptId: string | null }) =>
+			client.submission.retry({
+				id,
+				attemptId: input.attemptId,
+				confirmedNotSent,
+				idempotencyKey: submitKey.current,
+			}),
+		onSuccess: () => {
+			toast.success("Retrying the submission.");
+			submitKey.current = crypto.randomUUID();
+			setConfirmedNotSent(false);
+			void refresh();
+		},
+		onError: submissionRefused,
+	});
+
+	const markSubmitted = useMutation({
+		/**
+		 * I submitted this, or Got the email (`gotEmail`: the sent attempt went through). Sent by
+		 * hand after "It didn't go through" was ticked, the clicked attempt is recorded not sent.
+		 * `attemptId`: the attempt the page showed (`currentAttempt`), from the button pressed.
+		 */
+		mutationFn: (input: {
+			appliedOn: string;
+			attemptId: string | null;
+			gotEmail?: boolean;
+		}) =>
+			client.submission.markSubmitted({
+				id,
+				attemptId: input.attemptId,
+				idempotencyKey: submitKey.current,
+				appliedOn: input.appliedOn,
+				confirmedNotSent: !input.gotEmail && confirmedNotSent,
+			}),
+		onSuccess: () => {
+			toast.success("Marked as applied.");
+			submitKey.current = crypto.randomUUID();
+			void refreshLists();
+		},
+		onError: submissionRefused,
+	});
+
+	return { retry, markSubmitted, confirmedNotSent, setConfirmedNotSent };
+}
 
 /** Opens the inspector with ⌘⌥I (View › Show or Hide Inspector). */
 function useInspectorToggle(toggle: () => void) {

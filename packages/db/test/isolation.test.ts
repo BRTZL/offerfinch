@@ -340,13 +340,18 @@ const CASES: Record<string, (b: TestUser) => Promise<unknown>> = {
 		refused(ids.app, (id) =>
 			u.rpc.submission.retry({
 				id,
+				attemptId: null,
 				confirmedNotSent: true,
 				idempotencyKey: `b-retry-${id}`,
 			}),
 		),
 	"submission.markSubmitted": (u) =>
 		refused(ids.app, (id) =>
-			u.rpc.submission.markSubmitted({ id, idempotencyKey: `b-mark-${id}` }),
+			u.rpc.submission.markSubmitted({
+				id,
+				attemptId: null,
+				idempotencyKey: `b-mark-${id}`,
+			}),
 		),
 	"submission.dryRun": (u) =>
 		refused(ids.app, (id) => u.rpc.submission.dryRun({ id })),

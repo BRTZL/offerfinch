@@ -40,6 +40,7 @@ import {
 	DrizzleLinkedInStore,
 	DrizzleSpendStore,
 	EditConflictError,
+	StaleAttemptError,
 	saveFilterSettings,
 } from "@offerfinch/db";
 import { ORPCError } from "@orpc/server";
@@ -127,7 +128,10 @@ async function refusal<T>(fn: () => Promise<T>): Promise<T> {
 	try {
 		return await fn();
 	} catch (error) {
-		if (error instanceof EditConflictError)
+		if (
+			error instanceof EditConflictError ||
+			error instanceof StaleAttemptError
+		)
 			throw new ORPCError("CONFLICT", { message: error.message });
 		if (
 			error instanceof Error &&
@@ -561,6 +565,8 @@ export const pipelineRouter = {
 			.input(
 				z.object({
 					id: z.string().uuid(),
+					/** The attempt the user saw (`currentAttempt`); null when none was shown. */
+					attemptId: z.string().uuid().nullable(),
 					confirmedNotSent: z.boolean(),
 					idempotencyKey: z.string().min(8).max(100),
 				}),
@@ -570,8 +576,10 @@ export const pipelineRouter = {
 					const event = await repoOf(context).retrySubmission({
 						userId: context.session.user.id,
 						applicationId: input.id,
+						attemptId: input.attemptId,
 						confirmedNotSent: input.confirmedNotSent,
-						idempotencyKey: `retry-${input.idempotencyKey}`,
+						// A key repeated for another attempt is a new action, not a repeat.
+						idempotencyKey: `retry-${input.attemptId ?? "none"}-${input.idempotencyKey}`,
 					});
 					await context.sendEvent(event);
 					return { ok: true };
@@ -581,6 +589,8 @@ export const pipelineRouter = {
 			.input(
 				z.object({
 					id: z.string().uuid(),
+					/** The attempt the user saw (`currentAttempt`); null when none was shown. */
+					attemptId: z.string().uuid().nullable(),
 					idempotencyKey: z.string().min(8).max(100),
 					/** The day it was submitted, YYYY-MM-DD; default today. */
 					appliedOn: z
@@ -596,7 +606,9 @@ export const pipelineRouter = {
 					const event = await repoOf(context).markSubmittedManually({
 						userId: context.session.user.id,
 						applicationId: input.id,
-						idempotencyKey: `manual-${input.idempotencyKey}`,
+						attemptId: input.attemptId,
+						// A key repeated for another attempt is a new action, not a repeat.
+						idempotencyKey: `manual-${input.attemptId ?? "none"}-${input.idempotencyKey}`,
 						appliedOn: input.appliedOn,
 						confirmedNotSent: input.confirmedNotSent,
 					});

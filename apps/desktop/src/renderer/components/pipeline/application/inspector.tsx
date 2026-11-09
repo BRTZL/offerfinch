@@ -72,9 +72,15 @@ export function ApplicationInspector({
 				app={loaded}
 				confirmedNotSent={confirmedNotSent}
 				setConfirmedNotSent={setConfirmedNotSent}
-				onRetry={() => retry.mutate()}
+				onRetry={() =>
+					retry.mutate({ attemptId: loaded.currentAttempt?.id ?? null })
+				}
 				onMarkSubmitted={(appliedOn, gotEmail) =>
-					markSubmitted.mutate({ appliedOn, gotEmail })
+					markSubmitted.mutate({
+						appliedOn,
+						gotEmail,
+						attemptId: loaded.currentAttempt?.id ?? null,
+					})
 				}
 				onDryRun={() => dryRun.mutate()}
 				busy={retry.isPending || markSubmitted.isPending}

@@ -1,7 +1,8 @@
 import type { FieldPlan } from "@offerfinch/core/apply/field-answers";
 import type { FormRead } from "@offerfinch/core/apply/form-schema";
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { type ProofShot, stepKeysOf } from "../proof-steps";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { currentAttemptOf, type ProofShot, stepKeysOf } from "../proof-steps";
+import type { Tx } from "../repository/shared";
 import { formQuestionText, questionKey } from "../repository/shared";
 import {
 	applications,
@@ -10,7 +11,46 @@ import {
 	submissionSettings,
 } from "../schema/pipeline";
 import type { DashboardRepositoryContext } from "./context";
-import { appliedDate, type PendingEvent } from "./shared";
+import { appliedDate, type PendingEvent, StaleAttemptError } from "./shared";
+
+/**
+ * Under the application's lock: the attempt a confirmation names must still be the one it is
+ * about (`currentAttemptOf`), else nothing changes and the user is told to look again. Null: the
+ * user saw no attempt, and there must still be none.
+ */
+async function expectAttempt(
+	tx: Tx,
+	userId: string,
+	applicationId: string,
+	attemptId: string | null,
+) {
+	const rows = await tx
+		.select({
+			id: submissionAttempts.id,
+			attempt: submissionAttempts.attempt,
+			status: submissionAttempts.status,
+		})
+		.from(submissionAttempts)
+		.where(
+			and(
+				eq(submissionAttempts.applicationId, applicationId),
+				eq(submissionAttempts.userId, userId),
+			),
+		)
+		.orderBy(desc(submissionAttempts.attempt));
+	const current = currentAttemptOf(rows);
+	if ((current?.id ?? null) !== attemptId) throw new StaleAttemptError();
+	return current;
+}
+
+/** The named attempt, while a click on it may have gone through (started or needs_human). */
+const unresolvedNamed = (applicationId: string, attemptId: string) =>
+	and(
+		eq(submissionAttempts.id, attemptId),
+		eq(submissionAttempts.applicationId, applicationId),
+		inArray(submissionAttempts.status, ["started", "needs_human"]),
+	);
+
 export const submissionMethods = {
 	/**
 	 * The global switch, per user. Turning submissions on wakes every approved application; the
@@ -67,11 +107,13 @@ export const submissionMethods = {
 	 * The user submitted it themselves, or checked that an unknown attempt went through. From
 	 * approved or needs_human; records a manual attempt and moves to applied. `confirmedNotSent`:
 	 * the user said an earlier clicked attempt did not go through and sent it by hand; that
-	 * attempt is recorded as not sent instead of as the one that went through.
+	 * attempt is recorded as not sent instead of as the one that went through. `attemptId`: the
+	 * attempt the user saw (`currentAttempt`); refused when it is no longer the current one.
 	 */
 	async markSubmittedManually(input: {
 		userId: string;
 		applicationId: string;
+		attemptId: string | null;
 		idempotencyKey: string;
 		/** The day the user submitted it (YYYY-MM-DD); default today. Never in the future. */
 		appliedOn?: string;
@@ -90,28 +132,29 @@ export const submissionMethods = {
 				throw new Error(
 					`Refusing: only an approved or handed-over application can be marked submitted (it is ${row.state})`,
 				);
-			await tx
-				.update(submissionAttempts)
-				.set(
-					input.confirmedNotSent
-						? {
-								status: "not_sent",
-								resolution: "The user confirmed it did not go through",
-								finishedAt: new Date(),
-							}
-						: {
-								status: "submitted",
-								resolution: "The user confirmed it went through",
-								finishedAt: new Date(),
-							},
-				)
-				.where(
-					and(
-						eq(submissionAttempts.applicationId, input.applicationId),
-						eq(submissionAttempts.userId, input.userId),
-						inArray(submissionAttempts.status, ["started", "needs_human"]),
-					),
-				);
+			const current = await expectAttempt(
+				tx,
+				input.userId,
+				input.applicationId,
+				input.attemptId,
+			);
+			if (current)
+				await tx
+					.update(submissionAttempts)
+					.set(
+						input.confirmedNotSent
+							? {
+									status: "not_sent",
+									resolution: "The user confirmed it did not go through",
+									finishedAt: new Date(),
+								}
+							: {
+									status: "submitted",
+									resolution: "The user confirmed it went through",
+									finishedAt: new Date(),
+								},
+					)
+					.where(unresolvedNamed(input.applicationId, current.id));
 			await tx.insert(submissionAttempts).values({
 				userId: input.userId,
 				applicationId: input.applicationId,
@@ -145,11 +188,13 @@ export const submissionMethods = {
 
 	/**
 	 * Retries an automatic submission from needs_human. When an earlier attempt was clicked and
-	 * its outcome is unknown, the user must first confirm it did not go through.
+	 * its outcome is unknown, the user must first confirm it did not go through. `attemptId`: the
+	 * attempt the user saw (`currentAttempt`); refused when it is no longer the current one.
 	 */
 	async retrySubmission(input: {
 		userId: string;
 		applicationId: string;
+		attemptId: string | null;
 		idempotencyKey: string;
 		confirmedNotSent: boolean;
 	}): Promise<PendingEvent> {
@@ -165,6 +210,12 @@ export const submissionMethods = {
 				throw new Error(
 					`Refusing: only a handed-over application can be retried (it is ${row.state})`,
 				);
+			await expectAttempt(
+				tx,
+				input.userId,
+				input.applicationId,
+				input.attemptId,
+			);
 			const blocking = await this.blockingAttempt(tx, input.applicationId);
 			if (blocking?.status === "submitted")
 				throw new Error("Refusing: this application was already submitted");
@@ -179,12 +230,7 @@ export const submissionMethods = {
 						status: "not_sent",
 						resolution: "The user confirmed it did not go through",
 					})
-					.where(
-						and(
-							eq(submissionAttempts.applicationId, input.applicationId),
-							inArray(submissionAttempts.status, ["started", "needs_human"]),
-						),
-					);
+					.where(unresolvedNamed(input.applicationId, blocking.id));
 			const [open] = await tx
 				.select({ n: sql<number>`count(*)` })
 				.from(questions)

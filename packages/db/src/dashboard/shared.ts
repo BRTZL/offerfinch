@@ -88,6 +88,18 @@ export class EditConflictError extends Error {
 	}
 }
 
+/**
+ * A confirmation (Retry, Got the email, I submitted this, It didn't go through) named an attempt
+ * that is no longer the one it would resolve: another run or another window changed it since the
+ * user saw it. Nothing was changed.
+ */
+export class StaleAttemptError extends Error {
+	constructor() {
+		super("This changed since you opened it; look again.");
+		this.name = "StaleAttemptError";
+	}
+}
+
 /** The submission day the user gave (noon UTC, so it reads as that day everywhere), or now. */
 export function appliedDate(day: string | undefined, now: Date): Date {
 	if (!day) return now;

@@ -46,3 +46,19 @@ export function unresolvedOf<T extends { status: string }>(
 		) ?? null
 	);
 }
+
+/**
+ * The attempt a user's confirmation is about: the unresolved one, else the latest that is not a
+ * dry run (a dry run sends nothing, so it changes nothing a confirmation decides). Attempts newest
+ * first. Retry, Got the email, I submitted this and It didn't go through name it, and are refused
+ * when it is no longer this one.
+ */
+export function currentAttemptOf<T extends { status: string }>(
+	attempts: T[],
+): T | null {
+	return (
+		unresolvedOf(attempts) ??
+		attempts.find((a) => a.status !== "dry_run") ??
+		null
+	);
+}

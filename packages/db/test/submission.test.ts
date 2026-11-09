@@ -196,6 +196,11 @@ async function attempts(id: string) {
 	);
 }
 
+/** The attempt the page shows a confirmation for (`currentAttempt`), as the dashboard sends it. */
+async function current(id: string): Promise<string | null> {
+	return (await repo.getApplication("u1", id))?.currentAttempt?.id ?? null;
+}
+
 describe("submission on approval", () => {
 	it("waits while paused (the default), then submits once and stores proof", async () => {
 		const id = await approvedApp();
@@ -302,6 +307,7 @@ describe("submission on approval", () => {
 			repo.retrySubmission({
 				userId: "u1",
 				applicationId: id,
+				attemptId: await current(id),
 				idempotencyKey: `r-${id}`,
 				confirmedNotSent: false,
 			}),
@@ -309,12 +315,14 @@ describe("submission on approval", () => {
 		const first = await repo.retrySubmission({
 			userId: "u1",
 			applicationId: id,
+			attemptId: await current(id),
 			idempotencyKey: `r2-${id}`,
 			confirmedNotSent: true,
 		});
 		const second = await repo.retrySubmission({
 			userId: "u1",
 			applicationId: id,
+			attemptId: await current(id),
 			idempotencyKey: `r2-${id}`,
 			confirmedNotSent: true,
 		});
@@ -364,6 +372,7 @@ describe("submission on approval", () => {
 		await repo.retrySubmission({
 			userId: "u1",
 			applicationId: id,
+			attemptId: await current(id),
 			idempotencyKey: `p-${id}`,
 			confirmedNotSent: false,
 		});
@@ -552,12 +561,14 @@ describe("manual submission", () => {
 		const first = await repo.markSubmittedManually({
 			userId: "u1",
 			applicationId: id,
+			attemptId: await current(id),
 			idempotencyKey: key,
 		});
 		expect(
 			await repo.markSubmittedManually({
 				userId: "u1",
 				applicationId: id,
+				attemptId: await current(id),
 				idempotencyKey: key,
 			}),
 		).toEqual(first);
@@ -570,6 +581,7 @@ describe("manual submission", () => {
 			repo.retrySubmission({
 				userId: "u1",
 				applicationId: id,
+				attemptId: await current(id),
 				idempotencyKey: `x-${id}`,
 				confirmedNotSent: true,
 			}),
@@ -622,6 +634,7 @@ describe("an employer's form sent, check your email (decision 2026-11-09)", () =
 			repo.retrySubmission({
 				userId: "u1",
 				applicationId: id,
+				attemptId: await current(id),
 				idempotencyKey: `r-${id}`,
 				confirmedNotSent: false,
 			}),
@@ -631,6 +644,7 @@ describe("an employer's form sent, check your email (decision 2026-11-09)", () =
 		await repo.markSubmittedManually({
 			userId: "u1",
 			applicationId: id,
+			attemptId: await current(id),
 			idempotencyKey: `got-${id}`,
 		});
 		expect(await repo.getApplication("u1", id)).toMatchObject({
@@ -670,6 +684,7 @@ describe("an employer's form sent, check your email (decision 2026-11-09)", () =
 		await repo.markSubmittedManually({
 			userId: "u1",
 			applicationId: id,
+			attemptId: await current(id),
 			idempotencyKey: `hand-${id}`,
 			confirmedNotSent: true,
 		});
@@ -680,6 +695,190 @@ describe("an employer's form sent, check your email (decision 2026-11-09)", () =
 		expect(await attempts(id)).toEqual([
 			{ attempt: 1, status: "not_sent", mode: "auto" },
 			{ attempt: 2, status: "submitted", mode: "manual" },
+		]);
+	});
+});
+
+describe("a confirmation names the attempt it is about (review fix)", () => {
+	// Built per test: the repository opens in beforeAll.
+	const crashing = () =>
+		deps(async (run) => {
+			await run.claim?.(png, []);
+			throw new Error("browser crashed");
+		}).pipeline;
+	const sending = () =>
+		deps(async (run) => {
+			await run.claim?.(png, []);
+			return {
+				outcome: "web_sent",
+				before: png,
+				after: null,
+				finalUrl: run.url,
+				filled: [],
+				evidence: {
+					requestSeen: true,
+					confirmation: null,
+					warning: null,
+					note: null,
+				},
+			};
+		}).pipeline;
+
+	/** Attempt 1 ends unknown, is confirmed not sent and retried; attempt 2 ends unknown too. */
+	async function retriedOnce(pipeline: PipelineDeps) {
+		const id = await approvedApp();
+		await repo.setSubmissionsPaused("u1", false);
+		await beginSubmissionStep(pipeline, "u1", id);
+		await submitStep(pipeline, "u1", id);
+		const first = await current(id);
+		expect(first).not.toBeNull();
+		await repo.retrySubmission({
+			userId: "u1",
+			applicationId: id,
+			attemptId: first,
+			idempotencyKey: `again-${id}`,
+			confirmedNotSent: true,
+		});
+		await submitStep(pipeline, "u1", id);
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "not_sent", mode: "auto" },
+			{ attempt: 2, status: "needs_human", mode: "auto" },
+		]);
+		return { id, first };
+	}
+
+	it("refuses a delayed It didn't go through and Retry meant for attempt 1 once attempt 2 ended unknown", async () => {
+		const { id, first } = await retriedOnce(crashing());
+		await expect(
+			repo.retrySubmission({
+				userId: "u1",
+				applicationId: id,
+				attemptId: first,
+				idempotencyKey: `stale-retry-${id}`,
+				confirmedNotSent: true,
+			}),
+		).rejects.toThrow("This changed since you opened it; look again.");
+		await expect(
+			repo.markSubmittedManually({
+				userId: "u1",
+				applicationId: id,
+				attemptId: first,
+				idempotencyKey: `stale-hand-${id}`,
+				confirmedNotSent: true,
+			}),
+		).rejects.toThrow("This changed since you opened it; look again.");
+		// Attempt 2 is untouched and still waits for the user; nothing went back to applying.
+		expect(await repo.getState("u1", id)).toBe("needs_human");
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "not_sent", mode: "auto" },
+			{ attempt: 2, status: "needs_human", mode: "auto" },
+		]);
+		// Named for attempt 2, the same confirmation goes through.
+		await repo.retrySubmission({
+			userId: "u1",
+			applicationId: id,
+			attemptId: await current(id),
+			idempotencyKey: `fresh-retry-${id}`,
+			confirmedNotSent: true,
+		});
+		expect(await repo.getState("u1", id)).toBe("applying");
+		expect((await attempts(id))[1]).toMatchObject({ status: "not_sent" });
+	});
+
+	it("refuses a delayed Got the email meant for attempt 1 once attempt 2 was sent", async () => {
+		const { id, first } = await retriedOnce(sending());
+		await expect(
+			repo.markSubmittedManually({
+				userId: "u1",
+				applicationId: id,
+				attemptId: first,
+				idempotencyKey: `stale-got-${id}`,
+			}),
+		).rejects.toThrow("This changed since you opened it; look again.");
+		expect(await repo.getState("u1", id)).toBe("needs_human");
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "not_sent", mode: "auto" },
+			{ attempt: 2, status: "needs_human", mode: "auto" },
+		]);
+		// A confirmation shown with no attempt is stale too once one exists.
+		await expect(
+			repo.markSubmittedManually({
+				userId: "u1",
+				applicationId: id,
+				attemptId: null,
+				idempotencyKey: `none-got-${id}`,
+			}),
+		).rejects.toThrow("This changed since you opened it; look again.");
+		await repo.markSubmittedManually({
+			userId: "u1",
+			applicationId: id,
+			attemptId: await current(id),
+			idempotencyKey: `got-${id}`,
+		});
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "not_sent", mode: "auto" },
+			{ attempt: 2, status: "submitted", mode: "auto" },
+			{ attempt: 3, status: "submitted", mode: "manual" },
+		]);
+	});
+
+	it("is one action for concurrent double clicks on the same attempt", async () => {
+		const id = await approvedApp();
+		await repo.setSubmissionsPaused("u1", false);
+		const webSent = sending();
+		await beginSubmissionStep(webSent, "u1", id);
+		await submitStep(webSent, "u1", id);
+		const seen = await current(id);
+		const got = () =>
+			repo.markSubmittedManually({
+				userId: "u1",
+				applicationId: id,
+				attemptId: seen,
+				idempotencyKey: `twice-${id}`,
+			});
+		// The same click delivered twice: one event, one manual attempt.
+		const [a, b] = await Promise.all([got(), got()]);
+		expect(b).toEqual(a);
+		// Another window's click on the same attempt, after it was resolved: refused, nothing added.
+		await expect(
+			repo.markSubmittedManually({
+				userId: "u1",
+				applicationId: id,
+				attemptId: seen,
+				idempotencyKey: `other-window-${id}`,
+			}),
+		).rejects.toThrow(/Refusing|changed since you opened it/);
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "submitted", mode: "auto" },
+			{ attempt: 2, status: "submitted", mode: "manual" },
+		]);
+	});
+
+	it("retries once for concurrent double clicks, whatever their keys", async () => {
+		const id = await approvedApp();
+		await repo.setSubmissionsPaused("u1", false);
+		const crashes = crashing();
+		await beginSubmissionStep(crashes, "u1", id);
+		await submitStep(crashes, "u1", id);
+		const seen = await current(id);
+		const retry = (key: string) =>
+			repo.retrySubmission({
+				userId: "u1",
+				applicationId: id,
+				attemptId: seen,
+				idempotencyKey: key,
+				confirmedNotSent: true,
+			});
+		const [a, b] = await Promise.all([retry(`k-${id}`), retry(`k-${id}`)]);
+		expect(b).toEqual(a);
+		const results = await Promise.allSettled([
+			retry(`k2-${id}`),
+			retry(`k3-${id}`),
+		]);
+		expect(results.every((r) => r.status === "rejected")).toBe(true);
+		expect(await repo.getState("u1", id)).toBe("applying");
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "not_sent", mode: "auto" },
 		]);
 	});
 });

@@ -4,7 +4,7 @@ import type {
 } from "@offerfinch/core/pipeline/ports";
 import { parseFormAnswers } from "@offerfinch/core/tailor/tailor";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { shownAttempt, unresolvedOf } from "../proof-steps";
+import { currentAttemptOf, shownAttempt, unresolvedOf } from "../proof-steps";
 import { firstPer } from "../repository";
 import {
 	applications,
@@ -22,6 +22,14 @@ import {
 	type PendingEvent,
 	subscriptionPauseOf,
 } from "./shared";
+
+/** The current attempt as the dashboard names it back: its id and number. */
+function currentOf(
+	attempts: { id: string; attempt: number; status: string }[],
+) {
+	const current = currentAttemptOf(attempts);
+	return current ? { id: current.id, attempt: current.attempt } : null;
+}
 
 /**
  * Whether the posting could be read, how old it is, and whether it was found closed (when, and
@@ -204,6 +212,11 @@ export const documentsMethods = {
 			subscriptionPause: subscriptionPauseOf(row.app.state, cost.calls),
 			/** A clicked attempt the user has not resolved: a retry needs their confirmation. */
 			unresolvedAttempt: unresolvedOf(attempts),
+			/**
+			 * The attempt a confirmation shown now is about; Retry, Got the email, I submitted this
+			 * and It didn't go through send its id back and are refused once it changed.
+			 */
+			currentAttempt: currentOf(attempts),
 			company: {
 				id: row.company.id,
 				name: row.company.name,
