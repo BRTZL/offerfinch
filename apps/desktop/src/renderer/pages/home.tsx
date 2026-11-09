@@ -355,7 +355,7 @@ export default function HomePage() {
 						<Group data-testid="home-calm">
 							<GroupBody className="text-muted-foreground">
 								{h.scan.watching > 0
-									? "OfferFinch searches the internet for jobs that fit you every hour and tells you when a match is worth a look."
+									? "OfferFinch keeps searching the internet for jobs that fit you and tells you when a match is worth a look."
 									: "Set up where to search in Settings › Sources and OfferFinch starts looking."}
 							</GroupBody>
 						</Group>

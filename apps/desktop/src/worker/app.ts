@@ -70,13 +70,21 @@ import {
 import { movedSearchesNote, upgradeJobSearch } from "./job-search";
 import { linkedinScanDeps } from "./linkedin";
 import { fillKeySteps, noteRemovedKeys } from "./model-choice";
-import { NoticeBatcher } from "./notices";
+import { NoticeBatcher, type NoticeItem } from "./notices";
 import { buildPipeline, type RoleState } from "./pipeline";
 import { scanLogFor, scanRunRepo } from "./scan-history";
 import {
+	nextScan,
+	quietUntil,
+	SCHEDULE_TICK_MS,
+	scheduledScanAllowed,
+} from "./schedule";
+import {
+	type HeldNotice,
 	LOCAL_USER_EMAIL,
 	LOCAL_USER_ID,
 	type NotificationSettings,
+	type ScanSchedule,
 	SettingsStore,
 } from "./settings";
 import type { SiteCaller } from "./site-tab";
@@ -105,8 +113,13 @@ export interface WorkerHooks {
 	) => void;
 }
 
-const SCHEDULE_EVERY_MS = 5 * 60_000;
 const QUEUE_START_DELAY_MS = 1_500;
+
+/** A board's health that stops its scans until the user looks: a stopped-board notice. */
+const STOPPED_HEALTH: ["needs_human", "robots_disallowed"] = [
+	"needs_human",
+	"robots_disallowed",
+];
 
 const SITE_LABEL: Record<SiteTabId, string> = {
 	linkedin: "LinkedIn",
@@ -121,7 +134,7 @@ const quietNotifier: Notifier = { notifyStrongMatch: async () => {} };
 
 /**
  * Everything the worker process runs: the database (with a backup before each migration), the
- * durable runner with the scan and application flows, the hourly scheduler, notifications and
+ * durable runner with the scan and application flows, the scan scheduler, notifications and
  * the state the tray shows. The oRPC API reads `deps` and `db` from here.
  */
 export class WorkerApp {
@@ -133,7 +146,20 @@ export class WorkerApp {
 	deps!: PipelineDeps;
 	roles: RoleState[] = [];
 	private notifications!: NotificationSettings;
+	/** The scan interval and quiet hours, as saved (`setScanSchedule` keeps it current). */
+	private scanSchedule!: ScanSchedule;
 	private readonly batcher: NoticeBatcher;
+	/** The last write of the waiting notifications (`heldNotices`); each waits for the one before. */
+	private heldWrite: Promise<void> = Promise.resolve();
+	/** The waiting notifications as last given, and which change that is (`heldSaved`). */
+	private held: { items: HeldNotice[]; version: number } = {
+		items: [],
+		version: 0,
+	};
+	/** The latest change written to `heldNotices`. */
+	private heldSavedVersion = 0;
+	/** Set by stop(): no notice is read or kept after it. */
+	private stopping = false;
 	private readonly followUpDelivery: FollowUpDelivery;
 	private scheduleTimer: NodeJS.Timeout | null = null;
 	private statusTimer: NodeJS.Timeout | null = null;
@@ -215,6 +241,12 @@ export class WorkerApp {
 					? void this.followUpDelivery.emit(notice, items)
 					: hooks.notify(notice),
 			settings: () => this.notifications,
+			// Quiet hours hold every batched notification (follow-ups included) until they end.
+			holdUntil: () => this.quietUntil()?.getTime() ?? null,
+			// What waits is kept, so a restart (overnight, in quiet hours) loses none of it.
+			persist: (items) => this.keepHeld(items),
+			// A held notice goes out only while what it is about is still so.
+			review: (items) => this.stillDue(items),
 		});
 		this.runner = new FlowRunner({
 			db,
@@ -302,6 +334,9 @@ export class WorkerApp {
 				steps: app.keySteps,
 			});
 		app.notifications = await app.settings.get("notifications");
+		app.scanSchedule = await app.settings.get("scanSchedule");
+		// What waited when the app last stopped waits again (quiet hours still hold it).
+		app.batcher.restore(await app.settings.get("heldNotices"));
 		// Last start's login-shell PATH, so `claude` and `codex` are found without waiting for
 		// the shell (seconds); start() reads it again in the background.
 		const cachedPath = init.demo ? "" : await app.settings.get("shellPath");
@@ -355,6 +390,10 @@ export class WorkerApp {
 	async reopen(): Promise<void> {
 		await this.ensureLocalUser();
 		this.notifications = await this.settings.get("notifications");
+		this.scanSchedule = await this.settings.get("scanSchedule");
+		// Erased: what waited was about the erased jobs.
+		this.batcher.clear();
+		await this.heldSaved();
 		await this.settings.set("noticeWatermark", Date.now());
 		await this.rebuild();
 	}
@@ -406,6 +445,160 @@ export class WorkerApp {
 		this.notifications = value;
 	}
 
+	/** Writes the waiting notifications, in order; follow-ups are found again, so not kept. */
+	private keepHeld(items: NoticeItem[]) {
+		const kept: HeldNotice[] = items.flatMap(({ stageId: _, ...item }) =>
+			item.kind === "followup" ? [] : [{ ...item, kind: item.kind }],
+		);
+		this.held = { items: kept, version: this.held.version + 1 };
+		void this.writeHeld();
+	}
+
+	/** Queues a write of the latest waiting notifications; a failure is logged, not thrown. */
+	private writeHeld(): Promise<void> {
+		this.heldWrite = this.heldWrite
+			.then(async () => {
+				// Several changes in a row: the latest is written once.
+				const { items, version } = this.held;
+				if (this.heldSavedVersion >= version) return;
+				await this.settings.set("heldNotices", items);
+				this.heldSavedVersion = Math.max(this.heldSavedVersion, version);
+			})
+			.catch((error) =>
+				this.hooks.log("warn", "waiting notifications not kept", String(error)),
+			);
+		return this.heldWrite;
+	}
+
+	/**
+	 * Whether the waiting notifications, as of change `version`, are in `heldNotices`. A write
+	 * that failed is tried again once here.
+	 */
+	private async heldSaved(version = this.held.version): Promise<boolean> {
+		await this.heldWrite;
+		if (this.heldSavedVersion >= version) return true;
+		await this.writeHeld();
+		return this.heldSavedVersion >= version;
+	}
+
+	/**
+	 * The held notices still true now, as `collectNotices` would read them: a match not deleted
+	 * or dismissed, a question still waiting for answers, an application still ready for review,
+	 * a board still stopped. Follow-ups and stops with no company pass.
+	 */
+	private async stillDue(items: NoticeItem[]): Promise<NoticeItem[]> {
+		const appIds = [
+			...new Set(
+				items.flatMap((i) =>
+					i.kind !== "followup" && i.kind !== "stopped" && i.applicationId
+						? [i.applicationId]
+						: [],
+				),
+			),
+		];
+		const companyIds = [
+			...new Set(
+				items.flatMap((i) =>
+					i.kind === "stopped" && i.companyId ? [i.companyId] : [],
+				),
+			),
+		];
+		const apps = new Map(
+			(appIds.length === 0
+				? []
+				: await this.db
+						.select({
+							id: applications.id,
+							state: applications.state,
+							alertedAt: applications.alertedAt,
+						})
+						.from(applications)
+						.where(
+							and(
+								eq(applications.userId, LOCAL_USER_ID),
+								inArray(applications.id, appIds),
+							),
+						)
+			).map((a) => [a.id, a]),
+		);
+		const stopped = new Set(
+			(companyIds.length === 0
+				? []
+				: await this.db
+						.select({ id: companies.id })
+						.from(companies)
+						.where(
+							and(
+								eq(companies.userId, LOCAL_USER_ID),
+								inArray(companies.id, companyIds),
+								inArray(companies.health, STOPPED_HEALTH),
+							),
+						)
+			).map((c) => c.id),
+		);
+		return items.filter((item) => {
+			const app = item.applicationId ? apps.get(item.applicationId) : undefined;
+			switch (item.kind) {
+				case "match":
+					return (
+						app !== undefined &&
+						app.alertedAt !== null &&
+						app.state !== "dismissed"
+					);
+				case "question":
+					return app?.state === "needs_answers";
+				case "review":
+					return app?.state === "ready_for_review";
+				case "stopped":
+					return !item.companyId || stopped.has(item.companyId);
+				default:
+					return true;
+			}
+		});
+	}
+
+	getScanSchedule(): ScanSchedule {
+		return this.scanSchedule;
+	}
+
+	/** Saves the interval and quiet hours; notifications they no longer hold go out now. */
+	async setScanSchedule(value: ScanSchedule): Promise<ScanSchedule> {
+		await this.settings.set("scanSchedule", value);
+		this.scanSchedule = await this.settings.get("scanSchedule");
+		if (!this.quietUntil()) {
+			await this.collectNotices();
+			this.batcher.recheck();
+		}
+		await this.pushStatus();
+		return this.scanSchedule;
+	}
+
+	/** When the quiet hours `now` is in end; null outside them (or when they are off). */
+	quietUntil(now = new Date()): Date | null {
+		return quietUntil(this.scanSchedule.quietHours, now);
+	}
+
+	/** When the latest scan started (timer, launch or Scan now); null before the first. */
+	async lastScanStartedAt(): Promise<Date | null> {
+		const [last] = await recentScans(this.db, LOCAL_USER_ID, 1);
+		return last?.createdAt ?? null;
+	}
+
+	/** When the next scheduled scan is due, and why (paused, quiet hours, no profile, tests). */
+	async nextScan(
+		now = new Date(),
+	): Promise<{ at: string | null; note: string }> {
+		const repo = new DashboardRepository(this.db);
+		return nextScan({
+			now,
+			paused: await this.settings.get("paused"),
+			hasProfile: Boolean(await repo.profileFiles(LOCAL_USER_ID)),
+			scheduleOff: Boolean(this.init.test?.noSchedule),
+			schedule: this.scanSchedule,
+			lastStartedAt: await this.lastScanStartedAt(),
+		});
+	}
+
 	log(level: "info" | "warn" | "error", message: string, data?: unknown) {
 		this.hooks.log(level, message, data);
 	}
@@ -436,6 +629,9 @@ export class WorkerApp {
 				if (stop.kind === "login_wall")
 					await this.markSession(site, { needsSignIn: true });
 				if (!this.notifications.stopped) return;
+				// Not held in quiet hours: the run waits on the user now (at most 10 minutes), so the
+				// notice would be stale by their end. Only a run already going, or one the user
+				// started, reads a site then: no scheduled scan starts in quiet hours.
 				const label = SITE_LABEL[site];
 				this.hooks.notify({
 					kind: "check",
@@ -574,7 +770,7 @@ export class WorkerApp {
 				.catch((error) =>
 					this.hooks.log("warn", "API key steps not filled", String(error)),
 				);
-		// The window's first queries go first: the queue (recovery, replays, the hourly scan)
+		// The window's first queries go first: the queue (recovery, replays, the scheduled scan)
 		// starts a moment later, so a busy queue does not hold the first screen back.
 		this.background = new Promise<void>((resolve) => {
 			const timer = setTimeout(async () => {
@@ -644,7 +840,7 @@ export class WorkerApp {
 	}
 
 	/**
-	 * The hourly scans, after the queue started. Try-it mode instead searches the sample jobs
+	 * The scheduled scans, after the queue started. Try-it mode instead searches the sample jobs
 	 * once, at once (a new demo), and never on a timer.
 	 */
 	private async startScans(): Promise<void> {
@@ -657,7 +853,7 @@ export class WorkerApp {
 		await this.scheduleTick("start");
 		this.scheduleTimer = setInterval(
 			() => void this.scheduleTick("timer"),
-			SCHEDULE_EVERY_MS,
+			SCHEDULE_TICK_MS,
 		);
 	}
 
@@ -667,12 +863,28 @@ export class WorkerApp {
 		if (this.statusTimer) clearInterval(this.statusTimer);
 		if (this.followUpTimer) clearInterval(this.followUpTimer);
 		await this.runner.stop(3_000);
+		// No notice timer after the database closes; what still waits is already written.
+		this.stopping = true;
+		this.batcher.dispose();
+		await this.heldSaved();
 		this.db.$close();
 	}
 
-	/** Hourly scan: this hour's scan unless paused, not onboarded, or already run. */
+	/**
+	 * A scheduled scan (the timer, launch, waking): none while paused, in quiet hours, under
+	 * `every` hours since the last scan started (Scan now's included), or before a profile.
+	 * `ensureHourlyScan` still dedupes by the clock hour and skips while a scan is busy.
+	 */
 	async scheduleTick(reason: string): Promise<void> {
 		if (await this.settings.get("paused")) return;
+		if (
+			!scheduledScanAllowed({
+				now: new Date(),
+				schedule: this.scanSchedule,
+				lastStartedAt: await this.lastScanStartedAt(),
+			})
+		)
+			return;
 		const repo = new DashboardRepository(this.db);
 		if (!(await repo.profileFiles(LOCAL_USER_ID))) return;
 		// A profile imported since the last start: where the user lives, before the scan filters.
@@ -723,8 +935,15 @@ export class WorkerApp {
 		await this.starter.sendEvent(event);
 	};
 
-	/** New strong matches, questions, reviews and stopped boards since the last look. */
+	/**
+	 * New strong matches, questions, reviews and stopped boards since the last look. In quiet
+	 * hours nothing is read and the watermark stays: what happens then is found, and announced,
+	 * once they end (a restart meanwhile loses none of it).
+	 */
 	async collectNotices(): Promise<void> {
+		// A write that failed is tried again on each look, quiet hours included.
+		await this.heldSaved();
+		if (this.quietUntil()) return;
 		const since = new Date(await this.settings.get("noticeWatermark"));
 		const now = new Date();
 		const matches = await this.db
@@ -745,17 +964,23 @@ export class WorkerApp {
 					gt(applications.alertedAt, since),
 				),
 			);
+		/** What was read: skipped when it already went out and the watermark has not moved since. */
+		const offer = (item: NoticeItem) => {
+			if (!this.batcher.wasSent(item)) this.batcher.add(item);
+		};
 		for (const m of matches)
-			this.batcher.add({
+			offer({
 				kind: "match",
 				applicationId: m.id,
 				title: m.title,
 				company: m.company,
 				score: m.score ?? undefined,
+				eventId: `${m.id}@${m.alertedAt?.getTime() ?? 0}`,
 			});
 		const moved = await this.db
 			.select({
 				id: applications.id,
+				transitionId: applicationTransitions.id,
 				to: applicationTransitions.toState,
 				title: jobs.title,
 				company: companies.name,
@@ -778,30 +1003,43 @@ export class WorkerApp {
 				),
 			);
 		for (const m of moved)
-			this.batcher.add({
+			offer({
 				kind: m.to === "needs_answers" ? "question" : "review",
 				applicationId: m.id,
 				title: m.title,
 				company: m.company,
+				eventId: m.transitionId,
 			});
 		const blocked = await this.db
-			.select({ name: companies.name, reason: companies.healthReason })
+			.select({
+				id: companies.id,
+				name: companies.name,
+				updatedAt: companies.updatedAt,
+			})
 			.from(companies)
 			.where(
 				and(
 					eq(companies.userId, LOCAL_USER_ID),
-					inArray(companies.health, ["needs_human", "robots_disallowed"]),
+					inArray(companies.health, STOPPED_HEALTH),
 					gt(companies.updatedAt, since),
 				),
 			);
 		for (const b of blocked)
-			this.batcher.add({
+			offer({
 				kind: "stopped",
+				companyId: b.id,
+				eventId: `${b.id}@${b.updatedAt?.getTime() ?? 0}`,
 				title: `${b.name}: stopped`,
 				detail: `${b.name}'s board asked for a person (or robots.txt refused). Nothing was bypassed; the scan history says more.`,
 			});
 		await this.announceAdded();
+		// Past the watermark only once what was read is kept (`heldNotices`): a restart before
+		// it goes out finds it there, not lost and not sent twice. Not kept (the write failed):
+		// the watermark stays, so it is read again, here or after a restart.
+		const read = this.held.version;
+		if (!(await this.heldSaved(read)) || this.stopping) return;
 		await this.settings.set("noticeWatermark", now.getTime());
+		this.batcher.forgetSent();
 	}
 
 	/**

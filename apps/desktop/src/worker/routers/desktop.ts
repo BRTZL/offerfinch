@@ -1,11 +1,7 @@
 import { DashboardRepository, DrizzleSpendStore } from "@offerfinch/db";
 import { flowRuns } from "@offerfinch/db/schema/jobs";
 import { applications, companies, jobs } from "@offerfinch/db/schema/pipeline";
-import {
-	APPLICATION_KIND,
-	hourlyScanId,
-	recentScans,
-} from "@offerfinch/runner";
+import { APPLICATION_KIND, recentScans } from "@offerfinch/runner";
 import { ORPCError } from "@orpc/server";
 import {
 	and,
@@ -23,32 +19,19 @@ import { z } from "zod";
 import { findChrome } from "../browser";
 import { firstSearchView, jobsFoundBy } from "../first-search";
 import { scanProgressOf } from "../scan-history";
-import { nextScan } from "../schedule";
+import { scanScheduleSchema } from "../settings";
 import { protectedProcedure } from "./procedure";
 import { providerStatus, WAITING_ON_YOU, worker } from "./shared";
 
 export const desktopStatusRouter = {
-	status: protectedProcedure.handler(async ({ context }) => {
+	status: protectedProcedure.handler(async () => {
 		const w = worker();
 		const chrome = findChrome();
 		const status = await w.status();
-		const userId = context.session.user.id;
-		const [thisHour] = await w.db
-			.select({ id: flowRuns.id })
-			.from(flowRuns)
-			.where(eq(flowRuns.id, hourlyScanId(userId, new Date())));
 		return {
 			...status,
-			/** When the next hourly scan is due, and why (paused, no profile, test runs). */
-			next: nextScan({
-				now: new Date(),
-				paused: status.paused,
-				hasProfile: Boolean(
-					await new DashboardRepository(w.db).profileFiles(userId),
-				),
-				scheduleOff: Boolean(w.init.test?.noSchedule),
-				thisHourRan: Boolean(thisHour),
-			}),
+			/** When the next scheduled scan is due, and why (paused, quiet hours, no profile, tests). */
+			next: await w.nextScan(),
 			version: w.init.version,
 			chrome: chrome ? chrome.name : null,
 			roles: w.roles,
@@ -66,6 +49,11 @@ export const desktopStatusRouter = {
 		.handler(async ({ input }) => ({
 			paused: await worker().setPaused(input.paused),
 		})),
+	/** The scan interval and quiet hours (Settings › General). */
+	scanSchedule: protectedProcedure.handler(() => worker().getScanSchedule()),
+	setScanSchedule: protectedProcedure
+		.input(scanScheduleSchema)
+		.handler(({ input }) => worker().setScanSchedule(input)),
 	/**
 	 * Home in one read: what waits for the user (with company and role), recent matches with
 	 * their fit, the scan schedule and stops, and this month's AI spend. Reads only.
@@ -132,10 +120,6 @@ export const desktopStatusRouter = {
 				);
 		const order = (s: string) => WAITING_ON_YOU.indexOf(s as never);
 		const [last] = scans;
-		const [thisHour] = await w.db
-			.select({ id: flowRuns.id })
-			.from(flowRuns)
-			.where(eq(flowRuns.id, hourlyScanId(userId, new Date())));
 		const status = await w.status();
 		const subscriptionRoles = w.roles.filter(
 			(r) => r.billing === "subscription",
@@ -164,13 +148,7 @@ export const desktopStatusRouter = {
 								: null,
 						}
 					: null,
-				next: nextScan({
-					now: new Date(),
-					paused: status.paused,
-					hasProfile: Boolean(await repo.profileFiles(userId)),
-					scheduleOff: Boolean(w.init.test?.noSchedule),
-					thisHourRan: Boolean(thisHour),
-				}),
+				next: await w.nextScan(),
 				// PLAN A: what scans search, and each provider's problem from its last run.
 				watching: providers.filter((p) => p.ready).length,
 				unset: providers

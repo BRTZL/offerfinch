@@ -22,6 +22,10 @@ at the top, above the newest version. Only what is merged into main belongs here
   fuller cover letter (always 220 to 400 words), words never to use, and your own "always /
   never" guidance. It applies to new drafts, redrafts, the chat and the answer helper; facts
   still come only from your profile, and every draft is checked as before.
+- Settings › General › Running has a scan interval (every 1, 3, 6, 12 or 24 hours) and quiet
+  hours (off by default; 22:00–07:00 when turned on, in your Mac's time). In quiet hours no
+  scheduled scan starts and notifications wait, then arrive together when quiet hours end. Scan
+  now still works at any time. "Pause hourly scans" is now "Pause scans".
 
 ## 0.4.0 (2026-11-08)
 

@@ -22,7 +22,7 @@ const plural = (n: number, one: string, many = `${one}s`) =>
 	`${n} ${n === 1 ? one : many}`;
 
 const NO_MATCHES =
-	"No matches this time. OfferFinch keeps looking every hour, and new ones show up in the Inbox.";
+	"No matches this time. OfferFinch keeps looking on its schedule, and new ones show up in the Inbox.";
 
 /** How often the step reads the run while it is live, and while scoring waits on a paused model. */
 export const POLL_MS = 1_000;

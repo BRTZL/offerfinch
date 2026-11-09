@@ -2,7 +2,6 @@ import { DashboardRepository } from "@offerfinch/db";
 import { recentScans } from "@offerfinch/runner";
 import type { WorkerApp } from "./app";
 import { providerStatus } from "./routers/shared";
-import { nextScan } from "./schedule";
 import { LOCAL_USER_ID } from "./settings";
 
 /**
@@ -47,13 +46,9 @@ async function settingsSummary(app: WorkerApp) {
 		schedule: {
 			state: status.state,
 			paused: status.paused,
-			next: nextScan({
-				now: new Date(),
-				paused: status.paused,
-				hasProfile,
-				scheduleOff: Boolean(app.init.test?.noSchedule),
-				thisHourRan: false,
-			}).note,
+			every: app.getScanSchedule().every,
+			quietHours: app.getScanSchedule().quietHours,
+			next: (await app.nextScan()).note,
 			lastScan: last
 				? {
 						status: last.status,

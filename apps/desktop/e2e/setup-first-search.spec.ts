@@ -144,7 +144,7 @@ test("every job scored below the minimum: the friendly no-match line", async () 
 		const seen = await watchProgress(page);
 		await page.getByTestId("first-scan-start").click();
 		await expect(page.getByTestId("first-scan-progress")).toContainText(
-			"No matches this time. OfferFinch keeps looking every hour",
+			"No matches this time. OfferFinch keeps looking on its schedule",
 			{ timeout: 120_000 },
 		);
 		await expect(page.getByTestId("first-scan-progress")).toContainText(

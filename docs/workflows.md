@@ -18,8 +18,9 @@ flowchart LR
   Main --> Sites[Site browser sessions]
 ```
 
-An hourly scan, or **Scan now**, runs enabled source providers. New postings are deduplicated,
-filtered, and scored. A suitable match waits in the Inbox until **Prepare** is selected.
+A scheduled scan (hourly by default; Settings › General sets the interval and quiet hours),
+or **Scan now**, runs enabled source providers. New postings are deduplicated, filtered, and
+scored. A suitable match waits in the Inbox until **Prepare** is selected.
 A check or sign-in request holds its source for the user; existing retry and stop rules
 control subsequent attempts.
 

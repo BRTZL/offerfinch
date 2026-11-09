@@ -18,7 +18,7 @@ type ListRun = Awaited<ReturnType<typeof client.scanHistory.list>>[number];
 type Source = Run["sources"][number];
 
 const TRIGGER: Record<string, string> = {
-	timer: "Hourly",
+	timer: "Scheduled",
 	start: "At launch",
 	manual: "Scan now",
 };
@@ -188,8 +188,9 @@ function NoScans() {
 			}
 		>
 			A scan searches the sources you turn on in Settings › Sources for the
-			titles in Job search, every hour while the computer is awake. Each scan is
-			listed here with what it found and why it set jobs aside.
+			titles in Job search, on the schedule in Settings › General, while the
+			computer is awake. Each scan is listed here with what it found and why it
+			set jobs aside.
 		</EmptyState>
 	);
 }
