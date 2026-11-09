@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 
+import { schemaKey } from "../src/apply/form-schema";
 import {
 	type ApplicantData,
 	applyUrl,
+	dialCode,
 	exactOption,
 	type FormField,
 	markdownToPlain,
 	planFill,
 	sameQuestion,
+	verifyFilled,
 } from "../src/apply/forms";
 
 const data: ApplicantData = {
@@ -159,5 +162,106 @@ describe("planFill", () => {
 		expect(
 			markdownToPlain("Ada\\\n**Bold** and [link](https://x.y)\n\n\n\nEnd"),
 		).toBe("Ada\nBold and link\n\nEnd");
+	});
+});
+
+/** Drift found on the real forms on 2026-11-09 (docs/form-inspection.md). */
+describe("2026-11-09 form drift", () => {
+	it("keys Ashby's EEO radios without the UUID that changes on every load", () => {
+		const a = schemaKey({
+			kind: "radio",
+			name: "48a5ac0a-8696-4f4b-9283-3e1010d67194__systemfield_eeoc_gender",
+			label: "Gender",
+		});
+		const b = schemaKey({
+			kind: "radio",
+			name: "d4a050b1-953d-41ab-9d43-fec43e7512cf__systemfield_eeoc_gender",
+			label: "Gender",
+		});
+		expect(a).toBe("radio:_systemfield_eeoc_gender");
+		expect(b).toBe(a);
+		// Lever's card ids are stable and stay in the key.
+		expect(
+			schemaKey({
+				kind: "checkbox",
+				name: "cards[95e981e4-5566-4377-abbf-351be458e327][field0]",
+				label: "",
+			}),
+		).toBe("checkbox:cards[95e981e4-5566-4377-abbf-351be458e327][field0]");
+	});
+
+	it("reads the calling code only when it is set apart", () => {
+		expect(dialCode("+1 555 010 0199")).toBe("+1");
+		expect(dialCode("+90 (555) 000 00 00")).toBe("+90");
+		expect(dialCode("+90-555")).toBe("+90");
+		expect(dialCode("+905550000000")).toBeNull();
+		expect(dialCode("0555 000 00 00")).toBeNull();
+	});
+
+	it("expects Greenhouse's phone country from the number and checks what it holds", () => {
+		const country = field({
+			kind: "combobox",
+			label: "Country",
+			name: "country",
+			options: ["United States +1", "Turkey +90"],
+		});
+		const phone = field({ label: "Phone", name: "phone" });
+		const plan = planFill([country, phone], data);
+		expect(plan.actions).toContainEqual({
+			ref: country.ref,
+			label: "Country",
+			kind: "expect",
+			value: "+90",
+		});
+		expect(plan.unknown).toEqual([]);
+		const held = (value: string[]) => [
+			{ ...country, current: value },
+			{ ...phone, current: ["+90 555"] },
+		];
+		expect(verifyFilled(plan, [country, phone], held(["+90"]))).toEqual([]);
+		expect(verifyFilled(plan, [country, phone], held(["Turkey +90"]))).toEqual(
+			[],
+		);
+		expect(verifyFilled(plan, [country, phone], held(["+1"]))).toEqual([
+			'"Country" holds "+1", not "+90".',
+		]);
+		// No calling code to read: the picker is left blank like any optional field.
+		const plain = planFill([country, phone], {
+			...data,
+			contact: { ...data.contact, phone: "0555 000" },
+		});
+		expect(plain.actions.some((a) => a.ref === country.ref)).toBe(false);
+		expect(plain.blank).toContain("Country");
+	});
+
+	it("checks a location exactly, and an approved answer for it wins", () => {
+		const location = field({
+			label: "Current location",
+			name: "location",
+			required: true,
+		});
+		const plan = planFill([location], data);
+		expect(plan.actions).toEqual([
+			{
+				ref: location.ref,
+				label: "Current location",
+				kind: "location",
+				value: "Izmir, Turkey",
+			},
+		]);
+		expect(
+			verifyFilled(plan, [location], [{ ...location, current: ["Izmir"] }]),
+		).toEqual(['"Current location" holds "Izmir", not "Izmir, Turkey".']);
+		const answered = planFill([location], {
+			...data,
+			answers: [
+				...data.answers,
+				{ question: "Current location", answer: "Izmir, Izmir, Turkey" },
+			],
+		});
+		expect(answered.actions[0]).toMatchObject({
+			kind: "location",
+			value: "Izmir, Izmir, Turkey",
+		});
 	});
 });

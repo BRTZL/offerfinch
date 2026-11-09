@@ -20,6 +20,7 @@ import {
 	questionKeyOf,
 	scanScript,
 	successScript,
+	systemRole,
 	type UnknownQuestion,
 	VISIBLE_CHALLENGE_SCRIPT,
 	verifyFilled,
@@ -277,6 +278,26 @@ async function chooseIn(
 	}
 }
 
+/**
+ * Polls the options a combobox or location field shows for typed text, until one is exactly the
+ * approved value or the time is up. Only an exact option is ever picked: review listed that value.
+ */
+async function suggestions(
+	page: BrowserPage,
+	ref: string,
+	value: string,
+	timeoutMs: number,
+): Promise<{ options: string[]; match: string | null }> {
+	const deadline = Date.now() + timeoutMs;
+	let options: string[] = [];
+	for (;;) {
+		await page.waitForTimeout(250);
+		options = (await safeEvaluate<string[]>(page, optionsScript(ref))) ?? [];
+		const match = exactOption(value, options);
+		if (match || Date.now() >= deadline) return { options, match };
+	}
+}
+
 /** Runs one planned action; a stop when a combobox or location has no exact option. */
 async function perform(
 	page: BrowserPage,
@@ -323,16 +344,13 @@ async function perform(
 			}
 			if (!match) {
 				await page.type(at(action.ref), action.value);
-				await page.waitForTimeout(800);
-				options =
-					(await safeEvaluate<string[]>(page, optionsScript(action.ref))) ?? [];
-				match =
-					exactOption(action.value, options) ??
-					(action.kind === "location"
-						? (options.find((o) =>
-								questionKeyOf(o).startsWith(questionKeyOf(action.value)),
-							) ?? null)
-						: null);
+				// Suggestions come after a debounce and a lookup (Lever: 500 ms, then a request).
+				({ options, match } = await suggestions(
+					page,
+					action.ref,
+					action.value,
+					action.kind === "location" ? 5_000 : 800,
+				));
 			}
 			if (!match) {
 				await page.press(at(action.ref), "Escape").catch(() => {});
@@ -353,6 +371,9 @@ async function perform(
 			await page.click(`[data-jp-option="${options.indexOf(match)}"]`);
 			return null;
 		}
+		case "expect":
+			// The page sets it from another value; `verifyFilled` checks what it holds.
+			return null;
 		case "file":
 			await page.setInputFiles(at(action.ref), [
 				action.file === "cv" ? files.cv : (files.coverLetter ?? files.cv),
@@ -411,6 +432,7 @@ function filledValue(action: FillAction, files: FormFiles): string {
  * The plan for the scanned form. Only reviewed fields get a value; a field the review never
  * listed is at most emptied. A dry run with the network closed cannot pick a location suggestion
  * (the field empties itself when left without one): that action is set apart, not performed.
+ * A phone country the page derives is expected only when the phone number itself is typed.
  */
 function reviewedPlan(
 	fields: FormField[],
@@ -420,9 +442,17 @@ function reviewedPlan(
 	const planned = planFill(fields, run.data, {
 		declineVoluntary: run.schema !== undefined,
 	});
-	const reviewed = planned.actions.filter(
+	const kept = planned.actions.filter(
 		(a) => !unreviewed.has(a.ref) || a.kind === "clear",
 	);
+	// The page sets the phone's country from the number: expected only if the number is typed.
+	const phoneRefs = new Set(
+		fields.filter((f) => systemRole(f) === "phone").map((f) => f.ref),
+	);
+	const typesPhone = kept.some(
+		(a) => a.kind === "fill" && phoneRefs.has(a.ref),
+	);
+	const reviewed = kept.filter((a) => a.kind !== "expect" || typesPhone);
 	const offline = run.lookupsOffline
 		? reviewed.filter(
 				(a): a is Extract<FillAction, { kind: "location" }> =>

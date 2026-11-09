@@ -40,11 +40,19 @@ export type FormRead =
 			readAt: string;
 	  };
 
+/**
+ * A control name with its per-load part removed: Ashby prefixes its EEO radio names with a UUID
+ * that changes on every page load (`<uuid>__systemfield_eeoc_gender`, seen 2026-11-09).
+ */
+const PER_LOAD_PREFIX =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_(?=_)/i;
+
 /** The stable key of a field: what the same question is called on every read of the form. */
 export function schemaKey(
 	field: Pick<FormField, "kind" | "name" | "label">,
 ): string {
-	return `${field.kind}:${field.name || `label:${questionKeyOf(field.label)}`}`;
+	const name = field.name.replace(PER_LOAD_PREFIX, "");
+	return `${field.kind}:${name || `label:${questionKeyOf(field.label)}`}`;
 }
 
 /**

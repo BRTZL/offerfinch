@@ -38,7 +38,9 @@ export const BOARD_CONFIGS: Record<Board, BoardConfig> = {
 	ashby: {
 		board: "ashby",
 		root: ".ashby-application-form-container",
-		container: ".ashby-application-form-field-entry",
+		// The EEO radio groups (since 2026-11) are fieldsets of their own, outside any field entry.
+		container:
+			".ashby-application-form-field-entry, .ashby-application-form-input-radio-group",
 		label: ".ashby-application-form-question-title",
 		submit: "button.ashby-application-form-submit-button",
 		success: {
@@ -147,12 +149,19 @@ export function scanScript(config: BoardConfig): string {
 	const root = { querySelectorAll: (sel) => roots.flatMap((r) => [...r.querySelectorAll(sel)]) };
 	const clean = (t) => (t || "").replace(/[*✱]/g, " ").replace(/\\s+/g, " ").trim();
 	const textOf = (el) => clean(el ? el.textContent : "");
+	// The nearest container that has a question label, else the nearest one.
+	const boxOf = (el) => {
+		const first = el.closest(cfg.container);
+		for (let box = first; box; box = box.parentElement && box.parentElement.closest(cfg.container))
+			if (box.querySelector(cfg.label)) return box;
+		return first;
+	};
 	const labelFor = (el) => {
 		if (el.id) {
 			const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
 			if (l && textOf(l) && !/^(attach|enter manually)$/i.test(textOf(l))) return textOf(l);
 		}
-		const box = el.closest(cfg.container);
+		const box = boxOf(el);
 		const own = box && box.querySelector(cfg.label);
 		if (own && textOf(own)) return textOf(own);
 		const by = el.getAttribute("aria-labelledby");
@@ -199,7 +208,7 @@ export function scanScript(config: BoardConfig): string {
 	let n = 0;
 	const stamp = (el) => { const ref = String(++n); el.setAttribute("data-jp", ref); return ref; };
 	for (const yesno of root.querySelectorAll(".ashby-application-form-input-yesno")) {
-		const box = yesno.closest(cfg.container);
+		const box = boxOf(yesno);
 		const hidden = yesno.querySelector("input");
 		if (hidden) seen.add(hidden);
 		const buttons = [...yesno.querySelectorAll("button")];
@@ -212,9 +221,10 @@ export function scanScript(config: BoardConfig): string {
 		if (el.name === "g-recaptcha-response" || el.name === "h-captcha-response") continue;
 		// Helper inputs a widget hides from people (react-select's requiredInput) are not questions.
 		if (type !== "file" && el.getAttribute("aria-hidden") === "true") continue;
-		const box = el.closest(cfg.container);
+		const box = boxOf(el);
 		if (type === "radio" || type === "checkbox") {
-			const group = el.name ? [...root.querySelectorAll('input[name="' + CSS.escape(el.name) + '"]')] : [el];
+			// Same name and type only: Lever pairs its consent checkbox with a hidden input of that name.
+			const group = el.name ? [...root.querySelectorAll('input[name="' + CSS.escape(el.name) + '"]')].filter((g) => (g.getAttribute("type") || "").toLowerCase() === type) : [el];
 			group.forEach((g) => seen.add(g));
 			const ref = String(++n);
 			group.forEach((g) => g.setAttribute("data-jp", ref));
@@ -258,6 +268,11 @@ export function optionsScript(ref: string): string {
 	if (options.length === 0) {
 		const box = input.closest(".field-wrapper, li, .select, [class*=field]") || input.parentElement;
 		options = [...(box ? box.querySelectorAll("[role=option]") : [])];
+	}
+	// Lever's location suggestions: plain divs, picked on mousedown.
+	if (options.length === 0) {
+		const box = input.closest("li, .application-field") || input.parentElement;
+		options = [...(box ? box.querySelectorAll(".dropdown-results .dropdown-location") : [])];
 	}
 	for (const o of document.querySelectorAll("[data-jp-option]")) o.removeAttribute("data-jp-option");
 	return options.filter(visible).map((o, i) => { o.setAttribute("data-jp-option", String(i)); return (o.textContent || "").replace(/\\s+/g, " ").trim(); });
@@ -332,6 +347,8 @@ export type SystemRole =
 	| "last_name"
 	| "email"
 	| "phone"
+	/** Greenhouse's country picker beside the phone number, set by the page from the number. */
+	| "phone_country"
 	| "location"
 	| "linkedin"
 	| "github"
@@ -388,6 +405,8 @@ const ROLE_BY_LABEL: [RegExp, SystemRole][] = [
 ];
 
 export function systemRole(field: FormField): SystemRole | null {
+	if (field.kind === "combobox" && field.name === "country")
+		return "phone_country";
 	for (const [pattern, role] of ROLE_BY_NAME)
 		if (pattern.test(field.name)) return role;
 	const label = normalizeForMatch(field.label)
@@ -462,6 +481,11 @@ export type FillAction =
 	| { ref: string; label: string; kind: "yesno"; value: string }
 	| { ref: string; label: string; kind: "location"; value: string }
 	| { ref: string; label: string; kind: "file"; file: "cv" | "cover_letter" }
+	/**
+	 * Nothing to do: the page sets this control itself from another approved value (Greenhouse's
+	 * phone country from the number). Listed in review and checked after filling.
+	 */
+	| { ref: string; label: string; kind: "expect"; value: string }
 	/** Empties a control that arrived answered: text, a select's empty option, ticked boxes. */
 	| {
 			ref: string;
@@ -495,6 +519,15 @@ function splitName(name: string): { first: string; last: string } {
 		first: parts.slice(0, -1).join(" ") || parts[0] || "",
 		last: parts.length > 1 ? (parts.at(-1) ?? "") : "",
 	};
+}
+
+/**
+ * The country calling code a phone number starts with ("+1 555 …" gives "+1"), when it is set
+ * apart by a space, dash, dot or bracket; null otherwise.
+ */
+export function dialCode(phone: string): string | null {
+	const match = phone.trim().match(/^\+(\d{1,4})[\s\-.(]/);
+	return match ? `+${match[1]}` : null;
 }
 
 function contactValue(role: SystemRole, data: ApplicantData): string {
@@ -535,6 +568,35 @@ const DECLINE =
 /** The option of a self-identification question that declines to answer, or null. */
 export function declineOption(field: FormField): string | null {
 	return field.options.find((o) => DECLINE.test(questionKeyOf(o))) ?? null;
+}
+
+/**
+ * A contact field's action, or null when the contact details do not answer it. Greenhouse's
+ * phone country is set by the page from the number: it is expected, not filled. A location
+ * suggestion the user picked in Questions (an approved answer) wins over the profile's text.
+ */
+function contactAction(
+	field: FormField,
+	role: SystemRole,
+	data: ApplicantData,
+): FillAction | null {
+	const base = { ref: field.ref, label: field.label };
+	if (role === "phone_country") {
+		const code = dialCode(data.contact.phone);
+		return code ? { ...base, kind: "expect", value: code } : null;
+	}
+	const value =
+		(role === "location"
+			? findAnswer(field.label, data.answers)?.answer
+			: "") || contactValue(role, data);
+	if (!value || (field.kind !== "text" && field.kind !== "textarea"))
+		return null;
+	return {
+		...base,
+		kind:
+			role === "location" && field.name === "location" ? "location" : "fill",
+		value,
+	};
 }
 
 export interface PlanOptions {
@@ -633,21 +695,8 @@ export function planFill(
 			}
 		}
 		if (role && role !== "voluntary") {
-			const value = contactValue(role, data);
-			if (!value) {
-				unknown(field);
-				continue;
-			}
-			if (field.kind === "text" || field.kind === "textarea")
-				plan.actions.push({
-					ref: field.ref,
-					label: field.label,
-					kind:
-						role === "location" && field.name === "location"
-							? "location"
-							: "fill",
-					value,
-				});
+			const action = contactAction(field, role, data);
+			if (action) plan.actions.push(action);
 			else unknown(field);
 			continue;
 		}
@@ -735,6 +784,56 @@ function declineAction(field: FormField, option: string): FillAction {
 const fieldKey = (f: FormField) => `${f.kind}|${f.name}|${f.label}`;
 const same = (a: string, b: string) => questionKeyOf(a) === questionKeyOf(b);
 
+/** Why a control's value is not the planned one, or null when it is. */
+function mismatch(
+	action: FillAction,
+	label: string,
+	current: string[],
+): string | null {
+	const holds = current.length ? `"${current.join("; ")}"` : "nothing";
+	const one = current.length === 1 ? (current[0] ?? "") : null;
+	switch (action.kind) {
+		case "fill": {
+			const digits = (t: string) => t.replace(/\D/g, "");
+			const phoneLike = /^\+?[\d\s().-]+$/.test(action.value);
+			const ok =
+				one !== null &&
+				(same(one, action.value) ||
+					(phoneLike && digits(one) === digits(action.value)));
+			return ok ? null : `"${label}" holds ${holds}, not the approved value.`;
+		}
+		case "select":
+		case "yesno":
+			return one !== null && same(one, action.value)
+				? null
+				: `"${label}" holds ${holds}, not "${action.value}".`;
+		case "choose": {
+			const want = action.values.map(questionKeyOf).sort().join("|");
+			const have = current.map(questionKeyOf).sort().join("|");
+			return want === have
+				? null
+				: `"${label}" holds ${holds}, not "${action.values.join("; ")}".`;
+		}
+		case "combobox":
+		case "location":
+			if (current.length === 0)
+				return `"${label}" is empty after choosing "${action.value}".`;
+			return same(current[0] ?? "", action.value)
+				? null
+				: `"${label}" holds ${holds}, not "${action.value}".`;
+		case "expect":
+			return one !== null &&
+				(one === action.value || one.endsWith(` ${action.value}`))
+				? null
+				: `"${label}" holds ${holds}, not "${action.value}".`;
+		case "file":
+			return current.length === 0 ? `"${label}" has no file attached.` : null;
+		case "clear":
+			// Checked by the caller: nothing may be held.
+			return null;
+	}
+}
+
 /**
  * The last check before the claim: reads the form again and compares every control with the
  * plan. Each must hold exactly its approved value, or nothing (blank, cleared or not ours to
@@ -771,54 +870,8 @@ export function verifyFilled(
 				problems.push(`"${label}" holds ${holds}, which was not approved.`);
 			continue;
 		}
-		switch (action.kind) {
-			case "fill":
-				if (
-					current.length !== 1 ||
-					!(
-						same(current[0] ?? "", action.value) ||
-						(/^\+?[\d\s().-]+$/.test(action.value) &&
-							(current[0] ?? "").replace(/\D/g, "") ===
-								action.value.replace(/\D/g, ""))
-					)
-				)
-					problems.push(`"${label}" holds ${holds}, not the approved value.`);
-				break;
-			case "select":
-			case "yesno":
-				if (current.length !== 1 || !same(current[0] ?? "", action.value))
-					problems.push(`"${label}" holds ${holds}, not "${action.value}".`);
-				break;
-			case "choose": {
-				const want = action.values.map(questionKeyOf).sort().join("|");
-				const have = current.map(questionKeyOf).sort().join("|");
-				if (want !== have)
-					problems.push(
-						`"${label}" holds ${holds}, not "${action.values.join("; ")}".`,
-					);
-				break;
-			}
-			case "combobox":
-			case "location":
-				if (current.length === 0)
-					problems.push(
-						`"${label}" is empty after choosing "${action.value}".`,
-					);
-				else if (
-					action.kind === "combobox" &&
-					!same(current[0] ?? "", action.value)
-				)
-					problems.push(`"${label}" holds ${holds}, not "${action.value}".`);
-				break;
-			case "file":
-				if (current.length === 0)
-					problems.push(`"${label}" has no file attached.`);
-				break;
-
-			default:
-				// Clear actions were handled before this switch.
-				break;
-		}
+		const problem = mismatch(action, label, current);
+		if (problem) problems.push(problem);
 	}
 	return problems;
 }

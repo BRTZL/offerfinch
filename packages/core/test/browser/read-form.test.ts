@@ -68,7 +68,8 @@ const EXPECTED: Record<Board, [string, string, boolean, string[], string][]> = {
 		["textarea:question_102", WHY, true, [], ""],
 		["text:question_103", NOTICE, true, [], ""],
 		[
-			"radio:x__systemfield_eeoc_gender",
+			// The per-load UUID in front of the control name is not part of the key.
+			"radio:_systemfield_eeoc_gender",
 			"Gender",
 			false,
 			["Male", "Female", "Decline to self-identify"],
@@ -79,6 +80,13 @@ const EXPECTED: Record<Board, [string, string, boolean, string[], string][]> = {
 		["text:first_name", "First Name", true, [], ""],
 		["text:last_name", "Last Name", true, [], ""],
 		["text:email", "Email", true, [], ""],
+		[
+			"combobox:country",
+			"Country",
+			false,
+			["United States +1", "Canada +1", "Turkey +90"],
+			"",
+		],
 		["text:phone", "Phone", false, [], ""],
 		["file:resume", "Resume/CV", true, [], ""],
 		["file:cover_letter", "Cover Letter", false, [], ""],
@@ -227,8 +235,14 @@ describe("what is sent is what review listed", () => {
 			const sent = boards.submissions.find((s) =>
 				s.path.includes(`/${jobId}/`),
 			);
-			const name = board === "ashby" ? "x__systemfield_eeoc_gender" : "gender";
-			expect(sent?.values[name]).toEqual([gender?.value]);
+			// Ashby's control name changes on every load (a UUID in front).
+			const name = Object.keys(sent?.values ?? {}).find((n) =>
+				board === "ashby"
+					? n.endsWith("__systemfield_eeoc_gender")
+					: n === "gender",
+			);
+			expect(name).toBeDefined();
+			expect(sent?.values[name ?? ""]).toEqual([gender?.value]);
 			// Every value sent is a value the list showed.
 			for (const line of listed.fields.filter(
 				(f) => f.value && f.kind !== "file",
