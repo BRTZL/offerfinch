@@ -24,6 +24,8 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  *                 unlabelled box appears above the others; posts every box by its label as JSON
  *   swapped       full name and email; from the second load on an optional "Promo code" box takes
  *                 the email box's place; a native POST that redirects to /thanks
+ *   shifted       full name, then "Contact details" with an unlabelled email and phone box; from
+ *                 the second load on an unlabelled box appears first in that group; posts as JSON
  */
 
 export interface WebSubmission {
@@ -172,6 +174,23 @@ ${text("Full name", "full_name", { required: true })}
 </form>`;
 }
 
+/** Two unlabelled boxes under one text; from the second load on, a third one before them. */
+function shiftedBody(inserted: boolean): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply">
+${text("Full name", "full_name", { required: true })}
+<div><div class="hint">Contact details</div>${inserted ? `<input data-origin="inserted" type="text">` : ""}<input data-origin="email" type="email"><input data-origin="phone" type="tel"></div>
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+const SHIFTED = `const form = document.getElementById('apply');
+form.addEventListener('submit', async (e) => {
+	e.preventDefault();
+	const out = {};
+	for (const el of form.querySelectorAll('input')) out[el.dataset.origin || el.name] = el.value;
+	const res = await fetch('/web/shifted/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(out) });
+	if (res.ok) form.outerHTML = '<div class="thanks"><h2>Thank you for your application!</h2></div>';
+});`;
+
 /** Posts every box as "label or nearby text = value", as the page shows it. */
 const NAMELESS = `const form = document.getElementById('apply');
 form.addEventListener('submit', async (e) => {
@@ -198,7 +217,7 @@ function postAnswer(
 			body: page("<h1>Acme Robotics</h1><p>Your request has been noted.</p>"),
 		};
 	if (
-		["two-step", "stays", "nameless"].includes(variant) ||
+		["two-step", "stays", "nameless", "shifted"].includes(variant) ||
 		action === "upload"
 	)
 		return {
@@ -247,6 +266,8 @@ function formPage(
 			return page(namelessBody(load > 1), NAMELESS);
 		case "swapped":
 			return page(swappedBody(load > 1));
+		case "shifted":
+			return page(shiftedBody(load > 1), SHIFTED);
 		default:
 			return null;
 	}

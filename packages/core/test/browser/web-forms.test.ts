@@ -398,23 +398,38 @@ describe("submitting an employer's form", () => {
 		const keys = schema.fields.map((f) => f.key);
 		expect(keys.filter((k) => k.includes(":#"))).toEqual(["text:#text-1"]);
 		expect(keys.filter((k) => k.includes(":label:"))).toHaveLength(5);
-		const { deps } = harness("nameless", schema);
+		const { deps, calls } = harness("nameless", schema);
 		const outcome = await submitStep(deps, "u1", "app-1");
-		expect(outcome).toMatchObject({ outcome: "applied" });
-		const sent = JSON.parse(
-			forms.submissions.find((s) => s.variant === "nameless")?.body ?? "{}",
-		);
-		// The new box stays empty; the unlabelled LinkedIn box moved, so it is left blank too.
-		expect(sent).toEqual({
-			"Promo code": "",
-			"Full name": "Ada Example",
-			"Email address": "ada@example.test",
-			"Your LinkedIn profile": "",
-			"Why do you want to work at Acme Robotics?":
-				"The robotics work matches what I build.",
-			"What is your notice period?": "Four weeks.",
-			"Resume / CV": "CV.pdf",
+		// The unlabelled LinkedIn box moved to another place: which box is which cannot be told.
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(
+				/unlabelled boxes .*LinkedIn.* not where review saw them/,
+			),
 		});
+		expect(calls.map((c) => c.method)).toEqual(["stop"]);
+		expect(forms.count("nameless")).toBe(0);
+	}, 60_000);
+
+	it("unlabelled boxes that shifted in their group stop the run (Codex, 2026-11-09)", async () => {
+		const schema = await schemaOf("shifted");
+		expect(
+			schema.fields.map((f) => [f.key, f.label, (f as { hint?: string }).hint]),
+		).toEqual([
+			["text:full_name", "Full name", undefined],
+			["text:#text-1", "Email", "Contact details"],
+			["text:#text-2", "Phone", "Contact details"],
+		]);
+		const { deps, calls } = harness("shifted", schema);
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(
+				/Contact details.* not where review saw them/,
+			),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["stop"]);
+		expect(forms.count("shifted")).toBe(0);
 	}, 60_000);
 
 	it("a changed box is never paired with a reviewed one by the model (Codex, 2026-11-09)", async () => {

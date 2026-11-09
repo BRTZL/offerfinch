@@ -50,6 +50,8 @@ export interface WebSchemaField extends SchemaField {
 	/** A control keyed by its place (`#text-1`): the text beside it and its autocomplete token. */
 	hint?: string;
 	autocomplete?: string;
+	/** A place key the read met twice with different text beside it: never trusted at submit. */
+	ambiguous?: true;
 }
 
 const BLOCK_STATUSES = new Set([401, 403, 407, 429, 503]);
@@ -384,7 +386,8 @@ export async function readWebFormOnPage(
 	if ("stop" in opened) return { ok: false, reason: opened.stop.message };
 	page.restrictNetwork("none");
 	const fields: { field: WebField; page: number }[] = [];
-	const keys = new Set<string>();
+	const keys = new Map<string, WebField>();
+	const ambiguous = new Set<string>();
 	let scan = opened.scan;
 	let submit: WebControl | null = null;
 	for (let step = 1; step <= MAX_STEPS; step++) {
@@ -393,8 +396,13 @@ export async function readWebFormOnPage(
 		const last = fields.reduce((m, f) => Math.max(m, f.page), 0);
 		for (const field of scan.fields) {
 			const key = schemaKey(field);
-			if (keys.has(key)) continue;
-			keys.add(key);
+			const seen = keys.get(key);
+			if (seen) {
+				// A step drawn after "Next" counts its unlabelled boxes from 1 again.
+				if (placed(field) && !sameSpot(field, seen)) ambiguous.add(key);
+				continue;
+			}
+			keys.set(key, field);
 			// Hidden steps count after the one shown; a step drawn after "Next" follows the last read.
 			fields.push({ field, page: step === 1 ? field.step : last + 1 });
 		}
@@ -434,8 +442,11 @@ export async function readWebFormOnPage(
 					page: p,
 					section: field.section ?? "",
 					...(fromModel ? { labelSource: "model" as const } : {}),
-					...(field.name.startsWith("#")
+					...(placed(field)
 						? { hint: field.hint, autocomplete: field.autocomplete }
+						: {}),
+					...(ambiguous.has(schemaKey(field))
+						? { ambiguous: true as const }
 						: {}),
 				};
 				return out;
@@ -480,12 +491,51 @@ interface Lined {
 	unreviewed: Set<string>;
 	/** Refs on steps the page keeps hidden for now: filled when their step is shown. */
 	later: Set<string>;
+	/** Unlabelled controls whose places no longer match the read (`placesMoved`). */
+	moved: string[];
 }
 
 /** The text beside an unlabelled control and its autocomplete token: what its place key must match. */
-const sameSpot = (live: WebField, reviewed: WebSchemaField) =>
+const sameSpot = (
+	live: WebField,
+	reviewed: { hint?: string; autocomplete?: string },
+) =>
 	questionKeyOf(live.hint) === questionKeyOf(reviewed.hint ?? "") &&
 	live.autocomplete === (reviewed.autocomplete ?? "");
+
+const placed = (f: { name: string }) => f.name.startsWith("#");
+/** Unlabelled controls of one kind with the same text beside them: a place key counts within one. */
+const groupOf = (f: { kind: string; hint?: string }) =>
+	`${f.kind}|${questionKeyOf(f.hint ?? "")}`;
+const placeOf = (f: { name: string; autocomplete?: string }) =>
+	`${f.name}|${f.autocomplete ?? ""}`;
+
+/**
+ * Where a key that is only a place (`#text-2`) can no longer be trusted: a group of unlabelled
+ * controls (same kind, same text beside them) the read saw whose places, in order, are not the
+ * ones the live page shows (a box added, removed or moved in the group or before it), or a place
+ * the read saw twice with different text beside it. The run stops on any (form_changed).
+ */
+function placesMoved(scanned: WebField[], schema: WebSchemaField[]): string[] {
+	const groups = (fields: (WebField | WebSchemaField)[]) => {
+		const out = new Map<string, string[]>();
+		for (const f of fields.filter(placed))
+			out.set(groupOf(f), [...(out.get(groupOf(f)) ?? []), placeOf(f)]);
+		return out;
+	};
+	const reviewed = groups(schema);
+	const moved: string[] = [];
+	for (const [group, places] of groups(scanned)) {
+		const was = reviewed.get(group);
+		const field = scanned.find((f) => placed(f) && groupOf(f) === group);
+		const ambiguous = schema.some(
+			(f) => f.ambiguous && places.some((p) => p === placeOf(f)),
+		);
+		if ((was && was.join() !== places.join()) || ambiguous)
+			moved.push(field?.hint || field?.kind || group);
+	}
+	return moved;
+}
 
 /**
  * The reviewed field each live control is, by ref: by its key alone (name, stable id or label,
@@ -540,7 +590,8 @@ function lineUp(scanned: WebField[], schema: WebSchemaField[]): Lined {
 		};
 	});
 	const later = new Set(scanned.filter((f) => f.step !== 1).map((f) => f.ref));
-	return { fields, unexpected, unreviewed, later };
+	const moved = placesMoved(scanned, schema);
+	return { fields, unexpected, unreviewed, later, moved };
 }
 
 /** What a filled field records: the file's name, the chosen options, or the value. */
@@ -603,6 +654,14 @@ async function fillStep(
 	const wall = wallOf(scan);
 	if (wall) return { ok: false, stop: wall };
 	const lined = lineUp(scan.fields, state.schema);
+	if (lined.moved.length > 0)
+		return {
+			ok: false,
+			stop: {
+				kind: "form_changed",
+				message: `The form's unlabelled boxes (${lined.moved.map((l) => `"${l}"`).join(", ")}) are not where review saw them, so which box is which can no longer be told.`,
+			},
+		};
 	if (lined.unexpected.length > 0)
 		return {
 			ok: false,
