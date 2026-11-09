@@ -1,6 +1,6 @@
 import {
-	type Board,
 	type FieldKind,
+	type FormBoard,
 	type FormField,
 	questionKeyOf,
 	systemRole,
@@ -21,7 +21,7 @@ export interface SchemaField extends FormField {
 }
 
 export interface FormSchema {
-	board: Board;
+	board: FormBoard;
 	url: string;
 	fields: SchemaField[];
 	/** The submit control's text; null when the form shows none. */

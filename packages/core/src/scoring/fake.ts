@@ -1,3 +1,4 @@
+import { fakeWebFormResponders } from "../apply/web-model";
 import {
 	fakeApplicationChatResponder,
 	fakeProfileChatResponder,
@@ -40,6 +41,7 @@ export class FakeLlmProvider implements LlmProvider {
 			"chat-profile": fakeProfileChatResponder,
 			"search-plan": fakeSearchPlanResponder,
 			"answer-helper": fakeAnswerHelperResponder,
+			...fakeWebFormResponders,
 		},
 	) {}
 

@@ -2,9 +2,11 @@ import {
 	type WhatWillBeSent,
 	whatWillBeSent,
 } from "@offerfinch/core/apply/field-answers";
-import { applyUrl, BOARDS, type Board } from "@offerfinch/core/apply/forms";
+import { formTargetFor } from "@offerfinch/core/apply/form-target";
+import { applyUrl } from "@offerfinch/core/apply/forms";
 import {
 	BOARD_SUBMISSION_MODES,
+	submissionModeAfterRead,
 	submissionModeForSource,
 } from "@offerfinch/core/apply/modes";
 import { applicantData } from "@offerfinch/core/apply/submit";
@@ -61,6 +63,48 @@ async function whatWillBeSentFor(
 		applicantData(profile, context, context.coverLetterMarkdown !== null),
 		await repo.savedAnswers(userId),
 	);
+}
+
+/**
+ * How the application is submitted and the form the hand-off opens, decided as the submission
+ * decides it (core apply/form-target.ts): the source's board, else the board or employer form its
+ * apply link names; an employer's own form is a hand-off unless its field list was read.
+ */
+export async function submissionView(
+	repo: ReturnType<typeof repoOf>,
+	userId: string,
+	applicationId: string,
+	posting: {
+		job: {
+			source: string;
+			url: string;
+			applyUrl: string | null;
+			externalId: string;
+		};
+		companyKey: string;
+	},
+) {
+	const { job } = posting;
+	const target = formTargetFor({ ...job, companyKey: posting.companyKey });
+	// The posting's own apply form on the real board (the board, not a fixture, decides);
+	// otherwise the employer's own apply link when the listing showed one, else the posting.
+	const postingForm =
+		target.board === "web"
+			? target.url
+			: target.board
+				? applyUrl(target.board, target)
+				: (job.applyUrl ?? job.url);
+	const mode = submissionModeAfterRead(
+		submissionModeForSource(
+			job.source,
+			target.board,
+			target.from,
+			target.reason,
+		),
+		target.board,
+		target.board === "web" ? await repo.formRead(userId, applicationId) : null,
+	);
+	return { postingForm, mode };
 }
 
 const repoOf = (context: {
@@ -168,19 +212,12 @@ export const pipelineRouter = {
 					(d) => d.kind === "form_answers",
 				);
 				const contact = profile ? parseContact(evidenceProfile(profile)) : null;
-				const board = (BOARDS as readonly string[]).includes(detail.job.source)
-					? (detail.job.source as Board)
-					: null;
-				// The posting's own apply form on the real board (the board, not a fixture, decides).
-				// LinkedIn: the employer's own apply link when the listing showed one, else the posting.
-				const postingForm = board
-					? applyUrl(board, {
-							url: detail.job.url,
-							externalId: detail.job.externalId,
-							companyKey: detail.company.key,
-						})
-					: (detail.job.applyUrl ?? detail.job.url);
-				const mode = submissionModeForSource(detail.job.source, board);
+				const { postingForm, mode } = await submissionView(
+					repoOf(context),
+					context.session.user.id,
+					input.id,
+					{ job: detail.job, companyKey: detail.company.key },
+				);
 				const form = await whatWillBeSentFor(
 					repoOf(context),
 					context.session.user.id,

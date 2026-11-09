@@ -1,0 +1,613 @@
+import type { ApplicationRun } from "@offerfinch/core/apply/applier";
+import { planFormFields } from "@offerfinch/core/apply/field-answers";
+import type { FormSchema } from "@offerfinch/core/apply/form-schema";
+import type { FormBoard } from "@offerfinch/core/apply/forms";
+import {
+	readApplicationForm,
+	readFormOnPage,
+} from "@offerfinch/core/apply/read-form";
+import {
+	applicantData,
+	type SubmissionStore,
+	submitStep,
+} from "@offerfinch/core/apply/submit";
+import { runWebApplication } from "@offerfinch/core/apply/web-form";
+import {
+	llmWebFormModel,
+	type WebFormModel,
+} from "@offerfinch/core/apply/web-model";
+import { MemoryBlobStore } from "@offerfinch/core/export/export";
+import type { PipelineDeps } from "@offerfinch/core/pipeline/ports";
+import { FakeLlmProvider } from "@offerfinch/core/scoring/fake";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { fixtureBrowser, localBrowser } from "./browser";
+import {
+	type FixtureWebForms,
+	startFixtureWebForms,
+} from "./fixture-web-forms";
+
+/**
+ * Plan step 6 on local stand-ins for employers' own forms: the form is read before review with
+ * nothing sent, filled from the approved plan step by step, submitted once after the claim, and
+ * only a confirmation the page bears out records it applied. Fabricated applicant; only
+ * 127.0.0.1 is allowed, so localhost is "another site".
+ */
+
+let forms: FixtureWebForms;
+beforeAll(async () => {
+	forms = await startFixtureWebForms();
+});
+afterAll(async () => {
+	await forms?.close();
+});
+
+const urlOf = (variant: string) => `${forms.url}/web/${variant}/apply`;
+
+const PROFILE = {
+	files: [
+		{
+			path: "personal.md",
+			content:
+				"# Personal\n\n- **Name:** Ada Example\n- **Email:** ada@example.test\n- **Phone:** +90 555 000 00 00\n- **Location:** Izmir, Turkey\n- **LinkedIn:** linkedin.com/in/adaexample\n",
+		},
+	],
+};
+
+const ANSWERS = [
+	{
+		question: "Why do you want to work at Acme Robotics?",
+		answer: "The robotics work matches what I build.",
+	},
+	{ question: "What is your notice period?", answer: "Four weeks." },
+];
+
+const fakeModel = (): WebFormModel => llmWebFormModel(new FakeLlmProvider());
+
+async function read(variant: string, model: WebFormModel | null = fakeModel()) {
+	const session = await localBrowser().openSession({
+		network: "read_only",
+		allowedHosts: ["127.0.0.1"],
+	});
+	try {
+		const page = await session.newPage();
+		const result = await readFormOnPage(page, "web", urlOf(variant), model);
+		return { result, log: page.networkLog() };
+	} finally {
+		await session.close();
+	}
+}
+
+async function schemaOf(variant: string): Promise<FormSchema> {
+	const { result } = await read(variant);
+	if (!result.ok) throw new Error(result.reason);
+	return result.schema;
+}
+
+const data = () =>
+	applicantData(
+		PROFILE,
+		{ formAnswers: ANSWERS, coverLetterMarkdown: "Dear team,\n\nLetter." },
+		false,
+	);
+
+const CV = {
+	name: "CV.pdf",
+	mimeType: "application/pdf",
+	buffer: new TextEncoder().encode("%PDF-1.4 cv"),
+};
+
+describe("reading an employer's form before review", () => {
+	it("lists every question with a stable key, sending nothing but reads", async () => {
+		const { result, log } = await read("single");
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		const fields = result.schema.fields.map((f) => [
+			f.key,
+			f.label,
+			f.required,
+			f.page,
+		]);
+		expect(fields).toEqual([
+			["text:full_name", "Full name", true, 1],
+			["text:email", "Email address", true, 1],
+			["text:phone", "Phone number", false, 1],
+			// No label: the model chose one from the text beside it.
+			["text:#text-1", "LinkedIn", false, 1],
+			["text:location", "Where are you based?", false, 1],
+			["textarea:why", "Why do you want to work at Acme Robotics?", true, 1],
+			["text:notice", "What is your notice period?", true, 1],
+			["file:cv", "Resume / CV", true, 1],
+			["checkbox:news", "Send me news about future openings", false, 1],
+		]);
+		expect(
+			result.schema.fields.find((f) => f.key === "text:#text-1"),
+		).toMatchObject({ labelSource: "model" });
+		expect(result.schema.submit).toBe("Submit application");
+		expect(log.filter((r) => r.allowed && r.method !== "GET")).toEqual([]);
+		expect(forms.count("single")).toBe(0);
+		// The ids change on every load; the keys do not.
+		const again = await schemaOf("single");
+		expect(again.fields.map((f) => f.key)).toEqual(
+			result.schema.fields.map((f) => f.key),
+		);
+	});
+
+	it("leaves a control nothing names unlabelled without a model", async () => {
+		const { result } = await read("single", null);
+		if (!result.ok) throw new Error(result.reason);
+		expect(
+			result.schema.fields.find((f) => f.key === "text:#text-1")?.label,
+		).toBe("");
+	});
+
+	it("reads a two-step form's hidden step as page 2", async () => {
+		const schema = await schemaOf("two-step");
+		expect(schema.fields.map((f) => [f.key, f.page])).toEqual([
+			["text:full_name", 1],
+			["text:email", 1],
+			["text:phone", 1],
+			["textarea:why", 2],
+			["text:notice", 2],
+			["file:cv", 2],
+		]);
+		expect(forms.count("two-step")).toBe(0);
+	});
+
+	it("is read in preparation only where submission may go, in its own session", async () => {
+		const context = {
+			applicationId: "app-1",
+			source: "web",
+			board: "web" as const,
+			boardFrom: "url" as const,
+			companyKey: "acme-robotics",
+			externalId: "single",
+			jobUrl: urlOf("single"),
+			formAnswers: [],
+			coverLetterMarkdown: null,
+			cvPdfKey: null,
+			coverLetterPdfKey: null,
+		};
+		const apply = {
+			store: {} as SubmissionStore,
+			browser: localBrowser(),
+			blobs: new MemoryBlobStore(),
+			allowedHosts: ["127.0.0.1"],
+		};
+		const prepared = await readApplicationForm(
+			apply,
+			context,
+			new Date(),
+			fakeModel(),
+		);
+		expect(prepared).toMatchObject({
+			status: "read",
+			schema: { board: "web", url: urlOf("single") },
+		});
+		// Not an allowed host: no browser opens.
+		expect(
+			await readApplicationForm({ ...apply, allowedHosts: [] }, context),
+		).toMatchObject({
+			status: "skipped",
+			note: expect.stringMatching(/not turned on/),
+		});
+	});
+
+	it("reads a form in a frame of the same site", async () => {
+		const schema = await schemaOf("framed");
+		expect(schema.fields.map((f) => f.key)).toContain("textarea:why");
+		expect(schema.url).toBe(urlOf("framed"));
+	});
+
+	it("gives review a value for every field, and asks the question nothing answers", async () => {
+		const single = planFormFields(await schemaOf("single"), data(), []);
+		expect(single.ask).toEqual([]);
+		expect(
+			Object.fromEntries(single.fields.map((f) => [f.label, f.value])),
+		).toMatchObject({
+			"Full name": "Ada Example",
+			LinkedIn: "https://linkedin.com/in/adaexample",
+			"Where are you based?": "Izmir, Turkey",
+			"Resume / CV": "CV.pdf",
+			"Send me news about future openings": null,
+		});
+		const unknown = planFormFields(await schemaOf("unknown"), data(), []);
+		expect(unknown.ask.map((q) => q.label)).toEqual([
+			"Do you hold a valid driving licence?",
+		]);
+	});
+
+	it.each([
+		["login", /password/],
+		["code", /code sent by email or SMS/],
+		["frame-away", /frame from localhost.*another site/],
+	])("does not read %s: %s", async (variant, why) => {
+		const { result } = await read(variant);
+		expect(result).toMatchObject({
+			ok: false,
+			reason: expect.stringMatching(why),
+		});
+	});
+});
+
+describe("filling an employer's form (dry run, network closed)", () => {
+	async function dryRun(variant: string, schema: FormSchema) {
+		const session = await localBrowser().openSession({ network: "read_only" });
+		try {
+			const page = await session.newPage();
+			const run: ApplicationRun = {
+				board: "web",
+				url: urlOf(variant),
+				mode: "dry_run",
+				schema: schema.fields,
+				data: data(),
+				files: { cv: CV, coverLetter: null },
+				model: fakeModel(),
+				beforeFill: () => page.restrictNetwork("none"),
+			};
+			const result = await runWebApplication(page, run);
+			return { result, log: page.networkLog() };
+		} finally {
+			await session.close();
+		}
+	}
+
+	it("fills a single-page form with the approved values only", async () => {
+		const { result, log } = await dryRun("single", await schemaOf("single"));
+		expect(result.outcome).toBe("dry_run");
+		expect(
+			Object.fromEntries(result.filled.map((f) => [f.label, f.value])),
+		).toEqual({
+			"Full name": "Ada Example",
+			"Email address": "ada@example.test",
+			"Phone number": "+90 555 000 00 00",
+			LinkedIn: "https://linkedin.com/in/adaexample",
+			"Where are you based?": "Izmir, Turkey",
+			"Why do you want to work at Acme Robotics?":
+				"The robotics work matches what I build.",
+			"What is your notice period?": "Four weeks.",
+			"Resume / CV": "CV.pdf",
+		});
+		expect(log.filter((r) => r.allowed && r.method !== "GET")).toEqual([]);
+		expect(forms.count("single")).toBe(0);
+	});
+
+	it("walks a two-step form with Next and stops short of the submit", async () => {
+		const { result } = await dryRun("two-step", await schemaOf("two-step"));
+		expect(result.outcome).toBe("dry_run");
+		expect(result.filled.map((f) => f.label)).toEqual([
+			"Full name",
+			"Email address",
+			"Phone number",
+			"Why do you want to work at Acme Robotics?",
+			"What is your notice period?",
+			"Resume / CV",
+		]);
+		expect(forms.count("two-step")).toBe(0);
+	});
+});
+
+/* --------------------------------------------------------------- submit */
+
+function harness(
+	variant: string,
+	schema: FormSchema | null,
+	{
+		source = "web",
+		board = "web" as FormBoard | null,
+		boardFrom = "url" as "url" | "source" | null,
+		answers = ANSWERS,
+		withModel = true,
+	} = {},
+) {
+	const blobs = new MemoryBlobStore();
+	void blobs.put("cv.pdf", CV.buffer, "application/pdf");
+	const calls: {
+		method: string;
+		reason?: string;
+		key?: string | null;
+		submitted?: boolean;
+	}[] = [];
+	const store = {
+		submissionsPaused: async () => false,
+		resolveInterrupted: async () => false,
+		submissionContext: async () => ({
+			applicationId: "app-1",
+			source,
+			board,
+			boardFrom,
+			companyKey: "acme-robotics",
+			externalId: variant,
+			jobUrl: urlOf(variant),
+			formAnswers: answers,
+			coverLetterMarkdown: "Dear team,\n\nLetter.",
+			cvPdfKey: "cv.pdf",
+			coverLetterPdfKey: null,
+		}),
+		formRead: async () =>
+			schema
+				? { status: "read" as const, schema, readAt: "2026-11-09T00:00:00Z" }
+				: null,
+		claimSubmission: vi.fn(async (_u, _a, input) => {
+			calls.push({ method: "claim", key: input.beforeKey });
+			return { go: true as const, attemptId: "attempt-1" };
+		}),
+		finishSubmission: vi.fn(async (_u, _a, _id, input) => {
+			calls.push({
+				method: "finish",
+				reason: input.reason,
+				key: input.afterKey,
+				submitted: input.submitted,
+			});
+		}),
+		stopSubmission: vi.fn(async (_u, _a, input) => {
+			calls.push({ method: "stop", reason: input.reason });
+		}),
+		stopForQuestions: vi.fn(async (_u, _a, input) => {
+			calls.push({ method: "questions", reason: input.reason });
+			return { asked: input.questions.length, reused: 0 };
+		}),
+		recordDryRun: vi.fn(async () => "dry"),
+		savedAnswers: async () => [],
+		handOverStuck: async () => [],
+		beginSubmission: async () => ({ outcome: "started" as const }),
+	} satisfies SubmissionStore;
+	const deps = {
+		repo: {
+			getState: async () => "applying",
+			getProfile: async () => PROFILE,
+		},
+		...(withModel ? { llm: new FakeLlmProvider() } : {}),
+		apply: {
+			store,
+			browser: fixtureBrowser(),
+			blobs,
+			allowedHosts: ["127.0.0.1"],
+		},
+	} as unknown as PipelineDeps;
+	return { deps, calls, blobs };
+}
+
+describe("submitting an employer's form", () => {
+	it.each(["single", "two-step"])(
+		"%s: fills, submits once after the claim, with screenshots before and after",
+		async (variant) => {
+			const { deps, calls, blobs } = harness(variant, await schemaOf(variant));
+			const outcome = await submitStep(deps, "u1", "app-1");
+			expect(outcome).toMatchObject({ outcome: "applied" });
+			expect(forms.count(variant)).toBe(1);
+			expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+			expect(calls[1]?.reason).toMatch(
+				/^Submitted; the employer's page confirmed: "Thank you for/,
+			);
+			for (const c of calls) {
+				expect(c.key).toBeTruthy();
+				expect(await blobs.get(c.key ?? "")).not.toBeNull();
+			}
+			// Only the reviewed fields' values were sent.
+			const sent = forms.submissions.find((s) => s.variant === variant);
+			expect(sent?.body).toContain("Four weeks.");
+			expect(sent?.fields).not.toContain("company_website_filled");
+			expect(forms.away).toEqual([]);
+		},
+		60_000,
+	);
+
+	it("a box the page adds after review never takes another question's value", async () => {
+		// Read on the first load; from the second on the page adds an unlabelled box above the rest.
+		const schema = await schemaOf("nameless");
+		const keys = schema.fields.map((f) => f.key);
+		expect(keys.filter((k) => k.includes(":#"))).toEqual(["text:#text-1"]);
+		expect(keys.filter((k) => k.includes(":label:"))).toHaveLength(5);
+		const { deps } = harness("nameless", schema);
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({ outcome: "applied" });
+		const sent = JSON.parse(
+			forms.submissions.find((s) => s.variant === "nameless")?.body ?? "{}",
+		);
+		// The new box stays empty; the unlabelled LinkedIn box moved, so it is left blank too.
+		expect(sent).toEqual({
+			"Promo code": "",
+			"Full name": "Ada Example",
+			"Email address": "ada@example.test",
+			"Your LinkedIn profile": "",
+			"Why do you want to work at Acme Robotics?":
+				"The robotics work matches what I build.",
+			"What is your notice period?": "Four weeks.",
+			"Resume / CV": "CV.pdf",
+		});
+	}, 60_000);
+
+	it("an ambiguous page after the click is an unknown outcome, never a retry", async () => {
+		const { deps, calls } = harness("ambiguous", await schemaOf("ambiguous"));
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(
+				/does not say the application was received/,
+			),
+		});
+		expect(forms.count("ambiguous")).toBe(1);
+		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+		expect(calls[1]?.submitted).toBe(false);
+	}, 60_000);
+
+	it("without a model, a changed page is unknown", async () => {
+		const { deps } = harness("single", await schemaOf("single"), {
+			withModel: false,
+		});
+		const before = forms.count("single");
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(/no model was available/),
+		});
+		expect(forms.count("single")).toBe(before + 1);
+	}, 60_000);
+
+	it("a confirmation quote the page does not show is not believed", async () => {
+		const schema = await schemaOf("single");
+		const liar: WebFormModel = {
+			...fakeModel(),
+			outcome: async () => ({
+				verdict: "confirmed",
+				quote: "Thank you for applying to Example Corp",
+			}),
+		};
+		const session = await fixtureBrowser().openSession({
+			network: "allowlist",
+			allowedHosts: ["127.0.0.1"],
+		});
+		try {
+			const page = await session.newPage();
+			const result = await runWebApplication(page, {
+				board: "web",
+				url: urlOf("single"),
+				mode: "submit",
+				schema: schema.fields,
+				data: data(),
+				files: { cv: CV, coverLetter: null },
+				model: liar,
+				allowedHosts: ["127.0.0.1"],
+				claim: async () => ({ go: true }),
+			});
+			expect(result).toMatchObject({
+				outcome: "unknown",
+				reason: expect.stringMatching(/does not bear out/),
+			});
+		} finally {
+			await session.close();
+		}
+	}, 60_000);
+
+	it("a model that says confirmed while the form stays on the page is not believed", async () => {
+		const schema = await schemaOf("stays");
+		const liar: WebFormModel = {
+			...fakeModel(),
+			outcome: async () => ({
+				verdict: "confirmed",
+				quote: "Thank you for applying!",
+			}),
+		};
+		const session = await fixtureBrowser().openSession({
+			network: "allowlist",
+			allowedHosts: ["127.0.0.1"],
+		});
+		try {
+			const page = await session.newPage();
+			const result = await runWebApplication(page, {
+				board: "web",
+				url: urlOf("stays"),
+				mode: "submit",
+				schema: schema.fields,
+				data: data(),
+				files: { cv: CV, coverLetter: null },
+				model: liar,
+				allowedHosts: ["127.0.0.1"],
+				confirmTimeoutMs: 3_000,
+				claim: async () => ({ go: true }),
+			});
+			expect(result).toMatchObject({
+				outcome: "unknown",
+				reason: expect.stringMatching(/the form is still on the page/),
+			});
+			expect(forms.count("stays")).toBe(1);
+		} finally {
+			await session.close();
+		}
+	}, 60_000);
+});
+
+describe("stops on an employer's form: nothing is sent", () => {
+	it("stops when the live form asks a required question review never listed", async () => {
+		const { deps, calls } = harness("unknown", await schemaOf("single"));
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(
+				/driving licence.*not in the approved list/,
+			),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["stop"]);
+		expect(forms.count("unknown")).toBe(0);
+	}, 60_000);
+
+	it("asks a reviewed required question that has no approved answer", async () => {
+		const { deps, calls } = harness("unknown", await schemaOf("unknown"));
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({ outcome: "needs_human" });
+		expect(calls.map((c) => c.method)).toEqual(["questions"]);
+		expect(forms.count("unknown")).toBe(0);
+	}, 60_000);
+
+	it.each([
+		["login", /password/],
+		["code", /code sent by email or SMS/],
+		["frame-away", /frame from localhost/],
+	])(
+		"%s: hands it to the user",
+		async (variant, why) => {
+			// The schema of the plain form: the live page is what stops the run.
+			const { deps, calls } = harness(variant, await schemaOf("single"));
+			const outcome = await submitStep(deps, "u1", "app-1");
+			expect(outcome).toMatchObject({
+				outcome: "needs_human",
+				reason: expect.stringMatching(why),
+			});
+			expect(calls.map((c) => c.method)).toEqual(["stop"]);
+			expect(forms.count(variant)).toBe(0);
+			expect(forms.away.filter((a) => a.method === "POST")).toEqual([]);
+		},
+		60_000,
+	);
+
+	it("stops when the CV is uploaded to another site, before the claim", async () => {
+		const { deps, calls } = harness(
+			"upload-away",
+			await schemaOf("upload-away"),
+		);
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(/localhost/),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["stop"]);
+		expect(forms.away.filter((a) => a.method === "POST")).toEqual([]);
+		expect(forms.count("upload-away")).toBe(0);
+	}, 60_000);
+
+	it("stops before opening a browser when the form was never read", async () => {
+		const { deps, calls } = harness("single", null);
+		const before = forms.count("single");
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(/not read before review/),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["stop"]);
+		expect(forms.count("single")).toBe(before);
+	}, 60_000);
+
+	it.each([
+		["linkedin", null, null, /Easy Apply is never used/],
+		["manual", "web", "url", /Added by hand/],
+		["sample", "web", "url", /sample job/],
+	] as const)(
+		"sends nothing for a %s job",
+		async (source, board, boardFrom, why) => {
+			const { deps, calls } = harness("single", await schemaOf("single"), {
+				source,
+				board,
+				boardFrom,
+			});
+			const before = forms.count("single");
+			const outcome = await submitStep(deps, "u1", "app-1");
+			expect(outcome).toMatchObject({
+				outcome: "needs_human",
+				reason: expect.stringMatching(why),
+			});
+			expect(calls.map((c) => c.method)).toEqual(["stop"]);
+			expect(forms.count("single")).toBe(before);
+		},
+		60_000,
+	);
+});

@@ -1,4 +1,5 @@
-import { BOARDS, type Board } from "./forms";
+import type { FormRead } from "./form-schema";
+import { BOARDS, type Board, type FormBoard } from "./forms";
 
 /**
  * How an approved application reaches the employer, per board (docs/decisions.md, 2026-11-09;
@@ -55,50 +56,85 @@ export interface ModeDecision {
 }
 
 /**
- * Job sources that are hand-off whatever the board or host; a hand-off source decides before its
- * board does. A job added by hand (`manual`) names no board to submit on. LinkedIn jobs are read by
- * the local runner only: Easy Apply and LinkedIn's apply controls are never used (docs/decisions.md,
- * phase 4). Indeed and Glassdoor's own apply sit behind challenges and logins and stay hand-off.
- * SmartRecruiters' application form answers an automated browser with a visible CAPTCHA
- * (docs/form-inspection.md, 2026-11-09). The web and the feeds have no form filler yet
- * (docs/auto-apply-plan.md, step 6): until theirs lands they are hand-off too. No option changes
- * this.
+ * An employer's own form, read by the generic scan (docs/auto-apply-plan.md, step 6). Its known
+ * risk, shown beside its mode like a board's.
  */
-const NOT_YET =
-	"Nothing is filled or sent automatically: automatic filling is not available here yet.";
+export const WEB_SUBMISSION_MODE: Readonly<{
+	mode: SubmissionMode;
+	why: string;
+}> = Object.freeze({
+	mode: "auto",
+	why: "An employer's own form is read by a generic scan, and its page after the click is read by the model: a thank-you page is not proof the employer received it.",
+});
+
+/**
+ * Job sources that are hand-off unless the job's apply link names a form this app fills
+ * (`form-target.ts`). A job added by hand (`manual`) and try-it samples never fill anything;
+ * SmartRecruiters' application form answers an automated browser with a visible CAPTCHA
+ * (docs/form-inspection.md, 2026-11-09). LinkedIn, Indeed and Glassdoor's own apply is never used
+ * (docs/decisions.md, phase 4); their jobs that link out to an employer's form, and web and feed
+ * jobs, are filled on that form. No option changes this.
+ */
+const NO_FORM =
+	"no form this app can fill was found at its link. Nothing is filled or sent automatically.";
 
 export const HANDOFF_SOURCES: Readonly<Record<string, string>> = Object.freeze({
 	manual:
 		"Added by hand: open the posting and submit it yourself. Nothing is filled or sent automatically.",
 	linkedin:
-		"Found on LinkedIn: open the employer's apply link (or the posting) and submit it yourself. Nothing is filled or sent automatically, and Easy Apply is never used.",
+		"Found on LinkedIn without an employer form this app can fill: open the employer's apply link (or the posting) and submit it yourself. Nothing is filled or sent automatically, and Easy Apply is never used.",
 	indeed:
-		"Found on Indeed: open the posting and apply yourself. Nothing is filled or sent automatically, and Indeed's own apply is never used.",
+		"Found on Indeed without an employer form this app can fill: open the posting and apply yourself. Nothing is filled or sent automatically, and Indeed's own apply is never used.",
 	glassdoor:
-		"Found on Glassdoor: open the posting and apply yourself. Nothing is filled or sent automatically, and Glassdoor's own apply is never used.",
+		"Found on Glassdoor without an employer form this app can fill: open the posting and apply yourself. Nothing is filled or sent automatically, and Glassdoor's own apply is never used.",
 	smartrecruiters:
 		"Found on SmartRecruiters: open the posting and apply on SmartRecruiters yourself. Nothing is filled or sent automatically: its application form shows an automated browser a CAPTCHA (DataDome) instead of the form.",
-	web: `Found on the web: open the posting and apply on the employer's site yourself. ${NOT_YET}`,
-	remotive: `Found on Remotive: open the posting on Remotive and apply yourself. ${NOT_YET}`,
-	remoteok: `Found on Remote OK: open the posting on Remote OK and apply yourself. ${NOT_YET}`,
-	weworkremotely: `Found on We Work Remotely: open the posting on We Work Remotely and apply yourself. ${NOT_YET}`,
-	hackernews: `Found in Hacker News' Who is hiring thread: open the post and apply the way it asks, yourself. ${NOT_YET}`,
+	web: `Found on the web: apply on the employer's site yourself; ${NO_FORM}`,
+	remotive: `Found on Remotive: open the posting on Remotive and apply yourself; ${NO_FORM}`,
+	remoteok: `Found on Remote OK: open the posting on Remote OK and apply yourself; ${NO_FORM}`,
+	weworkremotely: `Found on We Work Remotely: open the posting on We Work Remotely and apply yourself; ${NO_FORM}`,
+	hackernews: `Found in Hacker News' Who is hiring thread: apply the way the post asks, yourself; ${NO_FORM}`,
 	sample:
 		"A sample job from try-it mode: there is no real posting to apply to. Mark it applied to see the Applied list. Nothing is filled or sent.",
 });
 
-/** The mode for an application from `source`: a hand-off source decides before its board does. */
+/** Hand-off sources whose jobs are filled where their apply link points, when it names a form. */
+const LINKED_FORM_SOURCES = new Set([
+	"linkedin",
+	"indeed",
+	"glassdoor",
+	"web",
+	"remotive",
+	"remoteok",
+	"weworkremotely",
+	"hackernews",
+]);
+
+/**
+ * The mode for an application from `source`: a hand-off source decides before its board does,
+ * unless the board was read from the job's apply link (`from` "url", `form-target.ts`) and the
+ * source is one that links out. `note` says why a followed link named no form.
+ */
 export function submissionModeForSource(
 	source: string,
-	board: Board | null,
+	board: FormBoard | null,
+	from?: "source" | "url" | null,
+	note = "",
 ): ModeDecision {
 	const fixed = HANDOFF_SOURCES[source];
-	if (fixed) return { mode: "handoff", reason: fixed };
-	return submissionModeFor(board);
+	const linked =
+		from === "url" && board !== null && LINKED_FORM_SOURCES.has(source);
+	if (fixed && !linked)
+		return { mode: "handoff", reason: note ? `${note} ${fixed}` : fixed };
+	const decision = submissionModeFor(board);
+	return note && decision.mode === "handoff"
+		? { ...decision, reason: `${note} ${decision.reason}` }
+		: decision;
 }
 
 /** The mode for one application's board, from the table above. */
-export function submissionModeFor(board: Board | null): ModeDecision {
+export function submissionModeFor(board: FormBoard | null): ModeDecision {
+	if (board === "web") return { mode: WEB_SUBMISSION_MODE.mode, reason: "" };
 	if (!board || !(BOARDS as readonly string[]).includes(board))
 		return {
 			mode: "handoff",
@@ -110,5 +146,26 @@ export function submissionModeFor(board: Board | null): ModeDecision {
 	return {
 		mode: "handoff",
 		reason: `Submit this one yourself: ${fixed.why} Nothing is filled or sent automatically on this board.`,
+	};
+}
+
+/**
+ * An employer's own form is filled only from the field list read before review: without a read
+ * one, it is a hand-off, with the read's note. Boards are unchanged (they fill without one).
+ */
+export function submissionModeAfterRead(
+	mode: ModeDecision,
+	board: FormBoard | null,
+	read: FormRead | null,
+): ModeDecision {
+	if (board !== "web" || mode.mode !== "auto" || read?.status === "read")
+		return mode;
+	const note =
+		read?.status === "failed" || read?.status === "skipped"
+			? read.note
+			: "The employer's form has not been read.";
+	return {
+		mode: "handoff",
+		reason: `${note} Apply on the employer's site yourself; nothing is filled or sent automatically.`,
 	};
 }

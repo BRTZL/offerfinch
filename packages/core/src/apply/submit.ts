@@ -18,16 +18,19 @@ import type { SavedAnswer } from "./field-answers";
 import type { FormRead, FormSchema } from "./form-schema";
 import {
 	type ApplicantData,
-	BOARDS,
 	type Board,
 	applyUrl as boardApplyUrl,
 	exactOption,
+	type FormBoard,
 	markdownToPlain,
 	sameQuestion,
 	sessionHosts,
 	type UnknownQuestion,
 } from "./forms";
-import { submissionModeForSource } from "./modes";
+import { submissionModeAfterRead, submissionModeForSource } from "./modes";
+import { runWebApplication } from "./web-form";
+import { webSessionHosts } from "./web-hosts";
+import { webFormModelFor } from "./web-model";
 
 /**
  * Submission on approval (phase 3; automatic since 2026-11-09, docs/auto-apply-plan.md).
@@ -42,7 +45,15 @@ export interface SubmissionContext {
 	applicationId: string;
 	/** Where the job was found; a hand-off source (LinkedIn) is never filled, whatever the board. */
 	source?: string;
-	board: Board | null;
+	/** The form it is filled on (`formTargetFor`): a board, an employer's own form ("web"), or none. */
+	board: FormBoard | null;
+	/**
+	 * How the board was decided (`FormTarget.from`): read from the job's apply link ("url"), the
+	 * posting fields below are that link's. Unset: from the source, as before step 6.
+	 */
+	boardFrom?: "source" | "url" | null;
+	/** Why the job's apply link named no form this app fills (`FormTarget.reason`). */
+	handoffNote?: string;
 	companyKey: string;
 	externalId: string;
 	jobUrl: string;
@@ -190,7 +201,7 @@ export interface ApplyDeps {
 	) => Promise<RunResult & { networkLog?: unknown[] }>;
 	/** Replaces the browser read of a form before review (tests). */
 	readForm?: (input: {
-		board: Board;
+		board: FormBoard;
 		url: string;
 	}) => Promise<
 		{ ok: true; schema: FormSchema } | { ok: false; reason: string }
@@ -213,14 +224,6 @@ export function formLabelOf(question: string): string {
 	return question.replace(/\s*\(one of: [^)]*\)\s*$/, "").trim();
 }
 
-function boardOf(source: string): Board | null {
-	return (BOARDS as readonly string[]).includes(source)
-		? (source as Board)
-		: null;
-}
-
-export { boardOf };
-
 const keyFor = (userId: string, applicationId: string, label: string) =>
 	`users/${userId}/applications/${applicationId}/submissions/${Date.now()}-${label}.png`;
 
@@ -236,7 +239,12 @@ async function store(
 
 /** The submission mode for this application: its source, then its board. */
 export function modeOf(context: SubmissionContext) {
-	return submissionModeForSource(context.source ?? "", context.board);
+	return submissionModeForSource(
+		context.source ?? "",
+		context.board,
+		context.boardFrom,
+		context.handoffNote,
+	);
 }
 
 /**
@@ -259,7 +267,14 @@ export async function beginSubmissionStep(
 			outcome: "skipped",
 			reason: "the application's job could not be read",
 		};
-	const mode = modeOf(context);
+	// An employer's own form without a field list read before review is a hand-off too.
+	const mode = submissionModeAfterRead(
+		modeOf(context),
+		context.board,
+		context.board === "web"
+			? ((await deps.apply.store.formRead?.(userId, applicationId)) ?? null)
+			: null,
+	);
 	if (mode.mode === "handoff")
 		return { outcome: "handoff", reason: mode.reason };
 	return deps.apply.store.beginSubmission(userId, applicationId);
@@ -284,12 +299,16 @@ export function applicantData(
 	};
 }
 
-/** The board's form URL for this application (fixture bases replace the real hosts). */
+/**
+ * The board's form URL for this application (fixture bases replace the real hosts); an
+ * employer's own form is the apply link itself.
+ */
 export function formUrlOf(
 	context: Pick<SubmissionContext, "jobUrl" | "externalId" | "companyKey">,
-	board: Board,
+	board: FormBoard,
 	bases?: ApplyDeps["boardBases"],
 ): string {
+	if (board === "web") return context.jobUrl;
 	return boardApplyUrl(
 		board,
 		{
@@ -324,13 +343,29 @@ async function prepareRun(
 	if (!profile) return { stop: "No profile to read contact details from." };
 	// The form read before review: its fields are what the user approved values for.
 	const read = await apply.store.formRead?.(userId, context.applicationId);
+	// An employer's own form is filled only from a field list review showed and the user approved.
+	if (context.board === "web" && read?.status !== "read")
+		return {
+			stop: "The employer's form was not read before review, so no list of what will be sent was approved for it; apply on the employer's site yourself.",
+		};
+	const data = applicantData(profile, context, letter !== null);
 	return {
 		run: {
 			board: context.board,
 			url,
 			mode,
 			...(read?.status === "read" ? { schema: read.schema.fields } : {}),
-			data: applicantData(profile, context, letter !== null),
+			// The drafting model reads an employer's buttons and its page after the click; the
+			// applicant's email and phone never reach it.
+			...(context.board === "web"
+				? {
+						model: webFormModelFor(deps, userId, context.applicationId, [
+							data.contact.email,
+							data.contact.phone,
+						]),
+					}
+				: {}),
+			data,
 			files: {
 				cv: { name: "CV.pdf", mimeType: "application/pdf", buffer: cv },
 				coverLetter: letter
@@ -374,7 +409,9 @@ async function openAndRun(
 	);
 	try {
 		const page = await session.newPage();
-		const result = await runApplication(page, {
+		// An employer's own form: the generic run (web-form.ts).
+		const drive = run.board === "web" ? runWebApplication : runApplication;
+		const result = await drive(page, {
 			...run,
 			lookupsOffline: network === "read_only",
 			beforeFill:
@@ -421,6 +458,29 @@ function stopper(
 		return { outcome: "needs_human" as const, reason };
 	};
 }
+
+/**
+ * What a real submission's session may reach. A board: its own data hosts, and its asset and
+ * scoring hosts read-only (docs/form-inspection.md, 2026-11-09). An employer's own form: only its
+ * own site receives data (web-hosts.ts).
+ */
+function runHosts(run: ApplicationRun, apply: ApplyDeps) {
+	return run.board === "web"
+		? webSessionHosts(run.url)
+		: sessionHosts(run.board, apply.allowedHosts ?? LOCAL_HOSTS);
+}
+
+/** A gate that stops the run when submissions were paused before `what`. */
+function pausedBefore(db: SubmissionStore, userId: string, what: string) {
+	return async () =>
+		(await db.submissionsPaused(userId))
+			? `Submissions were paused before ${what}.`
+			: null;
+}
+
+/** Who confirmed a submission, in its reason. */
+const confirmer = (board: FormBoard) =>
+	board === "web" ? "the employer's page" : "the board";
 
 /** The gates before any browser opens; null when the run may open the form. */
 async function gateBeforeOpen(
@@ -478,9 +538,7 @@ export async function submitStep(
 				run.board,
 				run.url,
 			);
-		// The board's own data hosts, and its asset and scoring hosts read-only
-		// (docs/form-inspection.md, 2026-11-09).
-		const hosts = sessionHosts(run.board, apply.allowedHosts ?? LOCAL_HOSTS);
+		const hosts = runHosts(run, apply);
 		const result = await openAndRun(
 			apply,
 			{
@@ -494,6 +552,8 @@ export async function submitStep(
 					(await db.submissionsPaused(userId))
 						? "Submissions were paused before the files were uploaded."
 						: null,
+				// A multi-step form may save a step on the employer's site at "Next": same check.
+				beforeStep: pausedBefore(db, userId, "the form's next step"),
 				claim: async (before, filled) => {
 					const beforeKey = await store(
 						apply.blobs,
@@ -528,7 +588,7 @@ export async function submitStep(
 				).catch(() => null);
 				const submitted = result.outcome === "submitted";
 				const reason = submitted
-					? `Submitted; the board confirmed: "${result.confirmation}"`
+					? `Submitted; ${confirmer(run.board)} confirmed: "${result.confirmation}"`
 					: `Outcome unknown after the submit click: ${result.reason} Check the employer's portal or your email before retrying.`;
 				await db.finishSubmission(userId, applicationId, attemptId ?? "", {
 					submitted,

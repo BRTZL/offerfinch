@@ -3,7 +3,7 @@ import { declineBoardCookies, openForm } from "./applier";
 import { type FormRead, type FormSchema, schemaKey } from "./form-schema";
 import {
 	BOARD_CONFIGS,
-	type Board,
+	type FormBoard,
 	type FormField,
 	optionsScript,
 	scanScript,
@@ -16,6 +16,9 @@ import {
 	modeOf,
 	type SubmissionContext,
 } from "./submit";
+import { readWebFormOnPage } from "./web-form";
+import { webFormHosts } from "./web-hosts";
+import type { WebFormModel } from "./web-model";
 
 /**
  * The form reader (docs/auto-apply-plan.md, step 2): before review, the application's hosted form
@@ -42,9 +45,12 @@ async function tryEvaluate<T>(
  */
 export async function readFormOnPage(
 	page: BrowserPage,
-	board: Board,
+	board: FormBoard,
 	url: string,
+	model?: WebFormModel | null,
 ): Promise<{ ok: true; schema: FormSchema } | { ok: false; reason: string }> {
+	// An employer's own form: the generic scan (web-form.ts).
+	if (board === "web") return readWebFormOnPage(page, url, model);
 	const config = BOARD_CONFIGS[board];
 	const stop = await openForm(page, url, config);
 	if (stop) return { ok: false, reason: stop.message };
@@ -104,6 +110,8 @@ export async function readApplicationForm(
 	apply: ApplyDeps,
 	context: SubmissionContext,
 	now: Date = new Date(),
+	/** An employer's own form: the drafting model labels what the page names nothing for. */
+	model?: WebFormModel | null,
 ): Promise<FormRead> {
 	const readAt = now.toISOString();
 	const board = context.board;
@@ -128,7 +136,7 @@ export async function readApplicationForm(
 	try {
 		const result = apply.readForm
 			? await apply.readForm({ board, url })
-			: await readInSession(apply, board, url);
+			: await readInSession(apply, board, url, model);
 		if (result.ok) return { status: "read", schema: result.schema, readAt };
 		return {
 			status: "failed",
@@ -150,17 +158,20 @@ export async function readApplicationForm(
 
 async function readInSession(
 	apply: ApplyDeps,
-	board: Board,
+	board: FormBoard,
 	url: string,
+	model: WebFormModel | null | undefined,
 ): ReturnType<typeof readFormOnPage> {
-	// The page stays on the hosts submission may use, redirects included.
+	// The page stays on the hosts submission may use, redirects included (an employer's form:
+	// its own site, web-hosts.ts).
 	const session = await apply.browser.openSession({
 		network: "read_only",
-		allowedHosts: apply.allowedHosts ?? LOCAL_HOSTS,
+		allowedHosts:
+			board === "web" ? webFormHosts(url) : (apply.allowedHosts ?? LOCAL_HOSTS),
 	});
 	try {
 		const page = await session.newPage();
-		const result = await readFormOnPage(page, board, url);
+		const result = await readFormOnPage(page, board, url, model);
 		// Unload handlers (beacons) run now, while the page still aborts every request.
 		await page.goto("about:blank").catch(() => {});
 		return result;
