@@ -31,6 +31,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  *   echo          the same help text above the form; the submit posts and swaps the form for "Saved."
  *   posting-next  email and full name shown, phone and location in a hidden step; its "Next" is a
  *                 native submit button: clicking it posts the first step (and redirects to /thanks)
+ *   formless      name and email with no <form> around them, and a lone untyped "Go" button
  *   assets        name, email and location; loads a logo from localhost, and on input asks localhost
  *                 for images whose paths carry pieces of what was typed (base64 pieces, the first word)
  */
@@ -228,6 +229,12 @@ ${text("Email address", "email", { type: "email" })}${text("Full name", "full_na
 <p><button>Next</button></p></form>`;
 }
 
+function formlessBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><div>
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<p><button>Go</button></p></div>`;
+}
+
 function assetsBody(away: string): string {
 	return `<h1>Robotics Engineer at Acme Robotics</h1><img src="${away}/web/assets/logo.png" alt="">
 <form id="apply" method="post" action="/web/assets/apply">
@@ -329,6 +336,8 @@ function formPage(
 			return page(echoBody(), ECHO);
 		case "posting-next":
 			return page(postingNextBody());
+		case "formless":
+			return page(formlessBody());
 		case "assets":
 			return page(assetsBody(awayOrigin), ASSETS, awayOrigin);
 		default:

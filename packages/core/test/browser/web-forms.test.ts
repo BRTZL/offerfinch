@@ -159,6 +159,16 @@ describe("reading an employer's form before review", () => {
 		expect(forms.count("two-step")).toBe(0);
 	});
 
+	it("a button outside any form is never its submit (Codex, 2026-11-09)", async () => {
+		const { result } = await read("formless", null);
+		if (!result.ok) throw new Error(result.reason);
+		expect(result.schema.fields.map((f) => f.key)).toEqual([
+			"text:email",
+			"text:full_name",
+		]);
+		expect(result.schema.submit).toBeNull();
+	});
+
 	it("is read in preparation only where submission may go, in its own session", async () => {
 		const context = {
 			applicationId: "app-1",
@@ -707,7 +717,7 @@ describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09
 		// Posted and the form went, but the thank-you words were on the page before the click.
 		["echo", 1, /does not bear out/],
 	])(
-		"%s: confirmation words already on the page are not a confirmation",
+		"%s: not a confirmation without a send, a new page and new words",
 		async (variant, posts, why) => {
 			const { deps, calls } = harness(variant, await schemaOf(variant));
 			const outcome = await submitStep(deps, "u1", "app-1");

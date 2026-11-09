@@ -26,7 +26,7 @@ export interface WebField extends FormField {
 export interface WebControl {
 	ref: string;
 	text: string;
-	/** `submit`, `button`, `link` or `other`. */
+	/** `submit` (a submit button of a form), `button`, `link` or `other`. */
 	type: string;
 }
 
@@ -195,7 +195,9 @@ export const WEB_SCAN_SCRIPT = String.raw`(() => {
 	for (const b of root.querySelectorAll("button, input[type=submit], input[type=button], input[type=image], [role=button], a[href]")) {
 		if (!shown(b)) continue;
 		const tag = b.tagName;
-		const type = tag === "A" ? "link" : tag === "INPUT" ? (b.type === "button" ? "button" : "submit") : tag === "BUTTON" ? ((b.getAttribute("type") || "submit").toLowerCase() === "button" ? "button" : (b.getAttribute("type") || "submit").toLowerCase() === "reset" ? "other" : "submit") : "button";
+		const native = tag === "A" ? "link" : tag === "INPUT" ? (b.type === "button" ? "button" : "submit") : tag === "BUTTON" ? ((b.getAttribute("type") || "submit").toLowerCase() === "button" ? "button" : (b.getAttribute("type") || "submit").toLowerCase() === "reset" ? "other" : "submit") : "button";
+		// A submit button sends only a form it belongs to; outside any form it is a plain button.
+		const type = native === "submit" && !b.form ? "button" : native;
 		const text = clean(tag === "INPUT" ? b.value || b.getAttribute("aria-label") || "" : b.textContent || b.getAttribute("aria-label") || "");
 		if (!text) continue;
 		// Links inside the form (privacy policy, "sign in") are never a step or the submit.
