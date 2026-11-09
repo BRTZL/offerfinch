@@ -391,6 +391,55 @@ function againstSchema(
 	};
 }
 
+/** What a filled field records: the file's name, the chosen options, or the value. */
+function filledValue(action: FillAction, files: FormFiles): string {
+	switch (action.kind) {
+		case "file":
+			return action.file === "cv"
+				? files.cv.name
+				: (files.coverLetter?.name ?? "");
+		case "choose":
+			return action.values.join("; ");
+		case "clear":
+			return "(left blank)";
+		default:
+			return action.value;
+	}
+}
+
+/**
+ * The plan for the scanned form. Only reviewed fields get a value; a field the review never
+ * listed is at most emptied. A dry run with the network closed cannot pick a location suggestion
+ * (the field empties itself when left without one): that action is set apart, not performed.
+ */
+function reviewedPlan(
+	fields: FormField[],
+	unreviewed: Set<string>,
+	run: Pick<ApplicationRun, "data" | "schema" | "lookupsOffline">,
+): { plan: FillPlan; offline: Extract<FillAction, { kind: "location" }>[] } {
+	const planned = planFill(fields, run.data, {
+		declineVoluntary: run.schema !== undefined,
+	});
+	const reviewed = planned.actions.filter(
+		(a) => !unreviewed.has(a.ref) || a.kind === "clear",
+	);
+	const offline = run.lookupsOffline
+		? reviewed.filter(
+				(a): a is Extract<FillAction, { kind: "location" }> =>
+					a.kind === "location",
+			)
+		: [];
+	return {
+		plan: {
+			...planned,
+			actions: reviewed.filter(
+				(a) => a.kind !== "location" || !run.lookupsOffline,
+			),
+		},
+		offline,
+	};
+}
+
 /** Scans, plans and fills. Stops before the first keystroke when a required question is unknown. */
 export async function fillForm(
 	page: BrowserPage,
@@ -415,22 +464,7 @@ export async function fillForm(
 	);
 	if ("stop" in checked) return { ok: false, filled: [], stop: checked.stop };
 	const { fields, unreviewed } = checked;
-	const planned = planFill(fields, run.data, {
-		declineVoluntary: run.schema !== undefined,
-	});
-	// Only reviewed fields get a value; a field the review never listed is at most emptied.
-	const reviewed = planned.actions.filter(
-		(a) => !unreviewed.has(a.ref) || a.kind === "clear",
-	);
-	// A dry run with the network closed cannot pick a location suggestion (the field empties
-	// itself when left without one): it is not touched, and listed as not chosen.
-	const offline = run.lookupsOffline
-		? reviewed.filter((a) => a.kind === "location")
-		: [];
-	const plan = {
-		...planned,
-		actions: reviewed.filter((a) => !(offline as FillAction[]).includes(a)),
-	};
+	const { plan, offline } = reviewedPlan(fields, unreviewed, run);
 	// Before the first interaction of any kind (clicks included): dry runs close the network here.
 	run.beforeFill?.();
 	// A combobox lists its options only when open: read them so the question can offer them.
@@ -484,16 +518,7 @@ export async function fillForm(
 		if (stop) return { ok: false, stop, filled };
 		filled.push({
 			label: action.label || field.name,
-			value:
-				action.kind === "file"
-					? action.file === "cv"
-						? run.files.cv.name
-						: (run.files.coverLetter?.name ?? "")
-					: action.kind === "choose"
-						? action.values.join("; ")
-						: action.kind === "clear"
-							? "(left blank)"
-							: action.value,
+			value: filledValue(action, run.files),
 		});
 	}
 	// Read the form again: every control must hold its approved value or nothing.
