@@ -44,6 +44,7 @@ import { desktop } from "@/lib/desktop";
 import { keyHint } from "../../../../shared/shortcuts";
 import { approveBlocked, barKind, type MoreItem, moreItems } from "./bar-model";
 import { RedraftDialog } from "./redraft";
+import { StopSheetButton } from "./stop-sheet";
 import type {
 	ApplicationActions,
 	ApplicationDetailProps,
@@ -238,6 +239,7 @@ export function DetailActionBar({
 					<ActionBarDivider />
 				</>
 			) : null}
+			<StopSheetButton actions={actions} />
 			{chat}
 			<ActionBarButton
 				aria-pressed={detailsOpen}

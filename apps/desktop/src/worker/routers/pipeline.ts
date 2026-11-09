@@ -336,7 +336,7 @@ export const pipelineRouter = {
 						formUrl:
 							mode.mode === "handoff"
 								? postingForm
-								: (detail.attempts.find((a) => a.url)?.url ?? detail.job.url),
+								: (detail.attempts.find((a) => a.url)?.url ?? postingForm),
 						contact,
 					},
 					/**

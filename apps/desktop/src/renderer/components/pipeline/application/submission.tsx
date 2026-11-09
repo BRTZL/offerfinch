@@ -7,22 +7,13 @@ import {
 	type AppDetail,
 	DOC_LABEL,
 } from "@/components/pipeline/application/types";
-import { ago, FileLink, Section } from "@/components/pipeline/bits";
+import { FileLink, Section } from "@/components/pipeline/bits";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { desktop } from "@/lib/desktop";
 import { client, orpc } from "@/lib/orpc";
-import { cn } from "@/lib/utils";
-
-const ATTEMPT_LABEL: Record<string, string> = {
-	started: "clicked, outcome pending",
-	submitted: "submitted",
-	needs_human: "outcome unknown",
-	not_sent: "not sent",
-	dry_run: "dry run",
-	failed: "failed",
-};
+import { AttemptList } from "./proof";
 
 /** Today as YYYY-MM-DD in the browser's time zone. */
 export function today(): string {
@@ -30,7 +21,8 @@ export function today(): string {
 	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function CopyRow({ label, value }: { label: string; value: string }) {
+/** A label and value with a Copy button; nothing when the value is empty. */
+export function CopyRow({ label, value }: { label: string; value: string }) {
 	const [copied, setCopied] = useState(false);
 	if (!value) return null;
 	return (
@@ -295,65 +287,7 @@ export function SubmissionPanel({
 						</span>
 					</label>
 				)}
-				{app.attempts.length > 0 && (
-					<ol className="flex flex-col gap-2">
-						{app.attempts.map((a) => (
-							<li
-								key={a.id}
-								className="border-border border-l-2 pl-2"
-								data-testid="attempt"
-							>
-								<div className="flex items-center gap-2">
-									<span className="font-mono tabular-nums">#{a.attempt}</span>
-									<span
-										className={cn(
-											"font-medium",
-											a.status === "submitted" && "text-brand",
-											a.status === "needs_human" && "text-destructive",
-										)}
-										data-testid="attempt-status"
-									>
-										{ATTEMPT_LABEL[a.status] ?? a.status}
-									</span>
-									<span className="text-muted-foreground">
-										{a.mode === "manual" ? "by you" : a.board} ·{" "}
-										{ago(a.startedAt)}
-									</span>
-								</div>
-								{(a.error || a.resolution) && (
-									<div className="text-muted-foreground mt-0.5">
-										{a.resolution ?? a.error}
-									</div>
-								)}
-								{(a.hasBefore || a.hasAfter) && (
-									<div className="mt-1 flex gap-1.5">
-										{(["before", "after"] as const)
-											.filter((w) =>
-												w === "before" ? a.hasBefore : a.hasAfter,
-											)
-											.map((w) => (
-												<button
-													key={w}
-													type="button"
-													className={buttonVariants({
-														variant: "outline",
-														size: "xs",
-													})}
-													data-testid={`proof-${w}`}
-													onClick={() => void desktop.openProof(a.id, w)}
-												>
-													Screenshot{" "}
-													{w === "before"
-														? "before submitting"
-														: "after submitting"}
-												</button>
-											))}
-									</div>
-								)}
-							</li>
-						))}
-					</ol>
-				)}
+				<AttemptList attempts={app.attempts} />
 			</div>
 		</Section>
 	);

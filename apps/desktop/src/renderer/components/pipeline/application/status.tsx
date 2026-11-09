@@ -55,13 +55,15 @@ export function StatusStrip({ app }: { app: AppDetail }) {
 			text:
 				app.appliedVia === "manual"
 					? `Applied by you on ${app.appliedAt ? new Date(app.appliedAt).toISOString().slice(0, 10) : "the day you recorded"}.`
-					: `Applied automatically ${ago(app.appliedAt)}; the board confirmed it.`,
+					: `Submitted automatically ${ago(app.appliedAt)} (${app.attempts.find((a) => a.status === "submitted")?.board === "web" ? "the employer's page confirmed" : "board confirmed"}). A confirmation page is not proof the employer received it; their email is.`,
 			testId: "applied",
 		});
 	if (app.state === "needs_human")
 		items.push({
 			tone: "stop",
-			text: `Needs you: ${app.attempts[0]?.error ?? app.history.at(-1)?.reason ?? "the submission stopped"}. Check the job board, then finish it by hand or retry.`,
+			text: app.unresolvedAttempt
+				? "Outcome unknown: check your email or the employer's portal. What to do lists your options; it is never clicked again on its own."
+				: `Needs you: ${app.attempts[0]?.error ?? app.history.at(-1)?.reason ?? "the submission stopped"} What to do explains it and lists your options.`,
 			testId: "needs-human",
 		});
 	if (app.state === "approved" && app.activeApproval) {
