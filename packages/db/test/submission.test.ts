@@ -243,6 +243,22 @@ describe("submission on approval", () => {
 		expect(clicks.n).toBe(1);
 	});
 
+	it("wakes approved applications only when submissions go from paused to on", async () => {
+		await approvedApp();
+		const woken = async (paused: boolean) =>
+			(await repo.setSubmissionsPaused("u1", paused)).events.length;
+		expect(await woken(true)).toBe(0);
+		const first = await woken(false);
+		expect(first).toBeGreaterThan(0);
+		// On again, or off: no second round of events.
+		expect(await woken(false)).toBe(0);
+		expect(await woken(true)).toBe(0);
+		expect(await woken(true)).toBe(0);
+		expect(await repo.submissionsPaused("u1")).toBe(true);
+		expect(await woken(false)).toBe(first);
+		expect(await repo.submissionsPaused("u1")).toBe(false);
+	});
+
 	it("never clicks twice: two concurrent claims, one wins", async () => {
 		const id = await approvedApp();
 		await beginSubmissionStep(deps(submits({ n: 0 })).pipeline, "u1", id);

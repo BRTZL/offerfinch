@@ -15,12 +15,19 @@ export const submissionMethods = {
 	/**
 	 * The global switch, per user. Turning submissions on wakes every approved application; the
 	 * claim before each click reads the switch again, so pausing stops anything not yet clicked.
+	 * Idempotent: only the change from paused (no row counts as paused) to on wakes anything, so
+	 * turning them on twice sends no second round of events.
 	 */
 	async setSubmissionsPaused(
 		userId: string,
 		paused: boolean,
 	): Promise<{ paused: boolean; events: PendingEvent[] }> {
 		return this.database.transaction(async (tx) => {
+			const [before] = await tx
+				.select({ paused: submissionSettings.paused })
+				.from(submissionSettings)
+				.where(eq(submissionSettings.userId, userId));
+			const wasPaused = before?.paused ?? true;
 			await tx
 				.insert(submissionSettings)
 				.values({ userId, paused })
@@ -28,7 +35,7 @@ export const submissionMethods = {
 					target: submissionSettings.userId,
 					set: { paused, updatedAt: new Date() },
 				});
-			if (paused) return { paused, events: [] };
+			if (paused || !wasPaused) return { paused, events: [] };
 			const approved = await tx
 				.select({ id: applications.id })
 				.from(applications)
