@@ -9,7 +9,11 @@ import type { FormField } from "@offerfinch/core/apply/forms";
 import type { ExportInput } from "@offerfinch/core/export/export";
 import { MemoryBlobStore } from "@offerfinch/core/export/export";
 import { NoopNotifier } from "@offerfinch/core/notify/ntfy";
-import { LocalWorkflowStarter } from "@offerfinch/core/pipeline/local";
+import { runApplicationFlow } from "@offerfinch/core/pipeline/application-flow";
+import {
+	LocalStep,
+	LocalWorkflowStarter,
+} from "@offerfinch/core/pipeline/local";
 import type { PipelineDeps } from "@offerfinch/core/pipeline/ports";
 import { loadProfileFromDir } from "@offerfinch/core/profile/load-node";
 import { FakeLlmProvider } from "@offerfinch/core/scoring/fake";
@@ -62,6 +66,8 @@ let workflows: LocalWorkflowStarter;
 let jobId = "";
 let appId = "";
 let reads = 0;
+let deps: PipelineDeps;
+let companyId = "";
 
 beforeAll(async () => {
 	t = await startTestApp("form-flow");
@@ -69,7 +75,7 @@ beforeAll(async () => {
 	repo = new DashboardRepository(t.db);
 	workflows = new LocalWorkflowStarter();
 	const llm = new FakeLlmProvider();
-	const deps: PipelineDeps = {
+	deps = {
 		repo,
 		sources: {},
 		llm,
@@ -142,7 +148,8 @@ beforeAll(async () => {
 		.select({ id: companies.id })
 		.from(companies)
 		.where(eq(companies.userId, a.id));
-	({ jobId } = await repo.upsertJob(a.id, company?.id ?? "", {
+	companyId = company?.id ?? "";
+	({ jobId } = await repo.upsertJob(a.id, companyId, {
 		source: "greenhouse",
 		externalId: "4001",
 		url: "https://example.invalid/acme/4001",
@@ -236,5 +243,47 @@ describe("the form read before review", () => {
 			section: "Voluntary self-identification",
 		});
 		expect(app.form.submit).toBe("Submit application");
+	});
+
+	it("goes on to the draft when the read step itself times out", async () => {
+		/** A runner whose read step times out, as a hung board page would. */
+		class SlowRead extends LocalStep {
+			override do<T>(
+				name: string,
+				fn: (signal?: AbortSignal) => Promise<T>,
+				options?: { retries?: number; timeoutSeconds?: number },
+			): Promise<T> {
+				if (name.startsWith("read form"))
+					return Promise.reject(new Error(`Step "${name}" timed out`));
+				return super.do(name, fn, options);
+			}
+		}
+		const { jobId: slowJob } = await repo.upsertJob(a.id, companyId, {
+			source: "greenhouse",
+			externalId: "4009",
+			url: "https://example.invalid/acme/4009",
+			title: "Senior Full-Stack Engineer",
+			locations: ["Remote - Worldwide"],
+			workplaceType: "remote",
+			descriptionText: readFileSync(
+				join(FIXTURES, "acme-senior-fullstack.txt"),
+				"utf8",
+			).replace(/^.*notice period.*$/im, ""),
+		});
+		const slowApp =
+			(await repo.getApplicationByJob(a.id, slowJob))?.applicationId ?? "";
+		await t.db
+			.update(applications)
+			.set({ prepareRequestedAt: new Date() })
+			.where(eq(applications.id, slowApp));
+		const before = reads;
+		await runApplicationFlow(new SlowRead(), deps, {
+			userId: a.id,
+			jobId: slowJob,
+		});
+		// No form read, so no field list and no form question: drafted and reviewed as before.
+		expect(reads).toBe(before);
+		expect(await repo.getState(a.id, slowApp)).toBe("ready_for_review");
+		expect(await repo.formRead(a.id, slowApp)).toBeNull();
 	});
 });

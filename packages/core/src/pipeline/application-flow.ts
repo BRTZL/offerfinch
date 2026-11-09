@@ -148,12 +148,20 @@ async function prepareOnce(
 ): Promise<"capped" | "next"> {
 	const { userId, jobId, applicationId } = ids;
 	// The application form is read before the draft, so the draft can answer its questions. A
-	// read that fails is recorded and never stops preparation.
-	await step.do(
-		`read form ${wake}`,
-		() => readFormStep(deps, userId, applicationId),
-		{ retries: 0, timeoutSeconds: 180 },
-	);
+	// read that fails, or a step that times out, is recorded or logged and never stops preparation.
+	try {
+		await step.do(
+			`read form ${wake}`,
+			() => readFormStep(deps, userId, applicationId),
+			{ retries: 0, timeoutSeconds: 180 },
+		);
+	} catch (error) {
+		if (error instanceof FlowPaused) throw error;
+		deps.log?.("form read failed", {
+			applicationId,
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
 	const drafted = await step.do(
 		`prepare ${wake}`,
 		() => draftStep(deps, userId, jobId),
