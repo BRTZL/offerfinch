@@ -629,8 +629,8 @@ async function bodyOf(req: IncomingMessage): Promise<string> {
 }
 
 /**
- * Answers a POST (`postAnswer`). `unanswered`'s hang is never answered (until the server
- * closes). An autosave (`preclick`, `presave`) is answered only once the next post
+ * Answers a POST (`postAnswer`). `unanswered`'s hang is never answered: it is kept in `hanging`
+ * and settled (HTTP 503) when the fixture closes. An autosave (`preclick`, `presave`) is answered only once the next post
  * arrives, after the click; every other post answers at once and releases those held.
  */
 function answerPost(
@@ -638,13 +638,17 @@ function answerPost(
 	variant: string,
 	action: string,
 	held: (() => void)[],
+	hanging: ServerResponse[],
 ): void {
 	const answer = postAnswer(variant, action);
 	const reply = () => {
 		res.writeHead(answer.status, answer.headers);
 		res.end(answer.body);
 	};
-	if (variant === "unanswered" && action === "hang") return;
+	if (variant === "unanswered" && action === "hang") {
+		hanging.push(res);
+		return;
+	}
 	if (action === "autosave") {
 		held.push(reply);
 		return;
@@ -658,6 +662,7 @@ export async function startFixtureWebForms(): Promise<FixtureWebForms> {
 	const away: { method: string; path: string }[] = [];
 	const loads = new Map<string, number>();
 	const held: (() => void)[] = [];
+	const hanging: ServerResponse[] = [];
 	const server = createServer(async (req, res) => {
 		const host = (req.headers.host ?? "").split(":")[0] ?? "";
 		const port = (req.headers.host ?? "").split(":")[1] ?? "";
@@ -680,7 +685,7 @@ export async function startFixtureWebForms(): Promise<FixtureWebForms> {
 				fields: [...body.matchAll(/name="([^"]+)"/g)].map((m) => m[1] ?? ""),
 				body,
 			});
-			return answerPost(res, variant, action, held);
+			return answerPost(res, variant, action, held, hanging);
 		}
 		if (action === "thanks" || (variant === "native-get" && action === "sent"))
 			return html(
@@ -707,6 +712,11 @@ export async function startFixtureWebForms(): Promise<FixtureWebForms> {
 				.length,
 		close: () =>
 			new Promise<void>((done) => {
+				// A request left unanswered is settled, not cut off.
+				for (const res of hanging.splice(0)) {
+					res.writeHead(503);
+					res.end();
+				}
 				server.closeAllConnections?.();
 				server.close(() => done());
 			}),
