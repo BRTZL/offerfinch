@@ -417,6 +417,44 @@ describe("submitting an employer's form", () => {
 		});
 	}, 60_000);
 
+	it("a changed box is never paired with a reviewed one by the model (Codex, 2026-11-09)", async () => {
+		// Read with the email box; at submit an optional "Promo code" box stands in its place.
+		const schema = await schemaOf("swapped");
+		expect(schema.fields.map((f) => f.key)).toEqual([
+			"text:email",
+			"text:full_name",
+		]);
+		const pairing = {
+			...fakeModel(),
+			// A model that pairs every changed box with the reviewed email.
+			match: async (request: { live: { ref: string }[] }) =>
+				request.live.map((l) => ({ ref: l.ref, key: "text:email" })),
+		} as unknown as WebFormModel;
+		const session = await fixtureBrowser().openSession({
+			network: "allowlist",
+			allowedHosts: ["127.0.0.1"],
+		});
+		try {
+			const page = await session.newPage();
+			const result = await runWebApplication(page, {
+				board: "web",
+				url: urlOf("swapped"),
+				mode: "submit",
+				schema: schema.fields,
+				data: data(),
+				files: { cv: CV, coverLetter: null },
+				model: pairing,
+				allowedHosts: ["127.0.0.1"],
+				claim: async () => ({ go: true }),
+			});
+			expect(result.filled.map((f) => f.label)).toEqual(["Full name"]);
+		} finally {
+			await session.close();
+		}
+		const sent = forms.submissions.find((s) => s.variant === "swapped");
+		expect(sent?.body).toBe("promo=&full_name=Ada+Example");
+	}, 60_000);
+
 	it("an ambiguous page after the click is an unknown outcome, never a retry", async () => {
 		const { deps, calls } = harness("ambiguous", await schemaOf("ambiguous"));
 		const outcome = await submitStep(deps, "u1", "app-1");

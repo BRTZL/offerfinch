@@ -22,6 +22,8 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  *   framed        the single form in a frame of the same site
  *   nameless      no control has a name (a script framework's form); from the second load on an
  *                 unlabelled box appears above the others; posts every box by its label as JSON
+ *   swapped       full name and email; from the second load on an optional "Promo code" box takes
+ *                 the email box's place; a native POST that redirects to /thanks
  */
 
 export interface WebSubmission {
@@ -160,6 +162,16 @@ ${box("What is your notice period?", "text", true)}
 <p><button type="submit">Submit application</button></p></form>`;
 }
 
+/** Full name and email; from the second load on, an optional "Promo code" in the email's place. */
+function swappedBody(changed: boolean): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1>
+<form id="apply" method="post" action="/web/swapped/apply">
+${changed ? text("Promo code", "promo") : text("Email address", "email", { type: "email" })}
+${text("Full name", "full_name", { required: true })}
+<p><button type="submit">Submit application</button></p>
+</form>`;
+}
+
 /** Posts every box as "label or nearby text = value", as the page shows it. */
 const NAMELESS = `const form = document.getElementById('apply');
 form.addEventListener('submit', async (e) => {
@@ -233,6 +245,8 @@ function formPage(
 			);
 		case "nameless":
 			return page(namelessBody(load > 1), NAMELESS);
+		case "swapped":
+			return page(swappedBody(load > 1));
 		default:
 			return null;
 	}

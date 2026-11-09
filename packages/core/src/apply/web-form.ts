@@ -36,9 +36,9 @@ import {
 /**
  * An employer's own application form (the "web" board, docs/auto-apply-plan.md step 6): read
  * before review, filled from the approved plan, step by step, and submitted once after the claim.
- * The model only labels controls nothing on the page names, says which button is which, lines a
- * changed control up with a reviewed field, and reads the page after the click; every value comes
- * from `planFill`. A "Next" is clicked only when the reviewed form has a later step and the
+ * The model only labels controls nothing on the page names, says which button is which, and
+ * reads the page after the click; every value comes from `planFill`, and a control lines up with
+ * a reviewed field by its key alone. A "Next" is clicked only when the reviewed form has a later step and the
  * button's own text says next; any other control that may send is the final submit, clicked only
  * after the claim.
  */
@@ -488,25 +488,22 @@ const sameSpot = (live: WebField, reviewed: WebSchemaField) =>
 	live.autocomplete === (reviewed.autocomplete ?? "");
 
 /**
- * The reviewed field each live control is, by ref: by key (or the model's pairing in `matched`),
- * each reviewed field once, in page order. A key that is only a place among unlabelled controls
+ * The reviewed field each live control is, by ref: by its key alone (name, stable id or label,
+ * `schemaKey`), each reviewed field once, in page order. Nothing else, not the model, lines a
+ * control up with a reviewed field. A key that is only a place among unlabelled controls
  * (`#text-2`) counts only when the text beside the control is the one review saw, so a box the
  * page added never takes another question's value.
  */
 function resolveAll(
 	scanned: WebField[],
 	byKey: Map<string, WebSchemaField>,
-	matched: Map<string, string>,
 ): Map<string, WebSchemaField> {
 	const out = new Map<string, WebSchemaField>();
 	const taken = new Set<string>();
 	for (const field of scanned) {
-		const own = schemaKey(field);
-		const paired = matched.get(own);
-		const reviewed = byKey.get(paired ?? own);
+		const reviewed = byKey.get(schemaKey(field));
 		if (!reviewed || taken.has(reviewed.key)) continue;
-		if (!paired && reviewed.name.startsWith("#") && !sameSpot(field, reviewed))
-			continue;
+		if (reviewed.name.startsWith("#") && !sameSpot(field, reviewed)) continue;
 		taken.add(reviewed.key);
 		out.set(field.ref, reviewed);
 	}
@@ -514,47 +511,13 @@ function resolveAll(
 }
 
 /**
- * Lines the live controls up with the reviewed fields, by key, then by the model's pairing for
- * what is left (kept in `matched` for the rest of the run). Each lined-up control takes the
- * reviewed field's label and name, so the plan and the checks see the field review listed.
+ * Lines the live controls up with the reviewed fields by key. Each lined-up control takes the
+ * reviewed field's label and name, so the plan and the checks see the field review listed. A
+ * control that lines up with none is a question review never listed: required, the run stops;
+ * optional, it stays empty.
  */
-async function lineUp(
-	scanned: WebField[],
-	schema: WebSchemaField[],
-	matched: Map<string, string>,
-	model: WebFormModel | null | undefined,
-): Promise<Lined> {
-	const byKey = new Map(schema.map((f) => [f.key, f]));
-	let resolved = resolveAll(scanned, byKey, matched);
-	const used = new Set([...resolved.values()].map((s) => s.key));
-	const loose = scanned.filter(
-		(f) => f.visible && !resolved.has(f.ref) && systemRole(f) !== "ignore",
-	);
-	const free = schema.filter((s) => !used.has(s.key));
-	if (model && loose.length > 0 && free.length > 0) {
-		const pairs = await model
-			.match({
-				live: loose.map((f) => ({
-					ref: f.ref,
-					kind: f.kind,
-					label: f.label,
-					hint: f.hint,
-				})),
-				approved: free.map((s) => ({
-					key: s.key,
-					kind: s.kind,
-					label: s.label,
-				})),
-			})
-			.catch(() => []);
-		const freeKeys = new Set(free.map((s) => s.key));
-		for (const { ref, key } of pairs) {
-			const live = loose.find((f) => f.ref === ref);
-			if (live && freeKeys.has(key) && byKey.get(key)?.kind === live.kind)
-				matched.set(schemaKey(live), key);
-		}
-		resolved = resolveAll(scanned, byKey, matched);
-	}
+function lineUp(scanned: WebField[], schema: WebSchemaField[]): Lined {
+	const resolved = resolveAll(scanned, new Map(schema.map((f) => [f.key, f])));
 	const unexpected: string[] = [];
 	const unreviewed = new Set<string>();
 	const fields = scanned.map((f): FormField => {
@@ -633,19 +596,13 @@ async function fillStep(
 	scan: WebScan,
 	state: {
 		schema: WebSchemaField[];
-		matched: Map<string, string>;
 		filled: FilledField[];
 		uploadsCleared: boolean;
 	},
 ): Promise<StepResult> {
 	const wall = wallOf(scan);
 	if (wall) return { ok: false, stop: wall };
-	const lined = await lineUp(
-		scan.fields,
-		state.schema,
-		state.matched,
-		run.model,
-	);
+	const lined = lineUp(scan.fields, state.schema);
 	if (lined.unexpected.length > 0)
 		return {
 			ok: false,
@@ -696,7 +653,7 @@ async function fillStep(
 				message: "The form disappeared while filling.",
 			},
 		};
-	const now = await lineUp(again.fields, state.schema, state.matched, null);
+	const now = lineUp(again.fields, state.schema);
 	const mismatches = verifyFilled(
 		plan,
 		shown,
@@ -913,7 +870,6 @@ export async function runWebApplication(
 ): Promise<RunResult> {
 	const state = {
 		schema: (run.schema ?? []) as WebSchemaField[],
-		matched: new Map<string, string>(),
 		filled: [] as FilledField[],
 		uploadsCleared: false,
 	};

@@ -43,32 +43,6 @@ describe("the web form model's answers are held to its lists", () => {
 		expect(labels).toEqual([{ ref: "1", label: "Email" }]);
 	});
 
-	it("drops pairings to unknown keys, of another kind, or used twice", async () => {
-		const { llm } = lying({
-			"web-form-match": {
-				pairs: [
-					{ ref: "1", key: "text:why" },
-					{ ref: "2", key: "text:why" },
-					{ ref: "3", key: "file:cv" },
-					{ ref: "4", key: "text:made-up" },
-				],
-			},
-		});
-		const pairs = await llmWebFormModel(llm).match({
-			live: [
-				{ ref: "1", kind: "text", label: "Why us?", hint: "" },
-				{ ref: "2", kind: "text", label: "Why?", hint: "" },
-				{ ref: "3", kind: "text", label: "CV", hint: "" },
-				{ ref: "4", kind: "text", label: "Other", hint: "" },
-			],
-			approved: [
-				{ key: "text:why", kind: "text", label: "Why us?" },
-				{ key: "file:cv", kind: "file", label: "CV" },
-			],
-		});
-		expect(pairs).toEqual([{ ref: "1", key: "text:why" }]);
-	});
-
 	it("escapes the page and redacts the applicant's email and phone", async () => {
 		const { llm, sent } = lying({
 			"web-form-outcome": { verdict: "unclear", quote: "" },
