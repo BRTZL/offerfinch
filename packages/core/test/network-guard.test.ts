@@ -209,7 +209,7 @@ describe("boardHostDecision on the boards' own requests (2026-11-09 inspection)"
 	it("lets the boards' files, scripts and widget frames load", () => {
 		expect(
 			ashbyOk({
-				url: "https://cdn.ashbyprd.com/frontend_non_user/9a61/.vite/manifest.json",
+				url: "https://cdn.ashbyprd.com/frontend_non_user/5e16/assets/index-mlNa_IL5.js",
 				resourceType: "script",
 			}),
 		).toBe(true);
