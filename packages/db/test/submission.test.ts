@@ -577,6 +577,76 @@ describe("manual submission", () => {
 	});
 });
 
+describe("an employer's form sent, check your email (decision 2026-11-09)", () => {
+	it("waits for Got the email, which moves it to Applied; never applied or retried on its own", async () => {
+		const id = await approvedApp();
+		await repo.setSubmissionsPaused("u1", false);
+		const { pipeline } = deps(async (run) => {
+			await run.claim?.(png, [{ label: "Email", value: "ada@example.test" }]);
+			return {
+				outcome: "web_sent",
+				before: png,
+				after: png,
+				finalUrl: run.url,
+				filled: [{ label: "Email", value: "ada@example.test" }],
+				evidence: {
+					requestSeen: true,
+					confirmation: "Thank you for applying",
+					warning: null,
+					note: null,
+				},
+			};
+		});
+		await beginSubmissionStep(pipeline, "u1", id);
+		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(/^Sent; check your email\./),
+		});
+		const sent = await repo.getApplication("u1", id);
+		expect(sent).toMatchObject({
+			state: "needs_human",
+			unresolvedAttempt: { attempt: 1 },
+		});
+		// The page's thank-you is in the proof as evidence, not as a confirmation.
+		expect(sent?.attempts[0]?.proof).toMatchObject({
+			outcome: "web_sent",
+			evidence: { requestSeen: true, confirmation: "Thank you for applying" },
+		});
+		expect(sent?.attempts[0]?.proof).not.toHaveProperty("confirmation");
+		const row = async () =>
+			(await repo.listApplications("u1")).find((r) => r.id === id);
+		expect(Number((await row())?.sentCheckEmail)).toBe(1);
+		expect((await repo.listApplied("u1")).map((a) => a.id)).not.toContain(id);
+		// A plain retry is refused until the user says it did not go through.
+		await expect(
+			repo.retrySubmission({
+				userId: "u1",
+				applicationId: id,
+				idempotencyKey: `r-${id}`,
+				confirmedNotSent: false,
+			}),
+		).rejects.toThrow(/may have gone through/);
+
+		// Got the email: the same path as I submitted this.
+		await repo.markSubmittedManually({
+			userId: "u1",
+			applicationId: id,
+			idempotencyKey: `got-${id}`,
+		});
+		expect(await repo.getApplication("u1", id)).toMatchObject({
+			state: "applied",
+			appliedVia: "manual",
+			unresolvedAttempt: null,
+		});
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "submitted", mode: "auto" },
+			{ attempt: 2, status: "submitted", mode: "manual" },
+		]);
+		expect(Number((await row())?.sentCheckEmail)).toBe(0);
+		expect((await repo.listApplied("u1")).map((a) => a.id)).toContain(id);
+	});
+});
+
 describe("sweep", () => {
 	it("hands over applications a dead worker left in applying, without submitting", async () => {
 		const { sweepStuckApplications } = await import(

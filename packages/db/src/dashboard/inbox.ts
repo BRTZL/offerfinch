@@ -19,6 +19,7 @@ import {
 	llmUsage,
 	questions,
 } from "../schema/pipeline";
+import { sentCheckEmail } from "../web-sent";
 import type { DashboardRepositoryContext } from "./context";
 import {
 	type ApplicationFilters,
@@ -127,6 +128,8 @@ export const inboxMethods = {
 				companyKey: companies.nameKey,
 				prepareRequestedAt: applications.prepareRequestedAt,
 				openQuestions,
+				/** 1 while an employer's form that was sent waits for "Got the email" (`web-sent.ts`). */
+				sentCheckEmail,
 				/** Estimated LLM cost of this application so far, micro-dollars. */
 				costMicros,
 				/** Calls on a subscription ($0, shown as "Subscription") and on API keys. */
