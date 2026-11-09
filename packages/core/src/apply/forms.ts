@@ -20,6 +20,13 @@ export const BOARDS = [
 ] as const;
 export type Board = (typeof BOARDS)[number];
 
+/**
+ * Where an application's form is filled: a known board's config, or "web", any other employer's
+ * own form, read by the generic scan (`web-scan.ts`, docs/auto-apply-plan.md step 6). Never a
+ * member of `BOARDS`: "web" is also a job source.
+ */
+export type FormBoard = Board | "web";
+
 export interface BoardConfig {
 	board: Board;
 	/** The form; its absence means the page is not the form we expect. */
@@ -559,11 +566,11 @@ export function errorsScript(config: BoardConfig): string {
 }
 
 /** Words that make a would-be confirmation a refusal. */
-const REFUSAL =
+export const REFUSAL =
 	"\\b(?:rejected|declined|not (?:been )?(?:submitted|received|accepted)|unsuccessful|could ?n[o']t|failed|error|try again|already (?:applied|submitted|received|sent)|duplicate)\\b";
 
 /** A page that says the candidate applied before: never a confirmation of this submission. */
-const DUPLICATE =
+export const DUPLICATE =
 	"\\balready (?:applied|submitted|received|sent)\\b|\\bduplicate application\\b";
 
 /**

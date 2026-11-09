@@ -10,12 +10,12 @@ export const JOB_SOURCES = [
 	"personio",
 	"scrape",
 	"linkedin",
-	// Read from their search pages in the user's browser (core/sites); always handed off.
+	// Read from their search pages in the user's browser (core/sites); their own apply is never used.
 	"indeed",
 	"glassdoor",
-	// Found by web search on any other site (core/web); always handed off.
+	// Found by web search on any other site (core/web); filled where its link points (apply/form-target.ts).
 	"web",
-	// Public remote-job feeds (core/feeds); always handed off, linked back to the feed.
+	// Public remote-job feeds (core/feeds), linked back to the feed; filled where the apply link points.
 	"remotive",
 	"remoteok",
 	"weworkremotely",
