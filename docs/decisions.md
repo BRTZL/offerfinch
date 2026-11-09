@@ -872,3 +872,22 @@ steps are in `docs/auto-apply-plan.md`; this records step 1.
 | Kept: the claim before the click, no retry after it, the allowlist session, the stop on a visible challenge, and the submissions switch (`submission_settings.paused`, on until turned off). Real board hosts still need `SUBMIT_ALLOWED_HOSTS`, which the desktop leaves empty, so a real posting stops before any browser opens | The first real submission is one the user picks and watches (plan step 8); until then nothing reaches a real board |
 | Supersedes "Submission on scored boards (2026-10-31)" | |
 
+
+## 2026-11-09: The form is read before review (auto-apply plan, steps 2 and 3)
+
+The user approves the exact values that will be sent. During preparation the application's form
+is read, and review lists every field with its value ("What will be sent").
+
+| Decision | Why |
+|---|---|
+| The form is read in `preparing`, before the draft (`read form N` step, `apply/read-form.ts`): a read-only session (GET, HEAD and GraphQL queries while loading), the network closed after the scan, and only then each combobox opened to read its options. Nothing is typed, chosen or uploaded | The same guard dry runs use; comboboxes (Greenhouse's EEO questions) list their options only when opened |
+| It is read only where an approved run could submit: an `auto` board and a host in the submission allowlist (`SUBMIT_ALLOWED_HOSTS`, plus the local fixture boards). Elsewhere no browser opens; the read is `skipped` with a note | The desktop allows no real host yet, so no real board is read before plan step 4 |
+| One schema row per application (`application_forms`, additive migration): stable key (kind and control name, else the label), label, kind, required, options, page, section, plus the submit control. Written only while the application is `preparing` | An approval never covers a list that changed after it; approval needs `ready_for_review`, which comes after |
+| Greenhouse is read with the same DOM scan as Ashby and Lever, not its `?questions=true` API | The submit-time comparison uses the DOM scan's keys; an API schema would key fields differently |
+| A failed read (a challenge, a block, no form) never stops preparation: it is saved with its reason, review shows the note, and the submission behaves as before (no schema, no decline) | Review must not wait on a board's page |
+| Each field's value comes from `planFill` itself, the function the submission fills with: contact details, the approved files, the approved form answers, a saved answer (cited by its profile fact id), or blank. A required field nothing answers becomes a question in Questions (`needs_answers`); answering it resumes preparation | Rule 2: never a guess. One value path, so the list is what the run types |
+| The drafting model is given only the form's questions nothing on file answers (`<form_questions>`, escaped like the posting); a question it cannot settle from the profile stays out and is asked | The model only where deterministic matching fails; form labels are third-party text |
+| A saved answer the form needs joins the form answers as a new version | The claims check and the approval hash cover only the documents |
+| A self-identification question with no approved answer takes its own "decline to answer" option when it offers one, else an optional one is left blank. Only on a form read before review, where the list shows it | The plan's default (auto-apply-plan.md). Supersedes "Demographic answers are never chosen for the user" (Phase 3 review fixes) for forms read before review; without a read form nothing is chosen, as before |
+| At submit time the live form is lined up with the saved schema: a required question it does not have stops the run (`form_changed`, `needs_human`, the field named) before the first keystroke. It is not routed through the form-question inbox | Never answered on the fly. Through the inbox a reused answer would send it back to review with the same schema, and the next run would stop on the same field again |
+| Known gap: the approval hashes cover the documents and the posting, not the schema. The schema cannot change after preparing, and contact details are read from the profile at submit time, as before | Binding the schema into the approval hash is a follow-up if the schema ever changes outside preparation |

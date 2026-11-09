@@ -69,8 +69,8 @@ prepare ──► read form ──► draft field answers ──► claims check
 | # | Step | Done when | Estimate |
 |---|---|---|---|
 | 1 | Record the decision (decisions.md, PLAN phase 3, open questions); `modes.ts` gains an `auto` path for every board and the generic web, behind one in-code table; hand-off stays for account-wall sites and Indeed/Glassdoor's own apply | modes tests and `e2e:apply` rewritten: auto on the boards, zero posts on hand-off sources | ~half a day |
-| 2 | Form reader with schema storage (additive migration) for the three known boards; review shows "What will be sent" | Fixture boards: schema matches; review lists every field | 1 day |
-| 3 | Answer drafter and claims coverage per field; unknown fields become Questions | A planted unanswerable field becomes a question, not a guess | 1 day |
+| 2 | Form reader with schema storage (additive migration) for the three known boards; review shows "What will be sent" | Fixture boards: schema matches; review lists every field | Done 2026-11-09 |
+| 3 | Answer drafter and claims coverage per field; unknown fields become Questions | A planted unanswerable field becomes a question, not a guess | Done 2026-11-09 |
 | 4 | Dry runs on one real posting per known board (fill, screenshot, no click); fix selector drift since 2026-10-30 | Three screenshots of filled real forms | half a day, more if forms changed |
 | 5 | Inspect and add SmartRecruiters, Workable, Recruitee, Teamtailor, Personio (one fixture + config each) | Each fills its fixture and one real dry run | ~half a day per board |
 | 6 | Generic web form path: AI field matching over the plan, multi-page, outcome reader | Three fixture sites (single page, multi-step, with an unknown field) pass; one real employer form dry-runs | 2 days |
