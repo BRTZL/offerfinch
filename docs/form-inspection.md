@@ -159,7 +159,9 @@ Besides the form's own host (which must be in `SUBMIT_ALLOWED_HOSTS`), a real su
 | Teamtailor | `assets-aws.teamtailor-cdn.com`, `images.teamtailor-cdn.com`, `fonts.googleapis.com`, `fonts.gstatic.com` |
 | Personio | `assets.cdn.personio.de`, `challenges.cloudflare.com` |
 
-Any other request stops the run before the click. Expected stops, not fixed: a Recruitee form on an employer domain is only reachable when that domain is allowed, and one with trackers or Cookiebot stops at the first of them; the hosts Workable and Teamtailor upload the CV to were not seen (uploads were blocked), so the first real run may stop there.
+Teamtailor's list includes Google Fonts, which its careersite loads on every page; they are font GETs, not the board's own hosts. Any other request stops the run before the click. Expected stops, not fixed:
+- **Recruitee, every real run today.** Both Recruitee pages also posted to Recruitee's own analytics (`careers-analytics.recruitee.com`) and to a Sentry ingest host while loading, besides the employers' trackers (Google Tag Manager, Facebook, Ziggeo). These are not form, upload or scoring hosts, so they are not listed, and an allowlist run stops when the page opens, before anything is filled. Whether to allow Recruitee's analytics host is the user's call. Its forms also redirect to the employer's domain, which must be in `SUBMIT_ALLOWED_HOSTS`.
+- The hosts Workable and Teamtailor upload the CV to were not seen (uploads were blocked), so the first real run may stop there.
 
 ### Live dry runs (2026-11-09)
 
