@@ -288,10 +288,13 @@ async function followChecked(
 				: check(hop);
 		if (refused) return { refused, hop, followed };
 		const headers = { ...(request.headers?.() ?? {}) };
+		// As the browser would: no credentials to another origin (the context adds its cookies).
+		const crossOrigin = originOf(hop.url) !== originOf(from.url);
 		for (const name of Object.keys(headers))
 			if (
 				/^(?:host|cookie|content-length)$/i.test(name) ||
-				(!hop.keepsBody && /^content-type$/i.test(name))
+				(!hop.keepsBody && /^content-type$/i.test(name)) ||
+				(crossOrigin && /^(?:proxy-)?authorization$/i.test(name))
 			)
 				delete headers[name];
 		response = await route.fetch({
@@ -315,6 +318,15 @@ function readHopRefusal(hop: Hop, body: string | null): string | null {
 	if (privateUrl(hop.url)) return PRIVATE_NETWORK_REFUSED;
 	const read = readOnlyDecision(hop.method, hop.keepsBody ? body : null);
 	return read.allow ? null : read.reason;
+}
+
+/** `url`'s origin, or "" when it is not a URL. */
+function originOf(url: string): string {
+	try {
+		return new URL(url).origin;
+	} catch {
+		return "";
+	}
 }
 
 /** `url` without its fragment, as a request's URL is; `url` itself when it is not a URL. */

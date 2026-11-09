@@ -18,13 +18,18 @@ import { siteBrowser } from "./browser";
 let server: Server;
 let port = 0;
 const hits: string[] = [];
+/** The `authorization` header each request arrived with, by "METHOD host/path". */
+const credentials = new Map<string, string>();
 
 beforeAll(async () => {
 	server = createServer((req, res) => {
 		const host = String(
 			req.headers["x-fixture-host"] ?? req.headers.host ?? "",
 		);
-		hits.push(`${req.method} ${host.replace(/:\d+$/, "")}${req.url}`);
+		const hit = `${req.method} ${host.replace(/:\d+$/, "")}${req.url}`;
+		hits.push(hit);
+		if (req.headers.authorization)
+			credentials.set(hit, req.headers.authorization);
 		const sink = `http://localhost:${port}/sink`;
 		const redirects: Record<string, [number, string]> = {
 			"/asset": [302, sink],
@@ -41,7 +46,10 @@ beforeAll(async () => {
 		};
 		const redirect = redirects[(req.url ?? "").split("?")[0] ?? ""];
 		res.setHeader("access-control-allow-origin", "*");
-		res.setHeader("access-control-allow-headers", "content-type");
+		res.setHeader(
+			"access-control-allow-headers",
+			"content-type, authorization",
+		);
 		if (req.method === "OPTIONS") {
 			res.writeHead(204);
 			return res.end();
@@ -67,6 +75,7 @@ afterAll(async () => {
 
 beforeEach(() => {
 	hits.length = 0;
+	credentials.clear();
 });
 
 const sinkHits = () => hits.filter((h) => h.includes("/sink"));
@@ -184,6 +193,19 @@ describe.each(["read_only", "allowlist"] as const)(
 				status: 200,
 				url: `http://cdn.acme.test:${port}/landed`,
 			});
+		}, 30_000);
+
+		it("sends no credentials on to another origin", async () => {
+			await withPage(network, (page) =>
+				page.evaluate(
+					"fetch('/moved', { headers: { authorization: 'Bearer probe' } }).then((r) => r.json())",
+				),
+			);
+			expect(hits).toContain("GET cdn.acme.test/data");
+			expect(credentials.get("GET boards.acme.test/moved")).toBe(
+				"Bearer probe",
+			);
+			expect(credentials.has("GET cdn.acme.test/data")).toBe(false);
 		}, 30_000);
 
 		it("still follows a redirect between public hosts", async () => {

@@ -1208,4 +1208,12 @@ dry run on three real postings (no submit clicked); no form was sent anywhere re
 
 Tests: test:browser `private-redirects.test.ts`, in `read_only` and `allowlist` with private networks refused: Codex's fetch, 307 GraphQL-query POST and frame redirects to localhost, a public → public → localhost chain (fetch, frame, `goto` and the page's own navigation) reach nothing on this Mac; a public → public redirect still works (GET and 307 POST), and `goto` lands on the final URL. Desktop `apply-fixtures.test.ts`: packaged with test mode gives no fixtures, and `buildPipeline({ test: true })` alone gives `fixtures: false` and no allowed hosts. The live dry run (`test:live`) now reads with `refusePrivateNetwork`, as a real run does.
 
+Follow-ups in the same review round:
+
+| Decision | Why |
+|---|---|
+| A hop to another origin is fetched without the request's `Authorization` and `Proxy-Authorization` headers; the request's `Cookie` header is never copied (the context adds its own cookies for the hop's URL) | The browser drops them on a cross-origin redirect; the guard now follows redirects in its place |
+| In a submission, a destination's subresource redirecting to this Mac or another host is still `DESTINATION_REFUSED` and stops the run, not refused quietly | The rule already recorded in "no loopback outside fixture runs" (a destination's hop there stops the run): stricter than a quiet refusal, kept |
+| Known limit: a subresource or a frame's document that redirects is fulfilled under its first URL (its `response.url`, `redirected`, a frame's origin and base URL, and the `frameUrl` host rules match are the first URL's). Only the main frame loads the final URL as a new navigation. The live reads on Greenhouse, Lever and Ashby passed; a captcha frame that redirects has not been seen yet (watch for it in the first watched run, plan step 8) | Following the hop in the browser would skip the check |
+
 Packaged check: an unsigned arm64 `--dir` build (`node scripts/build.mjs --production`, `electron-builder --mac --arm64 --dir -c.mac.identity=null`) launched with `OFFERFINCH_TEST=1`, a throwaway `OFFERFINCH_USER_DATA` and `OFFERFINCH_BOARD_BASES` on the local Greenhouse fixture, Greenhouse opened, the fixture job approved: `app.isPackaged` true, test mode on (fake models ran), and the run stopped before opening the form ("The form was not read before review …", attempt `not_sent`); the fixture received no submission. The same flow unpackaged (`apply-proof.spec.ts`) submits.

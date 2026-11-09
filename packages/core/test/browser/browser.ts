@@ -99,9 +99,9 @@ export function siteBrowser(port: number): PlaywrightBrowserProvider {
 							return fetch({
 								...opts,
 								url: url.href,
+								// As Playwright: the given headers replace the request's.
 								headers: {
-									...request.headers(),
-									...opts.headers,
+									...(opts.headers ?? request.headers()),
 									"x-fixture-host": host,
 								},
 							});
