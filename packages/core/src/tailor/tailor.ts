@@ -38,7 +38,9 @@ export const tailorOutputSchema = z.object({
 		),
 	cv: z
 		.string()
-		.describe("The tailored CV in Markdown, following the template"),
+		.describe(
+			"The tailored CV in Markdown, following the template, at most 1,100 words",
+		),
 	coverLetter: z
 		.string()
 		.describe("The cover letter in Markdown, 220 to 400 words in total"),
@@ -190,7 +192,7 @@ Location · {{email}} · {{phone}} · linkedin.com/in/handle · website · githu
 **Field**, School — years
 
 - Single column; no tables, images, icons or columns. Standard section names only. Contact details in the body. URLs as visible text. Dates as "MMM YYYY – MMM YYYY" or "Present", the same everywhere. Use the posting's exact keyword spelling where it is true. Spell out an acronym next to its short form only when the profile spells it out, or for a standard term (Model Context Protocol, Continuous Integration); never guess what an acronym stands for.
-- One page by default; two only for a senior role with enough relevant material.
+- One page by default; two only for a senior role with enough relevant material. Count words: about 1,000 words at most, and a CV over 1,100 words (two pages) is rejected, so cut the oldest and least relevant bullets first.
 - Angle-bracket text renders as HTML, so never write <...>. End a line with \\ when a line break matters.
 
 Cover letter (Markdown), 220 to 400 words in total: the header, date and greeting, then 4 body paragraphs of 3 to 5 sentences and 60 to 90 words each (about 300 words for the whole letter; one under 220 words in total is rejected, so no paragraph under 60 words), a one-line close and the sign-off:

@@ -292,6 +292,23 @@ describe("the cover letter's length", () => {
 	});
 });
 
+describe("the CV's length", () => {
+	const cv = (words: number) =>
+		Array.from({ length: words }, (_, i) => `word${i}`).join(" ");
+	const length = (words: number) =>
+		check("cv", cv(words)).filter((i) => i.rule === "length");
+
+	it("accepts up to 1,100 words", () => {
+		expect(length(1100)).toEqual([]);
+	});
+
+	it("says how many words to cut, so a redraft can act on it", () => {
+		expect(length(1226).map((i) => i.message)).toEqual([
+			"CV has 1226 words; at most 1100 fit two pages, so cut at least 126.",
+		]);
+	});
+});
+
 describe("two roles at one company", () => {
 	const stint = (id: string, title: string, dates: string) => ({
 		path: `experience/${id}.md`,

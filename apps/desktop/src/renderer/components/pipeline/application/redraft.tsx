@@ -59,21 +59,26 @@ function useRefresh() {
 /**
  * Redraft, from the action bar's More menu on a prepared application in review or approved: a
  * new version of the chosen documents, written again from the current profile and the posting.
+ * A whole-document flag opens it too, with the flag's problem as the instruction.
  */
 export function RedraftDialog({
 	app,
 	initial,
+	initialInstruction = "",
 	onClose,
 }: {
 	app: AppDetail;
 	initial: Kind;
+	initialInstruction?: string;
 	onClose: () => void;
 }) {
 	const refresh = useRefresh();
 	const [scope, setScope] = useState<Scope>(
 		initial === "notes" ? "cv" : initial,
 	);
-	const [instruction, setInstruction] = useState("");
+	const [instruction, setInstruction] = useState(
+		initialInstruction.slice(0, INSTRUCTION_MAX),
+	);
 	const [rewriteOwn, setRewriteOwn] = useState(false);
 	const ids = useId();
 	const own = app.ownAnswers.length;
