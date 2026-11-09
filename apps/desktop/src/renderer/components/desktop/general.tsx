@@ -263,7 +263,7 @@ function ScanScheduleRows() {
 				label="Quiet hours"
 				hint={
 					quiet?.enabled
-						? "No scheduled scans and no notifications in this window (your Mac's time). Notifications wait and arrive when it ends; Scan now still works."
+						? "No scheduled scans or notifications in this window (your Mac's time). Notifications arrive when it ends; Scan now still works."
 						: "A nightly window with no scheduled scans and no notifications."
 				}
 			>
@@ -272,7 +272,7 @@ function ScanScheduleRows() {
 						<Input
 							type="time"
 							aria-label="Quiet hours start"
-							className="w-24"
+							className="w-32"
 							value={quiet.start}
 							onChange={(e) => {
 								if (e.target.value) saveQuiet({ start: e.target.value });
@@ -283,7 +283,7 @@ function ScanScheduleRows() {
 						<Input
 							type="time"
 							aria-label="Quiet hours end"
-							className="w-24"
+							className="w-32"
 							value={quiet.end}
 							onChange={(e) => {
 								if (e.target.value) saveQuiet({ end: e.target.value });

@@ -183,7 +183,7 @@
 		"contentInset": 24,
 		"sectionGap": [32],
 		"rowHeight": null,
-		"formRowHeight": 79,
+		"formRowHeight": 63,
 		"bodySize": "16px"
 	},
 	"16-command-menu": {
