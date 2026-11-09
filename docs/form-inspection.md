@@ -119,3 +119,96 @@ A real submission runs in an "allowlist" session. Until now every request to a h
 - The list never turns a host on: the form's host still needs `SUBMIT_ALLOWED_HOSTS`, which the desktop leaves empty. Tests: `test/browser/board-hosts.test.ts`.
 
 Submit endpoints: Lever posts the form to `jobs.lever.co`; Ashby's mutations go to `jobs.ashbyhq.com`; Greenhouse's form has a relative `action` (`/gitlab/jobs/8638232002`, on `job-boards.greenhouse.io`). Not seen yet, so unknown until the first watched submission (plan step 8): reCAPTCHA's execute and reload POSTs (they happen at the click), where Ashby's upload handles point (the URL comes from the `ApiCreateFileUploadHandle` answer; its bundle names no storage host), and whether the boards accept a token scored this way. An upload to a host not listed stops the run, so the first Ashby submission will stop there until its host is added.
+
+## The newer boards (2026-11-09)
+
+Inspected 2026-11-09 for plan step 5, read-only the same way: local headless Chrome, `read_only` network guard (only GET, HEAD and GraphQL queries left; every POST, beacon and upload was aborted), nothing typed, clicked or uploaded while the network was open. Postings were found through each source's public feed (`packages/core/src/sources`). Then one live dry run per filled board, the 2026-10-30 procedure: made-up data ("Dryrun Testperson", `dryrun@example.invalid`, a dummy PDF), the network closed completely before the first keystroke, `about:blank` before the browser closed. No POST was allowed in any run.
+
+| Board | Posting inspected | Form URL shape | Mode |
+|---|---|---|---|
+| Workable | Hugging Face, Open-Source Machine Learning Engineer, `https://apply.workable.com/huggingface/j/81B46579FE/apply/` | `https://apply.workable.com/<account>/j/<shortcode>/apply/` | auto |
+| Recruitee | Channable, Technical Writer (`channable.recruitee.com/o/technical-writer-customer-education/c/new`); dry run on Vandebron, Marketing Project Manager | `https://<company>.recruitee.com/o/<slug>/c/new`, which redirects to the employer's careers domain (`jobs.channable.com`, `werkenbij.vandebron.nl`) | auto |
+| Teamtailor | Polestar, Marketing & Events Intern, `https://polestar.teamtailor.com/jobs/8681158-marketing-events-intern/applications/new` | `https://<company>.teamtailor.com/jobs/<id>-<slug>/applications/new` | auto |
+| Personio | tado, Team Lead Accounting, `https://tado.jobs.personio.de/job/2502124/apply` | `https://<company>.jobs.personio.de/job/<id>/apply` | auto |
+| SmartRecruiters | SmartRecruiters, Senior / Lead Engineering Operations Manager, `jobs.smartrecruiters.com/oneclick-ui/company/smartrecruiters/publication/<uuid>` | `https://jobs.smartrecruiters.com/oneclick-ui/company/<company>/publication/<uuid>` | hand-off |
+
+None of the five asked for an account, a login or an email code before the form. Each is one page; none is multi-step.
+
+### Fields
+
+**Workable.** One React form, `form[data-ui=application-form]`, with hashed class names. Text fields sit inside the `<label>` that wraps them; the question text is a `span[id$=_label]`, required ones start with a `*` and carry `required`. Optional ones add " (Optional)".
+- System fields: `firstname`, `lastname`, `email` (required), `phone` (optional, a country picker that takes the "+90" of a typed number and keeps the national number in the box).
+- Files: one required `input[type=file][data-ui=resume]` with no `name` and an id that changes on every load. Choosing a file uploads it at once (in the dry run, with the network closed, it showed "Something went wrong"), and the label turns into "Replace file". The cover letter is a `textarea[name=cover_letter]`, not an upload.
+- Custom questions: `CA_<n>` (account-wide) and `QA_<n>` (this job): textareas, a select-like combobox, and Yes/No radios. The radios and the privacy checkbox `gdpr` are `aria-hidden` inputs inside drawn `[role=radio]` / `[role=checkbox]` controls, which take the click; the checkbox's asterisk is drawn in CSS.
+- A cookie banner with a backdrop covers the whole form until it is answered (`[data-ui=cookie-consent-decline]`).
+- Submit: `button[data-ui=apply-button]` "Submit application".
+
+**Recruitee.** One React form, `form#offer-application-form`; labels `for` the input, a `*` span when required, inputs carry `required`. Ids end in radix ids (`:r7:`) that change per load; names are stable.
+- System fields: `candidate.name`, `candidate.email`, `candidate.phone` (with a country picker). Labels follow the employer's language ("Volledige naam").
+- Files: `candidate.cv` (required), `candidate.coverLetterFile` (optional, with "Write it here instead"). Some employers add a video question (Ziggeo recorder, several unnamed file inputs).
+- Custom questions: `candidate.openQuestionAnswers.<id>.content` (text, radios) and `.flag` (Yes/No radios) under a `fieldset` legend; the radios are visually hidden behind their labels.
+- Consent: `candidate.agreements.0.consent`, a required, visually hidden checkbox named by `aria-labelledby`.
+- "All done!" and "You've already applied for this job" are in the page, hidden, before submit.
+- Its own cookie dialog sits over the submit button until answered (`button[data-testid=agree-to-selected-cookies]`, necessary cookies only). Channable's careers site adds Cookiebot as a modal over the whole form.
+- Submit: `button[type=submit]` "Send" (`data-testid=submit-application-form-button`).
+
+**Teamtailor.** A Rails form, `form#job-application-form`, `POST /applications`. Questions in `div[id^=id_]` or a `fieldset`; labels read "First name*Required" (the word in a hidden span), inputs have no `required`.
+- System fields: `candidate[first_name]`, `candidate[last_name]`, `candidate[email]`, `candidate[phone]` (intl-tel-input).
+- Files: a Dropzone file input `#candidate_resume_remote_url` with no `name`; it uploads on selection (in the dry run: "TypeError: Failed to fetch") and posts the file's URL. Cover letter: a textarea.
+- Custom questions: `candidate[answers_attributes][<n>][boolean|choice|text]`.
+- Consent: `candidate[consent_given]` (required, label starts "Required."), plus optional future-jobs and SMS boxes; each has a hidden `0` twin with the same name.
+- A "Log in" form (Teamtailor Connect) sits on the posting page; applying does not need it.
+- Its cookie dialog covers the submit button until answered (`button[data-action*="common--cookies--alert#disableAll"]`, "Decline all non-necessary cookies").
+- Submit: `input[type=submit][name=commit]`.
+
+**Personio.** A React form, `form[class*=DynamicForm_formContainer]`; labels "Email* (required)", inputs have no `required`.
+- System fields: `first_name`, `last_name` (under a "Name*" group), `email`, `phone`, `location` (plain text, no lookup).
+- Files: `documents.cv` (required), `documents.other`, hidden behind "Add file". A chosen file moves into a list (`[role=listitem]`) and the input is emptied.
+- Custom questions: `available_from`, `salary_expectations`, `custom_attribute_<n>`, all text.
+- Submit: `button[type=submit]` "Submit Application" (dimmed until Turnstile has a token).
+
+**SmartRecruiters.** The posting page loads, but its "I'm interested" form (`oneclick-ui`) answered headless Chrome with HTTP 403 and a full-page DataDome CAPTCHA frame (`geo.captcha-delivery.com`). The form itself was never seen.
+
+### Bot protection
+
+| Board | Seen | Visible challenge before submit |
+|---|---|---|
+| Workable | Cloudflare Turnstile script (`challenges.cloudflare.com`), no visible widget | No |
+| Recruitee | Its own hCaptcha (enclave frame from `captcha-assets.recruiteecdn.com`, `visibility: hidden`) | No |
+| Teamtailor | None; hidden `verify_token` and `ctoken` fields | No |
+| Personio | Cloudflare Turnstile: a `cf-turnstile-response` field in a 0 px high box, its frame in a shadow root | No |
+| SmartRecruiters | DataDome | **Yes**: 403 and a CAPTCHA instead of the form |
+
+The visible-challenge check now also counts a Turnstile box that shows (wider than 100 px, taller than 30 px), since its frame is not in the document.
+
+### Hosts each form needs
+
+Besides the form's own host (which must be in `SUBMIT_ALLOWED_HOSTS`), a real submission's session may reach only these, from the read-only network logs; employer trackers (Google Tag Manager, Facebook, Reddit, LinkedIn, Sentry, Ziggeo) are never added:
+
+| Board | Hosts |
+|---|---|
+| Workable | `challenges.cloudflare.com`, `dcvxs6ggqztsa.cloudfront.net`, `d2y4rc9q318ytb.cloudfront.net`, `workablehr.s3.amazonaws.com` |
+| Recruitee | `careers.recruiteecdn.com`, `captcha-base.recruiteecdn.com`, `captcha-assets.recruiteecdn.com` |
+| Teamtailor | `assets-aws.teamtailor-cdn.com`, `images.teamtailor-cdn.com`, `fonts.googleapis.com`, `fonts.gstatic.com` |
+| Personio | `assets.cdn.personio.de`, `challenges.cloudflare.com` |
+
+Teamtailor's list includes Google Fonts, which its careersite loads on every page; they are font GETs, not the board's own hosts. Any other request stops the run before the click. Expected stops, not fixed:
+- **Recruitee, every real run today.** Both Recruitee pages also posted to Recruitee's own analytics (`careers-analytics.recruitee.com`) and to a Sentry ingest host while loading, besides the employers' trackers (Google Tag Manager, Facebook, Ziggeo). These are not form, upload or scoring hosts, so they are not listed, and an allowlist run stops when the page opens, before anything is filled. Whether to allow Recruitee's analytics host is the user's call. Its forms also redirect to the employer's domain, which must be in `SUBMIT_ALLOWED_HOSTS`.
+- The hosts Workable and Teamtailor upload the CV to were not seen (uploads were blocked), so the first real run may stop there.
+
+### Live dry runs (2026-11-09)
+
+| Board | Result | Requests | POSTs allowed |
+|---|---|---|---|
+| Workable | Filled 14 fields (3 Yes/No radios and the privacy box through their drawn controls, the CV chosen); stopped on the CV upload's own error, which needs the network | 77 | 0 |
+| Recruitee (Vandebron) | Filled 6, including the consent box through its label; dry run complete | 47 | 0 |
+| Teamtailor | Filled 11, including 3 radio questions and the consent box; dry run complete | 46 | 0 |
+| Personio | Filled 8 and attached the CV; dry run complete | 23 | 0 |
+
+Screenshots: `screenshots/dry-run-live-workable.png`, `dry-run-live-teamtailor.png`, `dry-run-live-personio.png`, made-up data only. The Recruitee page shows employees in its header photo and is not saved; no screenshot of the inspection pages either.
+
+What the runs found and fixed before this table: Workable's radios ignore a click on the input (the drawn control takes it), its cookie backdrop and Teamtailor's and Recruitee's cookie dialogs cover the form or the submit button (each board's own "decline" button is now clicked once before filling, and a covered submit button stops the run before the claim), Personio empties its file input, Workable relabels the CV input, and Recruitee and Personio label fields in the employer's language (contact fields are now matched by control name).
+
+Not confirmed until a real, watched submission: each board's confirmation page (the success texts in `forms.ts` are strict guesses; anything else is an unknown outcome, never "applied"), and whether the uploads go to the listed hosts.
+
+**Confirmation evidence (after the Codex review, 2026-11-09).** Workable's careers bundle renders its success as `div[data-ui=successful-submit]` ("Your application has been submitted successfully."); Recruitee's page carries `…-content-offer-application-success` and `…-content-offer-application-rate-limited` ("You've already applied") tab panels before submit. Only these count as a board's confirmation. Teamtailor's and Personio's were not found, so their submissions are recorded as unknown outcomes until a watched submission shows them. A rerun of the live dry runs after these fixes: Recruitee, Teamtailor and Personio complete; Workable fills everything (radios and consent through its drawn controls, phone read as "+90 …" from its picker) and stops only on its CV upload, as before. No POST was allowed.

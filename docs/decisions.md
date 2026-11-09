@@ -901,3 +901,31 @@ is read, and review lists every field with its value ("What will be sent").
 | Greenhouse's phone country is listed as the calling code the page sets from the number and checked after filling | The page sets it itself; review shows it |
 | In a real submission each board's asset and scoring hosts (`BoardConfig.hosts`) may be read (GET, HEAD) and posted to only by a frame loaded from them (xhr, fetch); the board's own data hosts (`formHosts`) take any method; every other host is refused quietly; the page's own navigation, an upload, or a filled value in a URL or body outside the destinations stops the run | The widgets and CDN files must load for a submission to work at all; data goes only to the board. Coordinator's decision for all boards (step 5 included) |
 | The list never turns a host on: `SUBMIT_ALLOWED_HOSTS` stays empty in the desktop | The first real submission is plan step 8, watched |
+
+## 2026-11-09: Workable, Recruitee, Teamtailor and Personio submit automatically (auto-apply plan, step 5)
+
+Inspected read-only and dry-run on one real posting each (`docs/form-inspection.md`, "The newer boards").
+
+| Decision | Why |
+|---|---|
+| Workable, Recruitee, Teamtailor and Personio are `auto` in `apply/modes.ts` and leave `HANDOFF_SOURCES`; each has a config in `forms.ts` and a local stand-in (`test/browser/fixture-more-boards.ts`) | None needs an account, a login or an email code; each form filled in a live dry run with the network closed |
+| SmartRecruiters stays hand-off, its note naming the reason | Its application form answered headless Chrome with a 403 and a DataDome CAPTCHA (Rule 4) |
+| ~~A board's asset and scoring hosts join the submission session's allowlist (`BoardConfig.hosts`, `sessionHosts`; Teamtailor's also lists Google Fonts, which every careersite page loads); the form URL is still checked against `SUBMIT_ALLOWED_HOSTS` alone, and analytics and employer trackers are never listed~~ Superseded the same day by the step 4 rule above: `hosts` are read-only, `formHosts` receive data, other hosts are refused quietly | The allowlist refuses every request to another host, so a form that loads its scripts from a CDN would stop at once. Recruitee pages post to Recruitee's own analytics and Sentry while loading, so every real Recruitee run stops at open until the user decides whether to allow them; the CV upload hosts were not seen either |
+| A board's own cookie dialog is answered with its "decline" (or "necessary only") button once, before filling; an employer's own banner (Cookiebot) is never touched | Workable's backdrop and Teamtailor's and Recruitee's dialogs cover the form or the submit button |
+| Before the claim, the submit button must take a click (nothing drawn over it); otherwise the run stops with nothing sent | A covered button would swallow the one click after the claim |
+| A radio or checkbox drawn by the board (an ARIA control around a hidden input, or a hidden input behind its label) is clicked through that control; the re-read after filling still checks every value | Workable and Recruitee ignore clicks on their hidden inputs |
+| A phone number counts as filled when the widget moved its "+" country code into a picker and kept the national number | Workable's phone box |
+| A confirmation never counts when its element is hidden, and "already applied" is a refusal | Recruitee ships "All done!" and "You've already applied" in the page before submit |
+| A visible Turnstile box counts as a visible challenge | Its frame sits in a shadow root, out of reach of the iframe check |
+| Required privacy consent boxes are questions for the user like any other required field | Rule 2: no box is ticked for the user. Follow-up: a saved consent answer the user approves once |
+| The success texts of the four boards are strict guesses; anything else after the click is an unknown outcome | No real submission was made |
+| The covered-submit stop and the filter for hidden checkbox twins apply to Ashby, Greenhouse and Lever too | Same safety on every board; not yet run on their real forms (plan step 4) |
+| Supersedes, for these four boards, the 2026-11-09 step-1 row that kept SmartRecruiters, Workable, Recruitee, Teamtailor and Personio hand-off until their filler landed | |
+
+### Review fixes (Codex, 2026-11-09)
+
+| Decision | Why |
+|---|---|
+| A hidden radio or checkbox is set through a drawn ARIA control only when that control cannot submit (no submit button, input or link, nothing inside that submits); otherwise the input itself is clicked in the page. Labels and elements that merely name the input are never clicked | A `<button role="checkbox">` without `type="button"` submitted the form during filling, before the claim |
+| A filled value counts by digits only on a phone field, and only whole: a widget that moved the country code into its picker is read with the picker's code in front | Dropping 1 to 3 leading digits let a wrong country code or a cut-off salary pass, on every board |
+| Text alone never confirms a submission: the board's confirmation element or path is required, a duplicate ("already applied", "already submitted") anywhere on the page is a refusal, and Recruitee's "already applied" panel is one. Workable: `[data-ui=successful-submit]` (its careers bundle); Recruitee: its `…-content-offer-application-success` panel. Teamtailor and Personio have neither yet, so every submission there ends as an unknown outcome until a watched one records their confirmation | An email-verification page saying "All done!" and a "Thank you" page saying "You have already submitted an application" both counted as confirmed |

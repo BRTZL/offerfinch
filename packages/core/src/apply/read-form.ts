@@ -1,5 +1,5 @@
 import type { BrowserPage } from "../scrape/browser";
-import { openForm } from "./applier";
+import { declineBoardCookies, openForm } from "./applier";
 import { type FormRead, type FormSchema, schemaKey } from "./form-schema";
 import {
 	BOARD_CONFIGS,
@@ -64,6 +64,8 @@ export async function readFormOnPage(
 	// Nothing leaves the browser from here on, GETs included: opening a combobox may run the
 	// page's own scripts.
 	page.restrictNetwork("none");
+	// A board's own cookie dialog would take the clicks that open the comboboxes (Workable).
+	await declineBoardCookies(page, config);
 	for (const field of fields) {
 		if (field.kind !== "combobox" || field.options.length > 0) continue;
 		const at = `[data-jp="${field.ref}"]`;

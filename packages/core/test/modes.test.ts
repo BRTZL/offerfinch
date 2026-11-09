@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { BOARDS } from "../src/apply/forms";
 
 import {
 	BOARD_SUBMISSION_MODES,
@@ -8,10 +9,12 @@ import {
 } from "../src/apply/modes";
 
 describe("submission modes", () => {
-	it("submits automatically on Ashby, Greenhouse and Lever", () => {
-		for (const board of ["ashby", "greenhouse", "lever"] as const) {
+	it("submits automatically on every board with a form filler", () => {
+		for (const board of BOARDS) {
 			expect(BOARD_SUBMISSION_MODES[board].mode).toBe("auto");
-			expect(BOARD_SUBMISSION_MODES[board].why).toMatch(/scores the browser/);
+			expect(BOARD_SUBMISSION_MODES[board].why).toMatch(
+				/not proof the employer received it/,
+			);
 			expect(submissionModeFor(board)).toEqual({ mode: "auto", reason: "" });
 			expect(submissionModeForSource(board, board)).toEqual({
 				mode: "auto",
@@ -36,6 +39,22 @@ describe("submission modes", () => {
 		}
 		for (const source of ["manual", "indeed", "glassdoor", "sample"])
 			expect(HANDOFF_SOURCES[source]).toBeDefined();
+	});
+
+	it("fills Workable, Recruitee, Teamtailor and Personio; SmartRecruiters stays hand-off for its CAPTCHA", () => {
+		for (const board of [
+			"workable",
+			"recruitee",
+			"teamtailor",
+			"personio",
+		] as const) {
+			expect(HANDOFF_SOURCES[board]).toBeUndefined();
+			expect(submissionModeForSource(board, board).mode).toBe("auto");
+		}
+		expect(BOARDS).not.toContain("smartrecruiters");
+		const sr = submissionModeForSource("smartrecruiters", null);
+		expect(sr.mode).toBe("handoff");
+		expect(sr.reason).toMatch(/CAPTCHA \(DataDome\)/);
 	});
 
 	it("hands off a source with no board and no form filler", () => {

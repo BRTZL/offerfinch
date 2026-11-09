@@ -9,7 +9,15 @@ import type { Contact, FormAnswer } from "../tailor/tailor";
  * approved documents; anything else required is an unknown question.
  */
 
-export const BOARDS = ["ashby", "greenhouse", "lever"] as const;
+export const BOARDS = [
+	"ashby",
+	"greenhouse",
+	"lever",
+	"workable",
+	"recruitee",
+	"teamtailor",
+	"personio",
+] as const;
 export type Board = (typeof BOARDS)[number];
 
 export interface BoardConfig {
@@ -24,12 +32,15 @@ export interface BoardConfig {
 	/**
 	 * The board's confirmation after a submit. `path` maps the form's path to the exact path the
 	 * board moves to (none: the confirmation replaces the form on the same page); `selector` is
-	 * where the confirmation text must be; `text` is what it says.
+	 * where the confirmation text must be; `text` is what it says. Text alone never confirms: a
+	 * board with neither `path` nor `selector` (its confirmation not yet seen) ends every
+	 * submission as an unknown outcome. `refused` is the board's own "already applied" state.
 	 */
 	success: {
 		path?: (formPath: string) => string;
 		text: string;
 		selector?: string;
+		refused?: string;
 	};
 	/** Visible validation errors. */
 	errors: string;
@@ -46,7 +57,33 @@ export interface BoardConfig {
 	 * lookup of the typed email): any method, like the allowed form hosts.
 	 */
 	formHosts?: readonly string[];
+	/** How this board's markup differs from the first three boards' (docs/form-inspection.md). */
+	scan?: {
+		/** Attribute that names a control without a `name` (its id changes on every load). */
+		nameAttr?: string;
+		/** Radios and checkboxes the board draws itself and hides from assistive tech are questions. */
+		hiddenChoices?: boolean;
+		/** Label text that is not part of the question ("Required", "(Optional)"), as a pattern. */
+		labelNoise?: string;
+		/** A question's container text that marks it required, as a pattern. */
+		requiredText?: string;
+		/** Controls marked required only by a style (an asterisk drawn in CSS), by name. */
+		requiredNames?: string[];
+		/** Where a file input's container lists the files chosen, when the input itself is emptied. */
+		attachedFiles?: string;
+	};
+	/**
+	 * The board's own cookie banner, when it covers the form: its "decline all" button, clicked
+	 * once before filling. Only ever the decline; an employer's own banner is never touched.
+	 */
+	declineCookies?: string;
+	/** The form's location box is plain text, not Lever's lookup that must resolve to a suggestion. */
+	plainLocation?: boolean;
 }
+
+/** Label words the newer boards add around the question. */
+const LABEL_NOISE =
+	"\\((?:required|optional)\\)|^required\\.\\s*|^required(?=\\s|$)|\\s\\brequired\\.?$|svgs not supported by this browser\\.?|choose file|replace file";
 
 export const BOARD_CONFIGS: Record<Board, BoardConfig> = {
 	ashby: {
@@ -125,6 +162,99 @@ export const BOARD_CONFIGS: Record<Board, BoardConfig> = {
 			"*.w.hcaptcha.com",
 		],
 	},
+	workable: {
+		board: "workable",
+		root: "form[data-ui=application-form]",
+		// Text fields sit in the label that wraps them, choices in a fieldset, consent in its own label.
+		container:
+			"fieldset, label:not([data-ui=option] *):not([data-ui=option] > label)",
+		label: "[id$=_label]",
+		submit: "form[data-ui=application-form] button[data-ui=apply-button]",
+		success: {
+			// The success component in Workable's careers bundle (2026-11-09):
+			// `data-ui="successful-submit"`, "Your application has been submitted successfully."
+			text: "thank you for applying|application has been submitted successfully",
+			selector: "[data-ui=successful-submit]",
+		},
+		errors: "[role=alert]:not(:empty), [data-ui$=-error]:not(:empty)",
+		hosts: [
+			"challenges.cloudflare.com",
+			"dcvxs6ggqztsa.cloudfront.net",
+			"d2y4rc9q318ytb.cloudfront.net",
+			"workablehr.s3.amazonaws.com",
+		],
+		scan: {
+			nameAttr: "data-ui",
+			hiddenChoices: true,
+			labelNoise: LABEL_NOISE,
+			requiredText: "^\\s*\\*",
+			// The privacy consent's asterisk is drawn in CSS (inspection, 2026-11-09).
+			requiredNames: ["gdpr"],
+		},
+		declineCookies: "button[data-ui=cookie-consent-decline]",
+	},
+	recruitee: {
+		board: "recruitee",
+		root: "form#offer-application-form",
+		container:
+			"fieldset, div:has(> label):not(:has(> input[type=radio], > input[type=checkbox]))",
+		label: "legend, label",
+		submit: "form#offer-application-form button[type=submit]",
+		success: {
+			// Recruitee's tab panels, in the page before submit: the success one and the
+			// "already applied" one (`…-content-offer-application-rate-limited`).
+			text: "all done|thank you for (?:applying|your application)|application (?:has been |was )?(?:submitted|received|sent)",
+			selector: "[id$=-content-offer-application-success]",
+			refused: "[id$=-content-offer-application-rate-limited]",
+		},
+		errors: "[role=alert]:not(:empty)",
+		hosts: [
+			"careers.recruiteecdn.com",
+			"captcha-base.recruiteecdn.com",
+			"captcha-assets.recruiteecdn.com",
+		],
+		scan: { labelNoise: LABEL_NOISE },
+		// "Accept only the necessary": nothing optional is ticked in its dialog.
+		declineCookies: "button[data-testid=agree-to-selected-cookies]",
+	},
+	teamtailor: {
+		board: "teamtailor",
+		root: "form#job-application-form",
+		container: "fieldset, div[id^=id_]",
+		label: "legend, label",
+		submit:
+			"form#job-application-form input[type=submit], form#job-application-form button[type=submit]",
+		success: {
+			text: "thank you for (?:applying|your application)|application (?:has been |was )?(?:submitted|received|sent)",
+		},
+		errors: "[role=alert]:not(:empty), .error-message:not(:empty)",
+		hosts: [
+			"assets-aws.teamtailor-cdn.com",
+			"images.teamtailor-cdn.com",
+			"fonts.googleapis.com",
+			"fonts.gstatic.com",
+		],
+		scan: { labelNoise: LABEL_NOISE, requiredText: "\\brequired\\b" },
+		declineCookies: 'button[data-action*="common--cookies--alert#disableAll"]',
+	},
+	personio: {
+		board: "personio",
+		root: "form[class*=DynamicForm_formContainer]",
+		container: "div:has(> label), [role=group]",
+		label: "label, [id$=-label], [id^=doc-label]",
+		submit: "form[class*=DynamicForm_formContainer] button[type=submit]",
+		success: {
+			text: "thank you for (?:applying|your application)|application (?:has been |was )?(?:submitted|received|sent)|vielen dank für (?:deine|ihre) bewerbung",
+		},
+		errors: "[role=alert]:not(:empty), [class*=errorMessage]:not(:empty)",
+		hosts: ["assets.cdn.personio.de", "challenges.cloudflare.com"],
+		scan: {
+			labelNoise: LABEL_NOISE,
+			requiredText: "\\(required\\)",
+			attachedFiles: "[role=listitem] > span",
+		},
+		plainLocation: true,
+	},
 };
 
 /**
@@ -144,6 +274,17 @@ export function sessionHosts(
 			read: [...(config.hosts ?? [])],
 		},
 	};
+}
+
+/** A board that keys the company in the subdomain: its origin, or the fixture base plus the company. */
+function companyBase(
+	base: string | undefined,
+	company: string,
+	domain: string,
+): string {
+	return base
+		? `${base.replace(/\/+$/, "")}/${company}`
+		: `https://${company.toLowerCase()}.${domain}`;
 }
 
 /** A board's hosted form URL for a job, or null when the job's URL is not on that board. */
@@ -166,6 +307,22 @@ export function applyUrl(
 			const base = bases.lever ?? "https://jobs.lever.co";
 			return `${trim(base)}/${job.companyKey}/${job.externalId}/apply`;
 		}
+		case "workable": {
+			const base = bases.workable ?? "https://apply.workable.com";
+			return `${trim(base)}/${job.companyKey}/j/${job.externalId}/apply/`;
+		}
+		case "recruitee": {
+			// The stored id is `{company}:{slug}`; the form is the offer's /c/new page.
+			const slug = job.externalId.slice(job.externalId.lastIndexOf(":") + 1);
+			return `${companyBase(bases.recruitee, job.companyKey, "recruitee.com")}/o/${slug}/c/new`;
+		}
+		case "teamtailor": {
+			// The job's path is `{id}-{slug}`; the feed's link has it, the id alone is the fallback.
+			const tail = job.url.match(/\/jobs\/(\d+[^/?#]*)/)?.[1] ?? job.externalId;
+			return `${companyBase(bases.teamtailor, job.companyKey, "teamtailor.com")}/jobs/${tail}/applications/new`;
+		}
+		case "personio":
+			return `${companyBase(bases.personio, job.companyKey, "jobs.personio.de")}/job/${job.externalId}/apply`;
 	}
 }
 
@@ -210,12 +367,13 @@ export interface FormField {
  */
 export function scanScript(config: BoardConfig): string {
 	return `(() => {
-	const cfg = ${JSON.stringify({ root: config.root, container: config.container, label: config.label })};
+	const cfg = ${JSON.stringify({ root: config.root, container: config.container, label: config.label, ...config.scan })};
 	// Some boards split the form (Ashby renders its EEO survey in a second container).
 	const roots = [...document.querySelectorAll(cfg.root)].filter((r, i, all) => !all.some((o, j) => j !== i && o.contains(r)));
 	if (roots.length === 0) return null;
 	const root = { querySelectorAll: (sel) => roots.flatMap((r) => [...r.querySelectorAll(sel)]) };
-	const clean = (t) => (t || "").replace(/[*✱]/g, " ").replace(/\\s+/g, " ").trim();
+	const noise = cfg.labelNoise ? new RegExp(cfg.labelNoise, "gi") : null;
+	const clean = (t) => { const c = (t || "").replace(/[*✱]/g, " ").replace(/\\s+/g, " ").trim(); return noise ? c.replace(noise, " ").replace(/\\s+/g, " ").trim() : c; };
 	const textOf = (el) => clean(el ? el.textContent : "");
 	// The nearest container that has a question label, else the nearest one.
 	const boxOf = (el) => {
@@ -243,13 +401,16 @@ export function scanScript(config: BoardConfig): string {
 		if (!box) return false;
 		const label = box.querySelector(cfg.label);
 		return !!(label && (/[*✱]/.test(label.textContent || "") || /required/i.test(label.className || "") || label.querySelector(".required")))
-			|| box.getAttribute("aria-required") === "true" || !!box.querySelector('[role=group][aria-required="true"]');
+			|| box.getAttribute("aria-required") === "true" || !!box.querySelector('[role=group][aria-required="true"]')
+			|| (!!cfg.requiredText && new RegExp(cfg.requiredText, "i").test(box.textContent || ""));
 	};
 	const visible = (el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 2 && r.height > 2 && s.visibility !== "hidden" && s.display !== "none"; };
 	const optionText = (input) => {
 		const wrap = input.closest("label");
 		if (wrap && textOf(wrap)) return textOf(wrap);
 		if (input.id) { const l = document.querySelector('label[for="' + CSS.escape(input.id) + '"]'); if (l) return textOf(l); }
+		const by = input.getAttribute("aria-labelledby");
+		if (by) { const t = by.split(/\\s+/).map((id) => textOf(document.getElementById(id))).join(" ").trim(); if (t) return t; }
 		return clean(input.value);
 	};
 	const comboValue = (el) => {
@@ -260,10 +421,31 @@ export function scanScript(config: BoardConfig): string {
 		return hidden && hidden.value.trim() ? [clean(hidden.value)] : [];
 	};
 	const currentOf = (el, kind) => {
-		if (kind === "file") return [...(el.files || [])].map((f) => f.name);
+		if (kind === "file") {
+			const own = [...(el.files || [])].map((f) => f.name);
+			// Some boards move a chosen file into a list and empty the input (Personio).
+			const box = cfg.attachedFiles && !own.length ? el.closest(cfg.container) : null;
+			return box ? [...box.querySelectorAll(cfg.attachedFiles)].map(textOf).filter(Boolean) : own;
+		}
 		if (kind === "select") return [...el.selectedOptions].filter((o) => o.value !== "").map((o) => clean(o.textContent));
 		if (kind === "combobox") return comboValue(el);
-		return el.value && el.value.trim() ? [el.value] : [];
+		if (!el.value || !el.value.trim()) return [];
+		return [isPhone(el) && !el.value.trim().startsWith("+") ? pickerCode(el) + el.value : el.value];
+	};
+	const isPhone = (el) => el.type === "tel" || /phone/i.test(el.name || el.id || "");
+	// A phone widget that moved the country code into its picker (Workable): the code it shows,
+	// read from the picker beside the box, goes in front, so the whole number is compared.
+	const pickerCode = (el) => {
+		let p = el.parentElement;
+		for (let i = 0; i < 4 && p; i++, p = p.parentElement) {
+			for (const c of p.querySelectorAll("button, select, [role=combobox]")) {
+				if (c === el) continue;
+				const shown = c.tagName === "SELECT" ? (c.selectedOptions[0] || {}).textContent : c.textContent + " " + (c.getAttribute("aria-label") || "");
+				const m = (shown || "").match(/\\+(\\d{1,4})\\b/);
+				if (m) return "+" + m[1] + " ";
+			}
+		}
+		return "";
 	};
 	const headings = root.querySelectorAll("h2, h3, h4, [class*=section-header], [class*=section-title]");
 	const sectionOf = (el) => {
@@ -288,18 +470,20 @@ export function scanScript(config: BoardConfig): string {
 		if (["hidden", "submit", "button", "search"].includes(type)) continue;
 		if (el.name === "g-recaptcha-response" || el.name === "h-captcha-response") continue;
 		// Helper inputs a widget hides from people (react-select's requiredInput) are not questions.
-		if (type !== "file" && el.getAttribute("aria-hidden") === "true") continue;
-		const box = boxOf(el);
+		if (type !== "file" && el.getAttribute("aria-hidden") === "true" && !(cfg.hiddenChoices && (type === "radio" || type === "checkbox"))) continue;
+		const box = el.closest(cfg.container);
 		if (type === "radio" || type === "checkbox") {
-			// Same name and type only: Lever pairs its consent checkbox with a hidden input of that name.
+			// Same name and type only: a hidden twin of that name (Rails sends "0" for an unticked box,
+			// Lever pairs its consent box with one) is not an option.
 			const group = el.name ? [...root.querySelectorAll('input[name="' + CSS.escape(el.name) + '"]')].filter((g) => (g.getAttribute("type") || "").toLowerCase() === type) : [el];
 			group.forEach((g) => seen.add(g));
 			const ref = String(++n);
 			group.forEach((g) => g.setAttribute("data-jp", ref));
 			const fieldset = el.closest("fieldset");
 			const legend = fieldset && fieldset.querySelector("legend");
-			const label = textOf(box && box.querySelector(cfg.label)) || textOf(legend) || (group.length === 1 ? optionText(el) : "");
-			fields.push({ ref, kind: type, label, required: group.some((g) => g.required || g.getAttribute("aria-required") === "true") || requiredMark(box), name: el.name || el.id, options: group.map(optionText), visible: group.some(visible), current: group.filter((g) => g.checked).map(optionText), section: sectionOf(el) });
+			const named = fieldset && fieldset.getAttribute("aria-labelledby");
+			const label = textOf(box && box.querySelector(cfg.label)) || textOf(legend) || (named ? named.split(/\\s+/).map((id) => textOf(document.getElementById(id))).join(" ").trim() : "") || (group.length === 1 ? optionText(el) : "");
+			fields.push({ ref, kind: type, label, required: group.some((g) => g.required || g.getAttribute("aria-required") === "true") || requiredMark(box) || (cfg.requiredNames || []).includes(el.name), name: el.name || el.id, options: group.map(optionText), visible: group.some(visible), current: group.filter((g) => g.checked).map(optionText), section: sectionOf(el) });
 			continue;
 		}
 		seen.add(el);
@@ -309,7 +493,7 @@ export function scanScript(config: BoardConfig): string {
 			kind,
 			label: labelFor(el),
 			required: el.required || el.getAttribute("aria-required") === "true" || requiredMark(box),
-			name: el.name || el.id || "",
+			name: el.name || (cfg.nameAttr && el.getAttribute(cfg.nameAttr)) || el.id || "",
 			options: el.tagName === "SELECT" ? [...el.options].filter((o) => o.value !== "").map((o) => clean(o.textContent)) : [],
 			visible: kind === "file" ? true : visible(el),
 			current: currentOf(el, kind),
@@ -363,6 +547,8 @@ export const VISIBLE_CHALLENGE_SCRIPT = `(() => {
 		if (/captcha-delivery\\.com|arkoselabs|funcaptcha/.test(src)) return "CAPTCHA";
 	}
 	for (const el of document.querySelectorAll(".cf-turnstile, #challenge-form, #challenge-stage, [data-captcha-challenge]")) if (shown(el)) return "challenge";
+	// Turnstile draws its frame in a shadow root: the box around its response field is what shows.
+	for (const t of document.querySelectorAll('[name="cf-turnstile-response"]')) { const box = t.parentElement; const r = box ? box.getBoundingClientRect() : null; if (r && r.width > 100 && r.height > 30 && getComputedStyle(box).visibility !== "hidden") return "Cloudflare Turnstile"; }
 	if (/^\\s*just a moment/i.test(document.title)) return "Cloudflare interstitial";
 	return null;
 })()`;
@@ -374,7 +560,11 @@ export function errorsScript(config: BoardConfig): string {
 
 /** Words that make a would-be confirmation a refusal. */
 const REFUSAL =
-	"\\b(?:rejected|declined|not (?:been )?(?:submitted|received|accepted)|unsuccessful|could ?n[o']t|failed|error|try again)\\b";
+	"\\b(?:rejected|declined|not (?:been )?(?:submitted|received|accepted)|unsuccessful|could ?n[o']t|failed|error|try again|already (?:applied|submitted|received|sent)|duplicate)\\b";
+
+/** A page that says the candidate applied before: never a confirmation of this submission. */
+const DUPLICATE =
+	"\\balready (?:applied|submitted|received|sent)\\b|\\bduplicate application\\b";
 
 /**
  * Page script: the confirmation text when the board shows its confirmation, else null. All of
@@ -383,7 +573,9 @@ const REFUSAL =
  * element (Ashby), the confirmation text there, and no refusal wording.
  */
 export function successScript(config: BoardConfig, formUrl: string): string {
-	const { text, selector, path } = config.success;
+	const { text, selector, path, refused } = config.success;
+	// Text alone is no evidence: without the board's path or element nothing is confirmed.
+	if (!path && !selector) return "null";
 	const form = new URL(formUrl);
 	const expected = {
 		host: form.host,
@@ -398,7 +590,11 @@ export function successScript(config: BoardConfig, formUrl: string): string {
 	if ([...document.querySelectorAll(${JSON.stringify(`${config.root}, ${config.submit}`)})].some(shown)) return null;
 	if (expected.path !== null && location.pathname.replace(/\\/+$/, "") !== expected.path) return null;
 	const scope = ${JSON.stringify(selector ?? null)} ? document.querySelector(${JSON.stringify(selector ?? "")}) : document.body;
-	if (!scope) return null;
+	// Hidden nodes count for nothing: some boards ship their confirmation in the page before submit.
+	if (!scope || !shown(scope)) return null;
+	// The board's own "already applied" state, or a duplicate anywhere on the page, is a refusal.
+	if (${JSON.stringify(refused ?? null)} && [...document.querySelectorAll(${JSON.stringify(refused ?? "")})].some(shown)) return null;
+	if (new RegExp(${JSON.stringify(DUPLICATE)}, "i").test((document.body.innerText || "").slice(0, 20000))) return null;
 	const body = (scope.innerText || "").slice(0, 5000);
 	if (new RegExp(${JSON.stringify(REFUSAL)}, "i").test(body)) return null;
 	const m = body.match(new RegExp(${JSON.stringify(text)}, "i"));
@@ -428,16 +624,22 @@ export type SystemRole =
 	| "ignore";
 
 const ROLE_BY_NAME: [RegExp, SystemRole][] = [
-	[/^(_systemfield_name|name)$/, "full_name"],
-	[/^first_name$/, "first_name"],
-	[/^last_name$/, "last_name"],
-	[/^(_systemfield_email|email)$/, "email"],
-	[/^phone$/, "phone"],
+	// Control names hold in every language the form is shown in (Recruitee and Personio follow
+	// the employer's locale).
+	[/^(_systemfield_name|name|candidate\.name)$/, "full_name"],
+	[/^(first_name|firstname|candidate\[first_name\])$/, "first_name"],
+	[/^(last_name|lastname|candidate\[last_name\])$/, "last_name"],
+	[/^(_systemfield_email|email|candidate\.email|candidate\[email\])$/, "email"],
+	[/^(phone|candidate\.phone|candidate\[phone\])$/, "phone"],
 	[/^location$/, "location"],
 	[/^urls\[linkedin\]$/i, "linkedin"],
 	[/^urls\[github\]$/i, "github"],
 	[/^urls\[portfolio\]$/i, "website"],
-	[/^(_systemfield_resume|resume)$/, "resume"],
+	[
+		/^(_systemfield_resume|resume|candidate\.cv|documents\.cv|candidate_resume_remote_url)$/,
+		"resume",
+	],
+	[/^candidate\.coverLetterFile$/, "cover_letter"],
 	[/^cover_letter$/, "cover_letter"],
 	[/^comments$/, "cover_letter_text"],
 	[/^(resume_text|cover_letter_text)$/, "ignore"],
@@ -463,7 +665,7 @@ const ROLE_BY_LABEL: [RegExp, SystemRole][] = [
 		/^(website|portfolio|personal website|portfolio url|website url)$/,
 		"website",
 	],
-	[/^(resume|cv|resume ?\/ ?cv)$/, "resume"],
+	[/^(?:upload )?(resume|cv|resume ?\/ ?cv|cv or resume)$/, "resume"],
 	[/^cover letter$/, "cover_letter"],
 	[/^additional information$/, "cover_letter_text"],
 	[
@@ -475,6 +677,17 @@ const ROLE_BY_LABEL: [RegExp, SystemRole][] = [
 export function systemRole(field: FormField): SystemRole | null {
 	if (field.kind === "combobox" && field.name === "country")
 		return "phone_country";
+	const role = roleOf(field);
+	// A cover letter box that takes text (Workable, Teamtailor) gets the approved letter's text.
+	if (
+		role === "cover_letter" &&
+		(field.kind === "text" || field.kind === "textarea")
+	)
+		return "cover_letter_text";
+	return role;
+}
+
+function roleOf(field: FormField): SystemRole | null {
 	for (const [pattern, role] of ROLE_BY_NAME)
 		if (pattern.test(field.name)) return role;
 	const label = normalizeForMatch(field.label)
@@ -647,6 +860,7 @@ function contactAction(
 	field: FormField,
 	role: SystemRole,
 	data: ApplicantData,
+	plainLocation: boolean,
 ): FillAction | null {
 	const base = { ref: field.ref, label: field.label };
 	if (role === "phone_country") {
@@ -662,7 +876,9 @@ function contactAction(
 	return {
 		...base,
 		kind:
-			role === "location" && field.name === "location" ? "location" : "fill",
+			role === "location" && field.name === "location" && !plainLocation
+				? "location"
+				: "fill",
 		value,
 	};
 }
@@ -674,6 +890,8 @@ export interface PlanOptions {
 	 * approved in the "What will be sent" list (docs/auto-apply-plan.md, step 3).
 	 */
 	declineVoluntary?: boolean;
+	/** The location box is plain text (Personio), not Lever's lookup. */
+	plainLocation?: boolean;
 }
 
 /**
@@ -763,7 +981,12 @@ export function planFill(
 			}
 		}
 		if (role && role !== "voluntary") {
-			const action = contactAction(field, role, data);
+			const action = contactAction(
+				field,
+				role,
+				data,
+				options.plainLocation === true,
+			);
 			if (action) plan.actions.push(action);
 			else unknown(field);
 			continue;
@@ -849,11 +1072,22 @@ function declineAction(field: FormField, option: string): FillAction {
 	}
 }
 
+/**
+ * The same phone number, on a phone field only: every digit equal, country code included. A
+ * widget that moves the code into its picker is read with the picker's code in front (scanScript).
+ */
+function samePhone(field: FormField, held: string, approved: string): boolean {
+	if (systemRole(field) !== "phone") return false;
+	if (!/^\+?[\d\s().-]+$/.test(approved)) return false;
+	return held.replace(/\D/g, "") === approved.replace(/\D/g, "");
+}
+
 const fieldKey = (f: FormField) => `${f.kind}|${f.name}|${f.label}`;
 const same = (a: string, b: string) => questionKeyOf(a) === questionKeyOf(b);
 
 /** Why a control's value is not the planned one, or null when it is. */
 function mismatch(
+	field: FormField,
 	action: FillAction,
 	label: string,
 	current: string[],
@@ -862,12 +1096,9 @@ function mismatch(
 	const one = current.length === 1 ? (current[0] ?? "") : null;
 	switch (action.kind) {
 		case "fill": {
-			const digits = (t: string) => t.replace(/\D/g, "");
-			const phoneLike = /^\+?[\d\s().-]+$/.test(action.value);
 			const ok =
 				one !== null &&
-				(same(one, action.value) ||
-					(phoneLike && digits(one) === digits(action.value)));
+				(same(one, action.value) || samePhone(field, one, action.value));
 			return ok ? null : `"${label}" holds ${holds}, not the approved value.`;
 		}
 		case "select":
@@ -938,7 +1169,7 @@ export function verifyFilled(
 				problems.push(`"${label}" holds ${holds}, which was not approved.`);
 			continue;
 		}
-		const problem = mismatch(action, label, current);
+		const problem = mismatch(field, action, label, current);
 		if (problem) problems.push(problem);
 	}
 	return problems;

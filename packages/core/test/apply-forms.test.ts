@@ -5,6 +5,7 @@ import {
 	type ApplicantData,
 	applyUrl,
 	BOARD_CONFIGS,
+	BOARDS,
 	dialCode,
 	exactOption,
 	type FormField,
@@ -73,6 +74,89 @@ describe("answer matching", () => {
 		expect(applyUrl("lever", job, { lever: "http://127.0.0.1:9/lever/" })).toBe(
 			"http://127.0.0.1:9/lever/acme/123/apply",
 		);
+		expect(applyUrl("workable", { ...job, externalId: "AB12CD" })).toBe(
+			"https://apply.workable.com/acme/j/AB12CD/apply/",
+		);
+		expect(
+			applyUrl("recruitee", { ...job, externalId: "acme:platform-engineer" }),
+		).toBe("https://acme.recruitee.com/o/platform-engineer/c/new");
+		expect(
+			applyUrl("teamtailor", {
+				url: "https://acme.teamtailor.com/jobs/4100001-platform-engineer",
+				externalId: "4100001",
+				companyKey: "acme",
+			}),
+		).toBe(
+			"https://acme.teamtailor.com/jobs/4100001-platform-engineer/applications/new",
+		);
+		expect(applyUrl("personio", job)).toBe(
+			"https://acme.jobs.personio.de/job/123/apply",
+		);
+		expect(
+			applyUrl("personio", job, { personio: "http://127.0.0.1:9/personio" }),
+		).toBe("http://127.0.0.1:9/personio/acme/job/123/apply");
+	});
+
+	it("lets a submission reach a board's own asset and scoring hosts, never trackers", () => {
+		const hosts = sessionHosts("personio", ["acme.jobs.personio.de"]);
+		// Only the form's own hosts receive data; asset and scoring hosts are read-only rules.
+		expect(hosts.form).toEqual(["acme.jobs.personio.de"]);
+		expect(hosts.rules.read).toEqual([
+			"assets.cdn.personio.de",
+			"challenges.cloudflare.com",
+		]);
+		expect(sessionHosts("ashby", ["jobs.ashbyhq.com"]).form).toEqual([
+			"jobs.ashbyhq.com",
+		]);
+		for (const board of BOARDS)
+			for (const host of BOARD_CONFIGS[board].hosts ?? [])
+				expect(host).not.toMatch(
+					/googletagmanager|google-analytics|facebook|linkedin|reddit|sentry|ziggeo|analytics/,
+				);
+	});
+
+	describe("a filled number counts only with every digit, country code included", () => {
+		const fill = (value: string) => ({
+			actions: [{ ref: "1", label: "x", kind: "fill" as const, value }],
+			unknown: [],
+			blank: [],
+		});
+		const phone = {
+			ref: "1",
+			kind: "text" as const,
+			label: "Phone",
+			required: false,
+			name: "phone",
+			options: [],
+			visible: true,
+		};
+		const salary = { ...phone, label: "Expected salary", name: "salary" };
+
+		it("accepts the number as the scan reads it, picker code in front", () => {
+			const plan = fill("+90 555 000 00 00");
+			expect(
+				verifyFilled(
+					plan,
+					[phone],
+					[{ ...phone, current: ["+90 5550000000"] }],
+				),
+			).toEqual([]);
+		});
+
+		it("refuses a number whose country code was dropped or changed", () => {
+			const plan = fill("+90 555 000 00 00");
+			for (const held of ["5550000000", "555 000 00 00", "+31 555 000 00 00"])
+				expect(
+					verifyFilled(plan, [phone], [{ ...phone, current: [held] }]),
+				).toHaveLength(1);
+		});
+
+		it("refuses a non-phone value that lost its leading digits", () => {
+			const plan = fill("+1000000");
+			expect(
+				verifyFilled(plan, [salary], [{ ...salary, current: ["000000"] }]),
+			).toHaveLength(1);
+		});
 	});
 });
 

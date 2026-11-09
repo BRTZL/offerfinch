@@ -262,6 +262,76 @@ export async function openForm(
 
 const at = (ref: string) => `[data-jp="${ref}"]`;
 
+/** Page script: why the submit button cannot take a click (missing, or covered), else null. */
+function coveredScript(submit: string): string {
+	return `(() => {
+	const button = document.querySelector(${JSON.stringify(submit)});
+	if (!button) return "The submit button is not on the page.";
+	button.scrollIntoView({ block: "center" });
+	const r = button.getBoundingClientRect();
+	const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+	if (!hit || hit === button || button.contains(hit)) return null;
+	return "Something covers the submit button (a banner or dialog); it was not clicked.";
+})()`;
+}
+
+/**
+ * Page script: how to set a radio or checkbox the board hides or draws over (Workable,
+ * Recruitee). "set" when it already holds the wanted state.
+ * - "control": an ARIA radio or checkbox drawn around it takes the click (Workable). It is used
+ *   only when it cannot submit: not a button without type="button", not an input or a link,
+ *   and nothing inside it that submits or navigates. It is stamped for the caller to click.
+ * - "native": the input is shown and on top; the caller ticks it the ordinary way.
+ * - "set": otherwise the input element itself is clicked in the page. A radio's or checkbox's
+ *   own click never submits a form, even inside a submit button. Labels and elements that merely
+ *   name the input are never clicked.
+ */
+function hiddenChoiceScript(ref: string, index: number, on: boolean): string {
+	return `(() => {
+	const input = document.querySelectorAll('[data-jp="${ref}"]')[${index}];
+	if (!input || (input.type !== "radio" && input.type !== "checkbox")) return "native";
+	const shown = (el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 2 && r.height > 2 && s.visibility !== "hidden" && s.display !== "none"; };
+	if (input.checked === ${on}) return "set";
+	for (const el of document.querySelectorAll("[data-jp-click]")) el.removeAttribute("data-jp-click");
+	// A drawn ARIA control handles the click itself (Workable ignores clicks on its inputs).
+	const control = input.closest("[role=radio], [role=checkbox]");
+	const submits = (el) => (el.tagName === "BUTTON" && (el.getAttribute("type") || "submit").toLowerCase() !== "button") || el.tagName === "INPUT" || (el.tagName === "A" && el.hasAttribute("href"));
+	const safe = control && shown(control) && !submits(control) && ![...control.querySelectorAll("button, input, a[href]")].some((el) => el !== input && submits(el));
+	if (safe) { control.setAttribute("data-jp-click", "1"); return "control"; }
+	if (shown(input)) {
+		input.scrollIntoView({ block: "center" });
+		const box = input.getBoundingClientRect();
+		const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+		if (hit && (hit === input || input.contains(hit))) return "native";
+	}
+	input.click();
+	return "set";
+})()`;
+}
+
+/**
+ * Ticks or unticks one option. verifyFilled reads every control again afterwards, so a click the
+ * board ignored is caught before the claim.
+ */
+async function setChoice(
+	page: BrowserPage,
+	field: FormField,
+	index: number,
+	on: boolean,
+): Promise<void> {
+	const how = await safeEvaluate<string>(
+		page,
+		hiddenChoiceScript(field.ref, index, on),
+	);
+	if (how === "set") return;
+	if (how === "control") {
+		await page.click("[data-jp-click]");
+		return;
+	}
+	const selector = `${at(field.ref)} >> nth=${index}`;
+	await (on ? page.check(selector) : page.uncheck(selector));
+}
+
 /** Ticks exactly the approved options; a checkbox the form had ticked otherwise is unticked. */
 async function chooseIn(
 	page: BrowserPage,
@@ -272,9 +342,9 @@ async function chooseIn(
 	const current = new Set((field.current ?? []).map(questionKeyOf));
 	for (const [index, option] of field.options.entries()) {
 		const key = questionKeyOf(option);
-		if (wanted.has(key)) await page.check(`${at(field.ref)} >> nth=${index}`);
+		if (wanted.has(key)) await setChoice(page, field, index, true);
 		else if (field.kind === "checkbox" && current.has(key))
-			await page.uncheck(`${at(field.ref)} >> nth=${index}`);
+			await setChoice(page, field, index, false);
 	}
 }
 
@@ -321,7 +391,7 @@ async function perform(
 				await page.selectOption(at(action.ref), "");
 			else
 				for (const [index] of field.options.entries())
-					await page.uncheck(`${at(action.ref)} >> nth=${index}`);
+					await setChoice(page, field, index, false);
 			return null;
 		case "yesno": {
 			const index = field.options.findIndex(
@@ -438,9 +508,11 @@ function reviewedPlan(
 	fields: FormField[],
 	unreviewed: Set<string>,
 	run: Pick<ApplicationRun, "data" | "schema" | "lookupsOffline">,
+	plainLocation: boolean,
 ): { plan: FillPlan; offline: Extract<FillAction, { kind: "location" }>[] } {
 	const planned = planFill(fields, run.data, {
 		declineVoluntary: run.schema !== undefined,
+		plainLocation,
 	});
 	const kept = planned.actions.filter(
 		(a) => !unreviewed.has(a.ref) || a.kind === "clear",
@@ -470,6 +542,20 @@ function reviewedPlan(
 	};
 }
 
+/** The board's own cookie banner covers the form (Workable's backdrop): declines it once. */
+export async function declineBoardCookies(
+	page: BrowserPage,
+	config: BoardConfig,
+): Promise<void> {
+	const button = config.declineCookies;
+	if (!button) return;
+	const shown = await safeEvaluate<boolean>(
+		page,
+		`(() => { const b = document.querySelector(${JSON.stringify(button)}); if (!b) return false; const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0; })()`,
+	);
+	if (shown) await page.click(button).catch(() => {});
+}
+
 /** Scans, plans and fills. Stops before the first keystroke when a required question is unknown. */
 export async function fillForm(
 	page: BrowserPage,
@@ -494,9 +580,15 @@ export async function fillForm(
 	);
 	if ("stop" in checked) return { ok: false, filled: [], stop: checked.stop };
 	const { fields, unreviewed } = checked;
-	const { plan, offline } = reviewedPlan(fields, unreviewed, run);
+	const { plan, offline } = reviewedPlan(
+		fields,
+		unreviewed,
+		run,
+		config.plainLocation === true,
+	);
 	// Before the first interaction of any kind (clicks included): dry runs close the network here.
 	run.beforeFill?.();
+	await declineBoardCookies(page, config);
 	// A combobox lists its options only when open: read them so the question can offer them.
 	for (const question of plan.unknown) {
 		const field = fields.find((f) => (f.label || f.name) === question.label);
@@ -677,6 +769,18 @@ export async function runApplication(
 					kind: "unrecognized_page",
 					message: away ?? "The form is no longer on the page.",
 				},
+				screenshot: before,
+				filled,
+			};
+		// A banner over the submit button would swallow the one click after the claim.
+		const covered = await safeEvaluate<string | null>(
+			page,
+			coveredScript(config.submit),
+		);
+		if (covered)
+			return {
+				outcome: "stopped",
+				stop: { kind: "unrecognized_page", message: covered },
 				screenshot: before,
 				filled,
 			};
