@@ -1,5 +1,5 @@
 import type { FormAnswer } from "../tailor/tailor";
-import type { FormSchema, SchemaField } from "./form-schema";
+import type { FormRead, FormSchema, SchemaField } from "./form-schema";
 import {
 	type ApplicantData,
 	declineOption,
@@ -215,4 +215,44 @@ export function planFormFields(
 		});
 	}
 	return { fields, add, ask: plan.unknown };
+}
+
+/** The approved list's state for review: the fields and values, or why there is none. */
+export type WhatWillBeSent =
+	| {
+			status: "read";
+			fields: SentField[];
+			submit: string | null;
+			readAt: string;
+	  }
+	| { status: "failed" | "skipped"; note: string; readAt: string };
+
+/**
+ * "What will be sent", as review shows it: each value exactly as the submission fills it, from
+ * the current form answers (saved answers already joined them while preparing). A value equal to
+ * a saved answer for that question cites the profile fact it came from.
+ */
+export function whatWillBeSent(
+	read: FormRead,
+	data: ApplicantData,
+	saved: SavedAnswer[],
+): WhatWillBeSent {
+	if (read.status !== "read")
+		return { status: read.status, note: read.note, readAt: read.readAt };
+	const { fields } = planFormFields(read.schema, data, []);
+	return {
+		status: "read",
+		submit: read.schema.submit,
+		readAt: read.readAt,
+		fields: fields.map((f) => {
+			if (f.source.kind !== "form_answer" || f.value === null) return f;
+			const fact = saved.find(
+				(s) =>
+					s.answer === f.value && sameQuestion(labelOf(s.question), f.label),
+			);
+			return fact
+				? { ...f, source: { kind: "profile_fact", id: fact.id ?? null } }
+				: f;
+		}),
+	};
 }

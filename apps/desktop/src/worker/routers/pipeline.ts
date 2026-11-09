@@ -1,8 +1,13 @@
+import {
+	type WhatWillBeSent,
+	whatWillBeSent,
+} from "@offerfinch/core/apply/field-answers";
 import { applyUrl, BOARDS, type Board } from "@offerfinch/core/apply/forms";
 import {
 	BOARD_SUBMISSION_MODES,
 	submissionModeForSource,
 } from "@offerfinch/core/apply/modes";
+import { applicantData } from "@offerfinch/core/apply/submit";
 import { compareApproval } from "@offerfinch/core/domain/approval";
 import { normalizeLineEndings } from "@offerfinch/core/domain/line-endings";
 import { sourceMismatch } from "@offerfinch/core/domain/source";
@@ -38,6 +43,25 @@ import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
 import { protectedProcedure } from "./procedure";
+
+/** "What will be sent" for one application, from its saved form read; null when never read. */
+async function whatWillBeSentFor(
+	repo: ReturnType<typeof repoOf>,
+	userId: string,
+	applicationId: string,
+	profile: Awaited<ReturnType<ReturnType<typeof repoOf>["getProfile"]>>,
+): Promise<WhatWillBeSent | null> {
+	const read = await repo.formRead(userId, applicationId);
+	if (!read || !profile) return null;
+	const context = await repo.submissionContext(userId, applicationId);
+	if (!context) return null;
+	return whatWillBeSent(
+		read,
+		// Approval needs a finished review, which exports the letter: a drafted letter is attached.
+		applicantData(profile, context, context.coverLetterMarkdown !== null),
+		await repo.savedAnswers(userId),
+	);
+}
 
 const repoOf = (context: {
 	db: ConstructorParameters<typeof DashboardRepository>[0];
@@ -157,6 +181,12 @@ export const pipelineRouter = {
 						})
 					: (detail.job.applyUrl ?? detail.job.url);
 				const mode = submissionModeForSource(detail.job.source, board);
+				const form = await whatWillBeSentFor(
+					repoOf(context),
+					context.session.user.id,
+					input.id,
+					profile,
+				);
 				const docOf = (kind: string) =>
 					detail.documents.find((d) => d.kind === kind)?.content ?? "";
 				const flagDocs = {
@@ -259,6 +289,11 @@ export const pipelineRouter = {
 					 * "handoff": after approval the user submits it; nothing is filled automatically.
 					 */
 					submission: mode,
+					/**
+					 * The application form as read before review, with each field's exact value
+					 * ("What will be sent"), or why it could not be read. Null: never read.
+					 */
+					form,
 					/**
 					 * How old the posting is; `mayBeClosed` for LinkedIn, Indeed and Glassdoor
 					 * postings past 14 days, which are never re-read to check.

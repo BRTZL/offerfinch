@@ -10,6 +10,7 @@ import {
 	QuestionsSection,
 	WhyDisclosure,
 } from "@/components/pipeline/application/details";
+import { WhatWillBeSentSection } from "@/components/pipeline/application/form-fields";
 import { SubmissionPanel } from "@/components/pipeline/application/submission";
 import {
 	NotesSection,
@@ -83,6 +84,7 @@ export function ApplicationInspector({
 			<ChecksSection app={loaded} />
 			<JobFlagsSection app={loaded} />
 			<FitSection app={loaded} />
+			<WhatWillBeSentSection app={loaded} />
 			<AfterApproveSection app={loaded} />
 			<QuestionsSection app={loaded} />
 			<NotesSection applicationId={loaded.id} />
