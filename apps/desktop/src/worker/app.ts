@@ -390,6 +390,8 @@ export class WorkerApp {
 			postingReader: (userId, jobId) => readPostingForJob(this, userId, jobId),
 			// Read at each export, so a change in Settings › Documents needs no rebuild.
 			documentLook: () => this.settings.get("documentLook"),
+			// Settings › Writing, read at each draft so a save applies at once.
+			writingStyle: () => this.settings.get("writingStyle"),
 			// The scan's re-check of listed board matches for closed postings (it reads the
 			// boards: never with sample data).
 			...(this.init.demo

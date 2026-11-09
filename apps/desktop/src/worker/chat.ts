@@ -125,6 +125,7 @@ export async function runChatTurn(
 					})),
 				history,
 				today: today(),
+				writingStyle: await w.settings.get("writingStyle"),
 			});
 			return finishTurn(w.db, turn.replyId, result);
 		}

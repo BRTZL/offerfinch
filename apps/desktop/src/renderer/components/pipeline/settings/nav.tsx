@@ -5,6 +5,7 @@ import {
 	FileText,
 	Filter,
 	Globe,
+	PenLine,
 	Settings2,
 	SlidersHorizontal,
 } from "lucide-react";
@@ -36,6 +37,7 @@ const GROUPS: {
 				label: "Documents",
 				icon: <FileText />,
 			},
+			{ href: "/settings/writing", label: "Writing", icon: <PenLine /> },
 		],
 	},
 	{

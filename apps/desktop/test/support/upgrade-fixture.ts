@@ -73,6 +73,12 @@ export function settingsFor(latest: boolean) {
 			// An object stored before this switch existed reads it as on: notices.test.ts.
 			followup: false,
 		},
+		writingStyle: {
+			tone: "formal",
+			coverLetterLength: "shorter",
+			avoidWords: ["synergy", "rockstar"],
+			guidance: "Always say team, never squad.",
+		},
 		onboarding: {
 			done: ["ai", "resume", "profile", "rules"],
 			skipped: ["login"],

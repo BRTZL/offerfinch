@@ -162,6 +162,7 @@ export async function draftStep(
 					previous && !previous.passed ? previous.issues : undefined,
 				askedQuestions: budget.asked,
 				questionsAllowed: questionsAllowed(budget),
+				writingStyle: await deps.writingStyle?.(userId),
 			},
 		);
 	} catch (error) {

@@ -1,4 +1,9 @@
 import { DEFAULT_LOOK, documentLookSchema } from "@offerfinch/core/export/look";
+import {
+	DEFAULT_WRITING_STYLE,
+	storedWritingStyleSchema,
+	writingStyleSchema,
+} from "@offerfinch/core/tailor/writing-style";
 import type { Database } from "@offerfinch/db";
 import { appSettings } from "@offerfinch/db/schema/jobs";
 import { eq } from "drizzle-orm";
@@ -153,6 +158,17 @@ const KEYS = {
 		key: "notifications",
 		schema: notificationSettingsSchema,
 		fallback: DEFAULT_NOTIFICATIONS,
+	},
+	/**
+	 * Settings › Writing: tone, the letter's length inside 220 to 400 words, words to avoid,
+	 * guidance. Read field by field (a new field, or a value a newer version wrote, never resets
+	 * the others); written strict.
+	 */
+	writingStyle: {
+		key: "writingStyle",
+		schema: storedWritingStyleSchema,
+		write: writingStyleSchema,
+		fallback: DEFAULT_WRITING_STYLE,
 	},
 	onboarding: {
 		key: "onboarding",
