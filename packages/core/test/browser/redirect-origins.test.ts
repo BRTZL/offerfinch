@@ -61,6 +61,13 @@ function fixedPage(
 			body: `<html><body><form id="f" method="post" enctype="text/plain" action="/${to}"><input name='{"query":"query {jobs}","pad":"' value='"}'></form></body></html>`,
 		};
 	}
+	if (path === "/framed-form") {
+		const to = new URL(url, "http://x").searchParams.get("to");
+		return {
+			headers: { "content-type": "text/html" },
+			body: `<html><body><iframe src="/form?to=${to}"></iframe></body></html>`,
+		};
+	}
 	if (path === "/post-landed")
 		return {
 			headers: { "content-type": "text/html" },
@@ -99,6 +106,9 @@ beforeAll(async () => {
 			"/post-307": [307, at("cdn.acme.test", "/landing")],
 			"/post-308": [308, at("cdn.acme.test", "/landing")],
 			"/post-same": [307, "/post-landed"],
+			// Same origin first, then elsewhere as a GET: still never fulfilled under the form's URL.
+			"/post-mixed": [307, "/post-mid"],
+			"/post-mid": [302, at("cdn.acme.test", "/landing")],
 		};
 		const redirect = redirects[path];
 		res.setHeader("access-control-allow-origin", "*");
@@ -305,20 +315,34 @@ describe.each(["read_only", "allowlist"] as const)(
 			).toBeDefined();
 		});
 
-		it.each(["post-307", "post-308"])(
-			"%s: a form's POST redirected to another allowed origin is refused before it is fetched",
-			async (to) => {
+		it.each([
+			["post-307", false, ["post-307"]],
+			["post-308", false, ["post-308"]],
+			["post-mixed", false, ["post-mixed", "post-mid"]],
+			["post-307", true, ["post-307"]],
+		] as const)(
+			"%s (in a frame: %s): a form's POST redirected to another allowed origin is refused before it is fetched",
+			async (to, framed, sent) => {
 				const { log, url } = await withBoard(network, async (page) => {
-					await page.goto(`http://boards.acme.test:${port}/form?to=${to}`);
-					await page.evaluate(`document.getElementById("f").submit()`);
+					await page.goto(
+						`http://boards.acme.test:${port}/${framed ? "framed-form" : "form"}?to=${to}`,
+					);
+					await page.waitForTimeout(500);
+					await page.evaluate(
+						framed
+							? `document.querySelector("iframe").contentDocument.getElementById("f").submit()`
+							: `document.getElementById("f").submit()`,
+					);
 					await page.waitForTimeout(1_500);
 					return { log: page.networkLog(), url: page.url() };
 				});
 				const posts = hits.filter((h) => h.startsWith("POST "));
 				// A read never sends a form's POST, even one that spells out a GraphQL query; a
-				// submission sends it once, to the form's own site, and never on.
+				// submission sends it to the form's own site only, and never on.
 				expect(posts).toEqual(
-					network === "read_only" ? [] : [`POST boards.acme.test/${to}`],
+					network === "read_only"
+						? []
+						: sent.map((p) => `POST boards.acme.test/${p}`),
 				);
 				expect(hits.filter((h) => h.includes("cdn.acme.test"))).toEqual([]);
 				expect(reports, JSON.stringify(reports)).toEqual([]);
@@ -329,8 +353,7 @@ describe.each(["read_only", "allowlist"] as const)(
 							(e) =>
 								!e.allowed &&
 								e.url === `http://cdn.acme.test:${port}/landing` &&
-								e.reason ===
-									"main-frame POST redirected to another origin, refused",
+								e.reason === "form POST redirected to another origin, refused",
 						),
 						JSON.stringify(log),
 					).toBeDefined();

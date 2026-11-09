@@ -260,10 +260,11 @@ export const CROSS_ORIGIN_REFUSED = "cross-origin redirect refused";
 
 /**
  * The reason logged for a hop to another origin in a redirect chain the guard follows for a
- * main-frame POST (a form's 307 or 308): refused before it is fetched, and the navigation aborted.
+ * navigation's POST (a form's, in the page or a frame, answered 307 or 308): refused before it is
+ * fetched, and the navigation aborted.
  */
 export const CROSS_ORIGIN_POST_REFUSED =
-	"main-frame POST redirected to another origin, refused";
+	"form POST redirected to another origin, refused";
 
 /** The reason logged for an answer the guard fetched that is larger than `MAX_FETCHED_BYTES`. */
 export const TOO_LARGE_REFUSED = "answer too large, refused";
@@ -327,8 +328,9 @@ type Followed =
  *
  * The answer is fulfilled under the first URL, so it would take the first URL's origin. Anything
  * but the page's main frame (whose GET redirect becomes a new navigation): a chain that ends on
- * another origin is refused. The main frame's POST (a form's 307 or 308, which sends the body
- * again): a hop to another origin is refused before it is fetched (`CROSS_ORIGIN_POST_REFUSED`),
+ * another origin is refused. A navigation's POST, in the main frame or a frame (a form's 307 or
+ * 308, which sends the body again): a hop to another origin is refused before it is fetched
+ * (`CROSS_ORIGIN_POST_REFUSED`),
  * so the body is sent nowhere else and nothing from there runs as the first origin. An answer
  * larger than `MAX_FETCHED_BYTES` is refused.
  */
@@ -355,12 +357,13 @@ async function followChecked(
 		hop: from,
 		followed: from === start ? followed : followed.slice(0, -1),
 	});
-	const mainFramePost =
-		options.mainFrame && !/^(?:GET|HEAD)$/i.test(start.method);
+	// A form's POST, in the page or a frame: its body goes nowhere but the first origin.
+	const formPost =
+		request.isNavigationRequest() && !/^(?:GET|HEAD)$/i.test(start.method);
 	for (let hop = nextHop(response, from); hop; hop = nextHop(response, from)) {
 		const refused =
 			hopLimit(hop, followed.length) ??
-			(mainFramePost && originOf(hop.url) !== originOf(start.url)
+			(formPost && originOf(hop.url) !== originOf(start.url)
 				? CROSS_ORIGIN_POST_REFUSED
 				: null) ??
 			check(hop);
@@ -408,7 +411,7 @@ function fulfillFollowed(
 /**
  * A refusal `followChecked` makes after the request itself was sent: the request is logged as
  * sent, then the refusal. A cross-origin redirect or an answer too large ends the request quietly;
- * a main-frame POST redirected to another origin ends the run (`destinationProblem`).
+ * a form's POST redirected to another origin ends the run (`destinationProblem`).
  */
 function refusedAfterSent(reason: string): boolean {
 	return (
