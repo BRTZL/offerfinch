@@ -134,6 +134,46 @@ describe("which button is which", () => {
 		expect(roles.submit?.ref).toBe("2");
 	});
 
+	it("never lets the model promote a plain button nothing shows may send (Codex, 2026-11-09)", async () => {
+		const preview = { ref: "1", text: "Preview details", type: "button" };
+		expect(
+			(await controlRoles([preview], model({ "1": "submit" }))).submit,
+		).toBeNull();
+		// Two plain buttons that both say submit: neither is known to send.
+		expect(
+			(
+				await controlRoles(
+					[
+						{ ref: "1", text: "Submit application", type: "button" },
+						{ ref: "2", text: "Apply", type: "button" },
+					],
+					model({ "1": "submit", "2": "other" }),
+				)
+			).submit,
+		).toBeNull();
+		// The model only chooses among controls that may send.
+		const roles = await controlRoles(
+			[
+				preview,
+				{ ref: "2", text: "Go", type: "submit" },
+				{ ref: "3", text: "Done", type: "submit" },
+			],
+			model({ "1": "submit", "2": "other", "3": "submit" }),
+		);
+		expect(roles.submit?.ref).toBe("3");
+	});
+
+	it("a script form's only button that says submit is its submit", async () => {
+		const roles = await controlRoles(
+			[
+				{ ref: "1", text: "Preview details", type: "button" },
+				{ ref: "2", text: "Submit application", type: "button" },
+			],
+			null,
+		);
+		expect(roles.submit?.ref).toBe("2");
+	});
+
 	it("without words or a model, only a lone submit button is the submit", async () => {
 		expect(
 			(await controlRoles([{ ref: "1", text: "Go", type: "submit" }], null))

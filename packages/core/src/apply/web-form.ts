@@ -247,19 +247,41 @@ function wordsRole(control: WebControl): ControlRole | null {
 }
 
 /**
+ * The controls with deterministic evidence that they send the form: a submit button of the form
+ * (`<button>` without another type, `<input type=submit>`), or, on a form that sends by script,
+ * its only plain button whose words say submit. Only these can ever be the submit.
+ */
+function submitCapable(controls: WebControl[]): Set<string> {
+	const worded = controls.filter(
+		(c) => c.type === "button" && wordsRole(c) === "submit",
+	);
+	return new Set(
+		controls
+			.filter(
+				(c) =>
+					(c.type === "submit" && wordsRole(c) !== "other") ||
+					(worded.length === 1 && c === worded[0]),
+			)
+			.map((c) => c.ref),
+	);
+}
+
+/**
  * The model's roles, where the words allow them: a control the words call something else
  * (back, upload, sign in) stays that; "next" only where the words say next; the submit never
- * where they say next. The model may drop a would-be submit to "other".
+ * where they say next, and only on a control that already may send (`submitCapable`). The model
+ * may drop a would-be submit to "other".
  */
 function mergeModelRoles(
 	roles: Map<string, ControlRole | null>,
 	answers: { ref: string; role: ControlRole }[],
+	capable: Set<string>,
 ): void {
 	for (const { ref, role } of answers) {
 		const words = roles.get(ref);
 		if (words === undefined || words === "other") continue;
 		if (role === "next" && words !== "next") continue;
-		if (role === "submit" && words === "next") continue;
+		if (role === "submit" && (words === "next" || !capable.has(ref))) continue;
 		roles.set(ref, role);
 	}
 }
@@ -268,13 +290,14 @@ function mergeModelRoles(
  * Which control moves to the next step and which sends the application. From their words; the
  * model is asked only when the words leave it open (no control, or more than one, for a role).
  * The model can never make a control "next" whose text does not say so, nor make a control
- * whose text says otherwise the submit.
+ * whose text says otherwise, or that nothing shows may send, the submit.
  */
 export async function controlRoles(
 	controls: WebControl[],
 	model: WebFormModel | null | undefined,
 ): Promise<{ next: WebControl | null; submit: WebControl | null }> {
 	const roles = new Map(controls.map((c) => [c.ref, wordsRole(c)]));
+	const capable = submitCapable(controls);
 	const count = (role: ControlRole) =>
 		[...roles.values()].filter((r) => r === role).length;
 	const open =
@@ -293,9 +316,13 @@ export async function controlRoles(
 					})),
 				})
 				.catch(() => []),
+			capable,
 		);
 	const pick = (role: ControlRole) => {
-		const all = controls.filter((c) => roles.get(c.ref) === role);
+		const all = controls.filter(
+			(c) =>
+				roles.get(c.ref) === role && (role !== "submit" || capable.has(c.ref)),
+		);
 		return all.length === 1 ? (all[0] ?? null) : null;
 	};
 	let submit = pick("submit");
