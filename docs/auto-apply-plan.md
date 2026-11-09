@@ -72,7 +72,7 @@ prepare ──► read form ──► draft field answers ──► claims check
 | 2 | Form reader with schema storage (additive migration) for the three known boards; review shows "What will be sent" | Fixture boards: schema matches; review lists every field | Done 2026-11-09 |
 | 3 | Answer drafter and claims coverage per field; unknown fields become Questions | A planted unanswerable field becomes a question, not a guess | Done 2026-11-09 |
 | 4 | Dry runs on one real posting per known board (fill, screenshot, no click); fix selector drift since 2026-10-30 | Three screenshots of filled real forms | half a day, more if forms changed |
-| 5 | Inspect and add SmartRecruiters, Workable, Recruitee, Teamtailor, Personio (one fixture + config each) | Each fills its fixture and one real dry run | ~half a day per board |
+| 5 | Inspect and add SmartRecruiters, Workable, Recruitee, Teamtailor, Personio (one fixture + config each) | Each fills its fixture and one real dry run | Done 2026-11-09: Workable, Recruitee, Teamtailor and Personio are auto; SmartRecruiters stays hand-off (DataDome CAPTCHA before the form) |
 | 6 | Generic web form path: AI field matching over the plan, multi-page, outcome reader | Three fixture sites (single page, multi-step, with an unknown field) pass; one real employer form dry-runs | 2 days |
 | 7 | Proof on the application page and in Applied; stop sheet with "finish it yourself" (opens the form in a visible window, answers ready to copy) | e2e: proof visible after a fixture submission; a fixture challenge ends in the sheet | 1 day |
 | 8 | First real submission: the user picks and watches one posting; then one per board | Board confirmation stored, user confirms the email arrived | depends on the user's picks |

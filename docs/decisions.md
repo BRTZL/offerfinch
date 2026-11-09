@@ -891,3 +891,21 @@ is read, and review lists every field with its value ("What will be sent").
 | A self-identification question with no approved answer takes its own "decline to answer" option when it offers one, else an optional one is left blank. Only on a form read before review, where the list shows it | The plan's default (auto-apply-plan.md). Supersedes "Demographic answers are never chosen for the user" (Phase 3 review fixes) for forms read before review; without a read form nothing is chosen, as before |
 | At submit time the live form is lined up with the saved schema: a required question it does not have stops the run (`form_changed`, `needs_human`, the field named) before the first keystroke. It is not routed through the form-question inbox | Never answered on the fly. Through the inbox a reused answer would send it back to review with the same schema, and the next run would stop on the same field again |
 | Known gap: the approval hashes cover the documents and the posting, not the schema. The schema cannot change after preparing, and contact details are read from the profile at submit time, as before | Binding the schema into the approval hash is a follow-up if the schema ever changes outside preparation |
+
+## 2026-11-09: Workable, Recruitee, Teamtailor and Personio submit automatically (auto-apply plan, step 5)
+
+Inspected read-only and dry-run on one real posting each (`docs/form-inspection.md`, "The newer boards").
+
+| Decision | Why |
+|---|---|
+| Workable, Recruitee, Teamtailor and Personio are `auto` in `apply/modes.ts` and leave `HANDOFF_SOURCES`; each has a config in `forms.ts` and a local stand-in (`test/browser/fixture-more-boards.ts`) | None needs an account, a login or an email code; each form filled in a live dry run with the network closed |
+| SmartRecruiters stays hand-off, its note naming the reason | Its application form answered headless Chrome with a 403 and a DataDome CAPTCHA (Rule 4) |
+| A board's own asset and scoring hosts join the submission session's allowlist (`BoardConfig.hosts`, `sessionHosts`); the form URL is still checked against `SUBMIT_ALLOWED_HOSTS` alone, and employer trackers are never listed | The allowlist refuses every request to another host, so a form that loads its scripts from a CDN would stop at once. Recruitee's employer domains and the CV upload hosts are not listed: those runs stop before the click until seen |
+| A board's own cookie dialog is answered with its "decline" (or "necessary only") button once, before filling; an employer's own banner (Cookiebot) is never touched | Workable's backdrop and Teamtailor's and Recruitee's dialogs cover the form or the submit button |
+| Before the claim, the submit button must take a click (nothing drawn over it); otherwise the run stops with nothing sent | A covered button would swallow the one click after the claim |
+| A radio or checkbox drawn by the board (an ARIA control around a hidden input, or a hidden input behind its label) is clicked through that control; the re-read after filling still checks every value | Workable and Recruitee ignore clicks on their hidden inputs |
+| A phone number counts as filled when the widget moved its "+" country code into a picker and kept the national number | Workable's phone box |
+| A confirmation never counts when its element is hidden, and "already applied" is a refusal | Recruitee ships "All done!" and "You've already applied" in the page before submit |
+| A visible Turnstile box counts as a visible challenge | Its frame sits in a shadow root, out of reach of the iframe check |
+| Required privacy consent boxes are questions for the user like any other required field | Rule 2: no box is ticked for the user. Follow-up: a saved consent answer the user approves once |
+| The success texts of the four boards are strict guesses; anything else after the click is an unknown outcome | No real submission was made |
