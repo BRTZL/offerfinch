@@ -163,6 +163,7 @@ export function joinRules(...parts: HostRules[]): HostRules {
 		assets: [...new Set(parts.flatMap((p) => [...p.assets]))],
 		query,
 		widgets,
+		staticFetch: parts.flatMap((p) => [...(p.staticFetch ?? [])]),
 	};
 }
 
@@ -173,11 +174,29 @@ export function joinRules(...parts: HostRules[]): HostRules {
  * widgets get no posts until they are.
  */
 export const BOARD_HOST_RULES: Record<Board, HostRules> = {
-	ashby: joinRules(
-		recaptchaEnterprise(["6LezdY0tAAAAAEnollNLCAI0z1VDGwM7AzGrU4XZ"]),
-		GOOGLE_FONTS,
-	),
-	greenhouse: recaptchaEnterprise(["6LfmcbcpAAAAAChNTbhUShzUOAMj_wY9LQIvLFX0"]),
+	ashby: {
+		...joinRules(
+			recaptchaEnterprise(["6LezdY0tAAAAAEnollNLCAI0z1VDGwM7AzGrU4XZ"]),
+			GOOGLE_FONTS,
+		),
+		// The form's build manifest, keyed by the release's commit.
+		staticFetch: [
+			{
+				host: "cdn.ashbyprd.com",
+				path: /^\/frontend_non_user\/[0-9a-f]{40}\/\.vite\/manifest\.json$/,
+			},
+		],
+	},
+	greenhouse: {
+		...recaptchaEnterprise(["6LfmcbcpAAAAAChNTbhUShzUOAMj_wY9LQIvLFX0"]),
+		// The form's translation files, one per namespace and content hash.
+		staticFetch: [
+			{
+				host: "job-boards.cdn.greenhouse.io",
+				path: /^\/locales\/[a-z]{2}(?:-[A-Z]{2})?\/[a-z_]{1,30}\.[\w-]{20,60}\.json$/,
+			},
+		],
+	},
 	lever: hcaptcha(["e33f87f8-88ec-4e1a-9a13-df9bbb1d8120"]),
 	workable: turnstile([]),
 	recruitee: { assets: [] },

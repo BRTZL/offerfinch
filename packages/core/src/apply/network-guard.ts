@@ -91,6 +91,11 @@ export interface HostRules {
 		Record<string, Readonly<Record<string, QueryValue | readonly QueryValue[]>>>
 	>;
 	widgets?: readonly WidgetRule[];
+	/**
+	 * Static files the board's own script fetches while loading (a build manifest, translation
+	 * files): GET only, never a navigation, no query string, and the whole path must match.
+	 */
+	staticFetch?: readonly { host: string; path: RegExp }[];
 }
 
 /** What the guard knows of a request to a host outside the destinations. */
@@ -258,6 +263,18 @@ export function boardHostDecision(
 		queryAllowed(url, rules, siteKeys, formHosts)
 	)
 		return { allow: true, reason: "board asset, read" };
+	if (
+		method === "GET" &&
+		!request.navigation &&
+		(request.resourceType === "fetch" ||
+			request.resourceType === "xhr" ||
+			request.resourceType === "other") &&
+		url.search === "" &&
+		(rules.staticFetch ?? []).some(
+			(f) => hostMatches(url.hostname, f.host) && f.path.test(url.pathname),
+		)
+	)
+		return { allow: true, reason: "board static file, read" };
 	return { allow: false, reason: "not an asset or a widget endpoint" };
 }
 

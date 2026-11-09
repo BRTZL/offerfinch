@@ -206,6 +206,40 @@ describe("boardHostDecision on the boards' own requests (2026-11-09 inspection)"
 	const leverOk = (f: Partial<RequestFacts>) =>
 		boardHostDecision(facts(f), lever.rules, lever.form).allow;
 
+	it("lets the boards' own static files load by GET with no query, nothing else", () => {
+		const manifest =
+			"https://cdn.ashbyprd.com/frontend_non_user/75dd703b5d0c341eca51333bf946f1a8093b9360/.vite/manifest.json";
+		expect(ashbyOk({ url: manifest, resourceType: "other" })).toBe(true);
+		expect(ashbyOk({ url: manifest, resourceType: "fetch" })).toBe(true);
+		expect(ashbyOk({ url: `${manifest}?e=ada`, resourceType: "fetch" })).toBe(
+			false,
+		);
+		expect(
+			ashbyOk({ url: manifest, resourceType: "fetch", method: "POST" }),
+		).toBe(false);
+		expect(
+			ashbyOk({
+				url: "https://cdn.ashbyprd.com/frontend_non_user/ada/.vite/manifest.json",
+				resourceType: "fetch",
+			}),
+		).toBe(false);
+		const greenhouse = sessionHosts("greenhouse", ["job-boards.greenhouse.io"]);
+		const ghOk = (url: string, method = "GET") =>
+			boardHostDecision(
+				facts({ url, method, resourceType: "fetch" }),
+				greenhouse.rules,
+				greenhouse.form,
+			).allow;
+		const locale =
+			"https://job-boards.cdn.greenhouse.io/locales/en/common.JhgW1MtlxQMWLxqjNtT6nMMubUGRVw8hHuLsUmHD0-8.json";
+		expect(ghOk(locale)).toBe(true);
+		expect(ghOk(locale, "POST")).toBe(false);
+		expect(ghOk(`${locale}?x=1`)).toBe(false);
+		expect(
+			ghOk("https://job-boards.cdn.greenhouse.io/locales/en/../../upload.json"),
+		).toBe(false);
+	});
+
 	it("lets the boards' files, scripts and widget frames load", () => {
 		expect(
 			ashbyOk({

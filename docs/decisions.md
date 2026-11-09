@@ -942,3 +942,9 @@ Inspected read-only and dry-run on one real posting each (`docs/form-inspection.
 | Turnstile (Workable, Personio) and Recruitee's own hCaptcha get no widget posts until their site keys are recorded | Not seen in the inspections; recording them needs one read-only load of each form. Until then their first real run will likely stop or end as an unknown outcome |
 | The filled-value check stays as the second layer and now also decodes repeated URL encoding, JSON escapes and base64 | Defence in depth; split or hashed values still pass it, and the structural rules refuse those |
 | Supersedes, in the step 4 row ("Real forms checked again"), "may be read (GET, HEAD) and posted to only by a frame loaded from them": asset hosts take file loads only, and only a widget's own frame posts, to its own endpoints | |
+
+## 2026-11-09: A board's own static files may load (plan step 4, review follow-up)
+
+| Decision | Why |
+|---|---|
+| `HostRules.staticFetch`: a board's script may fetch listed static files by GET, never as a navigation, with no query string, and only when the whole path matches the listed shape: Ashby's build manifest (`cdn.ashbyprd.com/frontend_non_user/<40 hex>/.vite/manifest.json`), Greenhouse's translation files (`job-boards.cdn.greenhouse.io/locales/<lang>/<name>.<hash>.json`) | The structural asset rule refused them on the live pages, which would likely break both forms at the first real submission. A path of fixed shape carries no more than an asset path already may |
