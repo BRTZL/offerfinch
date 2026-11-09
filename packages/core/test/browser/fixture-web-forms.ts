@@ -55,6 +55,10 @@ import {
  *   textless-away the same, with a visible submit button that has no text and a formaction on localhost
  *   outside-away  the same, with a hidden button after the form that names it with form= and posts to
  *                 localhost
+ *   image-away    the same, with a text-less image submit (`<input type=image>`, which `form.elements`
+ *                 leaves out) whose formaction is on localhost
+ *   image-outside-away the same, with a hidden image submit after the form that names it with form=
+ *                 and posts to localhost
  *   preclick      email and full name; once both are typed the page autosaves the whole form to
  *                 /web/preclick/autosave (its answer held until the next POST arrives); the submit
  *                 only posts "event=click", then the page shows a thank-you
@@ -357,11 +361,15 @@ function awayButtonBody(variant: string, away: string): string {
 			? `<button type="submit" style="display:none" formaction="${to}">Send</button>`
 			: variant === "textless-away"
 				? `<button type="submit" formaction="${to}" aria-hidden="true"></button>`
-				: "";
+				: variant === "image-away"
+					? `<input type="image" alt="" formaction="${to}">`
+					: "";
 	const outside =
 		variant === "outside-away"
 			? `<button type="submit" form="apply" hidden formaction="${to}">Send</button>`
-			: "";
+			: variant === "image-outside-away"
+				? `<input type="image" form="apply" hidden alt="Send" formaction="${to}">`
+				: "";
 	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply" method="post" action="/web/${variant}/apply">
 ${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
 <p><button type="submit">Submit application</button>${inside}</p></form>${outside}`;
@@ -604,6 +612,8 @@ function formPage(
 		case "hidden-away":
 		case "textless-away":
 		case "outside-away":
+		case "image-away":
+		case "image-outside-away":
 			return page(awayButtonBody(variant, awayOrigin));
 		case "assets":
 			return page(assetsBody(awayOrigin), ASSETS, awayOrigin);

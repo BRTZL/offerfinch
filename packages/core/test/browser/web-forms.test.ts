@@ -204,6 +204,10 @@ describe("reading an employer's form before review", () => {
 		"hidden-away",
 		"textless-away",
 		"outside-away",
+		// An image submit (`<input type=image>`), which form.elements leaves out, inside the form
+		// and outside it naming it with form= (Codex review, 2026-11-09).
+		"image-away",
+		"image-outside-away",
 	])(
 		"%s: a button of the form that sends elsewhere makes it a hand-off, shown or not",
 		async (variant) => {
@@ -218,23 +222,24 @@ describe("reading an employer's form before review", () => {
 		},
 	);
 
-	it("at submit, a hidden button that sends elsewhere stops the run before the claim", async () => {
-		// A read of a form with the same two questions; the live page has the hidden button.
-		const { deps, calls } = harness(
-			"hidden-away",
-			await readAs("silent", "hidden-away"),
-		);
-		const outcome = await submitStep(deps, "u1", "app-1");
-		expect(outcome).toMatchObject({
-			outcome: "needs_human",
-			reason: expect.stringMatching(
-				/^This form sends to localhost; finish it yourself\./,
-			),
-		});
-		expect(calls.map((c) => c.method)).toEqual(["stop"]);
-		expect(forms.count("hidden-away")).toBe(0);
-		expect(forms.away.filter((a) => a.method === "POST")).toEqual([]);
-	}, 60_000);
+	it.each(["hidden-away", "image-away", "image-outside-away"])(
+		"at submit, %s: a button that sends elsewhere stops the run before the claim",
+		async (variant) => {
+			// A read of a form with the same two questions; the live page has the other button.
+			const { deps, calls } = harness(variant, await readAs("silent", variant));
+			const outcome = await submitStep(deps, "u1", "app-1");
+			expect(outcome).toMatchObject({
+				outcome: "needs_human",
+				reason: expect.stringMatching(
+					/^This form sends to localhost; finish it yourself\./,
+				),
+			});
+			expect(calls.map((c) => c.method)).toEqual(["stop"]);
+			expect(forms.count(variant)).toBe(0);
+			expect(forms.away.filter((a) => a.method === "POST")).toEqual([]);
+		},
+		60_000,
+	);
 
 	it("a submit button outside the form that names it with form= is its submit", async () => {
 		const schema = await schemaOf("form-attr");
