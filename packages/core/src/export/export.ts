@@ -9,7 +9,16 @@ import {
 } from "../tailor/profile-rules";
 import { parseContact } from "../tailor/tailor";
 import { atsIssues, documentKeywords, pdfText } from "./ats";
+import { DEFAULT_LOOK, type DocumentLook, lookSlug } from "./look";
 import { markdownToDocx, markdownToHtml } from "./render";
+
+/**
+ * The export renderer's revision, in every export's file name. Bump it whenever the same look
+ * renders different bytes (revision 2: Word files took the look's font, page size and heading
+ * colour), so a re-export of an unchanged document never overwrites a file an earlier version
+ * wrote and an approval may rest on. Files from before revisions keep their names in their rows.
+ */
+const RENDER_REVISION = 2;
 
 /** Storage for exported files: a local directory in the desktop app, memory in tests. */
 export interface BlobStore {
@@ -63,7 +72,10 @@ export async function renderPdf(
 	}
 }
 
-/** One page for a letter; two for a senior CV, otherwise one, as the skill says. */
+/**
+ * One page for a letter; two for a senior CV, otherwise one, as the skill says. Pages of the
+ * look's size: the check counts the printed PDF's pages, A4 or Letter.
+ */
 export function pageLimit(
 	kind: "cv" | "cover_letter",
 	jobTitle: string,
@@ -84,6 +96,8 @@ export interface ExportInput {
 		version: number;
 		content: string;
 	}[];
+	/** Settings › Documents; unset: the default (classic, A4). */
+	look?: DocumentLook;
 }
 
 export interface ExportResult {
@@ -93,8 +107,9 @@ export interface ExportResult {
 
 /**
  * Exports the CV and letter to PDF (through the browser provider) and DOCX, stores both, and
- * runs the ATS text check on each PDF. Keys carry the source version, so a re-export after an
- * edit never overwrites the file an approval was based on.
+ * runs the ATS text check on each PDF. Keys carry the source version, the renderer revision and the look (nothing for
+ * the default look), so neither a re-export after an edit nor one in another look overwrites the
+ * file an approval was based on.
  */
 export async function exportDocuments(
 	deps: { browser: BrowserProvider; blobs: BlobStore },
@@ -103,13 +118,14 @@ export async function exportDocuments(
 	const profile = evidenceProfile(input.profile);
 	const contact = parseContact(profile);
 	const records = experienceRecords(profile);
+	const look = input.look ?? DEFAULT_LOOK;
 	const result: ExportResult = { records: [], atsIssues: [] };
 	for (const doc of input.documents) {
-		const base = `users/${input.userId}/applications/${input.applicationId}/${doc.kind}-v${doc.version}`;
+		const base = `users/${input.userId}/applications/${input.applicationId}/${doc.kind}-v${doc.version}-r${RENDER_REVISION}${lookSlug(look)}`;
 		const title = `${contact.name} ${doc.kind === "cv" ? "CV" : "Cover letter"} ${input.companyName}`;
 		const pdf = await renderPdf(
 			deps.browser,
-			markdownToHtml(doc.content, title),
+			markdownToHtml(doc.content, title, look),
 		);
 		const extracted = await pdfText(pdf);
 		const issues = atsIssues(extracted, {
@@ -120,7 +136,7 @@ export async function exportDocuments(
 			keywords: documentKeywords(doc.content, input.postingText, SKILL_TERMS),
 			maxPages: pageLimit(doc.kind, input.jobTitle),
 		});
-		const docx = await markdownToDocx(doc.content);
+		const docx = await markdownToDocx(doc.content, look);
 		await deps.blobs.put(`${base}.pdf`, pdf, CONTENT_TYPES.pdf);
 		await deps.blobs.put(`${base}.docx`, docx, CONTENT_TYPES.docx);
 		const meta = {
@@ -129,6 +145,7 @@ export async function exportDocuments(
 			atsIssues: issues,
 			browser: deps.browser.name,
 			store: deps.blobs.name,
+			look,
 		};
 		result.records.push(
 			{
@@ -143,7 +160,7 @@ export async function exportDocuments(
 				format: "docx",
 				sourceVersion: doc.version,
 				storageKey: `${base}.docx`,
-				meta: { bytes: docx.byteLength, store: deps.blobs.name },
+				meta: { bytes: docx.byteLength, store: deps.blobs.name, look },
 			},
 		);
 		result.atsIssues.push(...issues);

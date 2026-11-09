@@ -2,6 +2,7 @@ import {
 	Bell,
 	Database,
 	EyeOff,
+	FileText,
 	Filter,
 	Globe,
 	Settings2,
@@ -30,6 +31,11 @@ const GROUPS: {
 				icon: <EyeOff />,
 			},
 			{ href: "/settings/sources", label: "Sources", icon: <Globe /> },
+			{
+				href: "/settings/documents",
+				label: "Documents",
+				icon: <FileText />,
+			},
 		],
 	},
 	{

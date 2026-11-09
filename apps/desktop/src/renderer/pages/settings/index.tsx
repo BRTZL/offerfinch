@@ -26,6 +26,10 @@ const SECTIONS: Record<string, ReturnType<typeof lazyNamed>> = {
 		() => import("@/components/pipeline/settings/hidden-companies"),
 		"HiddenCompaniesSettings",
 	),
+	documents: lazyNamed(
+		() => import("@/components/pipeline/settings/documents"),
+		"DocumentSettings",
+	),
 	sources: lazyNamed(
 		() => import("@/components/pipeline/settings/sources"),
 		"SourcesSettings",

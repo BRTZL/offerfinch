@@ -79,6 +79,12 @@ export function settingsFor(latest: boolean) {
 			dismissed: true,
 			completedAt: iso(1),
 		},
+		documentLook: {
+			template: "compact",
+			font: "georgia",
+			accent: "navy",
+			pageSize: "Letter",
+		},
 		paused: true,
 		shellPath: "/opt/fixture/bin:/usr/bin:/bin",
 		linkedinEnabled: true,

@@ -1,6 +1,7 @@
 import { Marked } from "marked";
 
-import { PRINT_CSS } from "./print-css";
+import type { DocumentLook } from "./look";
+import { printCss } from "./print-css";
 
 /**
  * Markdown to the two submission formats, in plain JS so it runs on Workers: HTML (printed to
@@ -97,14 +98,19 @@ export function markdownToPreviewHtml(
 		.replace(MARKS, "");
 }
 
-export function markdownToHtml(markdown: string, title: string): string {
+/** The document as the export prints it, in a look (the default: classic, A4). */
+export function markdownToHtml(
+	markdown: string,
+	title: string,
+	look?: DocumentLook,
+): string {
 	const body = marked.parse(markdown, { async: false });
 	return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>${escapeHtml(title)}</title>
-<style>${PRINT_CSS}</style>
+<style>${printCss(look)}</style>
 </head>
 <body>
 ${body}
@@ -118,7 +124,10 @@ ${body}
  * Markdown to DOCX. The builder (and the `docx` library) loads on first use, so a process that
  * never exports a document never loads it.
  */
-export async function markdownToDocx(markdown: string): Promise<Uint8Array> {
+export async function markdownToDocx(
+	markdown: string,
+	look?: DocumentLook,
+): Promise<Uint8Array> {
 	const { buildDocx } = await import("./docx");
-	return buildDocx(markdown);
+	return buildDocx(markdown, look);
 }

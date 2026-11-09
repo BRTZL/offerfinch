@@ -6,6 +6,7 @@ import { aiRouter } from "./routers/ai";
 import { applicationRouter } from "./routers/application";
 import { dataRouter } from "./routers/data";
 import { desktopStatusRouter } from "./routers/desktop";
+import { documentLookRouter } from "./routers/document-look";
 import { inboxRouter } from "./routers/inbox";
 import { jobsRouter } from "./routers/jobs";
 import { notificationsRouter } from "./routers/notifications";
@@ -50,6 +51,8 @@ export const desktopAppRouter = {
 	ai: aiRouter,
 	/** A plan stopped after a paid call, and Resume. */
 	notifications: notificationsRouter,
+	/** Settings › Documents: the look of exported CVs and letters. */
+	documentLook: documentLookRouter,
 	onboarding: onboardingRouter,
 	data: dataRouter,
 	whatsNew: whatsNewRouter,

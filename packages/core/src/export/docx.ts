@@ -8,6 +8,8 @@ import {
 } from "docx";
 import { Marked, type Token, type Tokens } from "marked";
 
+import { ACCENTS, DEFAULT_LOOK, type DocumentLook, FONTS } from "./look";
+
 /** The same lexing as the HTML renderer (render.ts); DOCX has its own output. */
 const marked = new Marked({ gfm: true, breaks: false });
 
@@ -75,8 +77,21 @@ const HEADINGS = [
 	HeadingLevel.HEADING_4,
 ] as const;
 
-/** Markdown to DOCX bytes (loaded on demand through render.ts's markdownToDocx). */
-export async function buildDocx(markdown: string): Promise<Uint8Array> {
+/** Page sizes in twips (1/1440 inch). */
+const PAGE_TWIPS = {
+	A4: { width: 11906, height: 16838 },
+	Letter: { width: 12240, height: 15840 },
+} as const;
+
+/**
+ * Markdown to DOCX bytes (loaded on demand through render.ts's markdownToDocx). Of the look, Word
+ * gets the font (Arial for the sans fonts, Georgia for the serifs: fonts every Word has), the
+ * page size and the accent on headings; the templates' spacing stays the PDF's.
+ */
+export async function buildDocx(
+	markdown: string,
+	look: DocumentLook = DEFAULT_LOOK,
+): Promise<Uint8Array> {
 	const paragraphs: Paragraph[] = [];
 	for (const token of marked.lexer(markdown)) {
 		if (token.type === "heading") {
@@ -109,13 +124,24 @@ export async function buildDocx(markdown: string): Promise<Uint8Array> {
 				);
 		}
 	}
+	const color = ACCENTS[look.accent].hex.slice(1);
 	const doc = new Document({
 		styles: {
 			default: {
-				document: { run: { font: "Arial", size: 21 } },
+				document: { run: { font: FONTS[look.font].docx, size: 21 } },
+				// The library's sizes, in the accent instead of Word's blue.
+				heading1: { run: { color, size: 32 } },
+				heading2: { run: { color, size: 26 } },
+				heading3: { run: { color, size: 24 } },
+				heading4: { run: { color, italics: true } },
 			},
 		},
-		sections: [{ children: paragraphs }],
+		sections: [
+			{
+				properties: { page: { size: PAGE_TWIPS[look.pageSize] } },
+				children: paragraphs,
+			},
+		],
 	});
 	return new Uint8Array(await Packer.toArrayBuffer(doc));
 }
