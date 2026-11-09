@@ -79,8 +79,6 @@ export interface ApplicationRun {
 	 * "decline" option, as listed in review.
 	 */
 	schema?: SchemaField[];
-	/** An employer's form: the hosts its read saw it send to (`FormSchema.sendsTo`). */
-	sendsTo?: string[];
 	/** Called once the form is read, before the first click or keystroke (dry runs close the network). */
 	beforeFill?: () => void;
 	/** Called before the first file is chosen (boards upload on selection); a reason stops the run. */

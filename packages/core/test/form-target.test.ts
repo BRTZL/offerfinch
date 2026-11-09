@@ -7,9 +7,7 @@ import {
 } from "../src/apply/modes";
 import { hostMatches } from "../src/apply/network-guard";
 import {
-	sameSite,
 	siteOfHost,
-	webFormHosts,
 	webReadHosts,
 	webSessionHosts,
 } from "../src/apply/web-hosts";
@@ -185,41 +183,18 @@ describe("the generic host rule", () => {
 		expect(siteOfHost("jobs.acme.com.tr")).toBe("acme.com.tr");
 		expect(siteOfHost("com.tr")).toBeNull();
 		expect(siteOfHost("jobs.acme.co.uk")).toBe("acme.co.uk");
-		expect(sameSite("jobs.acme.com.es", "other.com.es")).toBe(false);
-		expect(sameSite("jobs.acme.com.es", "com.es")).toBe(false);
-		expect(sameSite("jobs.acme.com.tr", "api.acme.com.tr")).toBe(true);
+		expect(siteOfHost("other.com.es")).not.toBe(siteOfHost("jobs.acme.com.es"));
 	});
 
-	it("sends data only to the form's host and the same-site hosts its read saw, never a wildcard", () => {
-		// Codex's case: a suffix the old built-in list lacked authorized `com.es` and `*.com.es`.
-		expect(webFormHosts("https://jobs.acme.com.es/apply")).toEqual([
-			"jobs.acme.com.es",
-		]);
-		expect(
-			webFormHosts("https://jobs.acme.com.es/apply", [
-				"api.acme.com.es",
-				"com.es",
-				"*.acme.com.es",
-				"other.com.es",
-				"acme.com.es.evil.test",
-			]),
-		).toEqual(["jobs.acme.com.es", "api.acme.com.es"]);
-		expect(
-			webFormHosts("https://careers.eu.acme.co.uk/apply", [
-				"acme.co.uk",
-				"a.b.acme.co.uk",
-				"other.co.uk",
-			]),
-		).toEqual(["careers.eu.acme.co.uk", "acme.co.uk", "a.b.acme.co.uk"]);
-		// A sibling subdomain the read never saw gets nothing.
-		const hosts = webFormHosts("https://jobs.acme.com.tr/apply", [
-			"apply.acme.com.tr",
-		]);
-		const on = (host: string) => hosts.some((h) => hostMatches(host, h));
-		expect(on("apply.acme.com.tr")).toBe(true);
+	it("sends data only to the exact host of the form's page, never a sibling or a wildcard (Codex re-review, 2026-11-09)", () => {
+		const { form } = webSessionHosts("https://jobs.acme.com.tr/apply");
+		expect(form).toEqual(["jobs.acme.com.tr"]);
+		const on = (host: string) => form.some((h) => hostMatches(host, h));
+		expect(on("jobs.acme.com.tr")).toBe(true);
+		expect(on("sink.acme.com.tr")).toBe(false);
 		expect(on("api.acme.com.tr")).toBe(false);
 		expect(on("acme.com.tr")).toBe(false);
-		expect(on("evil.com.tr")).toBe(false);
+		expect(on("com.tr")).toBe(false);
 	});
 
 	it("reads, sending nothing, across the form's own site", () => {
@@ -236,23 +211,21 @@ describe("the generic host rule", () => {
 	});
 
 	it("keeps a shared host, an IP or localhost to the exact host", () => {
-		expect(webFormHosts("https://acme.github.io/jobs")).toEqual([
+		expect(webSessionHosts("https://acme.github.io/jobs").form).toEqual([
 			"acme.github.io",
 		]);
-		expect(webFormHosts("http://127.0.0.1:4000/web/single")).toEqual([
+		expect(webSessionHosts("http://127.0.0.1:4000/web/single").form).toEqual([
 			"127.0.0.1",
 		]);
-		expect(webFormHosts("http://localhost:4000/x")).toEqual(["localhost"]);
-		expect(sameSite("127.0.0.1", "localhost")).toBe(false);
-		expect(sameSite("jobs.acme.com", "apply.acme.com")).toBe(true);
-		expect(sameSite("a.github.io", "b.github.io")).toBe(false);
+		expect(webSessionHosts("http://localhost:4000/x").form).toEqual([
+			"localhost",
+		]);
+		expect(webReadHosts("https://a.github.io/jobs")).toEqual(["a.github.io"]);
 	});
 
 	it("only reads from the public asset hosts", () => {
-		const { form, rules } = webSessionHosts("https://jobs.acme.com/apply", [
-			"api.acme.com",
-		]);
-		expect(form).toEqual(["jobs.acme.com", "api.acme.com"]);
+		const { form, rules } = webSessionHosts("https://jobs.acme.com/apply");
+		expect(form).toEqual(["jobs.acme.com"]);
 		expect(rules.assets).toContain("fonts.gstatic.com");
 		for (const host of rules.assets) expect(host.startsWith("*.")).toBe(false);
 		expect(rules.widgets ?? []).toEqual([]);

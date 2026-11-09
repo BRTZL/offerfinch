@@ -26,6 +26,11 @@ export interface NavigationResult {
 	/** HTTP status of the main document, or null when the browser could not tell. */
 	status: number | null;
 	url: string;
+	/**
+	 * The URL of the document the browser answered with, after the HTTP redirects it followed
+	 * (never a script's or a meta refresh's later navigation); null when it could not tell.
+	 */
+	responseUrl?: string | null;
 }
 
 export interface GotoOptions {
@@ -201,6 +206,7 @@ export interface BrowserProvider {
 
 interface PlaywrightResponseLike {
 	status(): number;
+	url?(): string;
 }
 
 interface PlaywrightFetchResponseLike {
@@ -709,7 +715,11 @@ class PlaywrightPage implements BrowserPage {
 			throw new Error("beforeRedirect is only for open sessions");
 		if (!beforeRedirect) {
 			const response = await this.page.goto(url, gotoOptions);
-			return { status: response?.status() ?? null, url: this.page.url() };
+			return {
+				status: response?.status() ?? null,
+				url: this.page.url(),
+				responseUrl: response?.url?.() ?? null,
+			};
 		}
 		// Playwright follows redirects inside one request and its route handler never sees the hops,
 		// so main-frame documents are fetched with redirects off and each hop is followed here, after
@@ -752,7 +762,11 @@ class PlaywrightPage implements BrowserPage {
 				}
 				if (failure) throw failure;
 				if (!redirect)
-					return { status: response?.status() ?? null, url: this.page.url() };
+					return {
+						status: response?.status() ?? null,
+						url: this.page.url(),
+						responseUrl: response?.url?.() ?? null,
+					};
 				await beforeRedirect(redirect);
 				target = redirect;
 			}

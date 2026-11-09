@@ -21,7 +21,7 @@ import {
 	VISIBLE_CHALLENGE_SCRIPT,
 	verifyFilled,
 } from "./forms";
-import { sameSite } from "./web-hosts";
+import { webFormHost } from "./web-hosts";
 import type { ControlRole, WebFormModel } from "./web-model";
 import {
 	PAGE_TEXT_SCRIPT,
@@ -185,15 +185,51 @@ async function awaitForm(
 	return { scan };
 }
 
+/** A stop for a form that would send elsewhere than its page's host: the user finishes it. */
+const sendsTo = (host: string): Stop => ({
+	kind: "other_site",
+	message: `This form sends to ${host}; finish it yourself.`,
+});
+
+const hostOf = (url: string): string | null => {
+	try {
+		const { protocol, hostname } = new URL(url);
+		return /^https?:$/.test(protocol) ? hostname.toLowerCase() : null;
+	} catch {
+		return null;
+	}
+};
+
+/**
+ * Where the page is, or says it sends (its `action`, a `formaction`), when that is not the exact
+ * host of the form's page: data goes to that host alone, so the form is the user's to finish.
+ */
+function elsewhere(
+	page: BrowserPage,
+	scan: WebScan,
+	formHost: string,
+): Stop | null {
+	const here = hostOf(page.url());
+	if (here && here !== formHost) return sendsTo(here);
+	for (const endpoint of scan.endpoints) {
+		const host = hostOf(endpoint);
+		if (host && host !== formHost) return sendsTo(host);
+	}
+	return null;
+}
+
 /**
  * Opens an employer's form; a stop when the page is blocked, a challenge, a wall, on another
- * site, or shows no form. A form in a frame of the same site is opened on its own.
+ * host, sends elsewhere, or shows no form. The form's page is where the HTTP redirects led (the
+ * browser follows them before any script runs); a script or meta refresh that moves the page to
+ * another host, a frame from another host, or an `action` or `formaction` naming one is a
+ * hand-off. A form in a frame of the same host is opened on its own.
  */
 export async function openWebForm(
 	page: BrowserPage,
 	url: string,
 	allowedHosts?: string[],
-): Promise<{ scan: WebScan } | { stop: Stop }> {
+): Promise<{ scan: WebScan; formUrl: string } | { stop: Stop }> {
 	const nav = await page.goto(url, { waitUntil: "load", timeoutMs: 45_000 });
 	if (nav.status !== null && BLOCK_STATUSES.has(nav.status))
 		return {
@@ -202,17 +238,20 @@ export async function openWebForm(
 				message: `The site answered HTTP ${nav.status}.`,
 			},
 		};
+	const formUrl = nav.responseUrl ?? url;
+	const formHost = webFormHost(formUrl);
 	let found = await awaitForm(page, allowedHosts, 15_000);
 	if ("stop" in found) return found;
+	const moved = hostOf(page.url());
+	if (moved && moved !== formHost) return { stop: sendsTo(moved) };
 	const frame = found.scan.frameUrl;
 	if (frame) {
-		const here = new URL(page.url()).hostname;
 		const there = new URL(frame, page.url());
-		if (!sameSite(here, there.hostname))
+		if (there.hostname.toLowerCase() !== formHost)
 			return {
 				stop: {
 					kind: "other_site",
-					message: `The application form is in a frame from ${there.host}, another site than ${here}.`,
+					message: `The application form is in a frame from ${there.host}, not ${formHost}: this form sends to ${there.hostname}; finish it yourself.`,
 				},
 			};
 		await page.goto(there.href, { waitUntil: "load", timeoutMs: 45_000 });
@@ -220,6 +259,8 @@ export async function openWebForm(
 		if ("stop" in found) return found;
 	}
 	const { scan } = found;
+	const away = elsewhere(page, scan, formHost);
+	if (away) return { stop: away };
 	if (scan.frameHost)
 		return {
 			stop: {
@@ -236,7 +277,7 @@ export async function openWebForm(
 				message: `No application form at ${page.url()}.`,
 			},
 		};
-	return { scan };
+	return { scan, formUrl };
 }
 
 /* -------------------------------------------------------------- controls */
@@ -409,13 +450,12 @@ export async function readWebFormOnPage(
 	const opened = await openWebForm(page, url);
 	if ("stop" in opened) return { ok: false, reason: opened.stop.message };
 	page.restrictNetwork("none");
+	const formHost = webFormHost(opened.formUrl);
 	const fields: { field: WebField; page: number }[] = [];
 	const keys = new Map<string, WebField>();
 	const ambiguous = new Set<string>();
 	let scan = opened.scan;
 	let submit: WebControl | null = null;
-	// Where the form was read (after a redirect or a frame of the same site) and where it says it sends.
-	const sends = new Set([page.url(), ...scan.endpoints]);
 	for (let step = 1; step <= MAX_STEPS; step++) {
 		await readComboboxes(page, scan.fields);
 		const before = fields.length;
@@ -428,7 +468,9 @@ export async function readWebFormOnPage(
 		const next = await scanOf(page);
 		if (!next || next.fields.length === 0) break;
 		scan = next;
-		for (const endpoint of scan.endpoints) sends.add(endpoint);
+		// A later step that names another host as where it sends: the user finishes the form.
+		const away = elsewhere(page, scan, formHost);
+		if (away) return { ok: false, reason: away.message };
 	}
 	const labelled = await modelLabels(
 		fields.map((f) => f.field),
@@ -440,7 +482,7 @@ export async function readWebFormOnPage(
 			board: "web",
 			url,
 			submit: submit?.text ?? null,
-			sendsTo: sendsToOf(url, sends),
+			formUrl: opened.formUrl,
 			fields: fields.map(({ field, page: p }) => {
 				const {
 					hint: _h,
@@ -469,21 +511,6 @@ export async function readWebFormOnPage(
 			}),
 		},
 	};
-}
-
-/** The hosts of `urls` that are the form's own site, other than the form's own host. */
-function sendsToOf(formUrl: string, urls: Set<string>): string[] {
-	const own = new URL(formUrl).hostname.toLowerCase();
-	const hosts = new Set<string>();
-	for (const url of urls) {
-		try {
-			const { protocol, hostname } = new URL(url);
-			const host = hostname.toLowerCase();
-			if (/^https?:$/.test(protocol) && host !== own && sameSite(own, host))
-				hosts.add(host);
-		} catch {}
-	}
-	return [...hosts];
 }
 
 /** Labels for the controls nothing names, chosen by the model from the page's own text. */
@@ -671,6 +698,31 @@ type StepResult =
 	| { ok: true; scan: WebScan; lined: Lined }
 	| { ok: false; stop: Stop };
 
+/**
+ * Why the step shown now cannot be filled: a wall, a form that sends elsewhere, or controls that
+ * no longer line up with the reviewed list. Null when it can.
+ */
+function stepProblem(
+	page: BrowserPage,
+	scan: WebScan,
+	state: RunState,
+	lined: Lined,
+): Stop | null {
+	const wall = wallOf(scan) ?? elsewhere(page, scan, state.formHost);
+	if (wall) return wall;
+	if (lined.moved.length > 0)
+		return {
+			kind: "form_changed",
+			message: `The form's unlabelled boxes (${lined.moved.map((l) => `"${l}"`).join(", ")}) are not where review saw them, so which box is which can no longer be told.`,
+		};
+	if (lined.unexpected.length > 0)
+		return {
+			kind: "form_changed",
+			message: `The form now asks ${lined.unexpected.map((l) => `"${l}"`).join(", ")}, which was not in the approved list of what will be sent.`,
+		};
+	return null;
+}
+
 /** Fills the step shown now and checks it: every control holds its approved value or nothing. */
 async function fillStep(
 	page: BrowserPage,
@@ -678,25 +730,9 @@ async function fillStep(
 	scan: WebScan,
 	state: RunState,
 ): Promise<StepResult> {
-	const wall = wallOf(scan);
-	if (wall) return { ok: false, stop: wall };
 	const lined = lineUp(scan.fields, state.schema);
-	if (lined.moved.length > 0)
-		return {
-			ok: false,
-			stop: {
-				kind: "form_changed",
-				message: `The form's unlabelled boxes (${lined.moved.map((l) => `"${l}"`).join(", ")}) are not where review saw them, so which box is which can no longer be told.`,
-			},
-		};
-	if (lined.unexpected.length > 0)
-		return {
-			ok: false,
-			stop: {
-				kind: "form_changed",
-				message: `The form now asks ${lined.unexpected.map((l) => `"${l}"`).join(", ")}, which was not in the approved list of what will be sent.`,
-			},
-		};
+	const problem = stepProblem(page, scan, state, lined);
+	if (problem) return { ok: false, stop: problem };
 	const { plan, shown } = stepPlan(lined, run);
 	if (plan.unknown.length > 0)
 		return {
@@ -728,8 +764,9 @@ async function fillStep(
 		});
 	}
 	// An upload the page sent elsewhere is refused by the session and recorded: stop here.
-	const away = destinationProblem(page, run.allowedHosts);
-	if (away) return { ok: false, stop: { kind: "other_site", message: away } };
+	const refused = destinationProblem(page, run.allowedHosts);
+	if (refused)
+		return { ok: false, stop: { kind: "other_site", message: refused } };
 	const again = await scanOf(page);
 	if (!again)
 		return {
@@ -739,6 +776,9 @@ async function fillStep(
 				message: "The form disappeared while filling.",
 			},
 		};
+	// Filling may have pointed the form elsewhere: the claim never comes for that.
+	const moved = elsewhere(page, again, state.formHost);
+	if (moved) return { ok: false, stop: moved };
 	const now = lineUp(again.fields, state.schema);
 	const mismatches = verifyFilled(
 		plan,
@@ -949,6 +989,8 @@ function stopped(
 
 interface RunState {
 	schema: WebSchemaField[];
+	/** The exact host of the form's page: the only one the application may go to. */
+	formHost: string;
 	filled: FilledField[];
 	uploadsCleared: boolean;
 	/** The latest screenshot before a click that may send data. */
@@ -1180,6 +1222,7 @@ export async function runWebApplication(
 ): Promise<RunResult> {
 	const state: RunState = {
 		schema: (run.schema ?? []) as WebSchemaField[],
+		formHost: webFormHost(run.url),
 		filled: [],
 		uploadsCleared: false,
 		before: null,
@@ -1198,6 +1241,7 @@ export async function runWebApplication(
 			);
 		const opened = await openWebForm(page, run.url, run.allowedHosts);
 		if ("stop" in opened) return stopped(opened.stop, await shot(page), []);
+		state.formHost = webFormHost(opened.formUrl);
 		// Every reviewed question on every step must have its approved value before the first one.
 		const whole = planFill(run.schema, run.data, {
 			declineVoluntary: true,

@@ -87,6 +87,11 @@ async function schemaOf(variant: string): Promise<FormSchema> {
 	return result.schema;
 }
 
+/** The plain form's read, as if the job's link (`variant`) had shown it: the live page differs. */
+async function readAs(from: string, variant: string): Promise<FormSchema> {
+	return { ...(await schemaOf(from)), formUrl: urlOf(variant) };
+}
+
 const data = () =>
 	applicantData(
 		PROFILE,
@@ -127,8 +132,8 @@ describe("reading an employer's form before review", () => {
 			result.schema.fields.find((f) => f.key === "text:#text-1"),
 		).toMatchObject({ labelSource: "model" });
 		expect(result.schema.submit).toBe("Submit application");
-		// The form posts to its own host: no other host may receive it.
-		expect(result.schema.sendsTo).toEqual([]);
+		// The form's page, where its link landed: the only host that may receive it.
+		expect(result.schema.formUrl).toBe(urlOf("single"));
 		expect(log.filter((r) => r.allowed && r.method !== "GET")).toEqual([]);
 		expect(forms.count("single")).toBe(0);
 		// The ids change on every load; the keys do not.
@@ -737,7 +742,10 @@ describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09
 
 describe("stops on an employer's form: nothing is sent", () => {
 	it("stops when the live form asks a required question review never listed", async () => {
-		const { deps, calls } = harness("unknown", await schemaOf("single"));
+		const { deps, calls } = harness(
+			"unknown",
+			await readAs("single", "unknown"),
+		);
 		const outcome = await submitStep(deps, "u1", "app-1");
 		expect(outcome).toMatchObject({
 			outcome: "needs_human",
@@ -765,7 +773,7 @@ describe("stops on an employer's form: nothing is sent", () => {
 		"%s: hands it to the user",
 		async (variant, why) => {
 			// The schema of the plain form: the live page is what stops the run.
-			const { deps, calls } = harness(variant, await schemaOf("single"));
+			const { deps, calls } = harness(variant, await readAs("single", variant));
 			const outcome = await submitStep(deps, "u1", "app-1");
 			expect(outcome).toMatchObject({
 				outcome: "needs_human",

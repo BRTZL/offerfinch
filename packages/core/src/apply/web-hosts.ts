@@ -41,40 +41,21 @@ export function siteOfHost(host: string): string | null {
 	return getDomain(name, { allowPrivateDomains: true }) ?? null;
 }
 
-/** True when both hosts are the same site (`siteOfHost`), or the same host when it has none. */
-export function sameSite(a: string, b: string): boolean {
-	const one = a.toLowerCase();
-	const two = b.toLowerCase();
-	if (one === two) return true;
-	const site = siteOfHost(one);
-	return site !== null && site === siteOfHost(two);
-}
-
-/** A plain host name (no wildcard, no port, no path): what may be listed as a destination. */
-const PLAIN_HOST =
-	/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/;
-
 /**
- * The hosts an employer's form may send the application to, and only these, never a wildcard:
- * the form's own host, and the hosts the read before review saw the form send to (`sendsTo`:
- * where the form was read after a redirect or a frame of the same site, its `action`, its
- * buttons' `formaction`), each only when it is the same registrable domain as the form's host.
+ * The only host an employer's form may send the application to: the exact host of the form's page
+ * (the job's link after the HTTP redirects the read followed, `FormSchema.formUrl`). Nothing the
+ * page says (its `action`, a `formaction`, a script) adds another (docs/decisions.md, 2026-11-09,
+ * step 6 re-review).
  */
-export function webFormHosts(
-	formUrl: string,
-	sendsTo: readonly string[] = [],
-): string[] {
-	const host = new URL(formUrl).hostname.toLowerCase();
-	const known = sendsTo
-		.map((h) => h.toLowerCase())
-		.filter((h) => PLAIN_HOST.test(h) && sameSite(host, h));
-	return [...new Set([host, ...known])];
+export function webFormHost(formUrl: string): string {
+	return new URL(formUrl).hostname.toLowerCase();
 }
 
 /**
  * Where reading an employer's form may go (read-only, nothing typed): the form's own host, its
  * registrable domain and one label in front of it, so a redirect or a frame on the same site
- * still reads. What the read finds there becomes `sendsTo`; submission gets only those.
+ * still reads. Where the page lands after HTTP redirects is the form's page; submission sends
+ * only to that exact host (`webFormHost`).
  */
 export function webReadHosts(formUrl: string): string[] {
 	const host = new URL(formUrl).hostname.toLowerCase();
@@ -98,17 +79,14 @@ export const WEB_READ_HOSTS: readonly string[] = [
 ];
 
 /** The session hosts of a real submission on an employer's form (cf. `sessionHosts` for boards). */
-export function webSessionHosts(
-	formUrl: string,
-	sendsTo: readonly string[] = [],
-): {
+export function webSessionHosts(formUrl: string): {
 	form: string[];
 	rules: HostRules;
 } {
 	// Asset reads only (scripts, styles, fonts, images; no query string but Google Fonts' own):
 	// an employer's scoring widget has no recorded site key, so it gets no posts.
 	return {
-		form: webFormHosts(formUrl, sendsTo),
+		form: [webFormHost(formUrl)],
 		rules: joinRules({ assets: [...WEB_READ_HOSTS] }, GOOGLE_FONTS),
 	};
 }

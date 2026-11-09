@@ -352,11 +352,14 @@ async function prepareRun(
 	return {
 		run: {
 			board: context.board,
-			url,
+			// An employer's form opens where its read landed after HTTP redirects: that exact host
+			// is the only one that receives the application (web-hosts.ts `webFormHost`).
+			url:
+				context.board === "web" && read?.status === "read"
+					? (read.schema.formUrl ?? url)
+					: url,
 			mode,
-			...(read?.status === "read"
-				? { schema: read.schema.fields, sendsTo: read.schema.sendsTo ?? [] }
-				: {}),
+			...(read?.status === "read" ? { schema: read.schema.fields } : {}),
 			// The drafting model reads an employer's buttons and its page after the click; the
 			// applicant's email and phone never reach it.
 			...(context.board === "web"
@@ -463,12 +466,12 @@ function stopper(
 
 /**
  * What a real submission's session may reach. A board: its own data hosts, and its asset and
- * scoring hosts read-only (docs/form-inspection.md, 2026-11-09). An employer's own form: only its
- * own site receives data (web-hosts.ts).
+ * scoring hosts read-only (docs/form-inspection.md, 2026-11-09). An employer's own form: only the
+ * exact host of its page receives data (web-hosts.ts).
  */
 function runHosts(run: ApplicationRun, apply: ApplyDeps) {
 	return run.board === "web"
-		? webSessionHosts(run.url, run.sendsTo)
+		? webSessionHosts(run.url)
 		: sessionHosts(run.board, apply.allowedHosts ?? LOCAL_HOSTS);
 }
 
