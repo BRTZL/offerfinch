@@ -32,6 +32,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  *   posting-next  email and full name shown, phone and location in a hidden step; its "Next" is a
  *                 native submit button: clicking it posts the first step (and redirects to /thanks)
  *   formless      name and email with no <form> around them, and a lone untyped "Go" button
+ *   silent        name and email; the submit sends nothing and swaps the form for a thank-you
  *   assets        name, email and location; loads a logo from localhost, and on input asks localhost
  *                 for images whose paths carry pieces of what was typed (base64 pieces, the first word)
  */
@@ -235,6 +236,18 @@ ${text("Email address", "email", { type: "email" })}${text("Full name", "full_na
 <p><button>Go</button></p></div>`;
 }
 
+function silentBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+const SILENT = `const form = document.getElementById('apply');
+form.addEventListener('submit', (e) => {
+	e.preventDefault();
+	form.outerHTML = '<div class="thanks"><h2>Thank you for applying!</h2></div>';
+});`;
+
 function assetsBody(away: string): string {
 	return `<h1>Robotics Engineer at Acme Robotics</h1><img src="${away}/web/assets/logo.png" alt="">
 <form id="apply" method="post" action="/web/assets/apply">
@@ -338,6 +351,8 @@ function formPage(
 			return page(postingNextBody());
 		case "formless":
 			return page(formlessBody());
+		case "silent":
+			return page(silentBody(), SILENT);
 		case "assets":
 			return page(assetsBody(awayOrigin), ASSETS, awayOrigin);
 		default:

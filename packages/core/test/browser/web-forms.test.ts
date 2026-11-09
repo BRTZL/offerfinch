@@ -716,6 +716,8 @@ describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09
 		["preview", 0, /the form is still on the page/],
 		// Posted and the form went, but the thank-you words were on the page before the click.
 		["echo", 1, /does not bear out/],
+		// A new thank-you replaced the form, but nothing was sent.
+		["silent", 0, /sent nothing/],
 	])(
 		"%s: not a confirmation without a send, a new page and new words",
 		async (variant, posts, why) => {
