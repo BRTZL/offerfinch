@@ -255,52 +255,102 @@ function nextHop(response: PlaywrightFetchResponseLike, from: Hop): Hop | null {
 	return { url, method, keepsBody: resent && from.keepsBody };
 }
 
+/** The reason logged for a frame's or subresource's redirect that ends on another origin. */
+export const CROSS_ORIGIN_REFUSED = "cross-origin redirect refused";
+
+/** The reason logged for an answer the guard fetched that is larger than `MAX_FETCHED_BYTES`. */
+export const TOO_LARGE_REFUSED = "answer too large, refused";
+
+/** The largest answer the guard hands to the page from a request it fetched itself (25 MiB). */
+export const MAX_FETCHED_BYTES = 25 * 1024 * 1024;
+
+/** Credentials that never go on to another origin, nor come back once dropped in a chain. */
+const CREDENTIALS = /^(?:cookie|authorization|proxy-authorization)$/i;
+
+/**
+ * True when `response` is larger than `MAX_FETCHED_BYTES`. Playwright has already read it whole by
+ * then (its fetch has no size limit), so the cap bounds what reaches the page, not the download.
+ * `content-length` is trusted when present, so the body is not copied out just to be measured.
+ */
+async function tooLarge(
+	response: PlaywrightFetchResponseLike,
+): Promise<boolean> {
+	const length = response.headers()["content-length"];
+	if (length !== undefined && /^\d+$/.test(length))
+		return Number(length) > MAX_FETCHED_BYTES;
+	const body = await response.body?.();
+	return (body?.byteLength ?? 0) > MAX_FETCHED_BYTES;
+}
+
+/** Removes from `headers` (in place) every header whose name matches `names`. */
+function dropHeaders(headers: Record<string, string>, names: RegExp): void {
+	for (const name of Object.keys(headers))
+		if (names.test(name)) delete headers[name];
+}
+
+/** Why `hop`, after `count` hops followed, is refused before `check` runs, or null. */
+function hopLimit(hop: Hop, count: number): string | null {
+	if (!/^https?:/.test(hop.url)) return OFF_THE_WEB;
+	return count >= MAX_REDIRECTS
+		? `more than ${MAX_REDIRECTS} redirects, refused`
+		: null;
+}
+
+/** The result of `followChecked`: the last answer, or the hop refused and why. */
+type Followed =
+	| { response: PlaywrightFetchResponseLike; followed: Hop[] }
+	| { refused: string; hop: Hop; followed: Hop[] };
+
 /**
  * Follows the redirects of a request the guard fetched (`first`, its answer to `route`'s own
  * request) here, one hop at a time with redirects off: the browser follows a fulfilled 3xx by
  * itself and never asks the route again, so a second hop (public, then this Mac) would go
  * unseen. Each hop is checked first (`check` returns why it is refused, or null); an off-the-web
  * hop and the eleventh are refused. Ends with the last answer, or the refused hop.
+ *
+ * The headers go forward hop by hop: once a hop changes origin, the credentials are dropped for
+ * the rest of the chain, even back on the first origin. The `Cookie` header is never copied: the
+ * context's request client adds the cookies it holds for each hop's own URL, and stores each
+ * hop's `Set-Cookie` against that URL (`fulfillFollowed` keeps them from the page).
+ *
+ * `sameOrigin` (anything but the page's main frame, whose redirect becomes a new navigation): the
+ * answer is fulfilled under the first URL, so it would take the first URL's origin; a chain that
+ * ends on another origin is refused. An answer larger than `MAX_FETCHED_BYTES` is refused.
  */
 async function followChecked(
 	route: PlaywrightRouteLike,
 	first: PlaywrightFetchResponseLike,
 	check: (hop: Hop) => string | null,
-): Promise<
-	| { response: PlaywrightFetchResponseLike; followed: Hop[] }
-	| { refused: string; hop: Hop; followed: Hop[] }
-> {
+	options: { sameOrigin: boolean },
+): Promise<Followed> {
 	const request = route.request();
-	let from: Hop = {
+	const start: Hop = {
 		url: request.url(),
 		method: request.method(),
 		keepsBody: true,
 	};
+	let from = start;
 	let response = first;
 	const followed: Hop[] = [];
-	for (;;) {
-		const hop = nextHop(response, from);
-		if (!hop) return { response, followed };
-		const refused = !/^https?:/.test(hop.url)
-			? OFF_THE_WEB
-			: followed.length >= MAX_REDIRECTS
-				? `more than ${MAX_REDIRECTS} redirects, refused`
-				: check(hop);
+	const headers = { ...(request.headers?.() ?? {}) };
+	dropHeaders(headers, /^(?:host|cookie|content-length)$/i);
+	// The last hop fetched, refused after all: not logged as followed.
+	const refuseLast = (refused: string): Followed => ({
+		refused,
+		hop: from,
+		followed: from === start ? followed : followed.slice(0, -1),
+	});
+	for (let hop = nextHop(response, from); hop; hop = nextHop(response, from)) {
+		const refused = hopLimit(hop, followed.length) ?? check(hop);
 		if (refused) return { refused, hop, followed };
-		const headers = { ...(request.headers?.() ?? {}) };
-		// As the browser would: no credentials to another origin (the context adds its cookies).
-		const crossOrigin = originOf(hop.url) !== originOf(from.url);
-		for (const name of Object.keys(headers))
-			if (
-				/^(?:host|cookie|content-length)$/i.test(name) ||
-				(!hop.keepsBody && /^content-type$/i.test(name)) ||
-				(crossOrigin && /^(?:proxy-)?authorization$/i.test(name))
-			)
-				delete headers[name];
+		// As the browser would: no credentials to another origin, and none again after that.
+		if (originOf(hop.url) !== originOf(from.url))
+			dropHeaders(headers, CREDENTIALS);
+		if (!hop.keepsBody) dropHeaders(headers, /^content-type$/i);
 		response = await route.fetch({
 			url: hop.url,
 			method: hop.method,
-			headers,
+			headers: { ...headers },
 			maxRedirects: 0,
 			// Unset sends the first request's body again; a hop that drops it sends none.
 			...(hop.keepsBody ? {} : { postData: Buffer.alloc(0) }),
@@ -308,6 +358,34 @@ async function followChecked(
 		followed.push(hop);
 		from = hop;
 	}
+	if (options.sameOrigin && originOf(from.url) !== originOf(start.url))
+		return refuseLast(CROSS_ORIGIN_REFUSED);
+	if (await tooLarge(response)) return refuseLast(TOO_LARGE_REFUSED);
+	return { response, followed };
+}
+
+/**
+ * Fulfills `route` with the answer `followChecked` ended on. After a redirect, the answer's
+ * `Set-Cookie` headers are dropped: the browser would apply them to the first URL's host, while
+ * the request client has already stored them against the hop's real URL.
+ */
+function fulfillFollowed(
+	route: PlaywrightRouteLike,
+	result: { response: PlaywrightFetchResponseLike; followed: Hop[] },
+): Promise<void> {
+	if (result.followed.length === 0)
+		return route.fulfill({ response: result.response as never });
+	const headers = Object.fromEntries(
+		Object.entries(result.response.headers()).filter(
+			([name]) => !/^set-cookie2?$/i.test(name),
+		),
+	);
+	return route.fulfill({ response: result.response as never, headers });
+}
+
+/** A refusal `followChecked` makes that ends the request quietly, never the run. */
+function quietRefusal(reason: string): boolean {
+	return reason === CROSS_ORIGIN_REFUSED || reason === TOO_LARGE_REFUSED;
 }
 
 /**
@@ -824,10 +902,13 @@ class PlaywrightPage implements BrowserPage {
 			const refused = check(mainHop);
 			if (refused) return refuseHop(mainHop, refused);
 		}
-		const result = mainHop
+		const result: Followed = mainHop
 			? { response: first, followed: [] }
-			: await followChecked(route, first, check);
-		if ("refused" in result) {
+			: await followChecked(route, first, check, {
+					sameOrigin: !navigation,
+				});
+		// A quiet refusal ends this request only: the request itself was sent and is logged.
+		if ("refused" in result && !quietRefusal(result.refused)) {
 			this.logFollowed(result.followed, seq);
 			return refuseHop(result.hop, result.refused);
 		}
@@ -844,9 +925,10 @@ class PlaywrightPage implements BrowserPage {
 			...(answerHtml ? { answerHtml } : {}),
 		});
 		this.logFollowed(result.followed, seq);
+		if ("refused" in result) return refuseHop(result.hop, result.refused);
 		if (mainHop) return this.loadHop(route, request, mainHop);
 		if (navigation) this.pageHops = 0;
-		return route.fulfill({ response: result.response as never });
+		return fulfillFollowed(route, result);
 	}
 
 	/**
@@ -970,9 +1052,9 @@ class PlaywrightPage implements BrowserPage {
 				: readHopRefusal(hop, request.postData());
 		const mainHop = this.mainFrameHop(request, first);
 		const hopRefusal = mainHop && check(mainHop);
-		const result = mainHop
+		const result: Followed = mainHop
 			? { response: first, followed: [] }
-			: await followChecked(route, first, check);
+			: await followChecked(route, first, check, { sameOrigin: false });
 		const refused =
 			mainHop && hopRefusal
 				? { refused: hopRefusal, hop: mainHop }
@@ -994,7 +1076,7 @@ class PlaywrightPage implements BrowserPage {
 		if (mainHop) await this.loadHop(route, request, mainHop);
 		else if ("response" in result) {
 			this.pageHops = 0;
-			await route.fulfill({ response: result.response as never });
+			await fulfillFollowed(route, result);
 		}
 		return true;
 	}
@@ -1064,11 +1146,17 @@ class PlaywrightPage implements BrowserPage {
 		route: PlaywrightRouteLike,
 	): Promise<void> {
 		const request = route.request();
-		let result: Awaited<ReturnType<typeof followChecked>>;
+		const mainFrame =
+			request.isNavigationRequest() &&
+			request.frame() === this.page.mainFrame();
+		let result: Followed;
 		try {
 			const first = await route.fetch({ maxRedirects: 0 });
-			result = await followChecked(route, first, (hop) =>
-				readHopRefusal(hop, request.postData()),
+			result = await followChecked(
+				route,
+				first,
+				(hop) => readHopRefusal(hop, request.postData()),
+				{ sameOrigin: !mainFrame },
 			);
 		} catch (error) {
 			// Closing the session ends it in `routeUntilClosed`; a host that cannot be reached (an
@@ -1088,7 +1176,7 @@ class PlaywrightPage implements BrowserPage {
 			});
 			return route.abort("blockedbyclient");
 		}
-		return route.fulfill({ response: result.response as never });
+		return fulfillFollowed(route, result);
 	}
 
 	freezeAssets(): void {

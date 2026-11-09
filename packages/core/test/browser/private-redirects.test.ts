@@ -115,12 +115,12 @@ const PROBE = `(() => {
 })()`;
 
 const MOVED = `(async () => {
-	const get = await fetch('/moved').then((r) => r.json());
+	const get = await fetch('/moved').then((r) => r.json(), () => 'failed');
 	const post = await fetch('/moved-post', {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({ query: 'query { jobs }' }),
-	}).then((r) => r.json());
+	}).then((r) => r.json(), () => 'failed');
 	return { get, post };
 })()`;
 
@@ -198,7 +198,8 @@ describe.each(["read_only", "allowlist"] as const)(
 		it("sends no credentials on to another origin", async () => {
 			await withPage(network, (page) =>
 				page.evaluate(
-					"fetch('/moved', { headers: { authorization: 'Bearer probe' } }).then((r) => r.json())",
+					// The answer is refused (another origin, redirect-origins.test.ts); the hop is asked.
+					"fetch('/moved', { headers: { authorization: 'Bearer probe' } }).catch(() => null)",
 				),
 			);
 			expect(hits).toContain("GET cdn.acme.test/data");
@@ -208,12 +209,11 @@ describe.each(["read_only", "allowlist"] as const)(
 			expect(credentials.has("GET cdn.acme.test/data")).toBe(false);
 		}, 30_000);
 
-		it("still follows a redirect between public hosts", async () => {
+		it("checks a redirect between public hosts, then refuses it as another origin", async () => {
+			// Fulfilled under the first URL, the answer would take the first URL's origin
+			// (redirect-origins.test.ts); a chain on one origin is still followed there.
 			const answer = await withPage(network, (page) => page.evaluate(MOVED));
-			expect(answer).toEqual({
-				get: { ok: true, method: "GET" },
-				post: { ok: true, method: "POST" },
-			});
+			expect(answer).toEqual({ get: "failed", post: "failed" });
 			expect(hits).toEqual(
 				expect.arrayContaining([
 					"GET boards.acme.test/moved",
