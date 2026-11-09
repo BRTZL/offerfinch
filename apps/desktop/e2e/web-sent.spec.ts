@@ -211,6 +211,12 @@ test("an employer's form is sent, check your email; Got the email moves it to Ap
 			"The employer's page showed",
 		);
 		await expect(attempt.getByTestId("proof-field").first()).toBeVisible();
+		// Finishing it by hand waits for It didn't go through: no steps, no I submitted this.
+		await expect(inspector.getByTestId("sent-check-email")).toBeVisible();
+		await expect(inspector.getByTestId("got-email")).toBeEnabled();
+		await expect(inspector.getByTestId("handoff")).toHaveCount(0);
+		await expect(inspector.getByTestId("mark-submitted")).toHaveCount(0);
+		await expect(inspector.getByTestId("retry")).toHaveCount(0);
 
 		await page.getByTestId("stop-sheet-open").click();
 		const sheet = page.getByTestId("stop-sheet");
