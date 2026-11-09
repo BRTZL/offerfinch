@@ -31,6 +31,22 @@ export const BOARD_SUBMISSION_MODES: Readonly<
 		mode: "auto",
 		why: "Lever scores the browser invisibly at submit (hCaptcha and Cloudflare's bot script): a thank-you page is not proof the employer received it.",
 	},
+	workable: {
+		mode: "auto",
+		why: "Workable loads Cloudflare Turnstile on its form and decides at submit: a thank-you page is not proof the employer received it.",
+	},
+	recruitee: {
+		mode: "auto",
+		why: "Recruitee scores the browser invisibly at submit (its own hCaptcha): a thank-you page is not proof the employer received it.",
+	},
+	teamtailor: {
+		mode: "auto",
+		why: "Teamtailor showed no scoring widget, but its form carries verification tokens checked at submit: a thank-you page is not proof the employer received it.",
+	},
+	personio: {
+		mode: "auto",
+		why: "Personio scores the browser invisibly at submit (Cloudflare Turnstile): a thank-you page is not proof the employer received it.",
+	},
 });
 
 export interface ModeDecision {
@@ -43,8 +59,10 @@ export interface ModeDecision {
  * board does. A job added by hand (`manual`) names no board to submit on. LinkedIn jobs are read by
  * the local runner only: Easy Apply and LinkedIn's apply controls are never used (docs/decisions.md,
  * phase 4). Indeed and Glassdoor's own apply sit behind challenges and logins and stay hand-off.
- * The other boards, the web and the feeds have no form filler yet (docs/auto-apply-plan.md, steps
- * 5 and 6): until theirs lands they are hand-off too. No option changes this.
+ * SmartRecruiters' application form answers an automated browser with a visible CAPTCHA
+ * (docs/form-inspection.md, 2026-11-09). The web and the feeds have no form filler yet
+ * (docs/auto-apply-plan.md, step 6): until theirs lands they are hand-off too. No option changes
+ * this.
  */
 const NOT_YET =
 	"Nothing is filled or sent automatically: automatic filling is not available here yet.";
@@ -58,11 +76,8 @@ export const HANDOFF_SOURCES: Readonly<Record<string, string>> = Object.freeze({
 		"Found on Indeed: open the posting and apply yourself. Nothing is filled or sent automatically, and Indeed's own apply is never used.",
 	glassdoor:
 		"Found on Glassdoor: open the posting and apply yourself. Nothing is filled or sent automatically, and Glassdoor's own apply is never used.",
-	smartrecruiters: `Found on SmartRecruiters: open the posting and apply on SmartRecruiters yourself. ${NOT_YET}`,
-	workable: `Found on Workable: open the posting and apply on Workable yourself. ${NOT_YET}`,
-	recruitee: `Found on Recruitee: open the posting and apply on the company's Recruitee page yourself. ${NOT_YET}`,
-	teamtailor: `Found on Teamtailor: open the posting and apply on the company's Teamtailor page yourself. ${NOT_YET}`,
-	personio: `Found on Personio: open the posting and apply on the company's Personio page yourself. ${NOT_YET}`,
+	smartrecruiters:
+		"Found on SmartRecruiters: open the posting and apply on SmartRecruiters yourself. Nothing is filled or sent automatically: its application form shows an automated browser a CAPTCHA (DataDome) instead of the form.",
 	web: `Found on the web: open the posting and apply on the employer's site yourself. ${NOT_YET}`,
 	remotive: `Found on Remotive: open the posting on Remotive and apply yourself. ${NOT_YET}`,
 	remoteok: `Found on Remote OK: open the posting on Remote OK and apply yourself. ${NOT_YET}`,

@@ -55,7 +55,10 @@ const WHY = "Why do you want to work at Acme Robotics?";
 const NOTICE = "What is your notice period?";
 
 /** [key, label, required, options, section] per board, as the fixtures render them. */
-const EXPECTED: Record<Board, [string, string, boolean, string[], string][]> = {
+const EXPECTED: Record<
+	"ashby" | "greenhouse" | "lever",
+	[string, string, boolean, string[], string][]
+> = {
 	ashby: [
 		["text:_systemfield_name", "Name", true, [], ""],
 		["text:_systemfield_email", "Email", true, [], ""],

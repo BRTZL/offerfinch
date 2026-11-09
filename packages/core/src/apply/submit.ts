@@ -20,6 +20,7 @@ import {
 	exactOption,
 	markdownToPlain,
 	sameQuestion,
+	sessionHosts,
 	type UnknownQuestion,
 } from "./forms";
 import { submissionModeForSource } from "./modes";
@@ -460,9 +461,13 @@ export async function submitStep(
 			apply,
 			{
 				...run,
-				// The run stays on these hosts: redirects, navigations, uploads and the submission
-				// itself are refused anywhere else, and the page is checked again before the claim.
-				allowedHosts: apply.allowedHosts ?? LOCAL_HOSTS,
+				// The run stays on these hosts and the board's own asset and scoring hosts:
+				// redirects, navigations, uploads and the submission itself are refused anywhere
+				// else, and the page is checked again before the claim.
+				allowedHosts: sessionHosts(
+					run.board,
+					apply.allowedHosts ?? LOCAL_HOSTS,
+				),
 				// Boards upload a file as soon as it is chosen: re-check the switch first, so a
 				// pause during the fill stops before the CV leaves.
 				beforeUpload: async () =>

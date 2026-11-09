@@ -255,6 +255,69 @@ export async function openForm(
 
 const at = (ref: string) => `[data-jp="${ref}"]`;
 
+/** Page script: why the submit button cannot take a click (missing, or covered), else null. */
+function coveredScript(submit: string): string {
+	return `(() => {
+	const button = document.querySelector(${JSON.stringify(submit)});
+	if (!button) return "The submit button is not on the page.";
+	button.scrollIntoView({ block: "center" });
+	const r = button.getBoundingClientRect();
+	const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+	if (!hit || hit === button || button.contains(hit)) return null;
+	return "Something covers the submit button (a banner or dialog); it was not clicked.";
+})()`;
+}
+
+/**
+ * Page script: for a radio or checkbox the board hides and draws itself (Recruitee), stamps the
+ * visible control that toggles it (its label, or the element naming it) and says whether it is
+ * ticked now. Null when the input itself can be clicked.
+ */
+function drawnChoiceScript(ref: string, index: number): string {
+	return `(() => {
+	const input = document.querySelectorAll('[data-jp="${ref}"]')[${index}];
+	if (!input) return null;
+	const shown = (el) => { if (!el) return false; const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 2 && r.height > 2 && s.visibility !== "hidden" && s.display !== "none"; };
+	// An ARIA radio or checkbox drawn around the input is the control people click (Workable).
+	const aria = input.closest("[role=radio], [role=checkbox]");
+	if (shown(aria)) {
+		for (const el of document.querySelectorAll("[data-jp-click]")) el.removeAttribute("data-jp-click");
+		aria.setAttribute("data-jp-click", "1");
+		return { checked: input.checked };
+	}
+	if (shown(input)) {
+		// Shown but covered by the board's own drawing (Workable): only a click on top reaches it.
+		input.scrollIntoView({ block: "center" });
+		const r = input.getBoundingClientRect();
+		const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+		if (!hit || hit === input || input.contains(hit)) return null;
+	}
+	for (const el of document.querySelectorAll("[data-jp-click]")) el.removeAttribute("data-jp-click");
+	const named = (input.getAttribute("aria-labelledby") || "").split(/\\s+/).filter(Boolean).map((id) => document.getElementById(id));
+	const target = [...(input.labels || []), input.closest("label"), input.closest("[role=radio], [role=checkbox]"), ...named].find(shown);
+	if (!target) return null;
+	target.setAttribute("data-jp-click", "1");
+	return { checked: input.checked };
+})()`;
+}
+
+/** Ticks or unticks one option; a hidden, self-drawn control is toggled through its label. */
+async function setChoice(
+	page: BrowserPage,
+	field: FormField,
+	index: number,
+	on: boolean,
+): Promise<void> {
+	const drawn = await safeEvaluate<{ checked: boolean } | null>(
+		page,
+		drawnChoiceScript(field.ref, index),
+	);
+	const selector = `${at(field.ref)} >> nth=${index}`;
+	if (!drawn) await (on ? page.check(selector) : page.uncheck(selector));
+	// verifyFilled reads every control again afterwards, so a click that did nothing is caught.
+	else if (drawn.checked !== on) await page.click("[data-jp-click]");
+}
+
 /** Ticks exactly the approved options; a checkbox the form had ticked otherwise is unticked. */
 async function chooseIn(
 	page: BrowserPage,
@@ -265,9 +328,9 @@ async function chooseIn(
 	const current = new Set((field.current ?? []).map(questionKeyOf));
 	for (const [index, option] of field.options.entries()) {
 		const key = questionKeyOf(option);
-		if (wanted.has(key)) await page.check(`${at(field.ref)} >> nth=${index}`);
+		if (wanted.has(key)) await setChoice(page, field, index, true);
 		else if (field.kind === "checkbox" && current.has(key))
-			await page.uncheck(`${at(field.ref)} >> nth=${index}`);
+			await setChoice(page, field, index, false);
 	}
 }
 
@@ -294,7 +357,7 @@ async function perform(
 				await page.selectOption(at(action.ref), "");
 			else
 				for (const [index] of field.options.entries())
-					await page.uncheck(`${at(action.ref)} >> nth=${index}`);
+					await setChoice(page, field, index, false);
 			return null;
 		case "yesno": {
 			const index = field.options.findIndex(
@@ -384,6 +447,20 @@ function againstSchema(
 	};
 }
 
+/** The board's own cookie banner covers the form (Workable's backdrop): declines it once. */
+async function declineBoardCookies(
+	page: BrowserPage,
+	config: BoardConfig,
+): Promise<void> {
+	const button = config.declineCookies;
+	if (!button) return;
+	const shown = await safeEvaluate<boolean>(
+		page,
+		`(() => { const b = document.querySelector(${JSON.stringify(button)}); if (!b) return false; const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0; })()`,
+	);
+	if (shown) await page.click(button).catch(() => {});
+}
+
 /** Scans, plans and fills. Stops before the first keystroke when a required question is unknown. */
 export async function fillForm(
 	page: BrowserPage,
@@ -404,9 +481,11 @@ export async function fillForm(
 	const { fields } = checked;
 	const plan = planFill(fields, run.data, {
 		declineVoluntary: run.schema !== undefined,
+		plainLocation: config.plainLocation === true,
 	});
 	// Before the first interaction of any kind (clicks included): dry runs close the network here.
 	run.beforeFill?.();
+	await declineBoardCookies(page, config);
 	// A combobox lists its options only when open: read them so the question can offer them.
 	for (const question of plan.unknown) {
 		const field = fields.find((f) => (f.label || f.name) === question.label);
@@ -593,6 +672,18 @@ export async function runApplication(
 					kind: "unrecognized_page",
 					message: away ?? "The form is no longer on the page.",
 				},
+				screenshot: before,
+				filled,
+			};
+		// A banner over the submit button would swallow the one click after the claim.
+		const covered = await safeEvaluate<string | null>(
+			page,
+			coveredScript(config.submit),
+		);
+		if (covered)
+			return {
+				outcome: "stopped",
+				stop: { kind: "unrecognized_page", message: covered },
 				screenshot: before,
 				filled,
 			};

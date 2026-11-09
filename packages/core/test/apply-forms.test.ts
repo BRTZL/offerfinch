@@ -3,11 +3,15 @@ import { describe, expect, it } from "vitest";
 import {
 	type ApplicantData,
 	applyUrl,
+	BOARD_CONFIGS,
+	BOARDS,
 	exactOption,
 	type FormField,
 	markdownToPlain,
 	planFill,
 	sameQuestion,
+	sessionHosts,
+	verifyFilled,
 } from "../src/apply/forms";
 
 const data: ApplicantData = {
@@ -68,6 +72,74 @@ describe("answer matching", () => {
 		expect(applyUrl("lever", job, { lever: "http://127.0.0.1:9/lever/" })).toBe(
 			"http://127.0.0.1:9/lever/acme/123/apply",
 		);
+		expect(applyUrl("workable", { ...job, externalId: "AB12CD" })).toBe(
+			"https://apply.workable.com/acme/j/AB12CD/apply/",
+		);
+		expect(
+			applyUrl("recruitee", { ...job, externalId: "acme:platform-engineer" }),
+		).toBe("https://acme.recruitee.com/o/platform-engineer/c/new");
+		expect(
+			applyUrl("teamtailor", {
+				url: "https://acme.teamtailor.com/jobs/4100001-platform-engineer",
+				externalId: "4100001",
+				companyKey: "acme",
+			}),
+		).toBe(
+			"https://acme.teamtailor.com/jobs/4100001-platform-engineer/applications/new",
+		);
+		expect(applyUrl("personio", job)).toBe(
+			"https://acme.jobs.personio.de/job/123/apply",
+		);
+		expect(
+			applyUrl("personio", job, { personio: "http://127.0.0.1:9/personio" }),
+		).toBe("http://127.0.0.1:9/personio/acme/job/123/apply");
+	});
+
+	it("lets a submission reach a board's own asset and scoring hosts, never trackers", () => {
+		const hosts = sessionHosts("personio", ["acme.jobs.personio.de"]);
+		expect(hosts).toEqual([
+			"acme.jobs.personio.de",
+			"assets.cdn.personio.de",
+			"challenges.cloudflare.com",
+		]);
+		expect(sessionHosts("ashby", ["jobs.ashbyhq.com"])).toEqual([
+			"jobs.ashbyhq.com",
+		]);
+		for (const board of BOARDS)
+			for (const host of BOARD_CONFIGS[board].hosts ?? [])
+				expect(host).not.toMatch(
+					/googletagmanager|google-analytics|facebook|linkedin|reddit|sentry|ziggeo|analytics/,
+				);
+	});
+
+	it("reads a phone number whose country code moved into the widget's picker", () => {
+		const phone = {
+			ref: "1",
+			kind: "text" as const,
+			label: "Phone",
+			required: false,
+			name: "phone",
+			options: [],
+			visible: true,
+		};
+		const plan = {
+			actions: [
+				{
+					ref: "1",
+					label: "Phone",
+					kind: "fill" as const,
+					value: "+90 555 000 00 00",
+				},
+			],
+			unknown: [],
+			blank: [],
+		};
+		expect(
+			verifyFilled(plan, [phone], [{ ...phone, current: ["555 000 00 00"] }]),
+		).toEqual([]);
+		expect(
+			verifyFilled(plan, [phone], [{ ...phone, current: ["000 00 00"] }]),
+		).toHaveLength(1);
 	});
 });
 
