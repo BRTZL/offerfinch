@@ -25,7 +25,7 @@ import {
 	VISIBLE_CHALLENGE_SCRIPT,
 	verifyFilled,
 } from "./forms";
-import { webFormHost } from "./web-hosts";
+import { linkMoved, webFormHost } from "./web-hosts";
 import type { ControlRole, WebFormModel } from "./web-model";
 import {
 	PAGE_TEXT_SCRIPT,
@@ -221,9 +221,10 @@ function elsewhere(
 /**
  * Opens an employer's form; a stop when the page is blocked, a challenge, a wall, on another
  * host, sends elsewhere, or shows no form. The form's page is where the HTTP redirects led (the
- * browser follows them before any script runs); a script or meta refresh that moves the page to
- * another host, a frame from another host, or an `action` or `formaction` naming one is a
- * hand-off. A form in a frame of the same host is opened on its own.
+ * browser follows them before any script runs), and only when they kept the link's own host; a
+ * redirect, a script or a meta refresh that moves the page to another host, a frame from another
+ * host, or an `action` or `formaction` naming one is a hand-off. A form in a frame of the same
+ * host is opened on its own.
  */
 export async function openWebForm(
 	page: BrowserPage,
@@ -239,11 +240,14 @@ export async function openWebForm(
 			},
 		};
 	const formUrl = nav.responseUrl ?? url;
+	// An HTTP redirect to another host never makes that host the destination: the user finishes it.
+	const moved = linkMoved(url, formUrl);
+	if (moved) return { stop: { kind: "other_site", message: moved } };
 	const formHost = webFormHost(formUrl);
 	let found = await awaitForm(page, allowedHosts, 15_000);
 	if ("stop" in found) return found;
-	const moved = hostOf(page.url());
-	if (moved && moved !== formHost) return { stop: sendsTo(moved) };
+	const here = hostOf(page.url());
+	if (here && here !== formHost) return { stop: sendsTo(here) };
 	const frame = found.scan.frameUrl;
 	if (frame) {
 		const there = new URL(frame, page.url());

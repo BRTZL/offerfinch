@@ -29,7 +29,7 @@ import {
 } from "./forms";
 import { submissionModeAfterRead, submissionModeForSource } from "./modes";
 import { runWebApplication } from "./web-form";
-import { webSessionHosts } from "./web-hosts";
+import { linkMoved, webSessionHosts } from "./web-hosts";
 import { webFormModelFor } from "./web-model";
 
 /**
@@ -346,6 +346,13 @@ async function prepareRun(
 		return {
 			stop: "The employer's form was not read before review, so no list of what will be sent was approved for it; apply on the employer's site yourself.",
 		};
+	// A read saved before redirects to another host became a hand-off may hold a form page on
+	// another host than the job's link: never opened, never sent to.
+	const moved =
+		context.board === "web" && read?.status === "read" && read.schema.formUrl
+			? linkMoved(url, read.schema.formUrl)
+			: null;
+	if (moved) return { stop: moved };
 	const data = applicantData(profile, context, letter !== null);
 	return {
 		run: {

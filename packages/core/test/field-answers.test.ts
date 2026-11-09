@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { openFormQuestions, planFormFields } from "../src/apply/field-answers";
+import {
+	openFormQuestions,
+	planFormFields,
+	whatWillBeSent,
+} from "../src/apply/field-answers";
 import {
 	alignWithSchema,
 	type FormSchema,
@@ -212,6 +216,33 @@ describe("answers per field", () => {
 			kind: "combobox",
 			value: "Decline To Self Identify",
 		});
+	});
+});
+
+describe("review's header names where an employer's form sends (Codex review, 2026-11-09)", () => {
+	const readOf = (schema: FormSchema) =>
+		whatWillBeSent(
+			{ status: "read", schema, readAt: "2026-11-09T00:00:00Z" },
+			DATA,
+			[],
+		);
+
+	it("names the form page's host on an employer's form", () => {
+		const web: FormSchema = {
+			...SCHEMA,
+			board: "web",
+			url: "https://jobs.acme.test/apply",
+			formUrl: "https://jobs.acme.test/careers/apply?id=1",
+		};
+		expect(readOf(web)).toMatchObject({ sendsTo: "jobs.acme.test" });
+		// A read saved without the form's page: the link itself.
+		expect(readOf({ ...web, formUrl: undefined })).toMatchObject({
+			sendsTo: "jobs.acme.test",
+		});
+	});
+
+	it("names none on a board", () => {
+		expect(readOf(SCHEMA)).toMatchObject({ sendsTo: null });
 	});
 });
 
