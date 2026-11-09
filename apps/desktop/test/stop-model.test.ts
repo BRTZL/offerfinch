@@ -77,16 +77,22 @@ describe("the stop sheet", () => {
 		expect(view?.reason).toMatch(/CAPTCHA/);
 	});
 
-	it("a host outside SUBMIT_ALLOWED_HOSTS never offers a retry, with or without its kind", () => {
-		const reason =
-			"Automatic submission to jobs.lever.co is not turned on (SUBMIT_ALLOWED_HOSTS). Nothing was submitted.";
-		for (const proof of [{ stop: "host_not_allowed" }, null]) {
-			const view = stopView(
-				app({ attempts: [attempt(1, "not_sent", reason, proof)] }),
-			);
-			expect(view?.case).toBe("host_not_allowed");
-			expect(view?.actions).toEqual(["finish", "mark"]);
-		}
+	it("a board not opened in Settings offers Retry after opening it, with or without its kind", () => {
+		for (const reason of [
+			"Greenhouse isn't opened in Settings › Applying. Nothing was submitted.",
+			"Employers' own forms aren't opened in Settings › Applying. Nothing was submitted.",
+			// Stored before real sites could be opened (plan step 8).
+			"Automatic submission to jobs.lever.co is not turned on (SUBMIT_ALLOWED_HOSTS). Nothing was submitted.",
+			"Automatic submission to evil.example is not turned on. Nothing was submitted.",
+		])
+			for (const proof of [{ stop: "host_not_allowed" }, null]) {
+				const view = stopView(
+					app({ attempts: [attempt(1, "not_sent", reason, proof)] }),
+				);
+				expect(view?.case).toBe("host_not_allowed");
+				expect(view?.title).toBe("This job site isn't opened yet");
+				expect(view?.actions).toEqual(["finish", "mark", "retry"]);
+			}
 	});
 
 	it("an unknown outcome decides over a later stop, and its retry needs the confirmation", () => {

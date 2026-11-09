@@ -331,6 +331,16 @@ function StopSheet({
 							{view.note ? (
 								<p className="text-muted-foreground">{view.note}</p>
 							) : null}
+							{view.case === "host_not_allowed" ? (
+								<p
+									className="text-muted-foreground"
+									data-testid="stop-open-site"
+								>
+									<SubmissionsSettingsLink onClick={onClose}>
+										Open it in Settings › Applying
+									</SubmissionsSettingsLink>
+								</p>
+							) : null}
 							{view.case === "paused" ? (
 								<p
 									className="text-muted-foreground"

@@ -15,6 +15,7 @@ import {
 	documents,
 	jobs,
 	submissionAttempts,
+	submissionBoards,
 	submissionSettings,
 } from "../schema/pipeline";
 import type { DrizzlePipelineRepositoryContext } from "./context";
@@ -32,6 +33,18 @@ export const submissionMethods = {
 			.from(submissionSettings)
 			.where(eq(submissionSettings.userId, userId));
 		return row?.paused ?? true;
+	},
+
+	/** Boards the user opened in Settings › Applying ("web": employers' own forms). */
+	async openedBoards(
+		this: DrizzlePipelineRepositoryContext,
+		userId: string,
+	): Promise<string[]> {
+		const rows = await this.db
+			.select({ board: submissionBoards.board })
+			.from(submissionBoards)
+			.where(eq(submissionBoards.userId, userId));
+		return rows.map((r) => r.board);
 	},
 
 	async submissionContext(
@@ -85,11 +98,24 @@ export const submissionMethods = {
 			externalId: row.job.externalId,
 			companyKey: row.companyKey,
 		});
+		// Read with every run: a board closed in Settings stops the next run before any browser.
+		const [opened] = target.board
+			? await this.db
+					.select({ board: submissionBoards.board })
+					.from(submissionBoards)
+					.where(
+						and(
+							eq(submissionBoards.userId, userId),
+							eq(submissionBoards.board, target.board),
+						),
+					)
+			: [];
 		return {
 			applicationId,
 			source: row.job.source,
 			board: target.board,
 			boardFrom: target.from,
+			boardOpened: opened !== undefined,
 			...(target.reason ? { handoffNote: target.reason } : {}),
 			companyKey: target.companyKey,
 			externalId: target.externalId,

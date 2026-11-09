@@ -28,6 +28,7 @@ import {
 	type UnknownQuestion,
 } from "./forms";
 import { submissionModeAfterRead, submissionModeForSource } from "./modes";
+import { boardClosedReason, runFormHosts } from "./open-boards";
 import { runWebApplication } from "./web-form";
 import { linkMoved, webSessionHosts } from "./web-hosts";
 import { webFormModelFor } from "./web-model";
@@ -54,6 +55,11 @@ export interface SubmissionContext {
 	boardFrom?: "source" | "url" | null;
 	/** Why the job's apply link named no form this app fills (`FormTarget.reason`). */
 	handoffNote?: string;
+	/**
+	 * Whether the user opened this board in Settings › Applying (`submission_boards`), read with
+	 * the context for each run. Unset (no such setting here): only `ApplyDeps.allowedHosts`.
+	 */
+	boardOpened?: boolean;
 	companyKey: string;
 	externalId: string;
 	jobUrl: string;
@@ -533,14 +539,49 @@ function stopper(
 }
 
 /**
+ * The form hosts a run on `url` may open: the local fixture hosts (`ApplyDeps.allowedHosts`), plus
+ * this board's exact form host when the user opened it in Settings › Applying (open-boards.ts).
+ */
+export function allowedHostsFor(
+	apply: Pick<ApplyDeps, "allowedHosts">,
+	context: SubmissionContext,
+	url: string,
+): string[] {
+	return runFormHosts(apply.allowedHosts ?? LOCAL_HOSTS, context, url);
+}
+
+/**
  * What a real submission's session may reach. A board: its own data hosts, and its asset and
  * scoring hosts read-only (docs/form-inspection.md, 2026-11-09). An employer's own form: only the
  * exact host of its page receives data (web-hosts.ts).
  */
-function runHosts(run: ApplicationRun, apply: ApplyDeps) {
+function runHosts(run: ApplicationRun, allowed: string[]) {
 	return run.board === "web"
 		? webSessionHosts(run.url)
-		: sessionHosts(run.board, apply.allowedHosts ?? LOCAL_HOSTS);
+		: sessionHosts(run.board, allowed);
+}
+
+/**
+ * Stops a run whose form `url` is not on this run's allowed hosts (a board the user has not
+ * opened in Settings › Applying), before any browser opens; null when it may open.
+ */
+async function hostRefused(
+	apply: ApplyDeps,
+	context: SubmissionContext,
+	url: string,
+	stop: ReturnType<typeof stopper>,
+): Promise<SubmitOutcome | null> {
+	if (!context.board || hostAllowed(url, allowedHostsFor(apply, context, url)))
+		return null;
+	return stop(
+		context.boardOpened === false
+			? boardClosedReason(context.board)
+			: `Automatic submission to ${new URL(url).hostname} is not turned on.`,
+		context.board,
+		url,
+		null,
+		{ stop: "host_not_allowed" },
+	);
 }
 
 /** A gate that stops the run when submissions were paused before `what`. */
@@ -557,7 +598,7 @@ const confirmer = (board: FormBoard) =>
 
 /** The gates before any browser opens; null when the run may open the form. */
 async function gateBeforeOpen(
-	db: ApplyDeps["store"],
+	apply: ApplyDeps,
 	userId: string,
 	stop: ReturnType<typeof stopper>,
 	context: SubmissionContext,
@@ -568,7 +609,16 @@ async function gateBeforeOpen(
 	if (mode.mode === "handoff") return stop(mode.reason, board);
 	// A pause after approval stops before the browser opens: typing on a live form can send
 	// answers through the page's own scripts, long before the upload or the click.
-	if (!(await db.submissionsPaused(userId))) return null;
+	if (!(await apply.store.submissionsPaused(userId)))
+		// A real board the user has not opened stops before anything is prepared or opened.
+		return context.board && context.boardOpened === false
+			? hostRefused(
+					apply,
+					context,
+					formUrlOf(context, context.board, apply.boardBases),
+					stop,
+				)
+			: null;
 	const reason = "Submissions were paused before the form was opened.";
 	await stop(reason, board, "", null, { stop: "paused" });
 	return { outcome: "paused", reason };
@@ -597,7 +647,7 @@ export async function submitStep(
 	const context = await db.submissionContext(userId, applicationId);
 	const stop = stopper(db, userId, applicationId);
 	if (!context) return stop("The application's job could not be read.");
-	const gated = await gateBeforeOpen(db, userId, stop, context);
+	const gated = await gateBeforeOpen(apply, userId, stop, context);
 	if (gated) return gated;
 	let attemptId: string | null = null;
 	let pausedAtClaim = false;
@@ -605,15 +655,10 @@ export async function submitStep(
 		const prepared = await prepareRun(deps, apply, userId, context, "submit");
 		if ("stop" in prepared) return stop(prepared.stop, context.board ?? "");
 		const { run } = prepared;
-		if (!hostAllowed(run.url, apply.allowedHosts ?? LOCAL_HOSTS))
-			return stop(
-				`Automatic submission to ${new URL(run.url).hostname} is not turned on (SUBMIT_ALLOWED_HOSTS).`,
-				run.board,
-				run.url,
-				null,
-				{ stop: "host_not_allowed" },
-			);
-		const hosts = runHosts(run, apply);
+		// An employer's form opens where its read landed: that exact host must be the allowed one.
+		const refused = await hostRefused(apply, context, run.url, stop);
+		if (refused) return refused;
+		const hosts = runHosts(run, allowedHostsFor(apply, context, run.url));
 		const result = await openAndRun(
 			apply,
 			{

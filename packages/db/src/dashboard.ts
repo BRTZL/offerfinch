@@ -156,6 +156,10 @@ export class DashboardRepository extends DrizzlePipelineRepository {
 		return submissionMethods.setSubmissionsPaused.apply(this, args);
 	}
 
+	setBoardOpen(...args: Parameters<typeof submissionMethods.setBoardOpen>) {
+		return submissionMethods.setBoardOpen.apply(this, args);
+	}
+
 	markSubmittedManually(
 		...args: Parameters<typeof submissionMethods.markSubmittedManually>
 	) {

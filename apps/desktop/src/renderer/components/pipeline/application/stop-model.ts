@@ -107,7 +107,9 @@ const KIND_CASE: Record<string, StopCase> = {
 
 /** The stored reason's sentences, for stops whose proof names no kind. */
 const REASON_CASE: [RegExp, StopCase][] = [
-	[/is not turned on \(SUBMIT_ALLOWED_HOSTS\)/, "host_not_allowed"],
+	[/(?:isn't|aren't) opened in Settings › Applying/, "host_not_allowed"],
+	// Attempts stored before real sites could be opened (plan step 8) carry the old sentence.
+	[/is not turned on( \(SUBMIT_ALLOWED_HOSTS\))?\./, "host_not_allowed"],
 	[/Submissions were paused before/, "paused"],
 	[/which is not an allowed host/, "other_host"],
 	[/ended before it was cleared to submit/, "interrupted"],
@@ -256,9 +258,10 @@ const COPY: Record<
 		actions: ["finish", "mark"],
 	},
 	host_not_allowed: {
-		title: "Automatic submission is not turned on for this site yet",
-		body: "Real job sites are not on the submission list yet, so no browser was opened and nothing was sent. Send it yourself with your answers below.",
-		actions: ["finish", "mark"],
+		title: "This job site isn't opened yet",
+		body: "Real job sites stay closed until you open each one in Settings › Applying, so no browser was opened and nothing was sent. Open the site there and Retry, or send it yourself with your answers below.",
+		actions: ["finish", "mark", "retry"],
+		note: "While the site is closed, Retry stops here again, before any browser opens.",
 	},
 	paused: {
 		title: "Submissions were paused",

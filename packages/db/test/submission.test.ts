@@ -396,7 +396,7 @@ describe("submission on approval", () => {
 		]);
 	});
 
-	it("stops before opening a browser on a real host that is not allowed", async () => {
+	it("stops before opening a browser on a real board that is not opened", async () => {
 		const id = await approvedApp();
 		const { pipeline, runs } = deps(submits({ n: 0 }));
 		(pipeline.apply as ApplyDeps).boardBases = {};
@@ -406,12 +406,63 @@ describe("submission on approval", () => {
 		});
 		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
 			outcome: "needs_human",
-			reason: expect.stringMatching(/boards\.greenhouse\.io is not turned on/),
+			reason: "Greenhouse isn't opened in Settings › Applying.",
 		});
 		expect(runs).toHaveLength(0);
 		expect(await attempts(id)).toEqual([
 			{ attempt: 1, status: "not_sent", mode: "auto" },
 		]);
+		const [stopped] = await execute<{ error: string; proof: string }>(
+			db,
+			sql`select error, proof from submission_attempts where application_id = ${id}`,
+		);
+		expect(JSON.parse(stopped?.proof ?? "{}")).toMatchObject({
+			stop: "host_not_allowed",
+		});
+	});
+
+	it("keeps real job sites closed by default; opening and closing one is idempotent", async () => {
+		expect(await repo.openedBoards("u1")).toEqual([]);
+		expect(await repo.setBoardOpen("u1", "lever", true)).toEqual({
+			board: "lever",
+			open: true,
+		});
+		await repo.setBoardOpen("u1", "lever", true);
+		expect(await repo.openedBoards("u1")).toEqual(["lever"]);
+		await repo.setBoardOpen("u1", "lever", false);
+		await repo.setBoardOpen("u1", "lever", false);
+		expect(await repo.openedBoards("u1")).toEqual([]);
+	});
+
+	it("opens only the opened board's own form host for a run, never another's", async () => {
+		const id = await approvedApp();
+		const { pipeline, runs } = deps(submits({ n: 0 }));
+		// The run itself is a stub (`apply.run`) and the browser throws: no site is contacted.
+		(pipeline.apply as ApplyDeps).boardBases = {};
+		await repo.setBoardOpen("u1", "lever", true);
+		await repo.setBoardOpen("u1", "greenhouse", true);
+		expect((await repo.submissionContext("u1", id))?.boardOpened).toBe(true);
+		await repo.setSubmissionsPaused("u1", false);
+		await beginSubmissionStep(pipeline, "u1", id);
+		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
+			outcome: "applied",
+		});
+		expect(runs).toHaveLength(1);
+		expect(runs[0]?.url).toMatch(
+			/^https:\/\/job-boards\.greenhouse\.io\/acme\/jobs\//,
+		);
+		// Greenhouse's form host and its own upload and lookup hosts; not Lever's.
+		expect(runs[0]?.allowedHosts).toEqual([
+			"127.0.0.1",
+			"localhost",
+			"job-boards.greenhouse.io",
+			"boards.greenhouse.io",
+			"email-address-validator.us.greenhouse.io",
+			"grnhse-prod-jben-us-east-1.s3.amazonaws.com",
+		]);
+		await repo.setBoardOpen("u1", "greenhouse", false);
+		await repo.setBoardOpen("u1", "lever", false);
+		expect((await repo.submissionContext("u1", id))?.boardOpened).toBe(false);
 	});
 
 	it("never fills or submits a hand-off source's job, even on a fixture board", async () => {

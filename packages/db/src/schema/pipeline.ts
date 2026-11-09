@@ -733,6 +733,21 @@ export const submissionSettings = sqliteTable("submission_settings", {
 });
 
 /**
+ * Real job sites the user opened for automatic submission in Settings › Applying (plan step 8):
+ * one row per opened board ("greenhouse" … or "web" for employers' own forms). No row means
+ * closed: a run on that board stops before any browser opens.
+ */
+export const submissionBoards = sqliteTable(
+	"submission_boards",
+	{
+		userId: userId(),
+		board: text("board").notNull(),
+		openedAt: createdAt(),
+	},
+	(t) => [primaryKey({ columns: [t.userId, t.board] })],
+);
+
+/**
  * Scan history: one row per scan run (`flow_run_id`, the runner's run), with what each source
  * searched, read, saved and set aside (`sources`), and what runs now (`progress`). The run's
  * status stays on `flow_runs`; the newest 100 rows per user are kept.

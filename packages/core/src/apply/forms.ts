@@ -275,15 +275,64 @@ export function sessionHosts(
 	};
 }
 
+/**
+ * Where each board's hosted form lives: one fixed host, or the company's own subdomain of the
+ * board's domain (`acme.recruitee.com`). `applyUrl` builds the form URL from this, and the hosts
+ * a run may open (`boardFormHost`) are read from it too, so the two cannot drift.
+ */
+const FORM_HOST: Readonly<
+	Record<Board, { host: string } | { companyDomain: string }>
+> = {
+	ashby: { host: "jobs.ashbyhq.com" },
+	greenhouse: { host: "job-boards.greenhouse.io" },
+	lever: { host: "jobs.lever.co" },
+	workable: { host: "apply.workable.com" },
+	recruitee: { companyDomain: "recruitee.com" },
+	teamtailor: { companyDomain: "teamtailor.com" },
+	personio: { companyDomain: "jobs.personio.de" },
+};
+
+/** One DNS label: a company key that can only ever name a subdomain of the board's domain. */
+const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/**
+ * The exact host of a board's real form for a company: the board's fixed host, or
+ * `<company>.<board domain>` when the company key is a single DNS label. Null for any other key
+ * (`evil.com#`, `a.b`), so a key can never make the host another site. No wildcards.
+ */
+export function boardFormHost(board: Board, companyKey: string): string | null {
+	const at = FORM_HOST[board];
+	if ("host" in at) return at.host;
+	const label = companyKey.toLowerCase();
+	return DNS_LABEL.test(label) ? `${label}.${at.companyDomain}` : null;
+}
+
+/** The hosts Settings shows for a board: its form host (or `<company>.<domain>`) and `formHosts`. */
+export function boardShownHosts(board: Board): string[] {
+	const at = FORM_HOST[board];
+	return [
+		"host" in at ? at.host : `<company>.${at.companyDomain}`,
+		...(BOARD_CONFIGS[board].formHosts ?? []),
+	];
+}
+
 /** A board that keys the company in the subdomain: its origin, or the fixture base plus the company. */
 function companyBase(
 	base: string | undefined,
 	company: string,
-	domain: string,
+	board: Board,
 ): string {
+	const at = FORM_HOST[board];
+	const domain = "companyDomain" in at ? at.companyDomain : at.host;
 	return base
 		? `${base.replace(/\/+$/, "")}/${company}`
 		: `https://${company.toLowerCase()}.${domain}`;
+}
+
+/** A board's real form origin, or its fixture base. */
+function fixedBase(board: Board, base: string | undefined): string {
+	const at = FORM_HOST[board];
+	return base ?? `https://${"host" in at ? at.host : at.companyDomain}`;
 }
 
 /** A board's hosted form URL for a job, or null when the job's URL is not on that board. */
@@ -294,34 +343,26 @@ export function applyUrl(
 ): string {
 	const trim = (u: string) => u.replace(/\/+$/, "");
 	switch (board) {
-		case "ashby": {
-			const base = bases.ashby ?? "https://jobs.ashbyhq.com";
-			return `${trim(base)}/${job.companyKey}/${job.externalId}/application`;
-		}
-		case "greenhouse": {
-			const base = bases.greenhouse ?? "https://job-boards.greenhouse.io";
-			return `${trim(base)}/${job.companyKey}/jobs/${job.externalId}`;
-		}
-		case "lever": {
-			const base = bases.lever ?? "https://jobs.lever.co";
-			return `${trim(base)}/${job.companyKey}/${job.externalId}/apply`;
-		}
-		case "workable": {
-			const base = bases.workable ?? "https://apply.workable.com";
-			return `${trim(base)}/${job.companyKey}/j/${job.externalId}/apply/`;
-		}
+		case "ashby":
+			return `${trim(fixedBase(board, bases.ashby))}/${job.companyKey}/${job.externalId}/application`;
+		case "greenhouse":
+			return `${trim(fixedBase(board, bases.greenhouse))}/${job.companyKey}/jobs/${job.externalId}`;
+		case "lever":
+			return `${trim(fixedBase(board, bases.lever))}/${job.companyKey}/${job.externalId}/apply`;
+		case "workable":
+			return `${trim(fixedBase(board, bases.workable))}/${job.companyKey}/j/${job.externalId}/apply/`;
 		case "recruitee": {
 			// The stored id is `{company}:{slug}`; the form is the offer's /c/new page.
 			const slug = job.externalId.slice(job.externalId.lastIndexOf(":") + 1);
-			return `${companyBase(bases.recruitee, job.companyKey, "recruitee.com")}/o/${slug}/c/new`;
+			return `${companyBase(bases.recruitee, job.companyKey, board)}/o/${slug}/c/new`;
 		}
 		case "teamtailor": {
 			// The job's path is `{id}-{slug}`; the feed's link has it, the id alone is the fallback.
 			const tail = job.url.match(/\/jobs\/(\d+[^/?#]*)/)?.[1] ?? job.externalId;
-			return `${companyBase(bases.teamtailor, job.companyKey, "teamtailor.com")}/jobs/${tail}/applications/new`;
+			return `${companyBase(bases.teamtailor, job.companyKey, board)}/jobs/${tail}/applications/new`;
 		}
 		case "personio":
-			return `${companyBase(bases.personio, job.companyKey, "jobs.personio.de")}/job/${job.externalId}/apply`;
+			return `${companyBase(bases.personio, job.companyKey, board)}/job/${job.externalId}/apply`;
 	}
 }
 

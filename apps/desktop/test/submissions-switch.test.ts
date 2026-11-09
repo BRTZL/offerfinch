@@ -103,3 +103,74 @@ describe("submission.setPaused", () => {
 		).rejects.toThrow();
 	});
 });
+
+describe("submission.setBoardOpen", () => {
+	it("lists every real job site closed, with its hosts, and opens and closes one idempotently", async () => {
+		const { db } = await setup();
+		const sent: PendingEvent[] = [];
+		const context = {
+			session: { user: { id: "u1", email: "u1@example.test", name: "U" } },
+			db,
+			sendEvent: async (event: PendingEvent) => {
+				sent.push(event);
+			},
+		} as never;
+		const { settings, setBoardOpen } = pipelineRouter.submission;
+		const boards = async () =>
+			(await call(settings, undefined, { context })).boards;
+		const open = (board: "greenhouse" | "web", value: boolean) =>
+			call(setBoardOpen, { board, open: value }, { context });
+
+		const listed = await boards();
+		expect(listed.map((b) => b.name)).toEqual([
+			"Ashby",
+			"Greenhouse",
+			"Lever",
+			"Workable",
+			"Recruitee",
+			"Teamtailor",
+			"Personio",
+			"Employers' own forms",
+		]);
+		expect(listed.every((b) => !b.open)).toBe(true);
+		expect(listed.find((b) => b.board === "greenhouse")?.hosts).toContain(
+			"job-boards.greenhouse.io",
+		);
+		expect(listed.find((b) => b.board === "recruitee")?.hosts).toEqual([
+			"<company>.recruitee.com",
+		]);
+		expect(listed.find((b) => b.board === "web")?.hosts).toEqual([
+			"the form's own site only",
+		]);
+
+		expect(await open("greenhouse", true)).toEqual({
+			board: "greenhouse",
+			open: true,
+		});
+		await open("greenhouse", true);
+		expect((await boards()).filter((b) => b.open).map((b) => b.board)).toEqual([
+			"greenhouse",
+		]);
+		await open("greenhouse", false);
+		await open("greenhouse", false);
+		expect((await boards()).some((b) => b.open)).toBe(false);
+		// Opening a site wakes nothing: a stopped run is retried by the user.
+		expect(sent).toEqual([]);
+	});
+
+	it("refuses a board it does not know", async () => {
+		const { db } = await setup();
+		const context = {
+			session: { user: { id: "u1", email: "u1@example.test", name: "U" } },
+			db,
+			sendEvent: async () => {},
+		} as never;
+		await expect(
+			call(
+				pipelineRouter.submission.setBoardOpen,
+				{ board: "smartrecruiters" as never, open: true },
+				{ context },
+			),
+		).rejects.toThrow();
+	});
+});

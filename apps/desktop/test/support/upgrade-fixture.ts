@@ -1435,6 +1435,8 @@ function fixtureRows(): Record<string, Row[]> {
 			},
 		],
 		submission_settings: [{ user_id: U, paused: 0, updated_at: at(2) }],
+		// Real job sites the user opened in Settings › Applying (plan step 8).
+		submission_boards: [{ user_id: U, board: "greenhouse", created_at: at(2) }],
 		// The application forms read before review: one read, one that could not be read.
 		application_forms: [
 			{

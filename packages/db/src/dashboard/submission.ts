@@ -8,6 +8,7 @@ import {
 	applications,
 	questions,
 	submissionAttempts,
+	submissionBoards,
 	submissionSettings,
 } from "../schema/pipeline";
 import type { DashboardRepositoryContext } from "./context";
@@ -102,6 +103,33 @@ export const submissionMethods = {
 				);
 			return { paused, events };
 		});
+	},
+
+	/**
+	 * Opens or closes one real job site for automatic submission (Settings › Applying). Idempotent:
+	 * opening an open board or closing a closed one changes nothing. Wakes nothing: an application
+	 * that stopped on a closed board is retried by the user.
+	 */
+	async setBoardOpen(
+		userId: string,
+		board: string,
+		open: boolean,
+	): Promise<{ board: string; open: boolean }> {
+		if (open)
+			await this.database
+				.insert(submissionBoards)
+				.values({ userId, board })
+				.onConflictDoNothing();
+		else
+			await this.database
+				.delete(submissionBoards)
+				.where(
+					and(
+						eq(submissionBoards.userId, userId),
+						eq(submissionBoards.board, board),
+					),
+				);
+		return { board, open };
 	},
 
 	/**

@@ -268,6 +268,13 @@ export class DrizzlePipelineRepository
 		);
 	}
 
+	openedBoards(...args: Parameters<typeof submissionMethods.openedBoards>) {
+		return submissionMethods.openedBoards.apply(
+			this as unknown as DrizzlePipelineRepositoryContext,
+			args,
+		);
+	}
+
 	submissionContext(
 		...args: Parameters<typeof submissionMethods.submissionContext>
 	) {

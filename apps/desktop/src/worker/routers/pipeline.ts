@@ -4,12 +4,18 @@ import {
 	whatWillBeSent,
 } from "@offerfinch/core/apply/field-answers";
 import { formTargetFor } from "@offerfinch/core/apply/form-target";
-import { applyUrl } from "@offerfinch/core/apply/forms";
+import { applyUrl, BOARDS } from "@offerfinch/core/apply/forms";
 import {
 	BOARD_SUBMISSION_MODES,
 	submissionModeAfterRead,
 	submissionModeForSource,
 } from "@offerfinch/core/apply/modes";
+import {
+	BOARD_NAMES,
+	BOARD_RISKS,
+	OPENABLE_BOARDS,
+	shownHosts,
+} from "@offerfinch/core/apply/open-boards";
 import { applicantData } from "@offerfinch/core/apply/submit";
 import { compareApproval } from "@offerfinch/core/domain/approval";
 import { normalizeLineEndings } from "@offerfinch/core/domain/line-endings";
@@ -685,15 +691,45 @@ export const pipelineRouter = {
 					return context.dryRun(context.session.user.id, input.id);
 				}),
 			),
-		settings: protectedProcedure.handler(async ({ context }) => ({
-			paused: await repoOf(context).submissionsPaused(context.session.user.id),
-			/** Per board, fixed in code (apply/modes.ts). */
-			modes: Object.entries(BOARD_SUBMISSION_MODES).map(([board, m]) => ({
-				board,
-				mode: m.mode,
-				why: m.why,
-			})),
-		})),
+		settings: protectedProcedure.handler(async ({ context }) => {
+			const userId = context.session.user.id;
+			const opened = new Set(await repoOf(context).openedBoards(userId));
+			return {
+				paused: await repoOf(context).submissionsPaused(userId),
+				/**
+				 * Real job sites, each closed until the user opens it (step 8): the hosts a run on
+				 * it may open, and its known risks for the confirmation.
+				 */
+				boards: OPENABLE_BOARDS.map((board) => ({
+					board,
+					name: BOARD_NAMES[board],
+					hosts: shownHosts(board),
+					risks: BOARD_RISKS[board],
+					open: opened.has(board),
+				})),
+				/** Per board, fixed in code (apply/modes.ts). */
+				modes: Object.entries(BOARD_SUBMISSION_MODES).map(([board, m]) => ({
+					board,
+					mode: m.mode,
+					why: m.why,
+				})),
+			};
+		}),
+		/** Opens or closes one real job site (idempotent). Wakes nothing; a stopped run is retried. */
+		setBoardOpen: protectedProcedure
+			.input(
+				z.object({
+					board: z.enum([...BOARDS, "web"]),
+					open: z.boolean(),
+				}),
+			)
+			.handler(({ context, input }) =>
+				repoOf(context).setBoardOpen(
+					context.session.user.id,
+					input.board,
+					input.open,
+				),
+			),
 		setPaused: protectedProcedure
 			.input(z.object({ paused: z.boolean() }))
 			.handler(async ({ context, input }) => {

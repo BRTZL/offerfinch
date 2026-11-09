@@ -144,6 +144,7 @@ async function seedUserA() {
 	await a.rpc.spending.set({ enabled: true, monthlyUsd: 5 });
 	await a.rpc.models.confirmExtraUsageOff({ confirmed: true });
 	await a.rpc.submission.setPaused({ paused: false });
+	await a.rpc.submission.setBoardOpen({ board: "greenhouse", open: true });
 	await new DrizzleLinkedInStore(t.db).block(a.id, {
 		kind: "captcha",
 		reason: "a-secret check",
@@ -182,6 +183,7 @@ async function snapshotA() {
 		settings: await repo.getFilterSettings(a.id),
 		spending: (await repo.spending(a.id)).capMicros,
 		paused: await repo.submissionsPaused(a.id),
+		openedBoards: await repo.openedBoards(a.id),
 		linkedin: await new DrizzleLinkedInStore(t.db).blocked(a.id),
 		plan: await new SqliteSearchPlanStore(t.db).plan(a.id),
 		profile: (await repo.profileFiles(a.id))?.files,
@@ -364,8 +366,12 @@ const CASES: Record<string, (b: TestUser) => Promise<unknown>> = {
 			u.rpc.submission.readFormAgain({ id, idempotencyKey: `b-again-${id}` }),
 		),
 	"submission.settings": async (u) => {
-		expect((await u.rpc.submission.settings()).paused).toBe(true);
+		const settings = await u.rpc.submission.settings();
+		expect(settings.paused).toBe(true);
+		expect(settings.boards.some((site) => site.open)).toBe(false);
 	},
+	"submission.setBoardOpen": (u) =>
+		u.rpc.submission.setBoardOpen({ board: "greenhouse", open: false }),
 	"submission.setPaused": (u) => u.rpc.submission.setPaused({ paused: false }),
 	"submission.applied": async (u) => {
 		expect(await u.rpc.submission.applied()).toEqual([]);

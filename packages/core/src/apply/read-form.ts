@@ -13,11 +13,12 @@ import {
 	optionsScript,
 	scanScript,
 } from "./forms";
+import { boardClosedReason } from "./open-boards";
 import {
 	type ApplyDeps,
+	allowedHostsFor,
 	formUrlOf,
 	hostAllowed,
-	LOCAL_HOSTS,
 	modeOf,
 	type SubmissionContext,
 } from "./submit";
@@ -108,8 +109,9 @@ export async function readFormOnPage(
 /**
  * Reads one application's form before review, or says why not. Never throws: a failure is
  * recorded and review goes ahead without the field list. Gated before any browser opens: only
- * an "auto" board, and only a host automatic submission may use (`allowedHosts`, the local
- * fixture boards by default), so a form is never read where it could not be submitted.
+ * an "auto" board, and only a host a submission of this job may use (`allowedHostsFor`: the local
+ * fixture boards, and the board's own form host once the user opened it in Settings › Applying),
+ * so a form is never read where it could not be submitted.
  */
 export async function readApplicationForm(
 	apply: ApplyDeps,
@@ -130,18 +132,23 @@ export async function readApplicationForm(
 			readAt,
 		};
 	const url = formUrlOf(context, board, apply.boardBases);
-	if (!hostAllowed(url, apply.allowedHosts ?? LOCAL_HOSTS))
+	// The same hosts a submission of this job may open: none on a board the user has not opened.
+	const allowed = allowedHostsFor(apply, context, url);
+	if (!hostAllowed(url, allowed))
 		return {
 			status: "skipped",
 			board,
 			url,
-			note: `The form was not read before review: automatic submission to ${new URL(url).hostname} is not turned on, so nothing will be filled there.`,
+			note:
+				context.boardOpened === false
+					? `The form was not read before review: ${boardClosedReason(board)} Open it there, then Read the form again.`
+					: `The form was not read before review: automatic submission to ${new URL(url).hostname} is not turned on, so nothing will be filled there.`,
 			readAt,
 		};
 	try {
 		const result = apply.readForm
 			? await apply.readForm({ board, url })
-			: await readInSession(apply, board, url, model);
+			: await readInSession(apply, board, url, allowed, model);
 		if (result.ok) return { status: "read", schema: result.schema, readAt };
 		return {
 			status: "failed",
@@ -167,14 +174,14 @@ async function readInSession(
 	apply: ApplyDeps,
 	board: FormBoard,
 	url: string,
+	allowed: string[],
 	model: WebFormModel | null | undefined,
 ): ReturnType<typeof readFormOnPage> {
 	// The page stays on the hosts submission may use, redirects included (an employer's form:
 	// its own site, web-hosts.ts; submission then gets only the hosts the read saw it send to).
 	const session = await apply.browser.openSession({
 		network: "read_only",
-		allowedHosts:
-			board === "web" ? webReadHosts(url) : (apply.allowedHosts ?? LOCAL_HOSTS),
+		allowedHosts: board === "web" ? webReadHosts(url) : allowed,
 	});
 	try {
 		const page = await session.newPage();

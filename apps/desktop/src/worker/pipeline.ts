@@ -208,7 +208,8 @@ export function buildPipeline(input: PipelineInputs): {
 		claims: problemOf("claims", ai, input),
 	};
 	const env: ModelConfig = {
-		SUBMIT_ALLOWED_HOSTS: "",
+		// No fixed list of real hosts: a run opens a real form only on a board the user opened in
+		// Settings › Applying, read with each run (core apply/open-boards.ts).
 		ownerUserId: input.ownerUserId,
 		APPLY_BOARD_BASES: input.boardBases
 			? JSON.stringify(input.boardBases)
