@@ -234,8 +234,16 @@ export class NoticeBatcher {
 		if (!this.options.settings()[item.kind]) return false;
 		const queue = this.queues.get(item.kind) ?? [];
 		const key = noticeKey(item);
-		if (queue.some((q) => noticeKey(q) === key)) return false;
-		queue.push({ ...item, heldAt: item.heldAt ?? this.now() });
+		const at = queue.findIndex((q) => noticeKey(q) === key);
+		const fresh = { ...item, heldAt: item.heldAt ?? this.now() };
+		if (at >= 0) {
+			// The same event again: nothing new. A newer event about the subject replaces the
+			// waiting one (a new object, so a check of the old one that is still running cannot
+			// drop it, and a fresh wait, so the old one's age cannot expire it).
+			if (queue[at]?.eventId === item.eventId) return false;
+			queue.splice(at, 1);
+		}
+		queue.push(fresh);
 		if (queue.length > MAX_HELD_PER_KIND)
 			queue.splice(0, queue.length - MAX_HELD_PER_KIND);
 		this.queues.set(item.kind, queue);

@@ -485,3 +485,54 @@ describe("subjects already sent", () => {
 		expect(batcher.wasSent(match(1))).toBe(false);
 	});
 });
+
+describe("a newer event about a subject already waiting", () => {
+	const question = (eventId: string): NoticeItem => ({
+		kind: "question",
+		applicationId: "app-1",
+		title: "Engineer",
+		company: "Acme",
+		eventId,
+	});
+
+	it("replaces the waiting one, so a check of the old one still running cannot drop it", async () => {
+		let answer: (items: NoticeItem[]) => void = () => {};
+		const { batcher, sent, advance, persisted } = setup(
+			undefined,
+			undefined,
+			() =>
+				new Promise((resolve) => {
+					answer = resolve;
+				}),
+		);
+		batcher.add(question("round-1"));
+		advance(1_000);
+		// Round 1 is being checked; round 2 arrives meanwhile.
+		batcher.add(question("round-2"));
+		expect(persisted.at(-1)).toMatchObject([{ eventId: "round-2" }]);
+		// The check finds round 1 stale (its questions were answered); round 2 still goes out.
+		answer([]);
+		await settle();
+		expect(sent.map((n) => n.title)).toEqual(["Question waiting"]);
+		expect(batcher.pending()).toBe(0);
+		expect(persisted.at(-1)).toEqual([]);
+	});
+
+	it("waits from when it arrived, not from when the old one did", () => {
+		const { batcher, advance } = setup(undefined, () => Number.MAX_VALUE);
+		batcher.add(question("round-1"));
+		advance(HELD_FOR_MS - 1_000);
+		batcher.add(question("round-2"));
+		// Past round 1's week: a few looks while held.
+		for (let i = 0; i < 4; i++) advance(60_000);
+		expect(batcher.pending()).toBe(1);
+	});
+
+	it("the same event again changes nothing", () => {
+		const { batcher, persisted } = setup();
+		batcher.add(question("round-1"));
+		const writes = persisted.length;
+		batcher.add(question("round-1"));
+		expect(persisted).toHaveLength(writes);
+	});
+});
