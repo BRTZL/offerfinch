@@ -87,7 +87,7 @@ export function WhatWillBeSentSection({ app }: { app: AppDetail }) {
 					className="flex flex-col gap-2"
 				>
 					{group.title ? (
-						<div className="text-2xs text-muted-foreground font-medium tracking-wide uppercase">
+						<div className="text-2xs text-muted-foreground font-medium">
 							{group.title}
 						</div>
 					) : null}
