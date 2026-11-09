@@ -120,8 +120,8 @@ describe("reading an employer's form before review", () => {
 			["text:full_name", "Full name", true, 1],
 			["text:email", "Email address", true, 1],
 			["text:phone", "Phone number", false, 1],
-			// No label: the model chose one from the text beside it.
-			["text:#text-1", "LinkedIn", false, 1],
+			// No label, only a name: the model chose a label from the text beside it.
+			["text:profile_url", "LinkedIn", false, 1],
 			["text:location", "Where are you based?", false, 1],
 			["textarea:why", "Why do you want to work at Acme Robotics?", true, 1],
 			["text:notice", "What is your notice period?", true, 1],
@@ -129,7 +129,7 @@ describe("reading an employer's form before review", () => {
 			["checkbox:news", "Send me news about future openings", false, 1],
 		]);
 		expect(
-			result.schema.fields.find((f) => f.key === "text:#text-1"),
+			result.schema.fields.find((f) => f.key === "text:profile_url"),
 		).toMatchObject({ labelSource: "model" });
 		expect(result.schema.submit).toBe("Submit application");
 		// The form's page, where its link landed: the only host that may receive it.
@@ -147,7 +147,7 @@ describe("reading an employer's form before review", () => {
 		const { result } = await read("single", null);
 		if (!result.ok) throw new Error(result.reason);
 		expect(
-			result.schema.fields.find((f) => f.key === "text:#text-1")?.label,
+			result.schema.fields.find((f) => f.key === "text:profile_url")?.label,
 		).toBe("");
 	});
 
@@ -413,44 +413,84 @@ describe("submitting an employer's form", () => {
 		60_000,
 	);
 
-	it("a box the page adds after review never takes another question's value", async () => {
-		// Read on the first load; from the second on the page adds an unlabelled box above the rest.
-		const schema = await schemaOf("nameless");
-		const keys = schema.fields.map((f) => f.key);
-		expect(keys.filter((k) => k.includes(":#"))).toEqual(["text:#text-1"]);
-		expect(keys.filter((k) => k.includes(":label:"))).toHaveLength(5);
-		const { deps, calls } = harness("nameless", schema);
+	it.each([
+		// No control has a name; one box has no label either (only text beside it).
+		["nameless", /^This form has unlabelled fields; finish it yourself\.$/],
+		// Two boxes under "Contact details" with no name, id or label (Codex re-review, 2026-11-09).
+		["shifted", /^This form has unlabelled fields; finish it yourself\.$/],
+		["contact-swap", /^This form has unlabelled fields; finish it yourself\.$/],
+		// Two boxes with one name.
+		[
+			"twin-keys",
+			/^This form has fields that share one name or label; finish it yourself\.$/,
+		],
+	])(
+		"%s: a field with nothing of its own is a hand-off at read time (Codex re-review, 2026-11-09)",
+		async (variant, why) => {
+			const { result } = await read(variant);
+			expect(result).toMatchObject({
+				ok: false,
+				reason: expect.stringMatching(why),
+			});
+			expect(forms.count(variant)).toBe(0);
+		},
+	);
+
+	it("swapped nameless boxes never take each other's value: the run stops before the claim (Codex re-review, 2026-11-09)", async () => {
+		// The read Codex's case gave before this fix: both boxes keyed by their place.
+		const schema = await readAs("single", "contact-swap");
+		const field = (name: string, label: string) => ({
+			ref: name,
+			kind: "text" as const,
+			label,
+			required: false,
+			name,
+			options: [],
+			visible: true,
+			current: [],
+			section: "",
+			key: `text:${name}`,
+			page: 1,
+			// What the read kept for a place key before this fix.
+			...(name.startsWith("#")
+				? { hint: "Contact details", autocomplete: "" }
+				: {}),
+		});
+		const { deps, calls } = harness("contact-swap", {
+			...schema,
+			fields: [
+				{ ...field("full_name", "Full name"), required: true },
+				field("#text-1", "Email"),
+				field("#text-2", "Phone"),
+			],
+		});
 		const outcome = await submitStep(deps, "u1", "app-1");
-		// The unlabelled LinkedIn box moved to another place: which box is which cannot be told.
 		expect(outcome).toMatchObject({
 			outcome: "needs_human",
 			reason: expect.stringMatching(
-				/unlabelled boxes .*LinkedIn.* not where review saw them/,
+				/^This form has unlabelled fields; finish it yourself\./,
 			),
 		});
 		expect(calls.map((c) => c.method)).toEqual(["stop"]);
-		expect(forms.count("nameless")).toBe(0);
+		expect(forms.count("contact-swap")).toBe(0);
 	}, 60_000);
 
-	it("unlabelled boxes that shifted in their group stop the run (Codex, 2026-11-09)", async () => {
-		const schema = await schemaOf("shifted");
-		expect(
-			schema.fields.map((f) => [f.key, f.label, (f as { hint?: string }).hint]),
-		).toEqual([
-			["text:full_name", "Full name", undefined],
-			["text:#text-1", "Email", "Contact details"],
-			["text:#text-2", "Phone", "Contact details"],
+	it("a box with nothing of its own that appears after review stops the run before the claim (Codex re-review, 2026-11-09)", async () => {
+		const schema = await schemaOf("adds-unlabelled");
+		expect(schema.fields.map((f) => f.key)).toEqual([
+			"text:email",
+			"text:full_name",
 		]);
-		const { deps, calls } = harness("shifted", schema);
+		const { deps, calls } = harness("adds-unlabelled", schema);
 		const outcome = await submitStep(deps, "u1", "app-1");
 		expect(outcome).toMatchObject({
 			outcome: "needs_human",
 			reason: expect.stringMatching(
-				/Contact details.* not where review saw them/,
+				/^This form has unlabelled fields; finish it yourself\./,
 			),
 		});
 		expect(calls.map((c) => c.method)).toEqual(["stop"]);
-		expect(forms.count("shifted")).toBe(0);
+		expect(forms.count("adds-unlabelled")).toBe(0);
 	}, 60_000);
 
 	it("a changed box is never paired with a reviewed one by the model (Codex, 2026-11-09)", async () => {

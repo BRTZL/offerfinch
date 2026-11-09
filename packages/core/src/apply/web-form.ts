@@ -15,7 +15,6 @@ import {
 	type FormField,
 	optionsScript,
 	planFill,
-	questionKeyOf,
 	REFUSAL,
 	systemRole,
 	VISIBLE_CHALLENGE_SCRIPT,
@@ -48,11 +47,6 @@ import {
 export interface WebSchemaField extends SchemaField {
 	/** "model": the page names nothing; the drafting model chose this label from the page's own text. */
 	labelSource?: "page" | "model";
-	/** A control keyed by its place (`#text-1`): the text beside it and its autocomplete token. */
-	hint?: string;
-	autocomplete?: string;
-	/** A place key the read met twice with different text beside it: never trusted at submit. */
-	ambiguous?: true;
 }
 
 const BLOCK_STATUSES = new Set([401, 403, 407, 429, 503]);
@@ -412,24 +406,42 @@ async function readComboboxes(page: BrowserPage, fields: WebField[]) {
 	}
 }
 
-/** Adds a scan's new fields to the read, marking a place key met again with other text beside it. */
+const UNLABELLED: Stop = {
+	kind: "form_changed",
+	message: "This form has unlabelled fields; finish it yourself.",
+};
+
+/**
+ * Why a scan's controls cannot each be told apart by something of their own: a control with no
+ * name, no stable id and no label (keyed only by its place, `#text-1`), or two controls with one
+ * key. A form like that is the user's to finish: a place or a shared key is never filled from.
+ */
+function unlabelledProblem(scanned: WebField[]): Stop | null {
+	if (scanned.some((f) => f.name.startsWith("#"))) return UNLABELLED;
+	const keys = scanned
+		.filter((f) => f.kind !== "radio" && f.kind !== "checkbox")
+		.map(schemaKey);
+	if (new Set(keys).size < keys.length)
+		return {
+			kind: "form_changed",
+			message:
+				"This form has fields that share one name or label; finish it yourself.",
+		};
+	return null;
+}
+
+/** Adds a scan's new fields to the read (a step shown again after "Next" adds nothing new). */
 function addRead(
 	fields: { field: WebField; page: number }[],
-	keys: Map<string, WebField>,
-	ambiguous: Set<string>,
+	keys: Set<string>,
 	scanned: WebField[],
 	step: number,
 ): void {
 	const last = fields.reduce((m, f) => Math.max(m, f.page), 0);
 	for (const field of scanned) {
 		const key = schemaKey(field);
-		const seen = keys.get(key);
-		if (seen) {
-			// A step drawn after "Next" counts its unlabelled boxes from 1 again.
-			if (placed(field) && !sameSpot(field, seen)) ambiguous.add(key);
-			continue;
-		}
-		keys.set(key, field);
+		if (keys.has(key)) continue;
+		keys.add(key);
 		// Hidden steps count after the one shown; a step drawn after "Next" follows the last read.
 		fields.push({ field, page: step === 1 ? field.step : last + 1 });
 	}
@@ -439,8 +451,9 @@ function addRead(
  * Reads an employer's form on a page whose session is read-only, closing the network after the
  * first scan. Steps the page keeps hidden are read as later pages; steps it draws only after
  * "Next" are reached by clicking "Next" with the network closed and nothing typed, as far as the
- * form lets it. A control the page names nothing for is labelled by the model from the page's own
- * text, or left without a label.
+ * form lets it. A control with a name or stable id but no label is labelled by the model from the
+ * page's own text, or left without a label; a control with none of these, or two controls with one
+ * key, make the form a hand-off (`unlabelledProblem`).
  */
 export async function readWebFormOnPage(
 	page: BrowserPage,
@@ -452,14 +465,15 @@ export async function readWebFormOnPage(
 	page.restrictNetwork("none");
 	const formHost = webFormHost(opened.formUrl);
 	const fields: { field: WebField; page: number }[] = [];
-	const keys = new Map<string, WebField>();
-	const ambiguous = new Set<string>();
+	const keys = new Set<string>();
 	let scan = opened.scan;
 	let submit: WebControl | null = null;
 	for (let step = 1; step <= MAX_STEPS; step++) {
+		const unlabelled = unlabelledProblem(scan.fields);
+		if (unlabelled) return { ok: false, reason: unlabelled.message };
 		await readComboboxes(page, scan.fields);
 		const before = fields.length;
-		addRead(fields, keys, ambiguous, scan.fields, step);
+		addRead(fields, keys, scan.fields, step);
 		const roles = await controlRoles(scan.controls, model);
 		submit = roles.submit ?? submit;
 		if (!roles.next || (step > 1 && fields.length === before)) break;
@@ -500,12 +514,6 @@ export async function readWebFormOnPage(
 					page: p,
 					section: field.section ?? "",
 					...(fromModel ? { labelSource: "model" as const } : {}),
-					...(placed(field)
-						? { hint: field.hint, autocomplete: field.autocomplete }
-						: {}),
-					...(ambiguous.has(schemaKey(field))
-						? { ambiguous: true as const }
-						: {}),
 				};
 				return out;
 			}),
@@ -549,58 +557,13 @@ interface Lined {
 	unreviewed: Set<string>;
 	/** Refs on steps the page keeps hidden for now: filled when their step is shown. */
 	later: Set<string>;
-	/** Unlabelled controls whose places no longer match the read (`placesMoved`). */
-	moved: string[];
-}
-
-/** The text beside an unlabelled control and its autocomplete token: what its place key must match. */
-const sameSpot = (
-	live: WebField,
-	reviewed: { hint?: string; autocomplete?: string },
-) =>
-	questionKeyOf(live.hint) === questionKeyOf(reviewed.hint ?? "") &&
-	live.autocomplete === (reviewed.autocomplete ?? "");
-
-const placed = (f: { name: string }) => f.name.startsWith("#");
-/** Unlabelled controls of one kind with the same text beside them: a place key counts within one. */
-const groupOf = (f: { kind: string; hint?: string }) =>
-	`${f.kind}|${questionKeyOf(f.hint ?? "")}`;
-const placeOf = (f: { name: string; autocomplete?: string }) =>
-	`${f.name}|${f.autocomplete ?? ""}`;
-
-/**
- * Where a key that is only a place (`#text-2`) can no longer be trusted: a group of unlabelled
- * controls (same kind, same text beside them) the read saw whose places, in order, are not the
- * ones the live page shows (a box added, removed or moved in the group or before it), or a place
- * the read saw twice with different text beside it. The run stops on any (form_changed).
- */
-function placesMoved(scanned: WebField[], schema: WebSchemaField[]): string[] {
-	const groups = (fields: (WebField | WebSchemaField)[]) => {
-		const out = new Map<string, string[]>();
-		for (const f of fields.filter(placed))
-			out.set(groupOf(f), [...(out.get(groupOf(f)) ?? []), placeOf(f)]);
-		return out;
-	};
-	const reviewed = groups(schema);
-	const moved: string[] = [];
-	for (const [group, places] of groups(scanned)) {
-		const was = reviewed.get(group);
-		const field = scanned.find((f) => placed(f) && groupOf(f) === group);
-		const ambiguous = schema.some(
-			(f) => f.ambiguous && places.some((p) => p === placeOf(f)),
-		);
-		if ((was && was.join() !== places.join()) || ambiguous)
-			moved.push(field?.hint || field?.kind || group);
-	}
-	return moved;
 }
 
 /**
  * The reviewed field each live control is, by ref: by its key alone (name, stable id or label,
  * `schemaKey`), each reviewed field once, in page order. Nothing else, not the model, lines a
- * control up with a reviewed field. A key that is only a place among unlabelled controls
- * (`#text-2`) counts only when the text beside the control is the one review saw, so a box the
- * page added never takes another question's value.
+ * control up with a reviewed field; a control with no key of its own never gets this far
+ * (`unlabelledProblem`).
  */
 function resolveAll(
 	scanned: WebField[],
@@ -611,7 +574,6 @@ function resolveAll(
 	for (const field of scanned) {
 		const reviewed = byKey.get(schemaKey(field));
 		if (!reviewed || taken.has(reviewed.key)) continue;
-		if (reviewed.name.startsWith("#") && !sameSpot(field, reviewed)) continue;
 		taken.add(reviewed.key);
 		out.set(field.ref, reviewed);
 	}
@@ -648,8 +610,7 @@ function lineUp(scanned: WebField[], schema: WebSchemaField[]): Lined {
 		};
 	});
 	const later = new Set(scanned.filter((f) => f.step !== 1).map((f) => f.ref));
-	const moved = placesMoved(scanned, schema);
-	return { fields, unexpected, unreviewed, later, moved };
+	return { fields, unexpected, unreviewed, later };
 }
 
 /** What a filled field records: the file's name, the chosen options, or the value. */
@@ -708,13 +669,11 @@ function stepProblem(
 	state: RunState,
 	lined: Lined,
 ): Stop | null {
-	const wall = wallOf(scan) ?? elsewhere(page, scan, state.formHost);
+	const wall =
+		wallOf(scan) ??
+		elsewhere(page, scan, state.formHost) ??
+		unlabelledProblem(scan.fields);
 	if (wall) return wall;
-	if (lined.moved.length > 0)
-		return {
-			kind: "form_changed",
-			message: `The form's unlabelled boxes (${lined.moved.map((l) => `"${l}"`).join(", ")}) are not where review saw them, so which box is which can no longer be told.`,
-		};
 	if (lined.unexpected.length > 0)
 		return {
 			kind: "form_changed",
@@ -1239,6 +1198,9 @@ export async function runWebApplication(
 				null,
 				[],
 			);
+		// A read saved before unlabelled fields became a hand-off: still never filled by place.
+		if (run.schema.some((f) => f.name.startsWith("#")))
+			return stopped(UNLABELLED, null, []);
 		const opened = await openWebForm(page, run.url, run.allowedHosts);
 		if ("stop" in opened) return stopped(opened.stop, await shot(page), []);
 		state.formHost = webFormHost(opened.formUrl);

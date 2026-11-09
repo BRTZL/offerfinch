@@ -7,7 +7,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  * `/web/<variant>/apply` on 127.0.0.1; tests allow only that host, so `localhost` is "another
  * site". Control ids change on every load (as many sites' do), so keys must come from names.
  *
- *   single        one page: name, email, phone, a box with no label (only text near it), location,
+ *   single        one page: name, email, phone, a named box with no label (only text near it), location,
  *                 two questions, a CV upload, an optional newsletter box and a hidden honeypot;
  *                 a native POST that redirects to /thanks
  *   two-step      step 1 (contact) shown, step 2 (questions, CV) kept hidden; "Next" checks step 1
@@ -26,6 +26,11 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  *                 the email box's place; a native POST that redirects to /thanks
  *   shifted       full name, then "Contact details" with an unlabelled email and phone box; from
  *                 the second load on an unlabelled box appears first in that group; posts as JSON
+ *   contact-swap  full name, then "Contact details" with an email and a phone box that have no name, id
+ *                 or label; from the second load on the two trade places; posts as JSON
+ *   adds-unlabelled email and full name, named and labelled; from the second load on an optional box
+ *                 with no name, id or label appears
+ *   twin-keys     full name, and an email and a phone box that share one name ("contact")
  *   preview       email and full name, help text already saying "Thank you for applying!"; the only
  *                 button changes the query string and sends nothing
  *   echo          the same help text above the form; the submit posts and swaps the form for "Saved."
@@ -92,9 +97,9 @@ ${text("What is your notice period?", "notice", { required: true })}
 <div><label for="${cv}">Resume / CV *</label><input id="${cv}" name="cv" type="file" accept=".pdf" required> <button type="button" onclick="document.getElementById('${cv}').click()">Upload file</button></div>`;
 }
 
-/** A box no label names: only the text beside it says what it is. */
-function unlabelled(): string {
-	return `<div><div class="hint">Your LinkedIn profile</div><input id="${id("li")}" type="url"></div>`;
+/** A box no label names: only the text beside it says what it is (and its name, when it has one). */
+function unlabelled(name = ""): string {
+	return `<div><div class="hint">Your LinkedIn profile</div><input id="${id("li")}"${name ? ` name="${name}"` : ""} type="url"></div>`;
 }
 
 function singleBody(variant: string): string {
@@ -109,7 +114,7 @@ function singleBody(variant: string): string {
 <form id="apply" method="post" action="/web/${variant}/apply" enctype="multipart/form-data">
 <h2>Your details</h2>
 ${contact()}
-${unlabelled()}
+${unlabelled("profile_url")}
 ${text("Where are you based?", "location")}
 <h2>Questions</h2>
 ${questions()}
@@ -188,6 +193,36 @@ function shiftedBody(inserted: boolean): string {
 	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply">
 ${text("Full name", "full_name", { required: true })}
 <div><div class="hint">Contact details</div>${inserted ? `<input data-origin="inserted" type="text">` : ""}<input data-origin="email" type="email"><input data-origin="phone" type="tel"></div>
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+/**
+ * Codex's re-review case: under "Contact details" an email and a phone box with no name, id or
+ * label; from the second load on they trade places. The form's own submit posts them as JSON.
+ */
+function contactSwapBody(swapped: boolean): string {
+	const boxes = [
+		`<input data-origin="email" type="text">`,
+		`<input data-origin="phone" type="text">`,
+	];
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply">
+${text("Full name", "full_name", { required: true })}
+<div><div class="hint">Contact details</div>${(swapped ? boxes.reverse() : boxes).join("")}</div>
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+/** Labelled and named on the first load; from the second on, an optional box with nothing of its own. */
+function addsUnlabelledBody(added: boolean): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply" method="post" action="/web/adds-unlabelled/apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+${added ? `<div><div class="hint">Promo code</div><input type="text"></div>` : ""}
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+/** Two boxes with one name: which one is the email and which the phone only their labels say. */
+function twinKeysBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply" method="post" action="/web/twin-keys/apply">
+${text("Full name", "full_name", { required: true })}${text("Email address", "contact", { type: "email" })}${text("Phone number", "contact", { type: "tel" })}
 <p><button type="submit">Submit application</button></p></form>`;
 }
 
@@ -292,7 +327,14 @@ function postAnswer(
 			body: page("<h1>Acme Robotics</h1><p>Your request has been noted.</p>"),
 		};
 	if (
-		["two-step", "stays", "nameless", "shifted", "echo"].includes(variant) ||
+		[
+			"two-step",
+			"stays",
+			"nameless",
+			"shifted",
+			"contact-swap",
+			"echo",
+		].includes(variant) ||
 		action === "upload"
 	)
 		return {
@@ -343,6 +385,15 @@ function formPage(
 			return page(swappedBody(load > 1));
 		case "shifted":
 			return page(shiftedBody(load > 1), SHIFTED);
+		case "contact-swap":
+			return page(
+				contactSwapBody(load > 1),
+				SHIFTED.replace("/shifted/", "/contact-swap/"),
+			);
+		case "adds-unlabelled":
+			return page(addsUnlabelledBody(load > 1));
+		case "twin-keys":
+			return page(twinKeysBody());
 		case "preview":
 			return page(previewBody());
 		case "echo":
