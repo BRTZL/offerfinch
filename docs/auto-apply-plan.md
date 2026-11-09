@@ -53,9 +53,11 @@ prepare ──► read form ──► draft field answers ──► claims check
   a file, or a question for the user. Each value carries its source record id, so the existing
   claims check covers it. EEO questions default to "decline to answer" when offered.
 - **Fill engine:** deterministic actions from the approved plan (`FillAction`, extended with
-  date, multi-step "next" and checkbox consent). For generic sites the model only chooses
-  *which control* gets *which approved value*; it cannot type anything outside the plan. Each
-  page is verified (`verifyFilled`) and screenshotted.
+  date, multi-step "next" and checkbox consent). For generic sites a control takes a reviewed
+  field's value only by its key (name, stable id or label); the model labels unnamed controls
+  and tells buttons apart, and never pairs or types anything. On a multi-step form the claim
+  comes before the first "Next" (2026-11-09 review fixes). Each page is verified
+  (`verifyFilled`) and screenshotted.
 - **Outcome reader:** board-specific success checks for known boards; on generic sites the
   model reads the page after the click and answers confirmed / error shown / unclear. Unclear
   is `needs_human`, never a retry.
