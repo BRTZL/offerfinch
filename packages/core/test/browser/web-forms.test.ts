@@ -891,6 +891,58 @@ describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09
 	);
 });
 
+describe("refusal or error wording after the click is never a confirmation (Codex, 2026-11-09, third pass)", () => {
+	/** A model that always reads a confirmation: only the page's own wording can overrule it. */
+	const confirming: WebFormModel = {
+		...fakeModel(),
+		outcome: async () => ({
+			verdict: "confirmed",
+			quote: "Thank you for applying!",
+		}),
+	};
+
+	it.each([
+		// HTTP 200, the page says it could not be submitted, and also thanks.
+		["error200", /says "could not be submitted"/],
+		// HTTP 200, a thank-you shown, the refusal only in the answer's hidden HTML.
+		["error-hidden", /answer to the application says "could not be submitted"/],
+		// The application went, the path moved, a thank-you shows, and a box is marked invalid.
+		["invalid-after", /marked invalid/],
+	])(
+		"%s: an unknown outcome",
+		async (variant, why) => {
+			const schema = await schemaOf(variant);
+			const session = await fixtureBrowser().openSession({
+				network: "allowlist",
+				allowedHosts: ["127.0.0.1"],
+			});
+			try {
+				const page = await session.newPage();
+				const result = await runWebApplication(page, {
+					board: "web",
+					url: urlOf(variant),
+					mode: "submit",
+					schema: schema.fields,
+					data: data(),
+					files: { cv: CV, coverLetter: null },
+					model: confirming,
+					allowedHosts: ["127.0.0.1"],
+					claim: async () => ({ go: true }),
+					confirmTimeoutMs: 5_000,
+				});
+				expect(result).toMatchObject({
+					outcome: "unknown",
+					reason: expect.stringMatching(why),
+				});
+				expect(forms.count(variant)).toBe(1);
+			} finally {
+				await session.close();
+			}
+		},
+		60_000,
+	);
+});
+
 describe("the application request itself is the evidence (Codex re-review, 2026-11-09)", () => {
 	it("a native GET form whose query carries every approved value counts", async () => {
 		const { deps, calls } = harness("native-get", await schemaOf("native-get"));

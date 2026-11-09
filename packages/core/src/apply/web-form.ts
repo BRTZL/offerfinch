@@ -18,13 +18,11 @@ import {
 	schemaKey,
 } from "./form-schema";
 import {
-	DUPLICATE,
 	type FillAction,
 	type FillPlan,
 	type FormField,
 	optionsScript,
 	planFill,
-	REFUSAL,
 	systemRole,
 	VISIBLE_CHALLENGE_SCRIPT,
 	verifyFilled,
@@ -41,7 +39,13 @@ import {
 	type WebScan,
 	webCoveredScript,
 } from "./web-scan";
-import { answeredOk, carriesValues, type SentValues } from "./web-sent";
+import {
+	answeredOk,
+	carriesValues,
+	htmlText,
+	refusalIn,
+	type SentValues,
+} from "./web-sent";
 
 /**
  * An employer's own application form (the "web" board, docs/auto-apply-plan.md step 6): read
@@ -914,9 +918,10 @@ function applicationRequest(
 
 /**
  * After the one click: waits for evidence (the application request the click started reached the
- * form's host, `applicationRequest`, and the form is gone or the page's path changed), then the model reads the page. Only "confirmed", backed by
- * that evidence, a quote found on the page in confirmation words that were not on it before the
- * click, no refusal or duplicate wording and no visible error, records it applied; anything else
+ * form's host, `applicationRequest`, and the form is gone or the page's path changed), then checks
+ * that neither the page nor the employer's answer says anything went wrong (`refusalAfter`), then
+ * the model reads the page. Only "confirmed", backed by all of that and a quote found on the page
+ * in confirmation words that were not on it before the click, records it applied; anything else
  * is an unknown outcome, never a retry.
  */
 async function readOutcome(
@@ -930,6 +935,8 @@ async function readOutcome(
 	if ("unknown" in changed) return changed;
 	const sent = applicationRequest(page, before, run, state);
 	if ("unknown" in sent) return sent;
+	const refused = refusalAfter(changed.after, sent.request);
+	if (refused) return { unknown: refused };
 	return judge(changed.after, formUrl, run.model, before);
 }
 
@@ -985,6 +992,28 @@ function newConfirmation(
 	);
 }
 
+/**
+ * Why the page after the click, or the HTML the application request was answered with, may
+ * say it did not go through: refusal or error wording anywhere in either (`refusalIn`), or a
+ * visible error or field marked invalid. Null when neither does.
+ */
+function refusalAfter(
+	after: WebAfter,
+	request: NetworkLogEntry,
+): string | null {
+	if (after.errors.length > 0)
+		return `The form showed errors after the click: ${after.errors.join(" | ")}`;
+	const shown = refusalIn(after.text);
+	if (shown)
+		return `The page after the click says "${shown}", so the application may not have gone through.`;
+	const inAnswer = request.answerHtml
+		? refusalIn(htmlText(request.answerHtml))
+		: null;
+	return inAnswer
+		? `The employer's answer to the application says "${inAnswer}", so it may not have gone through.`
+		: null;
+}
+
 /** The model's reading of the changed page, believed only where the page bears it out. */
 async function judge(
 	after: WebAfter,
@@ -1001,7 +1030,7 @@ async function judge(
 	const read = await model
 		.outcome({
 			title: after.title,
-			text: after.text,
+			text: after.text.slice(0, 6000),
 			urlChanged,
 			formGone: !after.formShown,
 		})
@@ -1020,11 +1049,7 @@ async function judge(
 		return {
 			unknown: `The page after the click does not say the application was received${quote ? `: "${quote}"` : "."}`,
 		};
-	const supported =
-		newConfirmation(quote, after, before) &&
-		!new RegExp(REFUSAL, "i").test(quote) &&
-		!new RegExp(DUPLICATE, "i").test(after.text) &&
-		after.errors.length === 0;
+	const supported = newConfirmation(quote, after, before);
 	return supported
 		? { confirmed: quote }
 		: {

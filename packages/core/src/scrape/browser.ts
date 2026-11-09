@@ -121,6 +121,8 @@ export interface NetworkLogEntry {
 	status?: number;
 	body?: Uint8Array;
 	contentType?: string;
+	/** The same, when it was answered with HTML: that answer, cut at `ANSWER_LIMIT` characters. */
+	answerHtml?: string;
 }
 
 export interface BrowserSession {
@@ -238,6 +240,7 @@ interface PlaywrightResponseLike {
 interface PlaywrightFetchResponseLike {
 	status(): number;
 	headers(): Record<string, string>;
+	body?(): Promise<Buffer>;
 }
 
 interface PlaywrightWebSocketRouteLike {
@@ -373,6 +376,23 @@ function isUpload(method: string, type: string, body: string | null): boolean {
 		) ||
 		(body ?? "").includes("%PDF-")
 	);
+}
+
+/** How much of an HTML answer to a destination the log keeps (`NetworkLogEntry.answerHtml`). */
+const ANSWER_LIMIT = 200_000;
+
+/** The HTML a destination answered with, or null for any other answer (JSON, a redirect …). */
+async function answerHtmlOf(
+	response: PlaywrightFetchResponseLike,
+): Promise<string | null> {
+	if (!/text\/html|xhtml/i.test(response.headers()["content-type"] ?? ""))
+		return null;
+	try {
+		const body = await response.body?.();
+		return body ? body.toString("utf8").slice(0, ANSWER_LIMIT) : null;
+	} catch {
+		return null;
+	}
 }
 
 /** What a request to a destination carried, and how it was answered (`NetworkLogEntry`). */
@@ -610,6 +630,8 @@ class PlaywrightPage implements BrowserPage {
 		const navigation =
 			request.isNavigationRequest() &&
 			request.frame() === this.page.mainFrame();
+		const sent = destination && (navigation || !/^(?:GET|HEAD)$/i.test(method));
+		const answerHtml = sent ? await answerHtmlOf(response) : null;
 		this.state.log.push({
 			method,
 			url,
@@ -617,9 +639,8 @@ class PlaywrightPage implements BrowserPage {
 			reason,
 			seq,
 			...(navigation ? { navigation: true as const } : {}),
-			...(destination && (navigation || !/^(?:GET|HEAD)$/i.test(method))
-				? sentOf(request, response.status())
-				: {}),
+			...(sent ? sentOf(request, response.status()) : {}),
+			...(answerHtml ? { answerHtml } : {}),
 		});
 		return route.fulfill({ response: response as never });
 	}

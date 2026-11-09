@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { carriesApplication, decodeBody } from "../src/apply/web-sent";
+import {
+	carriesApplication,
+	decodeBody,
+	htmlText,
+	refusalIn,
+} from "../src/apply/web-sent";
 import type { NetworkLogEntry } from "../src/scrape/browser";
 
 /** Codex re-review (2026-11-09), finding 3: only the application request itself is evidence. */
@@ -139,5 +144,49 @@ describe("what counts as the application request", () => {
 		});
 		expect(carriesApplication(get("GET"), VALUES)).toBe(true);
 		expect(carriesApplication(get("POST"), VALUES)).toBe(false);
+	});
+});
+
+describe("refusal and error wording after the click (Codex, 2026-11-09, third pass)", () => {
+	it.each([
+		["Application could not be submitted", "could not be submitted"],
+		["We couldn't send your application.", "couldn't send"],
+		["Something went wrong. Please try again.", "Something went wrong"],
+		["An error occurred", "error"],
+		["Upload failed", "failed"],
+		["Invalid email address", "Invalid"],
+		["This field is required", "required"],
+		["You have already applied to this job", "already applied"],
+		["Duplicate application", "Duplicate"],
+		["Bewerbung fehlgeschlagen", "fehlgeschlagen"],
+		["Dieses Feld ist ungültig", "ungültig"],
+		["Une erreur est survenue", "erreur"],
+		["Échec de l'envoi", "Échec"],
+		["Este campo es obligatorio", "obligatorio"],
+		["Por favor, inténtalo de nuevo", "inténtalo de nuevo"],
+	])("finds %j", (text, hit) => {
+		expect(refusalIn(`Thank you for applying! ${text}`)).toBe(hit);
+	});
+
+	it.each([
+		"Thank you for applying! We have received your application and will reply by email.",
+		"Vielen Dank für Ihre Bewerbung. Sie ist bei uns eingegangen.",
+		"Merci pour votre candidature.",
+		// Whole words only: neither inside a longer word.
+		"Our terrors team and errorless requiredness",
+	])("finds nothing in %j", (text) => {
+		expect(refusalIn(text)).toBeNull();
+	});
+
+	it("reads an HTML answer's text, hidden parts kept and scripts dropped", () => {
+		const html =
+			'<html><head><script>console.error("x")</script><style>.error{}</style></head><body><h1>Thank you for applying!</h1><div style="display:none">Application could not be submitted</div></body></html>';
+		expect(htmlText(html)).toBe(
+			"Thank you for applying! Application could not be submitted",
+		);
+		expect(refusalIn(htmlText(html))).toBe("could not be submitted");
+		expect(
+			refusalIn(htmlText("<script>if (error) fail()</script><p>Thanks</p>")),
+		).toBeNull();
 	});
 });

@@ -120,3 +120,82 @@ export function carriesApplication(
 ): boolean {
 	return answeredOk(entry) && carriesValues(entry, values);
 }
+
+/**
+ * Wording that says an application did not go through, or may not have: on the page after the
+ * click, or in the HTML the application request was answered with, any of these makes the
+ * outcome unknown, whatever else the page says (docs/decisions.md, 2026-11-09, step 6 third
+ * pass). Unknown is the safe side: a confirmation page that happens to say "no further action is
+ * required" is checked by hand. Each entry is a regular expression source, matched whole-word,
+ * case-insensitive.
+ */
+export const OUTCOME_REFUSALS: readonly string[] = [
+	// English
+	"could ?n[o'’]t be (?:submitted|sent|processed|completed|saved|received)",
+	"could ?n[o'’]t (?:submit|send|process|complete|save)",
+	"unable to (?:submit|send|process|complete|save)",
+	"not (?:been )?(?:submitted|sent|received|accepted|processed)",
+	"(?:something|it) went wrong",
+	"errors?",
+	"fail(?:ed|ure|s)?",
+	"invalid",
+	"required",
+	"missing",
+	"try again",
+	"already (?:applied|submitted|received|sent)",
+	"duplicate",
+	"rejected",
+	"unsuccessful",
+	"problem",
+	"please (?:correct|fix|check|review)",
+	"expired",
+	"too many (?:requests|attempts)",
+	"access denied",
+	"forbidden",
+	// German
+	"fehler",
+	"fehlgeschlagen",
+	"ungültig",
+	"erforderlich",
+	"pflichtfeld",
+	"erneut versuchen",
+	"bereits beworben",
+	// French
+	"erreur",
+	"échec",
+	"invalide",
+	"obligatoire",
+	"requis",
+	"réessayer",
+	"déjà postulé",
+	// Spanish
+	"inválido",
+	"obligatorio",
+	"requerido",
+	"(?:inténtalo|intente|intenta) de nuevo",
+	"vuelva a intentar(?:lo)?",
+];
+
+/** Letters and digits on either side end a match: `\b` knows no letter outside ASCII. */
+const REFUSAL_WORDING = new RegExp(
+	`(?<![\\p{L}\\p{N}])(?:${OUTCOME_REFUSALS.join("|")})(?![\\p{L}\\p{N}])`,
+	"iu",
+);
+
+/** The first refusal or error wording in `text` (`OUTCOME_REFUSALS`), or null. */
+export function refusalIn(text: string): string | null {
+	return text.replace(/\s+/g, " ").match(REFUSAL_WORDING)?.[0] ?? null;
+}
+
+/** The text of an HTML answer: scripts, styles and tags dropped, hidden parts kept. */
+export function htmlText(html: string): string {
+	return html
+		.replace(/<(script|style|noscript)\b[\s\S]*?<\/\1\s*>/gi, " ")
+		.replace(/<!--[\s\S]*?-->/g, " ")
+		.replace(/<[^>]*>/g, " ")
+		.replace(/&nbsp;/gi, " ")
+		.replace(/&amp;/gi, "&")
+		.replace(/&#39;|&apos;|&rsquo;/gi, "'")
+		.replace(/\s+/g, " ")
+		.trim();
+}

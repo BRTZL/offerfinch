@@ -64,6 +64,11 @@ import {
  *                 posts only "event=click"; the answer's script posts both values (kept in
  *                 sessionStorage) to /web/later-native/telemetry and shows a thank-you
  *   native-get    email and full name in a native GET form to /web/native-get/sent, which thanks
+ *   error200      email and full name posted natively; HTTP 200 with "Application could not be
+ *                 submitted" above "Thank you for applying!"
+ *   error-hidden  the same; HTTP 200 showing only "Thank you for applying!", the refusal kept hidden
+ *   invalid-after email and full name; the submit posts the application, moves the path, marks the
+ *                 email box invalid and shows "Thank you for applying!" above the form
  *   assets        name, email and location; loads a logo from localhost, and on input asks localhost
  *                 for images whose paths carry pieces of what was typed (base64 pieces, the first word)
  */
@@ -370,6 +375,8 @@ ${text("Email address", "email", { type: "email" })}${text("Full name", "full_na
 }
 
 const SENDS: Record<string, string> = {
+	// The application, after which the page says the email is invalid (and thanks anyway).
+	"invalid-after": `fetch('/web/invalid-after/apply', { method: 'POST', body: new URLSearchParams(new FormData(form)) }).then(() => { history.pushState(null, '', '/web/invalid-after/done'); form.querySelector('[name=email]').setAttribute('aria-invalid', 'true'); form.insertAdjacentHTML('beforebegin', '<p class="thanks">Thank you for applying!</p>'); })`,
 	// Codex's third pass: the application went before the click (an autosave); the click sent
 	// only a click event.
 	preclick: `fetch('/web/preclick/telemetry', { method: 'POST', body: 'event=click' })`,
@@ -398,6 +405,7 @@ ${variant === "preclick" ? AUTOSAVE : ""}
 form.addEventListener('submit', async (e) => {
 	e.preventDefault();
 	await ${SENDS[variant]}.catch(() => {});
+	${variant === "invalid-after" ? "return;" : ""}
 	form.outerHTML = '<div class="thanks"><h2>Thank you for applying!</h2></div>';
 });`;
 }
@@ -463,6 +471,16 @@ function postAnswer(
 			headers: { "content-type": "text/html; charset=utf-8" },
 			body: page("<h1>Acme Robotics</h1>", LATER_NATIVE_ANSWER),
 		};
+	if (variant === "error200" || variant === "error-hidden")
+		return {
+			status: 200,
+			headers: { "content-type": "text/html; charset=utf-8" },
+			body: page(
+				variant === "error200"
+					? "<h1>Application could not be submitted</h1><p>Thank you for applying!</p>"
+					: '<h1>Thank you for applying!</h1><div style="display:none">Application could not be submitted. Please try again.</div>',
+			),
+		};
 	if (variant === "ambiguous")
 		return {
 			status: 200,
@@ -483,6 +501,7 @@ function postAnswer(
 			"preclick",
 			"later-fetch",
 			"later-native",
+			"invalid-after",
 		].includes(variant) ||
 		action === "upload"
 	)
@@ -562,7 +581,11 @@ function formPage(
 		case "later-native":
 			return page(nativeBody(variant), LATER_NATIVE);
 		case "native-get":
+		case "error200":
+		case "error-hidden":
 			return page(nativeBody(variant));
+		case "invalid-after":
+			return page(scriptedBody(), scripted(variant));
 		case "script-button":
 			return page(scriptButtonBody(), SCRIPT_BUTTON);
 		case "form-attr":
