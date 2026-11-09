@@ -222,7 +222,7 @@ test("Documents: the look's controls and preview, and a sample job exported in e
 			const row1 = cvPdf();
 			if (!row1) throw new Error("no CV export");
 			expect(row1.storage_key).toMatch(
-				new RegExp(`/cv-v\\d+${run.slug}\\.pdf$`),
+				new RegExp(`/cv-v\\d+-r2${run.slug}\\.pdf$`),
 			);
 			const meta = JSON.parse(row1.meta) as {
 				pages: number;

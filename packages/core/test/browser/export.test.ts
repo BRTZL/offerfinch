@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { exportDocuments } from "@offerfinch/core/export/export";
 import { FsBlobStore } from "@offerfinch/core/export/fs-blob";
 import {
+	ACCENTS,
+	type Accent,
 	DEFAULT_LOOK,
 	type DocumentLook,
 	FONTS,
@@ -55,12 +57,12 @@ describe("export in a real browser", () => {
 		);
 		expect(result.atsIssues).toEqual([]);
 		expect(result.records.map((r) => r.storageKey)).toEqual([
-			"users/u1/applications/app1/cv-v1.pdf",
-			"users/u1/applications/app1/cv-v1.docx",
-			"users/u1/applications/app1/cover_letter-v1.pdf",
-			"users/u1/applications/app1/cover_letter-v1.docx",
+			"users/u1/applications/app1/cv-v1-r2.pdf",
+			"users/u1/applications/app1/cv-v1-r2.docx",
+			"users/u1/applications/app1/cover_letter-v1-r2.pdf",
+			"users/u1/applications/app1/cover_letter-v1-r2.docx",
 		]);
-		const pdf = await blobs.get("users/u1/applications/app1/cv-v1.pdf");
+		const pdf = await blobs.get("users/u1/applications/app1/cv-v1-r2.pdf");
 		expect(new TextDecoder().decode(pdf?.slice(0, 5))).toBe("%PDF-");
 		expect(result.records[0]?.meta).toMatchObject({
 			pages: 1,
@@ -91,18 +93,20 @@ describe("every look passes the ATS check in a real browser", () => {
 		descriptionText:
 			"Requirements\n- TypeScript, React and Next.js\n- PostgreSQL\n- Cloudflare Workflows and webhooks",
 	};
-	const looks: DocumentLook[] = [
-		...TEMPLATES.flatMap((template) =>
-			PAGE_SIZES.map((pageSize) => ({ ...DEFAULT_LOOK, template, pageSize })),
+	// Every template, font and page size together (accent changes colour only, so it rotates).
+	const accents = Object.keys(ACCENTS) as Accent[];
+	const looks: DocumentLook[] = TEMPLATES.flatMap((template) =>
+		(Object.keys(FONTS) as Font[]).flatMap((font) =>
+			PAGE_SIZES.map((pageSize, i) => ({
+				template,
+				font,
+				pageSize,
+				accent: accents[
+					(TEMPLATES.indexOf(template) + i) % accents.length
+				] as Accent,
+			})),
 		),
-		// Every font once, in the template with the largest type, on the shorter page.
-		...(Object.keys(FONTS) as Font[]).map((font) => ({
-			template: "modern" as const,
-			font,
-			accent: "navy" as const,
-			pageSize: "Letter" as const,
-		})),
-	];
+	);
 
 	it.each(looks)(
 		"$template, $font, $accent, $pageSize",
@@ -138,6 +142,56 @@ describe("every look passes the ATS check in a real browser", () => {
 				if (!pdf) throw new Error(`${record.storageKey} was not stored`);
 				expect(mediaBox(pdf)).toEqual(POINTS[look.pageSize]);
 			}
+		},
+		60_000,
+	);
+});
+
+describe("a long CV in every template and page size", () => {
+	const job = {
+		companyName: "Acme Robotics",
+		title: "Full-Stack Engineer",
+		url: "https://jobs.example/1",
+		locations: ["Remote"],
+		workplaceType: "remote" as const,
+		descriptionText:
+			"Requirements\n- TypeScript, React and Next.js\n- PostgreSQL",
+	};
+	const looks: DocumentLook[] = TEMPLATES.flatMap((template) =>
+		PAGE_SIZES.map((pageSize) => ({ ...DEFAULT_LOOK, template, pageSize })),
+	);
+
+	it.each(looks)(
+		"$template, $pageSize: past the one-page limit is flagged, and the text still extracts",
+		async (look) => {
+			const profile = await loadProfileFromDir(PROFILE);
+			const docs = await tailorApplication(new FakeLlmProvider(), {
+				job,
+				profile,
+				today: "2026-10-30",
+			});
+			// The draft's own bullets, many times over: real CV lines, well past one page.
+			const bullets = docs.cv.split("\n").filter((l) => l.startsWith("- "));
+			const long = `${docs.cv}\n\n## Selected work\n\n${Array.from({ length: 12 }, () => bullets.join("\n")).join("\n")}\n`;
+			const blobs = new FsBlobStore(await mkdtemp(join(tmpdir(), "export-")));
+			const result = await exportDocuments(
+				{ browser: localBrowser(), blobs },
+				{
+					userId: "u1",
+					applicationId: "app1",
+					jobTitle: job.title,
+					companyName: job.companyName,
+					postingText: job.descriptionText,
+					profile,
+					documents: [{ kind: "cv", version: 1, content: long }],
+					look,
+				},
+			);
+			const pdf = result.records.find((r) => r.format === "pdf");
+			expect(pdf?.meta.pages).toBeGreaterThan(1);
+			expect(result.atsIssues.map((i) => i.message)).toEqual([
+				`The PDF has ${pdf?.meta.pages} pages; the limit is 1.`,
+			]);
 		},
 		60_000,
 	);

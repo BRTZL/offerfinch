@@ -12,6 +12,14 @@ import { atsIssues, documentKeywords, pdfText } from "./ats";
 import { DEFAULT_LOOK, type DocumentLook, lookSlug } from "./look";
 import { markdownToDocx, markdownToHtml } from "./render";
 
+/**
+ * The export renderer's revision, in every export's file name. Bump it whenever the same look
+ * renders different bytes (revision 2: Word files took the look's font, page size and heading
+ * colour), so a re-export of an unchanged document never overwrites a file an earlier version
+ * wrote and an approval may rest on. Files from before revisions keep their names in their rows.
+ */
+const RENDER_REVISION = 2;
+
 /** Storage for exported files: a local directory in the desktop app, memory in tests. */
 export interface BlobStore {
 	readonly name: string;
@@ -99,7 +107,7 @@ export interface ExportResult {
 
 /**
  * Exports the CV and letter to PDF (through the browser provider) and DOCX, stores both, and
- * runs the ATS text check on each PDF. Keys carry the source version and the look (nothing for
+ * runs the ATS text check on each PDF. Keys carry the source version, the renderer revision and the look (nothing for
  * the default look), so neither a re-export after an edit nor one in another look overwrites the
  * file an approval was based on.
  */
@@ -113,7 +121,7 @@ export async function exportDocuments(
 	const look = input.look ?? DEFAULT_LOOK;
 	const result: ExportResult = { records: [], atsIssues: [] };
 	for (const doc of input.documents) {
-		const base = `users/${input.userId}/applications/${input.applicationId}/${doc.kind}-v${doc.version}${lookSlug(look)}`;
+		const base = `users/${input.userId}/applications/${input.applicationId}/${doc.kind}-v${doc.version}-r${RENDER_REVISION}${lookSlug(look)}`;
 		const title = `${contact.name} ${doc.kind === "cv" ? "CV" : "Cover letter"} ${input.companyName}`;
 		const pdf = await renderPdf(
 			deps.browser,
