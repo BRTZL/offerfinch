@@ -286,13 +286,26 @@ test("remote feeds: off at first, on with one switch, read once, matches linked 
 			"select a.id from applications a join jobs j on j.id = a.job_id where j.source = 'remotive'",
 		);
 		await page.goto(`app://local/applications/${job?.id}?view=all`);
-		const link = page.getByRole("link", { name: "Open on Remotive" });
+		// The page names the application; the worker opens the stored job's link (worker/links.ts).
+		await app.evaluate(({ shell }) => {
+			const opened: string[] = [];
+			(globalThis as unknown as { __opened: string[] }).__opened = opened;
+			shell.openExternal = async (url: string) => {
+				opened.push(url);
+			};
+		});
+		const link = page.getByRole("button", { name: "Open on Remotive" });
 		await expect(link).toBeVisible({ timeout: 30_000 });
-		await expect(link).toHaveAttribute(
-			"href",
-			"https://remotive.com/remote-jobs/software-development/senior-frontend-engineer-1001",
-		);
-		await expect(link).not.toHaveAttribute("rel", /nofollow/);
+		await link.click();
+		await expect
+			.poll(() =>
+				app.evaluate(
+					() => (globalThis as unknown as { __opened: string[] }).__opened,
+				),
+			)
+			.toEqual([
+				"https://remotive.com/remote-jobs/software-development/senior-frontend-engineer-1001",
+			]);
 		// The feed gave the whole posting: nothing reads its page there again.
 		await expect(page.getByText("Re-read posting")).toHaveCount(0);
 		await theme(app, page, "light");
