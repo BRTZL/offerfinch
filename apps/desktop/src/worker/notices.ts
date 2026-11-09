@@ -18,6 +18,11 @@ export interface NoticeItem {
 	companyId?: string;
 	/** When it first waited (ms), kept across a restart: past `HELD_FOR_MS` it is dropped. */
 	heldAt?: number;
+	/**
+	 * The database event it announces (a transition's id, a match's alert time): what `wasSent`
+	 * remembers, so a later event about the same subject (a second round of questions) is new.
+	 */
+	eventId?: string;
 }
 
 /** At most this many waiting items per kind; the oldest go first. A summary counts up to it. */
@@ -35,6 +40,11 @@ function noticeKey(item: NoticeItem): string {
 		item.companyId ??
 		`${item.title}\n${item.detail ?? ""}`;
 	return `${item.kind}:${subject}`;
+}
+
+/** One event: its own id when it has one, else its subject. */
+function eventKey(item: NoticeItem): string {
+	return item.eventId ? `${item.kind}#${item.eventId}` : noticeKey(item);
 }
 
 export interface BatcherOptions {
@@ -153,7 +163,7 @@ export class NoticeBatcher {
 	private scanning = false;
 	private disposed = false;
 	private reviewing = false;
-	/** Subjects sent since `forgetSent` (`wasSent`). */
+	/** Events sent since `forgetSent` (`wasSent`). */
 	private readonly sentKeys = new Set<string>();
 	private readonly now: () => number;
 	private readonly debounceMs: number;
@@ -208,11 +218,11 @@ export class NoticeBatcher {
 	}
 
 	/**
-	 * Whether a notice about this subject went out since `forgetSent`. The caller reading the
+	 * Whether a notice about this event went out since `forgetSent`. The caller reading the
 	 * database skips those, so a watermark that could not move does not send them again.
 	 */
 	wasSent(item: NoticeItem): boolean {
-		return this.sentKeys.has(noticeKey(item));
+		return this.sentKeys.has(eventKey(item));
 	}
 
 	/** The watermark moved past what was sent: those subjects are not read again. */
@@ -301,7 +311,7 @@ export class NoticeBatcher {
 		for (const kind of due) {
 			const items = this.queues.get(kind) ?? [];
 			this.options.emit(summarize(kind, items), items);
-			for (const item of items) this.sentKeys.add(noticeKey(item));
+			for (const item of items) this.sentKeys.add(eventKey(item));
 			this.lastSent.set(kind, this.now());
 			this.queues.set(kind, []);
 			sent++;

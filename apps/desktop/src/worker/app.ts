@@ -975,10 +975,12 @@ export class WorkerApp {
 				title: m.title,
 				company: m.company,
 				score: m.score ?? undefined,
+				eventId: `${m.id}@${m.alertedAt?.getTime() ?? 0}`,
 			});
 		const moved = await this.db
 			.select({
 				id: applications.id,
+				transitionId: applicationTransitions.id,
 				to: applicationTransitions.toState,
 				title: jobs.title,
 				company: companies.name,
@@ -1006,9 +1008,14 @@ export class WorkerApp {
 				applicationId: m.id,
 				title: m.title,
 				company: m.company,
+				eventId: m.transitionId,
 			});
 		const blocked = await this.db
-			.select({ id: companies.id, name: companies.name })
+			.select({
+				id: companies.id,
+				name: companies.name,
+				updatedAt: companies.updatedAt,
+			})
 			.from(companies)
 			.where(
 				and(
@@ -1021,6 +1028,7 @@ export class WorkerApp {
 			offer({
 				kind: "stopped",
 				companyId: b.id,
+				eventId: `${b.id}@${b.updatedAt?.getTime() ?? 0}`,
 				title: `${b.name}: stopped`,
 				detail: `${b.name}'s board asked for a person (or robots.txt refused). Nothing was bypassed; the scan history says more.`,
 			});

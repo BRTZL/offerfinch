@@ -182,6 +182,7 @@ const heldNoticeSchema = z.object({
 	score: z.number().optional(),
 	detail: z.string().optional(),
 	companyId: z.string().optional(),
+	eventId: z.string().optional(),
 	/** When it first waited (ms); missing in a list written before it existed: now. */
 	heldAt: z.number().optional(),
 });

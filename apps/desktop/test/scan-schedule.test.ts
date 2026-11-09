@@ -2,7 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { appSettings, flowRuns } from "@offerfinch/db/schema/jobs";
-import { applications, companies, jobs } from "@offerfinch/db/schema/pipeline";
+import {
+	applications,
+	applicationTransitions,
+	companies,
+	jobs,
+} from "@offerfinch/db/schema/pipeline";
 import { SCAN_KIND } from "@offerfinch/runner";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -444,6 +449,49 @@ describe("a held notice whose write failed", () => {
 		adds.mockRestore();
 		await sleep(50);
 		expect(notified).toHaveLength(1);
+	});
+	it("sends a second round of questions on the same application, after the writes work again", async () => {
+		const notified: NativeNotice[] = [];
+		const app = await worker(undefined, notified);
+		await prime(app);
+		const failing = failHeldWrites(app);
+		const { applicationId } = await subject(app, "Engineer", {
+			state: "needs_answers",
+			alertedAt: null,
+		});
+		const round = (at: Date) =>
+			app.db.insert(applicationTransitions).values({
+				userId: "local",
+				applicationId,
+				fromState: "preparing",
+				toState: "needs_answers",
+				reason: "questions",
+				actor: "workflow",
+				createdAt: at,
+			});
+		await round(new Date());
+		await app.collectNotices();
+		await app.setScanSchedule({ every: 1, quietHours: off });
+		await sleep(50);
+		const questions = () => notified.filter((n) => n.kind === "question");
+		expect(questions()).toHaveLength(1);
+		// Answered, then a second round, while the watermark is still stuck.
+		await sleep(5);
+		const [second] = await round(new Date()).returning({
+			id: applicationTransitions.id,
+		});
+		await app.collectNotices();
+		// Writes work again: round 2 is kept to go out (the per-kind gap holds it a while), and
+		// only then does the watermark move past it.
+		failing.mockRestore();
+		await app.collectNotices();
+		expect(await app.settings.get("heldNotices")).toMatchObject([
+			{ kind: "question", applicationId, eventId: second?.id },
+		]);
+		// Read once: a later look does not queue it again.
+		await app.collectNotices();
+		expect(await app.settings.get("heldNotices")).toHaveLength(1);
+		expect(questions()).toHaveLength(1);
 	});
 });
 
