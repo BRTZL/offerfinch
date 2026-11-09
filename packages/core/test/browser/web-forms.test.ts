@@ -282,7 +282,15 @@ describe("filling an employer's form (dry run, network closed)", () => {
 			"What is your notice period?",
 			"Resume / CV",
 		]);
+		// Step 1, as filled before its "Next", is kept for the proof (the last step is `before`).
+		expect(result.steps).toHaveLength(1);
+		expect(result.steps?.[0]?.byteLength).toBeGreaterThan(0);
 		expect(forms.count("two-step")).toBe(0);
+	});
+
+	it("a single-page form has no step screenshots", async () => {
+		const { result } = await dryRun("single", await schemaOf("single"));
+		expect(result.steps).toBeUndefined();
 	});
 });
 
@@ -306,6 +314,7 @@ function harness(
 		reason?: string;
 		key?: string | null;
 		submitted?: boolean;
+		stepKeys?: string[];
 	}[] = [];
 	const store = {
 		submissionsPaused: async () => false,
@@ -337,6 +346,7 @@ function harness(
 				reason: input.reason,
 				key: input.afterKey,
 				submitted: input.submitted,
+				stepKeys: input.proof.stepKeys as string[] | undefined,
 			});
 		}),
 		stopSubmission: vi.fn(async (_u, _a, input) => {
@@ -382,6 +392,13 @@ describe("submitting an employer's form", () => {
 			for (const c of calls) {
 				expect(c.key).toBeTruthy();
 				expect(await blobs.get(c.key ?? "")).not.toBeNull();
+			}
+			// Every step before the last is in the proof too, each stored under its own key.
+			const stepKeys = calls[1]?.stepKeys ?? [];
+			expect(stepKeys).toHaveLength(variant === "two-step" ? 1 : 0);
+			for (const key of stepKeys) {
+				expect(key).toMatch(/-step-1\.png$/);
+				expect(await blobs.get(key)).not.toBeNull();
 			}
 			// Only the reviewed fields' values were sent.
 			const sent = forms.submissions.find((s) => s.variant === variant);

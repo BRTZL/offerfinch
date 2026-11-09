@@ -811,8 +811,21 @@ function stopped(
 	stop: Stop,
 	screenshot: Uint8Array | null,
 	filled: FilledField[],
+	steps: Uint8Array[] = [],
 ): RunResult {
-	return { outcome: "stopped", stop, screenshot, filled };
+	return {
+		outcome: "stopped",
+		stop,
+		screenshot,
+		filled,
+		...(steps.length > 0 ? { steps } : {}),
+	};
+}
+
+/** A filled step's screenshot, kept for the proof before its "Next" is clicked. */
+async function keepStepShot(page: BrowserPage, shots: Uint8Array[]) {
+	const bytes = await shot(page);
+	if (bytes) shots.push(bytes);
 }
 
 /** Steps through the form, filling each, up to the final submit control (not clicked here). */
@@ -821,6 +834,8 @@ async function fillSteps(
 	run: ApplicationRun,
 	first: WebScan,
 	state: Parameters<typeof fillStep>[3],
+	/** Receives a screenshot of each filled step before its "Next" (proof, step 7). */
+	shots: Uint8Array[],
 ): Promise<{ ok: true; submit: WebControl } | { ok: false; stop: Stop }> {
 	const lastPage = state.schema.reduce((m, f) => Math.max(m, f.page), 1);
 	let scan = first;
@@ -838,6 +853,7 @@ async function fillSteps(
 					return { ok: false, stop: { kind: "error", message: refused } };
 				stepped = true;
 			}
+			await keepStepShot(page, shots);
 			await page.click(`[data-jp-control="${roles.next.ref}"]`);
 			await page.waitForTimeout(500);
 			await page.waitForNetworkIdle(5_000);
@@ -890,6 +906,8 @@ export async function runWebApplication(
 		filled: [] as FilledField[],
 		uploadsCleared: false,
 	};
+	const shots: Uint8Array[] = [];
+	const steps = () => (shots.length > 0 ? { steps: shots } : {});
 	try {
 		if (!run.schema)
 			return stopped(
@@ -919,13 +937,14 @@ export async function runWebApplication(
 				[],
 			);
 		run.beforeFill?.();
-		const steps = await fillSteps(page, run, opened.scan, state);
-		if (!steps.ok) return stopped(steps.stop, await shot(page), state.filled);
+		const filledSteps = await fillSteps(page, run, opened.scan, state, shots);
+		if (!filledSteps.ok)
+			return stopped(filledSteps.stop, await shot(page), state.filled, shots);
 		const before = await page.screenshot({ fullPage: true });
 		const away = destinationProblem(page, run.allowedHosts);
 		const covered = await safeEvaluate<string | null>(
 			page,
-			webCoveredScript(steps.submit.ref),
+			webCoveredScript(filledSteps.submit.ref),
 		);
 		if (away || covered)
 			return stopped(
@@ -935,6 +954,7 @@ export async function runWebApplication(
 				},
 				before,
 				state.filled,
+				shots,
 			);
 		if (run.mode === "dry_run")
 			return {
@@ -942,6 +962,7 @@ export async function runWebApplication(
 				screenshot: before,
 				filled: state.filled,
 				blank: [],
+				...steps(),
 			};
 		const claimed = run.claim
 			? await run.claim(before, state.filled)
@@ -952,10 +973,11 @@ export async function runWebApplication(
 				reason: claimed.reason,
 				screenshot: before,
 				filled: state.filled,
+				...steps(),
 			};
 		const formUrl = page.url();
 		try {
-			await page.click(`[data-jp-control="${steps.submit.ref}"]`);
+			await page.click(`[data-jp-control="${filledSteps.submit.ref}"]`);
 			const result = await readOutcome(page, formUrl, run);
 			const after = (await shot(page)) ?? new Uint8Array();
 			return "confirmed" in result
@@ -966,6 +988,7 @@ export async function runWebApplication(
 						confirmation: result.confirmed,
 						finalUrl: page.url(),
 						filled: state.filled,
+						...steps(),
 					}
 				: {
 						outcome: "unknown",
@@ -974,6 +997,7 @@ export async function runWebApplication(
 						reason: result.unknown,
 						finalUrl: page.url(),
 						filled: state.filled,
+						...steps(),
 					};
 		} catch (error) {
 			return {
@@ -983,6 +1007,7 @@ export async function runWebApplication(
 				reason: `Error after the submit click: ${error instanceof Error ? error.message : String(error)}`,
 				finalUrl: page.url(),
 				filled: state.filled,
+				...steps(),
 			};
 		}
 	} catch (error) {
@@ -994,6 +1019,7 @@ export async function runWebApplication(
 			},
 			await shot(page),
 			state.filled,
+			shots,
 		);
 	}
 }

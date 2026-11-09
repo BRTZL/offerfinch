@@ -139,7 +139,11 @@ function hostOf(url: string): string {
 	}
 }
 
-export type RunResult =
+/**
+ * One run's outcome. `steps`: an employer's multi-step form, a full-page screenshot of each step
+ * as filled, taken before its "Next" (the last step is `before`); unset on single-page forms.
+ */
+export type RunResult = (
 	| {
 			outcome: "stopped";
 			stop: Stop;
@@ -173,7 +177,8 @@ export type RunResult =
 			reason: string;
 			finalUrl: string;
 			filled: FilledField[];
-	  };
+	  }
+) & { steps?: Uint8Array[] };
 
 const BLOCK_STATUSES = new Set([401, 403, 407, 429, 503]);
 

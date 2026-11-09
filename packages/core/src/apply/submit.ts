@@ -237,6 +237,29 @@ async function store(
 	return key;
 }
 
+/**
+ * Stores the screenshot of each filled step of a multi-step form (before its "Next"), keyed
+ * `step-1`, `step-2` …; their keys go into the attempt's proof as `stepKeys`, in step order.
+ */
+async function storeSteps(
+	blobs: BlobStore,
+	userId: string,
+	applicationId: string,
+	steps: Uint8Array[] | undefined,
+): Promise<{ stepKeys?: string[] }> {
+	if (!steps?.length) return {};
+	const keys: string[] = [];
+	for (const [i, bytes] of steps.entries()) {
+		const key = await store(
+			blobs,
+			keyFor(userId, applicationId, `step-${i + 1}`),
+			bytes,
+		).catch(() => null);
+		if (key) keys.push(key);
+	}
+	return keys.length > 0 ? { stepKeys: keys } : {};
+}
+
 /** The submission mode for this application: its source, then its board. */
 export function modeOf(context: SubmissionContext) {
 	return submissionModeForSource(
@@ -497,7 +520,7 @@ async function gateBeforeOpen(
 	// answers through the page's own scripts, long before the upload or the click.
 	if (!(await db.submissionsPaused(userId))) return null;
 	const reason = "Submissions were paused before the form was opened.";
-	await stop(reason, board);
+	await stop(reason, board, "", null, { stop: "paused" });
 	return { outcome: "paused", reason };
 }
 
@@ -537,6 +560,8 @@ export async function submitStep(
 				`Automatic submission to ${new URL(run.url).hostname} is not turned on (SUBMIT_ALLOWED_HOSTS).`,
 				run.board,
 				run.url,
+				null,
+				{ stop: "host_not_allowed" },
 			);
 		const hosts = runHosts(run, apply);
 		const result = await openAndRun(
@@ -577,7 +602,11 @@ export async function submitStep(
 			"allowlist",
 			hosts.rules,
 		);
-		const proof = { filled: result.filled, board: run.board };
+		const proof = {
+			filled: result.filled,
+			board: run.board,
+			...(await storeSteps(apply.blobs, userId, applicationId, result.steps)),
+		};
 		switch (result.outcome) {
 			case "submitted":
 			case "unknown": {
@@ -615,7 +644,7 @@ export async function submitStep(
 					url: run.url,
 					screenshotKey: key,
 					reason: `${result.reason} Nothing was submitted.`,
-					proof,
+					proof: pausedAtClaim ? { ...proof, stop: "paused" } : proof,
 				});
 				return pausedAtClaim
 					? { outcome: "paused", reason: result.reason }
