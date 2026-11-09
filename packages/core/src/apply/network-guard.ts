@@ -57,21 +57,37 @@ export function hostMatches(host: string, pattern: string): boolean {
 }
 
 /**
- * The values a filled form holds, as they may appear in a request: each value (lower case), the
- * first 24 characters of a long one, and a phone number's digits and its text without the "+".
- * Values under 4 characters
- * ("Yes", "No") are left out: they would match everywhere.
+ * The values a filled form holds, as they may appear in a request. A single word ("LinkedIn",
+ * a city, a first name) is left out: it is an option's text or too common to tell apart, and
+ * would match a board's own URLs. Kept: an email, a phone number (as typed, without its "+",
+ * and its digits), a link without its scheme and host (only the part that names the person),
+ * and any other value of two words or more (the first 24 characters of a long one).
  */
 export function formValueNeedles(values: string[]): string[] {
 	const needles = new Set<string>();
 	for (const raw of values) {
 		const value = raw.trim().toLowerCase();
-		if (value.length >= 4)
-			needles.add(value.length > 40 ? value.slice(0, 24) : value);
 		const digits = value.replace(/\D/g, "");
-		if (/^\+?[\d\s().-]+$/.test(value) && digits.length >= 7) {
-			needles.add(digits);
-			needles.add(value.replace(/^\+/, ""));
+		if (/^\+?[\d\s().-]+$/.test(value)) {
+			if (digits.length >= 7) {
+				needles.add(digits);
+				needles.add(value);
+				needles.add(value.replace(/^\+/, ""));
+			}
+			continue;
+		}
+		const link = value.match(
+			/^(?:https?:\/\/)?(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}(\/.*)$/,
+		);
+		if (link) {
+			// The path that names the person ("/in/ada-example"), never the bare host.
+			const path = (link[1] ?? "").replace(/\/+$/, "");
+			if (path.replace(/[^a-z0-9]/g, "").length >= 6) needles.add(path);
+			continue;
+		}
+		if (value.includes("@") || /\s/.test(value)) {
+			if (value.length >= 4)
+				needles.add(value.length > 40 ? value.slice(0, 24) : value);
 		}
 	}
 	return [...needles];

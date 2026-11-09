@@ -315,6 +315,31 @@ export interface PlaywrightBrowserLike {
 
 type GuardMode = "open" | "read_only" | "none" | "allowlist" | "pinned";
 
+/**
+ * True when a request sends a file: a PUT, a multipart body, a document type (PDF, Word) or raw
+ * bytes, or a body that is a PDF. Presigned uploads send the raw file.
+ */
+function isUpload(method: string, type: string, body: string | null): boolean {
+	return (
+		method === "PUT" ||
+		/^(?:multipart\/|application\/(?:pdf|octet-stream|msword|vnd\.openxmlformats))/i.test(
+			type,
+		) ||
+		(body ?? "").includes("%PDF-")
+	);
+}
+
+function hostOf(url: string): string {
+	try {
+		return new URL(url).hostname;
+	} catch {
+		return "";
+	}
+}
+
+/** The last two labels of a host name ("hcaptcha.com" for "api.hcaptcha.com"). */
+const siteOf = (host: string) => host.split(".").slice(-2).join(".");
+
 /** The URL of the frame that made a request, or "" when it cannot be told. */
 function frameUrl(request: { frame(): unknown }): string {
 	try {
@@ -478,7 +503,7 @@ class PlaywrightPage implements BrowserPage {
 		const type = request.headers?.()["content-type"] ?? "";
 		if (
 			(request.isNavigationRequest() && mainFrame) ||
-			/^multipart\/form-data/i.test(type) ||
+			isUpload(request.method(), type, request.postData()) ||
 			carriesFormData(url, this.needles) ||
 			carriesFormData(request.postData(), this.needles)
 		)
@@ -487,7 +512,12 @@ class PlaywrightPage implements BrowserPage {
 		if (!urlOnHosts(url, assets)) return NOT_A_DESTINATION;
 		if (method === "GET" || method === "HEAD") return null;
 		const kind = request.resourceType?.() ?? "";
-		const fromWidget = !mainFrame && urlOnHosts(frameUrl(request), assets);
+		// Only to the widget's own company: a frame on one listed host never posts to another.
+		const from = frameUrl(request);
+		const fromWidget =
+			!mainFrame &&
+			urlOnHosts(from, assets) &&
+			siteOf(hostOf(from)) === siteOf(hostOf(url));
 		return (kind === "xhr" || kind === "fetch") && fromWidget
 			? null
 			: NOT_A_DESTINATION;

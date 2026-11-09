@@ -350,7 +350,6 @@ function formValuesOf(data: ApplicationRun["data"]): string[] {
 	const { contact } = data;
 	return [
 		...Object.values(contact),
-		...contact.name.split(/\s+/),
 		...data.answers.map((a) => a.answer),
 		data.coverLetterText ?? "",
 	].filter(Boolean);

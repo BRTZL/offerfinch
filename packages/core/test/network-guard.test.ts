@@ -110,3 +110,46 @@ describe("carriesFormData", () => {
 		expect(carriesFormData(null, needles)).toBe(false);
 	});
 });
+
+describe("carriesFormData on the URLs the real forms load (2026-11-09)", () => {
+	// A realistic applicant: a long LinkedIn link, a short first name, and "LinkedIn" as the
+	// answer to Lever's "How did you hear about this opportunity?".
+	const needles = formValueNeedles([
+		"Mark Example",
+		"mark.example@example.com",
+		"+1 555 010 0199",
+		"Ankara",
+		"https://www.linkedin.com/in/mark-example-1234567890",
+		"https://github.com/mark-example",
+		"LinkedIn",
+		"Yes, I am willing to relocate to Istanbul.",
+	]);
+
+	it("matches none of the boards' own requests", () => {
+		for (const url of [
+			"https://platform.linkedin.com/xdoor/scripts/in.js",
+			"https://www.linkedin.com/talentwidgets/apply-with-linkedin",
+			"https://api.hcaptcha.com/checksiteconfig?v=58a2633848099317cef7deac21e607b1a41a5b9d&host=jobs.lever.co&sitekey=e33f87f8-88ec-4e1a-9a13-df9bbb1d8120&sc=1&swa=1&spst=1",
+			"https://www.recaptcha.net/recaptcha/enterprise/anchor?ar=1&k=6LdQ&co=aHR0cHM6Ly9qb2ItYm9hcmRzLmdyZWVuaG91c2UuaW86NDQz&hl=en&v=gYdqkxiddE5aXrugNbBbKgtN&size=invisible&cb=mark",
+			"https://www.googletagmanager.com/gtag/js?id=",
+			"https://cdn.lever.co/fonts/linkedin.woff2",
+			"https://jobs.lever.co/searchLocations?text=Ankara",
+		])
+			expect(carriesFormData(url, needles), url).toBe(false);
+	});
+
+	it("still matches the applicant's own data", () => {
+		expect(
+			carriesFormData(
+				"https://x.test/t?u=https%3A%2F%2Fwww.linkedin.com%2Fin%2Fmark-example-1234567890",
+				needles,
+			),
+		).toBe(true);
+		expect(carriesFormData("https://x.test/t?n=Mark%20Example", needles)).toBe(
+			true,
+		);
+		expect(
+			carriesFormData("https://x.test/t?e=mark.example%40example.com", needles),
+		).toBe(true);
+	});
+});

