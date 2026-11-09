@@ -33,15 +33,32 @@ const subscribe = <A extends unknown[]>(
 	};
 };
 
+/**
+ * The worker's own words for a refused link ("This changed since you opened it; look again."),
+ * without Electron's "Error invoking remote method '…': Error: " in front.
+ */
+const refusal = (error: unknown): never => {
+	const message = error instanceof Error ? error.message : String(error);
+	throw new Error(
+		message.replace(
+			/^Error invoking remote method '[^']+': (?:\w*Error: )?/,
+			"",
+		),
+	);
+};
+
 const bridge: DesktopBridge = {
 	info: () => ipcRenderer.invoke(IPC.info),
-	openPosting: (id) => ipcRenderer.invoke(IPC.openPosting, String(id)),
+	openPosting: (id) =>
+		ipcRenderer.invoke(IPC.openPosting, String(id)).catch(refusal),
 	openApplicationForm: (id, attemptId) =>
-		ipcRenderer.invoke(
-			IPC.openApplicationForm,
-			String(id),
-			attemptId === null ? null : String(attemptId),
-		),
+		ipcRenderer
+			.invoke(
+				IPC.openApplicationForm,
+				String(id),
+				attemptId === null ? null : String(attemptId),
+			)
+			.catch(refusal),
 	openDocument: (id) => ipcRenderer.invoke(IPC.openDocument, String(id)),
 	saveDocument: (id) => ipcRenderer.invoke(IPC.saveDocument, String(id)),
 	saveDataExport: () => ipcRenderer.invoke(IPC.saveDataExport),

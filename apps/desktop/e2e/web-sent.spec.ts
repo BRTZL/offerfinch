@@ -2,7 +2,12 @@ import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { expect, type Page, test } from "@playwright/test";
+import {
+	type ElectronApplication,
+	expect,
+	type Page,
+	test,
+} from "@playwright/test";
 import { startFixtureBoards } from "./fixture-boards";
 import {
 	APP_DIR,
@@ -124,6 +129,79 @@ async function settleOpenFlag(page: Page) {
 	}
 }
 
+/**
+ * Onboards, adds the stand-in employer's job from its link (as one the web search found), turns
+ * submissions on, approves it, and waits until it was sent once. Returns the application's id.
+ */
+async function sendOnce(
+	app: ElectronApplication,
+	page: Page,
+	userData: string,
+	employer: Awaited<ReturnType<typeof startEmployer>>,
+): Promise<string> {
+	await page.setViewportSize({ width: 1440, height: 1000 });
+	await onboardWithFakes(page);
+
+	// The job from its link: the posting is read, then its form, before review.
+	await sidebar(page, "Inbox").click();
+	await page.getByTestId("add-job-button").click();
+	await page.getByTestId("add-job-url").fill(employer.link);
+	await page.getByTestId("add-job-submit").click();
+	await expect(page.getByTestId("add-job")).toBeHidden();
+	await expect(page.getByTestId("interested")).toBeVisible({
+		timeout: 60_000,
+	});
+	// A job added by hand is always the user's to send. Stand in for one the web search
+	// found instead (source "web", whose link is followed to the employer's own form).
+	withDb(
+		userData,
+		(db) =>
+			db.prepare("update jobs set source = 'web' where title = ?").run(TITLE),
+		false,
+	);
+	await page.getByTestId("interested").click();
+	await expect
+		.poll(() => appRow(userData)?.state, { timeout: 120_000 })
+		.toBe("ready_for_review");
+	const id = appRow(userData)?.id ?? "";
+
+	// Submissions start paused: on through the switch in Settings › Applying.
+	await openRoute(app, page, "/settings/applying");
+	const toggle = page.getByTestId("submissions-switch");
+	await toggle.click();
+	await page.getByTestId("submissions-confirm").click();
+	await expect(toggle).toHaveAttribute("aria-checked", "true");
+
+	await openRoute(app, page, `/applications/${id}`);
+	const approve = page.getByTestId("approve");
+	await expect
+		.poll(
+			async () => {
+				if (await approve.isEnabled()) return "open";
+				await settleOpenFlag(page);
+				return (await approve.isEnabled()) ? "open" : "closed";
+			},
+			{ timeout: 150_000, intervals: [1_500] },
+		)
+		.toBe("open");
+	await approve.click();
+
+	// Sent once, and the page thanked: still "Sent — check your email", never Applied.
+	await expect
+		.poll(() => appRow(userData)?.state, { timeout: 120_000 })
+		.toBe("needs_human");
+	expect(employer.posts).toHaveLength(1);
+	expect(employer.posts[0]).toContain("email=");
+	expect(
+		countIn(
+			userData,
+			`select count(*) n from submission_attempts where application_id = '${id}' and status = 'needs_human' and json_extract(proof, '$.outcome') = 'web_sent'`,
+		),
+	).toBe(1);
+
+	return id;
+}
+
 test("an employer's form is sent, check your email; Got the email moves it to Applied", async () => {
 	const userData = tempUserData();
 	const boards = await startFixtureBoards();
@@ -135,66 +213,7 @@ test("an employer's form is sent, check your email; Got the email moves it to Ap
 		env: { OFFERFINCH_LINK_ALLOW_LOCAL: "1" },
 	});
 	try {
-		await page.setViewportSize({ width: 1440, height: 1000 });
-		await onboardWithFakes(page);
-
-		// The job from its link: the posting is read, then its form, before review.
-		await sidebar(page, "Inbox").click();
-		await page.getByTestId("add-job-button").click();
-		await page.getByTestId("add-job-url").fill(employer.link);
-		await page.getByTestId("add-job-submit").click();
-		await expect(page.getByTestId("add-job")).toBeHidden();
-		await expect(page.getByTestId("interested")).toBeVisible({
-			timeout: 60_000,
-		});
-		// A job added by hand is always the user's to send. Stand in for one the web search
-		// found instead (source "web", whose link is followed to the employer's own form).
-		withDb(
-			userData,
-			(db) =>
-				db.prepare("update jobs set source = 'web' where title = ?").run(TITLE),
-			false,
-		);
-		await page.getByTestId("interested").click();
-		await expect
-			.poll(() => appRow(userData)?.state, { timeout: 120_000 })
-			.toBe("ready_for_review");
-		const id = appRow(userData)?.id ?? "";
-
-		// Submissions start paused: on through the switch in Settings › Applying.
-		await openRoute(app, page, "/settings/applying");
-		const toggle = page.getByTestId("submissions-switch");
-		await toggle.click();
-		await page.getByTestId("submissions-confirm").click();
-		await expect(toggle).toHaveAttribute("aria-checked", "true");
-
-		await openRoute(app, page, `/applications/${id}`);
-		const approve = page.getByTestId("approve");
-		await expect
-			.poll(
-				async () => {
-					if (await approve.isEnabled()) return "open";
-					await settleOpenFlag(page);
-					return (await approve.isEnabled()) ? "open" : "closed";
-				},
-				{ timeout: 150_000, intervals: [1_500] },
-			)
-			.toBe("open");
-		await approve.click();
-
-		// Sent once, and the page thanked: still "Sent — check your email", never Applied.
-		await expect
-			.poll(() => appRow(userData)?.state, { timeout: 120_000 })
-			.toBe("needs_human");
-		expect(employer.posts).toHaveLength(1);
-		expect(employer.posts[0]).toContain("email=");
-		expect(
-			countIn(
-				userData,
-				`select count(*) n from submission_attempts where application_id = '${id}' and status = 'needs_human' and json_extract(proof, '$.outcome') = 'web_sent'`,
-			),
-		).toBe(1);
-
+		const id = await sendOnce(app, page, userData, employer);
 		await openRoute(app, page, `/applications/${id}`);
 		await expect(page.getByTestId("needs-human")).toContainText(
 			"Sent — check your email",
@@ -251,6 +270,83 @@ test("an employer's form is sent, check your email; Got the email moves it to Ap
 				.filter({ hasText: "Sent, and you got the email" }),
 		).toBeVisible();
 		await shot(page, "web-sent-applied");
+		expect(errors).toEqual([]);
+	} finally {
+		await app.close();
+		await boards.close();
+		await employer.close();
+	}
+});
+
+/** Records every link handed to the default browser instead of opening it. */
+async function stubBrowser(app: ElectronApplication) {
+	await app.evaluate(({ shell }) => {
+		const opened: string[] = [];
+		(globalThis as unknown as { __opened: string[] }).__opened = opened;
+		shell.openExternal = async (url: string) => {
+			opened.push(url);
+		};
+	});
+	return () =>
+		app.evaluate(
+			() => (globalThis as unknown as { __opened: string[] }).__opened,
+		);
+}
+
+test("It didn't go through, then Finish it yourself: recorded not sent before the form opens", async () => {
+	const userData = tempUserData();
+	const boards = await startFixtureBoards();
+	const employer = await startEmployer();
+	const { app, page, errors } = await launchApp({
+		userData,
+		rewrite: boards.rewrite,
+		siteOrigins: boards.siteOrigins,
+		env: { OFFERFINCH_LINK_ALLOW_LOCAL: "1" },
+	});
+	try {
+		const id = await sendOnce(app, page, userData, employer);
+		const opened = await stubBrowser(app);
+		await openRoute(app, page, `/applications/${id}`);
+		await page.getByTestId("stop-sheet-open").click();
+		const sheet = page.getByTestId("stop-sheet");
+		await expect(sheet).toHaveAttribute("data-case", "web_sent");
+		await sheet.getByTestId("stop-confirm-not-sent").click();
+		await sheet.getByTestId("stop-finish_confirmed").click();
+		// The panel stays open while the page reads the attempt again as not gone through.
+		await expect(sheet.getByTestId("finish-panel")).toBeVisible();
+		await expect.poll(opened).toHaveLength(1);
+		expect((await opened())[0]).toMatch(
+			/^http:\/\/127\.0\.0\.1:\d+\/careers\/robotics/,
+		);
+		const attempt = () =>
+			withDb(
+				userData,
+				(db) =>
+					db
+						.prepare(
+							"select status, resolution from submission_attempts where application_id = ? and attempt = 1",
+						)
+						.get(id) as { status: string; resolution: string | null },
+			);
+		expect(attempt()).toEqual({
+			status: "not_sent",
+			resolution: "The user confirmed it did not go through",
+		});
+		await expect(sheet).toHaveAttribute("data-case", "confirmed_not_sent");
+		await expect(sheet.getByTestId("finish-panel")).toBeVisible();
+
+		// Sent by hand: Applied, the sent attempt stays not sent, nothing posted again.
+		await sheet.getByTestId("stop-mark-submitted").click();
+		await expect
+			.poll(() => appRow(userData)?.state, { timeout: 30_000 })
+			.toBe("applied");
+		expect(
+			countIn(
+				userData,
+				`select count(*) n from submission_attempts where application_id = '${id}' and ((attempt = 1 and status = 'not_sent' and mode = 'auto') or (attempt = 2 and status = 'submitted' and mode = 'manual'))`,
+			),
+		).toBe(2);
+		expect(employer.posts).toHaveLength(1);
 		expect(errors).toEqual([]);
 	} finally {
 		await app.close();
