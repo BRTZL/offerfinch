@@ -73,16 +73,30 @@ export function decodeBody(body: Uint8Array, contentType: string): Decoded {
 	return { texts: [text], files: [] };
 }
 
+/** What a request carries: its body, decoded; a GET's (a native GET form's) is its query. */
+function carried(entry: NetworkLogEntry): Decoded | null {
+	if (entry.body) return decodeBody(entry.body, entry.contentType ?? "");
+	if (!/^GET$/i.test(entry.method)) return null;
+	try {
+		return {
+			texts: [...new URL(entry.url).searchParams.values()],
+			files: [],
+		};
+	} catch {
+		return null;
+	}
+}
+
 /**
- * True when `entry`'s body carries every approved typed value (each as one whole value; spaces
- * and line ends compared loosely), or, when nothing was typed, the CV file.
+ * True when `entry`'s body (a GET's query) carries every approved typed value (each as one whole
+ * value; spaces and line ends compared loosely), or, when nothing was typed, the CV file.
  */
 export function carriesValues(
 	entry: NetworkLogEntry,
 	values: SentValues,
 ): boolean {
-	if (!entry.body) return false;
-	const decoded = decodeBody(entry.body, entry.contentType ?? "");
+	const decoded = carried(entry);
+	if (!decoded) return false;
 	const sent = new Set(decoded.texts.map(squash));
 	const typed = values.typed.map(squash).filter(Boolean);
 	if (typed.length > 0) return typed.every((v) => sent.has(v));
@@ -105,4 +119,87 @@ export function carriesApplication(
 	values: SentValues,
 ): boolean {
 	return answeredOk(entry) && carriesValues(entry, values);
+}
+
+/**
+ * Wording that says an application did not go through, or may not have: on the page after the
+ * click, or in the HTML the application request was answered with, any of these makes the
+ * outcome unknown, whatever else the page says (docs/decisions.md, 2026-11-09, step 6 third
+ * pass); it covers every wording of the boards' `REFUSAL` and `DUPLICATE` (forms.ts). Unknown is
+ * the safe side: a confirmation page that happens to say "no further action is
+ * required" is checked by hand. Each entry is a regular expression source, matched whole-word,
+ * case-insensitive.
+ */
+export const OUTCOME_REFUSALS: readonly string[] = [
+	// English
+	// The longer wordings first, so the message quotes them whole.
+	"could ?n[o'’]t be (?:submitted|sent|processed|completed|saved|received)",
+	"could ?n[o'’]t (?:submit|send|process|complete|save)",
+	"could ?n[o'’]t",
+	"unable to (?:submit|send|process|complete|save)",
+	"not (?:been )?(?:submitted|sent|received|accepted|processed)",
+	"(?:something|it) went wrong",
+	"errors?",
+	"fail(?:ed|ure|s)?",
+	"invalid",
+	"required",
+	"missing",
+	"try again",
+	"already (?:applied|submitted|received|sent)",
+	"duplicate",
+	"rejected",
+	"declined",
+	"unsuccessful",
+	"problem",
+	"please (?:correct|fix|check|review)",
+	"expired",
+	"too many (?:requests|attempts)",
+	"access denied",
+	"forbidden",
+	// German
+	"fehler",
+	"fehlgeschlagen",
+	"ungültig",
+	"erforderlich",
+	"pflichtfeld",
+	"erneut versuchen",
+	"bereits beworben",
+	// French
+	"erreur",
+	"échec",
+	"invalide",
+	"obligatoire",
+	"requis",
+	"réessayer",
+	"déjà postulé",
+	// Spanish
+	"inválido",
+	"obligatorio",
+	"requerido",
+	"(?:inténtalo|intente|intenta) de nuevo",
+	"vuelva a intentar(?:lo)?",
+];
+
+/** Letters and digits on either side end a match: `\b` knows no letter outside ASCII. */
+const REFUSAL_WORDING = new RegExp(
+	`(?<![\\p{L}\\p{N}])(?:${OUTCOME_REFUSALS.join("|")})(?![\\p{L}\\p{N}])`,
+	"iu",
+);
+
+/** The first refusal or error wording in `text` (`OUTCOME_REFUSALS`), or null. */
+export function refusalIn(text: string): string | null {
+	return text.replace(/\s+/g, " ").match(REFUSAL_WORDING)?.[0] ?? null;
+}
+
+/** The text of an HTML answer: scripts, styles and tags dropped, hidden parts kept. */
+export function htmlText(html: string): string {
+	return html
+		.replace(/<(script|style|noscript)\b[\s\S]*?<\/\1\s*>/gi, " ")
+		.replace(/<!--[\s\S]*?-->/g, " ")
+		.replace(/<[^>]*>/g, " ")
+		.replace(/&nbsp;/gi, " ")
+		.replace(/&amp;/gi, "&")
+		.replace(/&#39;|&apos;|&rsquo;/gi, "'")
+		.replace(/\s+/g, " ")
+		.trim();
 }

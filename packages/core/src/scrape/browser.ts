@@ -85,7 +85,20 @@ export interface BrowserPage {
 	freezeAssets(): void;
 	/** Every request a guarded page made, with the guard's decision. Empty on open sessions. */
 	networkLog(): NetworkLogEntry[];
+	/**
+	 * "allowlist": how many requests the session has started so far (the last `seq` given), and
+	 * those started but not yet in the log (still waiting for their answer). Zero and none in
+	 * other modes.
+	 */
+	networkStarted(): { count: number; pending: PendingRequest[] };
 	close(): Promise<void>;
+}
+
+/** A request the guard let through that has no answer yet (`BrowserPage.networkStarted`). */
+export interface PendingRequest {
+	seq: number;
+	method: string;
+	url: string;
 }
 
 export interface NetworkLogEntry {
@@ -93,15 +106,23 @@ export interface NetworkLogEntry {
 	url: string;
 	allowed: boolean;
 	reason: string;
+	/**
+	 * "allowlist": the order the request started in (1, 2 …, counted when the guard first sees
+	 * it), not the order it was answered in, which is the log's order.
+	 */
+	seq?: number;
 	/** "allowlist": a navigation of the page itself (its main frame). */
 	navigation?: true;
 	/**
-	 * "allowlist", a request to a destination that is not a read (POST, PUT …): the HTTP status it
-	 * was answered with, its body and content type, so a run can tell what it carried.
+	 * "allowlist", a request to a destination that is not a read (POST, PUT …), or the page's own
+	 * navigation there: the HTTP status it was answered with, its body and content type, so a run
+	 * can tell what it carried.
 	 */
 	status?: number;
 	body?: Uint8Array;
 	contentType?: string;
+	/** The same, when it was answered with HTML: that answer, cut at `ANSWER_LIMIT` characters. */
+	answerHtml?: string;
 }
 
 export interface BrowserSession {
@@ -219,6 +240,7 @@ interface PlaywrightResponseLike {
 interface PlaywrightFetchResponseLike {
 	status(): number;
 	headers(): Record<string, string>;
+	body?(): Promise<Buffer>;
 }
 
 interface PlaywrightWebSocketRouteLike {
@@ -356,6 +378,23 @@ function isUpload(method: string, type: string, body: string | null): boolean {
 	);
 }
 
+/** How much of an HTML answer to a destination the log keeps (`NetworkLogEntry.answerHtml`). */
+const ANSWER_LIMIT = 200_000;
+
+/** The HTML a destination answered with, or null for any other answer (JSON, a redirect …). */
+async function answerHtmlOf(
+	response: PlaywrightFetchResponseLike,
+): Promise<string | null> {
+	if (!/text\/html|xhtml/i.test(response.headers()["content-type"] ?? ""))
+		return null;
+	try {
+		const body = await response.body?.();
+		return body ? body.toString("utf8").slice(0, ANSWER_LIMIT) : null;
+	} catch {
+		return null;
+	}
+}
+
 /** What a request to a destination carried, and how it was answered (`NetworkLogEntry`). */
 function sentOf(
 	request: ReturnType<PlaywrightRouteLike["request"]>,
@@ -397,6 +436,10 @@ interface GuardState {
 	readonly loaded: Set<string>;
 	/** "allowlist": set by `freezeAssets`; only a file in `loaded` may load from then on. */
 	frozen: boolean;
+	/** "allowlist": requests started so far (`NetworkLogEntry.seq`). */
+	started: number;
+	/** "allowlist": requests started and not yet logged, by `seq`. */
+	readonly pending: Map<number, PendingRequest>;
 }
 
 /** The URL of the frame that made a request, or "" when it cannot be told. */
@@ -527,6 +570,25 @@ class PlaywrightPage implements BrowserPage {
 		const url = request.url();
 		// data:, blob: and about: stay inside the browser.
 		if (!/^https?:/.test(url)) return route.continue();
+		// Counted when it starts, before anything is awaited: a run tells which requests a click
+		// started by this order, whatever order they are answered in.
+		const seq = ++this.state.started;
+		this.state.pending.set(seq, { seq, method, url });
+		try {
+			return await this.allowlistSend(route, seq);
+		} finally {
+			this.state.pending.delete(seq);
+		}
+	}
+
+	/** `allowlistRoute` for one http(s) request, its log entries numbered `seq`. */
+	private async allowlistSend(
+		route: PlaywrightRouteLike,
+		seq: number,
+	): Promise<void> {
+		const request = route.request();
+		const method = request.method();
+		const url = request.url();
 		const destination = urlOnHosts(url, this.allowedHosts);
 		let reason = "allowed host";
 		if (!destination) {
@@ -537,6 +599,7 @@ class PlaywrightPage implements BrowserPage {
 					url,
 					allowed: false,
 					reason: decision.reason,
+					seq,
 				});
 				return route.abort("blockedbyclient");
 			}
@@ -559,22 +622,25 @@ class PlaywrightPage implements BrowserPage {
 					url: target,
 					allowed: false,
 					reason: refusal,
+					seq,
 				});
 				return route.abort("blockedbyclient");
 			}
 		}
+		const navigation =
+			request.isNavigationRequest() &&
+			request.frame() === this.page.mainFrame();
+		const sent = destination && (navigation || !/^(?:GET|HEAD)$/i.test(method));
+		const answerHtml = sent ? await answerHtmlOf(response) : null;
 		this.state.log.push({
 			method,
 			url,
 			allowed: true,
 			reason,
-			...(request.isNavigationRequest() &&
-			request.frame() === this.page.mainFrame()
-				? { navigation: true as const }
-				: {}),
-			...(destination && !/^(?:GET|HEAD)$/i.test(method)
-				? sentOf(request, response.status())
-				: {}),
+			seq,
+			...(navigation ? { navigation: true as const } : {}),
+			...(sent ? sentOf(request, response.status()) : {}),
+			...(answerHtml ? { answerHtml } : {}),
 		});
 		return route.fulfill({ response: response as never });
 	}
@@ -705,6 +771,13 @@ class PlaywrightPage implements BrowserPage {
 
 	networkLog(): NetworkLogEntry[] {
 		return [...this.state.log];
+	}
+
+	networkStarted(): { count: number; pending: PendingRequest[] } {
+		return {
+			count: this.state.started,
+			pending: [...this.state.pending.values()],
+		};
 	}
 
 	async evaluate<T>(script: string): Promise<T> {
@@ -899,6 +972,8 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 			log: [],
 			loaded: new Set(),
 			frozen: false,
+			started: 0,
+			pending: new Map(),
 		};
 		const pages = new Map<unknown, PlaywrightPage>();
 		if (network !== "open") {

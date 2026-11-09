@@ -182,6 +182,7 @@ function fakeBrowser(
 		restrictNetwork: () => {},
 		freezeAssets: () => {},
 		networkLog: () => [],
+		networkStarted: () => ({ count: 0, pending: [] }),
 		close: async () => {},
 	};
 	return {

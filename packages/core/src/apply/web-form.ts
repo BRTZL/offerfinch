@@ -1,4 +1,8 @@
-import { type BrowserPage, urlOnHosts } from "../scrape/browser";
+import {
+	type BrowserPage,
+	type NetworkLogEntry,
+	urlOnHosts,
+} from "../scrape/browser";
 import {
 	type ApplicationRun,
 	destinationProblem,
@@ -14,18 +18,16 @@ import {
 	schemaKey,
 } from "./form-schema";
 import {
-	DUPLICATE,
 	type FillAction,
 	type FillPlan,
 	type FormField,
 	optionsScript,
 	planFill,
-	REFUSAL,
 	systemRole,
 	VISIBLE_CHALLENGE_SCRIPT,
 	verifyFilled,
 } from "./forms";
-import { webFormHost } from "./web-hosts";
+import { linkMoved, webFormHost } from "./web-hosts";
 import type { ControlRole, WebFormModel } from "./web-model";
 import {
 	PAGE_TEXT_SCRIPT,
@@ -37,7 +39,13 @@ import {
 	type WebScan,
 	webCoveredScript,
 } from "./web-scan";
-import { answeredOk, carriesValues, type SentValues } from "./web-sent";
+import {
+	answeredOk,
+	carriesValues,
+	htmlText,
+	refusalIn,
+	type SentValues,
+} from "./web-sent";
 
 /**
  * An employer's own application form (the "web" board, docs/auto-apply-plan.md step 6): read
@@ -221,9 +229,10 @@ function elsewhere(
 /**
  * Opens an employer's form; a stop when the page is blocked, a challenge, a wall, on another
  * host, sends elsewhere, or shows no form. The form's page is where the HTTP redirects led (the
- * browser follows them before any script runs); a script or meta refresh that moves the page to
- * another host, a frame from another host, or an `action` or `formaction` naming one is a
- * hand-off. A form in a frame of the same host is opened on its own.
+ * browser follows them before any script runs), and only when they kept the link's own host; a
+ * redirect, a script or a meta refresh that moves the page to another host, a frame from another
+ * host, or an `action` or `formaction` naming one is a hand-off. A form in a frame of the same
+ * host is opened on its own.
  */
 export async function openWebForm(
 	page: BrowserPage,
@@ -239,11 +248,14 @@ export async function openWebForm(
 			},
 		};
 	const formUrl = nav.responseUrl ?? url;
+	// An HTTP redirect to another host never makes that host the destination: the user finishes it.
+	const moved = linkMoved(url, formUrl);
+	if (moved) return { stop: { kind: "other_site", message: moved } };
 	const formHost = webFormHost(formUrl);
 	let found = await awaitForm(page, allowedHosts, 15_000);
 	if ("stop" in found) return found;
-	const moved = hostOf(page.url());
-	if (moved && moved !== formHost) return { stop: sendsTo(moved) };
+	const here = hostOf(page.url());
+	if (here && here !== formHost) return { stop: sendsTo(here) };
 	const frame = found.scan.frameUrl;
 	if (frame) {
 		const there = new URL(frame, page.url());
@@ -818,47 +830,102 @@ const pathOf = (url: string) => {
 const occurrences = (text: string, part: string) =>
 	part ? text.split(part).length - 1 : 0;
 
-/** The page just before the one click: its text and how far its network log had got. */
+/** The page just before the one click: its text, and how many requests had started by then. */
 interface BeforeClick {
 	text: string;
-	logged: number;
+	started: number;
 }
 
-/**
- * Null when, after the click, the application itself went to the form's host: a request that is
- * not a read, answered 2xx or 3xx, whose body carries the approved values (`carriesValues`).
- * Otherwise why not: any other post (an analytics event, a click log), a navigation alone, or the
- * application answered with an error is no evidence.
- */
-function notSent(
-	page: BrowserPage,
-	before: BeforeClick,
-	run: ApplicationRun,
-	state: RunState,
-): string | null {
-	const carrying = page
+const NO_APPLICATION =
+	"The page changed after the click, but no request carrying the application reached the employer's site.";
+const isWrite = (r: { method: string }) => !/^(?:GET|HEAD)$/i.test(r.method);
+const seqOf = (r: { seq?: number }) => r.seq ?? 0;
+
+/** The application request, unless it was answered with an error. */
+function answered(
+	request: NetworkLogEntry,
+): { request: NetworkLogEntry } | { unknown: string } {
+	return answeredOk(request)
+		? { request }
+		: {
+				unknown: `The page changed after the click, but the employer's site answered HTTP ${request.status ?? "nothing"} to the application.`,
+			};
+}
+
+/** The requests to the form's host the guard let through, in the order they started. */
+function toFormHost(page: BrowserPage, hosts: string[]): NetworkLogEntry[] {
+	return page
 		.networkLog()
-		.slice(before.logged)
 		.filter(
 			(r) =>
 				r.allowed &&
 				r.reason === "allowed host" &&
-				urlOnHosts(r.url, run.allowedHosts ?? [state.formHost]) &&
-				!/^(?:GET|HEAD)$/i.test(r.method) &&
-				carriesValues(r, state.sent),
-		);
-	if (carrying.some(answeredOk)) return null;
-	const refused = carrying.find((r) => r.status !== undefined);
-	return refused
-		? `The page changed after the click, but the employer's site answered HTTP ${refused.status} to the application.`
-		: "The page changed after the click, but no request carrying the application reached the employer's site.";
+				r.seq !== undefined &&
+				urlOnHosts(r.url, hosts),
+		)
+		.sort((a, b) => seqOf(a) - seqOf(b));
 }
 
 /**
- * After the one click: waits for evidence (the application request reached the form's host, and
- * the form is gone or the page's path changed), then the model reads the page. Only "confirmed", backed by
- * that evidence, a quote found on the page in confirmation words that were not on it before the
- * click, no refusal or duplicate wording and no visible error, records it applied; anything else
+ * The request the submit click itself started that is the application, or why there is none
+ * (docs/decisions.md, 2026-11-09, step 6 third pass). Requests count by when they started
+ * (`seq`), never by when they were answered; one started before the click never counts. A native
+ * submission: the page's own navigation to the form's host, the first one started after the
+ * click, when it posts or its query carries the values; it must carry every approved value
+ * (`carriesValues`). Else a script's: exactly one request to the form's host that is not a read,
+ * started after the click and before the next navigation, carrying every approved value, with no
+ * other request to the form's host carrying them (before the click or after) and none still
+ * unanswered. Anything else is no evidence: an unknown outcome.
+ */
+function applicationRequest(
+	page: BrowserPage,
+	before: BeforeClick,
+	run: ApplicationRun,
+	state: RunState,
+): { request: NetworkLogEntry } | { unknown: string } {
+	const hosts = run.allowedHosts ?? [state.formHost];
+	const all = toFormHost(page, hosts);
+	const carries = (r: NetworkLogEntry) => carriesValues(r, state.sent);
+	const navigation = all.find((r) => seqOf(r) > before.started && r.navigation);
+	if (navigation && (isWrite(navigation) || carries(navigation)))
+		return carries(navigation)
+			? answered(navigation)
+			: { unknown: NO_APPLICATION };
+	const until = navigation ? seqOf(navigation) : Number.POSITIVE_INFINITY;
+	const scripted = (r: { seq?: number; url: string; method: string }) =>
+		seqOf(r) > before.started && seqOf(r) < until && isWrite(r);
+	// A request is logged a moment before it leaves the pending set: logged is answered.
+	const logged = new Set(all.map(seqOf));
+	const unanswered = page
+		.networkStarted()
+		.pending.filter(
+			(p) => !logged.has(p.seq) && scripted(p) && urlOnHosts(p.url, hosts),
+		);
+	if (unanswered.length > 0)
+		return {
+			unknown: `The page changed after the click, but ${unanswered.length} request(s) it started to the employer's site had no answer yet, so which one was the application cannot be told.`,
+		};
+	const sent = all.filter((r) => scripted(r) && !r.navigation);
+	if (sent.length > 1)
+		return {
+			unknown: `The page changed after the click, but it sent ${sent.length} requests to the employer's site, so which one was the application cannot be told.`,
+		};
+	const request = sent[0];
+	if (!request || !carries(request)) return { unknown: NO_APPLICATION };
+	if (all.some((r) => r !== request && carries(r)))
+		return {
+			unknown:
+				"The page changed after the click, but another request to the employer's site carried the same answers, so which one was the application cannot be told.",
+		};
+	return answered(request);
+}
+
+/**
+ * After the one click: waits for evidence (the application request the click started reached the
+ * form's host, `applicationRequest`, and the form is gone or the page's path changed), then checks
+ * that neither the page nor the employer's answer says anything went wrong (`refusalAfter`), then
+ * the model reads the page. Only "confirmed", backed by all of that and a quote found on the page
+ * in confirmation words that were not on it before the click, records it applied; anything else
  * is an unknown outcome, never a retry.
  */
 async function readOutcome(
@@ -870,8 +937,10 @@ async function readOutcome(
 ): Promise<{ confirmed: string } | { unknown: string }> {
 	const changed = await awaitChange(page, formUrl, run);
 	if ("unknown" in changed) return changed;
-	const missing = notSent(page, before, run, state);
-	if (missing) return { unknown: missing };
+	const sent = applicationRequest(page, before, run, state);
+	if ("unknown" in sent) return sent;
+	const refused = refusalAfter(changed.after, sent.request);
+	if (refused) return { unknown: refused };
 	return judge(changed.after, formUrl, run.model, before);
 }
 
@@ -927,6 +996,28 @@ function newConfirmation(
 	);
 }
 
+/**
+ * Why the page after the click, or the HTML the application request was answered with, may
+ * say it did not go through: refusal or error wording anywhere in either (`refusalIn`), or a
+ * visible error or field marked invalid. Null when neither does.
+ */
+function refusalAfter(
+	after: WebAfter,
+	request: NetworkLogEntry,
+): string | null {
+	if (after.errors.length > 0)
+		return `The form showed errors after the click: ${after.errors.join(" | ")}`;
+	const shown = refusalIn(after.text);
+	if (shown)
+		return `The page after the click says "${shown}", so the application may not have gone through.`;
+	const inAnswer = request.answerHtml
+		? refusalIn(htmlText(request.answerHtml))
+		: null;
+	return inAnswer
+		? `The employer's answer to the application says "${inAnswer}", so it may not have gone through.`
+		: null;
+}
+
 /** The model's reading of the changed page, believed only where the page bears it out. */
 async function judge(
 	after: WebAfter,
@@ -943,7 +1034,7 @@ async function judge(
 	const read = await model
 		.outcome({
 			title: after.title,
-			text: after.text,
+			text: after.text.slice(0, 6000),
 			urlChanged,
 			formGone: !after.formShown,
 		})
@@ -962,11 +1053,7 @@ async function judge(
 		return {
 			unknown: `The page after the click does not say the application was received${quote ? `: "${quote}"` : "."}`,
 		};
-	const supported =
-		newConfirmation(quote, after, before) &&
-		!new RegExp(REFUSAL, "i").test(quote) &&
-		!new RegExp(DUPLICATE, "i").test(after.text) &&
-		after.errors.length === 0;
+	const supported = newConfirmation(quote, after, before);
 	return supported
 		? { confirmed: quote }
 		: {
@@ -1172,7 +1259,8 @@ async function submitOnce(
 	try {
 		const beforeClick = {
 			text: (await safeEvaluate<string>(page, PAGE_TEXT_SCRIPT)) ?? "",
-			logged: page.networkLog().length,
+			// Read last, just before the click: the click started every request after this count.
+			started: page.networkStarted().count,
 		};
 		await page.click(`[data-jp-control="${submit.ref}"]`);
 		const result = await readOutcome(page, formUrl, run, beforeClick, state);

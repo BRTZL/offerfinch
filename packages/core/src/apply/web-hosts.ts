@@ -43,12 +43,24 @@ export function siteOfHost(host: string): string | null {
 
 /**
  * The only host an employer's form may send the application to: the exact host of the form's page
- * (the job's link after the HTTP redirects the read followed, `FormSchema.formUrl`). Nothing the
+ * (`FormSchema.formUrl`, which is on the job link's own host: `linkMoved`). Nothing the
  * page says (its `action`, a `formaction`, a script) adds another (docs/decisions.md, 2026-11-09,
  * step 6 re-review).
  */
 export function webFormHost(formUrl: string): string {
 	return new URL(formUrl).hostname.toLowerCase();
+}
+
+/**
+ * Why an employer's form is the user's to finish when its link led to another host: the HTTP
+ * redirects moved the job's link (`link`) to a page (`formUrl`) on a host other than the link's
+ * own, same site included. Null when the host stayed (a path change is fine).
+ */
+export function linkMoved(link: string, formUrl: string): string | null {
+	const to = webFormHost(formUrl);
+	return to === webFormHost(link)
+		? null
+		: `The job link moves to ${to}; finish it yourself.`;
 }
 
 /**

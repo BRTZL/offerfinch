@@ -12,6 +12,8 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  *   meta-away       on jobs: a meta refresh moves the page to sink, whose form posts to sink
  *   redirect        on jobs: HTTP 302 to careers, whose form posts to careers (and 303s to thanks)
  *   redirect-back   on jobs: HTTP 302 to careers, whose form posts back to jobs
+ *   redirect-path   on jobs: HTTP 302 to another path on jobs (`/redirect-path/form`), whose form
+ *                   posts to jobs
  *   action-changes  on jobs: posts to itself on the first load, to sink from the second on
  */
 
@@ -74,6 +76,8 @@ function formOf(
 			return {
 				html: page("", form(variant === "redirect" ? own : at("jobs", own))),
 			};
+		case "redirect-path":
+			return { redirect: at(host, `/${variant}/form`) };
 		case "action-changes":
 			return { html: page("", form(load > 1 ? sink : own)) };
 		default:
@@ -120,6 +124,8 @@ export async function startFixtureWebSites(): Promise<FixtureWebSites> {
 					"<h2>Thank you for applying to Acme Robotics</h2><p>We have received your application.</p>",
 				),
 			);
+		if (variant === "redirect-path" && action === "form")
+			return html(page("", form(`/${variant}/collect`)));
 		if (action !== "apply") {
 			res.writeHead(404);
 			res.end();

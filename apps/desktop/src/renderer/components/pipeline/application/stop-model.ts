@@ -9,6 +9,7 @@
 type StopCase =
 	| "unknown_outcome"
 	| "unknown_error_answer"
+	| "unknown_refused"
 	| "challenge"
 	| "account_wall"
 	| "verification_code"
@@ -22,6 +23,7 @@ type StopCase =
 	| "interrupted"
 	| "not_automatic"
 	| "sends_elsewhere"
+	| "link_moves"
 	| "unlabelled"
 	| "no_submit"
 	| "other";
@@ -123,6 +125,7 @@ const REASON_CASE: [RegExp, StopCase][] = [
  */
 const HANDOFF_CASE: [RegExp, StopCase][] = [
 	[/this form sends to \S+; finish it yourself/i, "sends_elsewhere"],
+	[/The job link moves to \S+; finish it yourself/, "link_moves"],
 	[/unlabelled fields|share one name or label/, "unlabelled"],
 	[
 		/no submit button of its own|Could not tell which control sends the application/,
@@ -133,11 +136,19 @@ const HANDOFF_CASE: [RegExp, StopCase][] = [
 /** An unknown outcome whose application request the employer's site answered with an error. */
 const ERROR_ANSWER = /answered HTTP \d+ to the application/;
 
-/** An unknown outcome: an error answer to the application, or no confirmation. */
+/**
+ * An unknown outcome whose page or answer after the click reads as a refusal or an error (core
+ * apply/web-form.ts `refusalAfter`, the outcome reader's error verdicts).
+ */
+const REFUSED =
+	/so the application may not have gone through|employer's answer to the application says|The form showed errors after the click|The page after the click shows an error/;
+
+/** An unknown outcome: an error answer to the application, refusal wording, or no confirmation. */
 function unknownCase(attempt: StopAttempt): StopCase {
-	return ERROR_ANSWER.test(attempt.error ?? "")
-		? "unknown_error_answer"
-		: "unknown_outcome";
+	const reason = attempt.error ?? "";
+	if (ERROR_ANSWER.test(reason)) return "unknown_error_answer";
+	if (REFUSED.test(reason)) return "unknown_refused";
+	return "unknown_outcome";
 }
 
 function caseOf(attempt: StopAttempt | null): StopCase {
@@ -174,6 +185,12 @@ const COPY: Record<
 	unknown_error_answer: {
 		title: "The employer's site answered with an error",
 		body: "The application was sent once, and the employer's site answered it with an error, so it most likely did not go through, but that is not certain. Nothing is clicked again on its own. Check your email or the employer's portal.",
+		actions: ["mark", "finish", "retry_confirmed"],
+		note: "Retry opens only after you confirm it did not go through.",
+	},
+	unknown_refused: {
+		title: "The employer's site may have refused it",
+		body: "The application was sent once, but the page or the employer's answer after the click shows an error or refusal wording, so it may not have gone through. Nothing is clicked again on its own. Check your email or the employer's portal.",
 		actions: ["mark", "finish", "retry_confirmed"],
 		note: "Retry opens only after you confirm it did not go through.",
 	},
@@ -239,6 +256,11 @@ const COPY: Record<
 	not_automatic: {
 		title: "This form is filled by you",
 		body: "This site is not filled automatically, so nothing was sent. Send it yourself with your answers below.",
+		actions: ["finish", "mark"],
+	},
+	link_moves: {
+		title: "The job link leads to another site",
+		body: "The job's link redirects to a page on another site than its own. The application only goes to the site the link names, so it is yours to finish, and nothing was sent. Finish it yourself with your answers below.",
 		actions: ["finish", "mark"],
 	},
 	sends_elsewhere: {

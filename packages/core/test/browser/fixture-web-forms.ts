@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import {
+	createServer,
+	type IncomingMessage,
+	type Server,
+	type ServerResponse,
+} from "node:http";
 
 /**
  * Local stand-ins for employers' own application forms (the "web" board, plan step 6), on a
@@ -45,6 +50,28 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  *   rejected      the same, posting the application; the server answers HTTP 500
  *   json          the same, posting the application as JSON ({"candidate": {...}})
  *   silent        name and email; the submit sends nothing and swaps the form for a thank-you
+ *   hidden-away   email and full name with the form's own submit button, plus a submit button kept
+ *                 hidden (display:none) whose formaction is on localhost
+ *   textless-away the same, with a visible submit button that has no text and a formaction on localhost
+ *   outside-away  the same, with a hidden button after the form that names it with form= and posts to
+ *                 localhost
+ *   preclick      email and full name; once both are typed the page autosaves the whole form to
+ *                 /web/preclick/autosave (its answer held until the next POST arrives); the submit
+ *                 only posts "event=click", then the page shows a thank-you
+ *   presave       the same autosave; the submit then posts the whole application to /web/presave/apply
+ *   unanswered    email and full name; the submit posts to /web/unanswered/hang (never answered),
+ *                 then the whole application to /web/unanswered/apply
+ *   later-fetch   email and full name; the submit posts "event=click", then a telemetry post carrying
+ *                 both values as JSON, then the page shows a thank-you
+ *   later-native  email and full name, posted natively; on submit the page strips the boxes' names and
+ *                 posts only "event=click"; the answer's script posts both values (kept in
+ *                 sessionStorage) to /web/later-native/telemetry and shows a thank-you
+ *   native-get    email and full name in a native GET form to /web/native-get/sent, which thanks
+ *   error200      email and full name posted natively; HTTP 200 with "Application could not be
+ *                 submitted" above "Thank you for applying!"
+ *   error-hidden  the same; HTTP 200 showing only "Thank you for applying!", the refusal kept hidden
+ *   invalid-after email and full name; the submit posts the application, moves the path, marks the
+ *                 email box invalid and shows "Thank you for applying!" above the form
  *   assets        name, email and location; loads a logo from localhost, and on input asks localhost
  *                 for images whose paths carry pieces of what was typed (base64 pieces, the first word)
  */
@@ -298,6 +325,48 @@ ${text("Email address", "email", { type: "email" })}${text("Full name", "full_na
 </form><p><button type="submit" form="apply">Submit application</button></p>`;
 }
 
+/** Email and full name, posted natively to the form's own page (`later-native`, `native-get`). */
+function nativeBody(variant: string): string {
+	const method =
+		variant === "native-get"
+			? `method="get" action="/web/${variant}/sent"`
+			: `method="post" action="/web/${variant}/apply"`;
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply" ${method}>
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+/** On submit: keeps the answers aside, strips the boxes' names and posts only "event=click". */
+const LATER_NATIVE = `const form = document.getElementById('apply');
+form.addEventListener('submit', () => {
+	sessionStorage.payload = JSON.stringify(Object.fromEntries(new FormData(form)));
+	for (const box of form.querySelectorAll('input')) box.removeAttribute('name');
+	const click = document.createElement('input');
+	click.type = 'hidden'; click.name = 'event'; click.value = 'click';
+	form.append(click);
+});`;
+
+/** The answer to `later-native`'s post: its script sends the kept answers, then thanks. */
+const LATER_NATIVE_ANSWER = `fetch('/web/later-native/telemetry', { method: 'POST', headers: { 'content-type': 'application/json' }, body: sessionStorage.payload }).then(() => { document.body.insertAdjacentHTML('beforeend', '<h2>Thank you for applying!</h2>'); });`;
+
+/** Email and full name with the form's own submit button, and another one that sends to `away`. */
+function awayButtonBody(variant: string, away: string): string {
+	const to = `${away}/web/${variant}/collect`;
+	const inside =
+		variant === "hidden-away"
+			? `<button type="submit" style="display:none" formaction="${to}">Send</button>`
+			: variant === "textless-away"
+				? `<button type="submit" formaction="${to}" aria-hidden="true"></button>`
+				: "";
+	const outside =
+		variant === "outside-away"
+			? `<button type="submit" form="apply" hidden formaction="${to}">Send</button>`
+			: "";
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply" method="post" action="/web/${variant}/apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<p><button type="submit">Submit application</button>${inside}</p></form>${outside}`;
+}
+
 /**
  * Email and full name with the form's own submit button; on submit the page's script sends what
  * `SENDS[variant]` says, then swaps the form for a thank-you, whatever the answer.
@@ -309,6 +378,17 @@ ${text("Email address", "email", { type: "email" })}${text("Full name", "full_na
 }
 
 const SENDS: Record<string, string> = {
+	// The application, after which the page says the email is invalid (and thanks anyway).
+	"invalid-after": `fetch('/web/invalid-after/apply', { method: 'POST', body: new URLSearchParams(new FormData(form)) }).then(() => { history.pushState(null, '', '/web/invalid-after/done'); form.querySelector('[name=email]').setAttribute('aria-invalid', 'true'); form.insertAdjacentHTML('beforebegin', '<p class="thanks">Thank you for applying!</p>'); })`,
+	// Codex's third pass: the application went before the click (an autosave); the click sent
+	// only a click event.
+	preclick: `fetch('/web/preclick/telemetry', { method: 'POST', body: 'event=click' })`,
+	// The same autosave, then the click posts the whole application too: two requests carry it.
+	presave: `fetch('/web/presave/apply', { method: 'POST', body: new URLSearchParams(new FormData(form)) })`,
+	// The click starts a post that is never answered, then the application.
+	unanswered: `Promise.resolve(void fetch('/web/unanswered/hang', { method: 'POST', body: 'event=view' }).catch(() => {})).then(() => fetch('/web/unanswered/apply', { method: 'POST', body: new URLSearchParams(new FormData(form)) }))`,
+	// The click sent a click event, then a telemetry post that happens to carry the answers.
+	"later-fetch": `fetch('/web/later-fetch/telemetry', { method: 'POST', body: 'event=click' }).then(() => fetch('/web/later-fetch/telemetry', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(form))) }))`,
 	// Codex's re-review case: a click event to the form's own host, nothing of the application.
 	telemetry: `fetch('/web/telemetry/telemetry', { method: 'POST', body: 'event=click' })`,
 	// The application, refused by the server (HTTP 500).
@@ -317,11 +397,22 @@ const SENDS: Record<string, string> = {
 	json: `fetch('/web/json/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ candidate: Object.fromEntries(new FormData(form)) }) })`,
 };
 
+/** Once every box is filled, the whole form is saved (before any click). */
+const AUTOSAVE = `form.addEventListener('input', () => {
+	const boxes = [...form.querySelectorAll('input')];
+	if (!form.dataset.saved && boxes.every((b) => b.value)) {
+		form.dataset.saved = '1';
+		fetch(location.pathname.replace(/apply$/, 'autosave'), { method: 'POST', body: new URLSearchParams(new FormData(form)) }).catch(() => {});
+	}
+});`;
+
 function scripted(variant: string): string {
 	return `const form = document.getElementById('apply');
+${variant === "preclick" || variant === "presave" ? AUTOSAVE : ""}
 form.addEventListener('submit', async (e) => {
 	e.preventDefault();
 	await ${SENDS[variant]}.catch(() => {});
+	${variant === "invalid-after" ? "return;" : ""}
 	form.outerHTML = '<div class="thanks"><h2>Thank you for applying!</h2></div>';
 });`;
 }
@@ -381,6 +472,22 @@ function postAnswer(
 			headers: { "content-type": "application/json" },
 			body: '{"ok":false}',
 		};
+	if (variant === "later-native" && action === "apply")
+		return {
+			status: 200,
+			headers: { "content-type": "text/html; charset=utf-8" },
+			body: page("<h1>Acme Robotics</h1>", LATER_NATIVE_ANSWER),
+		};
+	if (variant === "error200" || variant === "error-hidden")
+		return {
+			status: 200,
+			headers: { "content-type": "text/html; charset=utf-8" },
+			body: page(
+				variant === "error200"
+					? "<h1>Application could not be submitted</h1><p>Thank you for applying!</p>"
+					: '<h1>Thank you for applying!</h1><div style="display:none">Application could not be submitted. Please try again.</div>',
+			),
+		};
 	if (variant === "ambiguous")
 		return {
 			status: 200,
@@ -398,6 +505,12 @@ function postAnswer(
 			"script-button",
 			"telemetry",
 			"json",
+			"preclick",
+			"presave",
+			"unanswered",
+			"later-fetch",
+			"later-native",
+			"invalid-after",
 		].includes(variant) ||
 		action === "upload"
 	)
@@ -471,11 +584,27 @@ function formPage(
 		case "telemetry":
 		case "rejected":
 		case "json":
+		case "preclick":
+		case "presave":
+		case "unanswered":
+		case "later-fetch":
+			return page(scriptedBody(), scripted(variant));
+		case "later-native":
+			return page(nativeBody(variant), LATER_NATIVE);
+		case "native-get":
+		case "error200":
+		case "error-hidden":
+			return page(nativeBody(variant));
+		case "invalid-after":
 			return page(scriptedBody(), scripted(variant));
 		case "script-button":
 			return page(scriptButtonBody(), SCRIPT_BUTTON);
 		case "form-attr":
 			return page(formAttrBody());
+		case "hidden-away":
+		case "textless-away":
+		case "outside-away":
+			return page(awayButtonBody(variant, awayOrigin));
 		case "assets":
 			return page(assetsBody(awayOrigin), ASSETS, awayOrigin);
 		default:
@@ -489,10 +618,36 @@ async function bodyOf(req: IncomingMessage): Promise<string> {
 	return Buffer.concat(chunks).toString("latin1");
 }
 
+/**
+ * Answers a POST (`postAnswer`). `unanswered`'s hang is never answered (until the server
+ * closes). An autosave (`preclick`, `presave`) is answered only once the next post
+ * arrives, after the click; every other post answers at once and releases those held.
+ */
+function answerPost(
+	res: ServerResponse,
+	variant: string,
+	action: string,
+	held: (() => void)[],
+): void {
+	const answer = postAnswer(variant, action);
+	const reply = () => {
+		res.writeHead(answer.status, answer.headers);
+		res.end(answer.body);
+	};
+	if (variant === "unanswered" && action === "hang") return;
+	if (action === "autosave") {
+		held.push(reply);
+		return;
+	}
+	reply();
+	for (const release of held.splice(0)) release();
+}
+
 export async function startFixtureWebForms(): Promise<FixtureWebForms> {
 	const submissions: WebSubmission[] = [];
 	const away: { method: string; path: string }[] = [];
 	const loads = new Map<string, number>();
+	const held: (() => void)[] = [];
 	const server = createServer(async (req, res) => {
 		const host = (req.headers.host ?? "").split(":")[0] ?? "";
 		const port = (req.headers.host ?? "").split(":")[1] ?? "";
@@ -515,12 +670,9 @@ export async function startFixtureWebForms(): Promise<FixtureWebForms> {
 				fields: [...body.matchAll(/name="([^"]+)"/g)].map((m) => m[1] ?? ""),
 				body,
 			});
-			const answer = postAnswer(variant, action);
-			res.writeHead(answer.status, answer.headers);
-			res.end(answer.body);
-			return;
+			return answerPost(res, variant, action, held);
 		}
-		if (action === "thanks")
+		if (action === "thanks" || (variant === "native-get" && action === "sent"))
 			return html(
 				200,
 				page(

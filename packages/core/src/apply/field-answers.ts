@@ -12,6 +12,7 @@ import {
 	systemRole,
 	type UnknownQuestion,
 } from "./forms";
+import { webFormHost } from "./web-hosts";
 
 /**
  * Answers per field (docs/auto-apply-plan.md, step 3): every field of the form read before review
@@ -223,6 +224,8 @@ export type WhatWillBeSent =
 			status: "read";
 			fields: SentField[];
 			submit: string | null;
+			/** An employer's form: the one host the application goes to; null on a board. */
+			sendsTo: string | null;
 			readAt: string;
 	  }
 	| { status: "failed" | "skipped"; note: string; readAt: string };
@@ -243,6 +246,10 @@ export function whatWillBeSent(
 	return {
 		status: "read",
 		submit: read.schema.submit,
+		sendsTo:
+			read.schema.board === "web"
+				? webFormHost(read.schema.formUrl ?? read.schema.url)
+				: null,
 		readAt: read.readAt,
 		fields: fields.map((f) => {
 			if (f.source.kind !== "form_answer" || f.value === null) return f;

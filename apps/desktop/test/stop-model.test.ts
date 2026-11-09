@@ -110,6 +110,29 @@ describe("the stop sheet", () => {
 		expect(view?.actions).toEqual(["mark", "finish", "retry_confirmed"]);
 	});
 
+	it("refusal or error wording after the click is an unknown outcome of its own", () => {
+		for (const said of [
+			'The page after the click says "Your application could not be submitted", so the application may not have gone through.',
+			'The employer\'s answer to the application says "Something went wrong", so it may not have gone through.',
+			"The form showed errors after the click: Email is required",
+		]) {
+			const view = stopView(
+				app({
+					attempts: [
+						attempt(
+							1,
+							"needs_human",
+							`Outcome unknown after a click that may have sent the application: ${said} Check the employer's portal or your email before retrying.`,
+						),
+					],
+					unresolvedAttempt: { attempt: 1 },
+				}),
+			);
+			expect(view?.case).toBe("unknown_refused");
+			expect(view?.actions).toEqual(["mark", "finish", "retry_confirmed"]);
+		}
+	});
+
 	it("an employer's form to finish by hand: no Read the form again, no Retry", () => {
 		const cases = [
 			[
@@ -121,6 +144,11 @@ describe("the stop sheet", () => {
 				"The application form is in a frame from forms.acme.test, not jobs.acme.test: this form sends to forms.acme.test; finish it yourself. Nothing was submitted.",
 				{ stop: "other_site" },
 				"sends_elsewhere",
+			],
+			[
+				"The job link moves to careers.acme.test; finish it yourself. Nothing was submitted.",
+				{ stop: "other_site" },
+				"link_moves",
 			],
 			[
 				"This form has unlabelled fields; finish it yourself. Nothing was submitted.",

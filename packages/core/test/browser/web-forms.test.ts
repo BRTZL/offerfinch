@@ -198,6 +198,44 @@ describe("reading an employer's form before review", () => {
 		expect(forms.count("script-button")).toBe(0);
 	}, 60_000);
 
+	it.each([
+		// A submit button kept hidden, one with no text, and a hidden one outside the form that
+		// names it with form=, each with a formaction on another host (Codex review, 2026-11-09).
+		"hidden-away",
+		"textless-away",
+		"outside-away",
+	])(
+		"%s: a button of the form that sends elsewhere makes it a hand-off, shown or not",
+		async (variant) => {
+			const { result } = await read(variant);
+			expect(result).toMatchObject({
+				ok: false,
+				reason: "This form sends to localhost; finish it yourself.",
+				handoff: true,
+			});
+			expect(forms.count(variant)).toBe(0);
+			expect(forms.away.filter((a) => a.method === "POST")).toEqual([]);
+		},
+	);
+
+	it("at submit, a hidden button that sends elsewhere stops the run before the claim", async () => {
+		// A read of a form with the same two questions; the live page has the hidden button.
+		const { deps, calls } = harness(
+			"hidden-away",
+			await readAs("silent", "hidden-away"),
+		);
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(
+				/^This form sends to localhost; finish it yourself\./,
+			),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["stop"]);
+		expect(forms.count("hidden-away")).toBe(0);
+		expect(forms.away.filter((a) => a.method === "POST")).toEqual([]);
+	}, 60_000);
+
 	it("a submit button outside the form that names it with form= is its submit", async () => {
 		const schema = await schemaOf("form-attr");
 		expect(schema.submit).toBe("Submit application");
@@ -846,6 +884,21 @@ describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09
 		["telemetry", 1, /no request carrying the application/],
 		// The application went, and the server refused it.
 		["rejected", 1, /answered HTTP 500 to the application/],
+		// Codex's third pass: an autosave of the whole form before the click, answered after it;
+		// the click itself sent only a click event.
+		["preclick", 2, /no request carrying the application/],
+		// The same autosave, and the click posts the whole application too: two carry it.
+		[
+			"presave",
+			2,
+			/another request to the employer's site carried the same answers/,
+		],
+		// The click starts a post that never gets an answer, besides the application.
+		["unanswered", 2, /had no answer yet/],
+		// The click sent a click event and then a telemetry post carrying the answers.
+		["later-fetch", 2, /which one was the application cannot be told/],
+		// A native post of only a click event, then the answer page's telemetry carrying them.
+		["later-native", 2, /no request carrying the application/],
 	])(
 		"%s: not a confirmation without a send, a new page and new words",
 		async (variant, posts, why) => {
@@ -863,7 +916,66 @@ describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09
 	);
 });
 
+describe("refusal or error wording after the click is never a confirmation (Codex, 2026-11-09, third pass)", () => {
+	/** A model that always reads a confirmation: only the page's own wording can overrule it. */
+	const confirming: WebFormModel = {
+		...fakeModel(),
+		outcome: async () => ({
+			verdict: "confirmed",
+			quote: "Thank you for applying!",
+		}),
+	};
+
+	it.each([
+		// HTTP 200, the page says it could not be submitted, and also thanks.
+		["error200", /says "could not be submitted"/],
+		// HTTP 200, a thank-you shown, the refusal only in the answer's hidden HTML.
+		["error-hidden", /answer to the application says "could not be submitted"/],
+		// The application went, the path moved, a thank-you shows, and a box is marked invalid.
+		["invalid-after", /marked invalid/],
+	])(
+		"%s: an unknown outcome",
+		async (variant, why) => {
+			const schema = await schemaOf(variant);
+			const session = await fixtureBrowser().openSession({
+				network: "allowlist",
+				allowedHosts: ["127.0.0.1"],
+			});
+			try {
+				const page = await session.newPage();
+				const result = await runWebApplication(page, {
+					board: "web",
+					url: urlOf(variant),
+					mode: "submit",
+					schema: schema.fields,
+					data: data(),
+					files: { cv: CV, coverLetter: null },
+					model: confirming,
+					allowedHosts: ["127.0.0.1"],
+					claim: async () => ({ go: true }),
+					confirmTimeoutMs: 5_000,
+				});
+				expect(result).toMatchObject({
+					outcome: "unknown",
+					reason: expect.stringMatching(why),
+				});
+				expect(forms.count(variant)).toBe(1);
+			} finally {
+				await session.close();
+			}
+		},
+		60_000,
+	);
+});
+
 describe("the application request itself is the evidence (Codex re-review, 2026-11-09)", () => {
+	it("a native GET form whose query carries every approved value counts", async () => {
+		const { deps, calls } = harness("native-get", await schemaOf("native-get"));
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({ outcome: "applied" });
+		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+	}, 60_000);
+
 	it("a JSON post carrying every approved value counts", async () => {
 		const { deps, calls } = harness("json", await schemaOf("json"));
 		const outcome = await submitStep(deps, "u1", "app-1");

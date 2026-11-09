@@ -81,6 +81,14 @@ export function WhatWillBeSentSection({ app }: { app: AppDetail }) {
 			end={form.fields.length}
 			data-testid="what-will-be-sent"
 		>
+			{form.sendsTo ? (
+				<p
+					className="text-foreground text-xs font-medium"
+					data-testid="what-will-be-sent-host"
+				>
+					Sent to {form.sendsTo}
+				</p>
+			) : null}
 			<p className="text-muted-foreground text-xs">
 				Every field on the form and the exact value it gets. A required field
 				the form adds later stops the run; it is never answered on the fly.

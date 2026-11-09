@@ -124,8 +124,6 @@ describe("an employer's form sends only to the exact host of its page (Codex re-
 		["script-away", "sink.acme.test"],
 		// So did a meta refresh.
 		["meta-away", "sink.acme.test"],
-		// HTTP 302 to careers, whose form posts back to the link's host.
-		["redirect-back", "jobs.acme.test"],
 	])(
 		"%s: a hand-off at read time, shown in review",
 		async (variant, host) => {
@@ -140,13 +138,57 @@ describe("an employer's form sends only to the exact host of its page (Codex re-
 		60_000,
 	);
 
-	it("an HTTP redirect decides the form's page: it alone receives the application", async () => {
+	it.each([
+		// HTTP 302 to careers, whose form posts to careers (Codex review, 2026-11-09).
+		"redirect",
+		// The same, its form posting back to the link's host.
+		"redirect-back",
+	])(
+		"%s: an HTTP redirect to another host of the site is a hand-off at read time",
+		async (variant) => {
+			const result = await read(sites.url("jobs", variant));
+			expect(result).toMatchObject({
+				ok: false,
+				reason: "The job link moves to careers.acme.test; finish it yourself.",
+				handoff: true,
+			});
+			const posted = (host: string) =>
+				sites.posts(host).filter((r) => r.path.startsWith(`/${variant}/`));
+			expect(posted("careers")).toEqual([]);
+			expect(posted("jobs")).toEqual([]);
+		},
+		60_000,
+	);
+
+	it("a read saved with its form page on another host is never opened at submit", async () => {
 		const link = sites.url("jobs", "redirect");
+		const schema: FormSchema = {
+			board: "web",
+			url: link,
+			submit: "Submit application",
+			formUrl: sites.url("careers", "redirect"),
+			fields: [],
+		};
+		const { deps, calls } = harness(link, schema, ["careers.acme.test"]);
+		const before = sites.requests.length;
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(
+				/^The job link moves to careers\.acme\.test; finish it yourself\./,
+			),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["stop"]);
+		expect(sites.requests.slice(before)).toEqual([]);
+	}, 60_000);
+
+	it("an HTTP redirect within the link's host decides the form's page: it receives the application", async () => {
+		const link = sites.url("jobs", "redirect-path");
 		const result = await read(link);
 		if (!result.ok) throw new Error(result.reason);
-		expect(result.schema.formUrl).toBe(sites.url("careers", "redirect"));
-		// The link's own host is not the form's page: it is not even opened at submit.
-		const { deps, calls } = harness(link, result.schema, ["careers.acme.test"]);
+		const formUrl = link.replace("/apply", "/form");
+		expect(result.schema.formUrl).toBe(formUrl);
+		const { deps, calls } = harness(link, result.schema, ["jobs.acme.test"]);
 		const before = sites.requests.length;
 		const outcome = await submitStep(deps, "u1", "app-1");
 		expect(outcome).toMatchObject({ outcome: "applied" });
@@ -154,12 +196,12 @@ describe("an employer's form sends only to the exact host of its page (Codex re-
 		const sent = sites.requests.slice(before);
 		expect(sent.filter((r) => r.method === "POST")).toEqual([
 			expect.objectContaining({
-				host: "careers",
-				path: "/redirect/collect",
+				host: "jobs",
+				path: "/redirect-path/collect",
 				body: expect.stringContaining("ada%40example.test"),
 			}),
 		]);
-		expect(sent.filter((r) => r.host !== "careers")).toEqual([]);
+		expect(sent.filter((r) => r.host !== "jobs")).toEqual([]);
 	}, 60_000);
 
 	it("a form that points elsewhere after review stops before the claim", async () => {
@@ -176,6 +218,8 @@ describe("an employer's form sends only to the exact host of its page (Codex re-
 		});
 		expect(calls.map((c) => c.method)).toEqual(["stop"]);
 		expect(sites.posts("sink")).toEqual([]);
-		expect(sites.posts("jobs")).toEqual([]);
+		expect(
+			sites.posts("jobs").filter((r) => r.path.startsWith("/action-changes/")),
+		).toEqual([]);
 	}, 60_000);
 });
