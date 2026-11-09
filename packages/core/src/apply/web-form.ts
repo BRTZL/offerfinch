@@ -9,6 +9,7 @@ import {
 	type FilledField,
 	perform,
 	type RunResult,
+	redirectedElsewhere,
 	type Stop,
 	type WebSentEvidence,
 } from "./applier";
@@ -1305,6 +1306,10 @@ async function submitOnce(
 			unknown: `Error after the submit click: ${error instanceof Error ? error.message : String(error)}`,
 		};
 	}
+	// The employer's site sent the application on to another site, which was refused: whether it
+	// arrived is not known, so this is an unknown outcome, not "sent, check your email".
+	const redirected = redirectedElsewhere(page);
+	if (redirected) return unknownAfterClaim(page, state, redirected);
 	const evidence = await sentEvidence(
 		page,
 		run,

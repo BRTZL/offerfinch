@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { gzipSync } from "node:zlib";
 import type { BrowserSession } from "@offerfinch/core/scrape/browser";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -16,6 +17,12 @@ import { fixtureBrowser, siteBrowser } from "./browser";
  * 3. Each hop rebuilt its headers from the first request, so after A → B dropped `Authorization`,
  *    a further B → B hop sent it again.
  * And: a fetched hop's body was buffered without a limit.
+ *
+ * Codex, next round (2026-11-09): a main-frame POST (a form's) answered 307 or 308 to another,
+ * even allowed, origin was followed and fulfilled under the first URL, so the other site's page
+ * ran as the first (its cookies and localStorage); in a read-only session a `text/plain` form
+ * spelled out a body that passed as a GraphQL query. And the size cap read `content-length`, the
+ * compressed size: a small gzip decoded past it.
  */
 let server: Server;
 let port = 0;
@@ -25,10 +32,42 @@ const credentials = new Map<string, string>();
 /** What the evil frame managed to read, from its `/report` query. */
 const reports: string[] = [];
 const BIG = 26 * 1024 * 1024;
+/** 26 MiB of "a", gzipped: a few dozen KiB on the wire. */
+const BIG_GZ = gzipSync(Buffer.alloc(BIG, 97));
 // Literal, not the module's constants: the same file runs against the code before the fix.
 const CROSS_ORIGIN_REFUSED = "cross-origin redirect refused";
 const TOO_LARGE_REFUSED = "answer too large, refused";
 const REDIRECT_FOLLOWED = "redirect followed";
+
+/** The fixed answers of the POST-redirect and decoded-size cases, or null for any other path. */
+function fixedPage(
+	path: string,
+	url: string,
+): { headers: Record<string, string>; body: string | Buffer } | null {
+	if (path === "/big-gz")
+		return {
+			headers: {
+				"content-type": "application/octet-stream",
+				"content-encoding": "gzip",
+				"content-length": String(BIG_GZ.byteLength),
+			},
+			body: BIG_GZ,
+		};
+	if (path === "/form") {
+		const to = new URL(url, "http://x").searchParams.get("to");
+		// A text/plain form: the field's name and value spell out a GraphQL query.
+		return {
+			headers: { "content-type": "text/html" },
+			body: `<html><body><form id="f" method="post" enctype="text/plain" action="/${to}"><input name='{"query":"query {jobs}","pad":"' value='"}'></form></body></html>`,
+		};
+	}
+	if (path === "/post-landed")
+		return {
+			headers: { "content-type": "text/html" },
+			body: "<html><body><h1>landed</h1></body></html>",
+		};
+	return null;
+}
 
 beforeAll(async () => {
 	server = createServer((req, res) => {
@@ -56,6 +95,10 @@ beforeAll(async () => {
 			"/auth-back": [302, at("cdn.acme.test", "/auth-back-2")],
 			"/auth-back-2": [302, at("boards.acme.test", "/data")],
 			"/big-chain": [302, "/big"],
+			// A form's POST sent on to another (allowed) origin, or kept on its own.
+			"/post-307": [307, at("cdn.acme.test", "/landing")],
+			"/post-308": [308, at("cdn.acme.test", "/landing")],
+			"/post-same": [307, "/post-landed"],
 		};
 		const redirect = redirects[path];
 		res.setHeader("access-control-allow-origin", "*");
@@ -79,7 +122,12 @@ beforeAll(async () => {
 			res.writeHead(200, { "content-type": "application/octet-stream" });
 			return res.end(Buffer.alloc(BIG, 97));
 		}
-		if (path === "/steal") {
+		const fixed = fixedPage(path, req.url ?? "");
+		if (fixed) {
+			res.writeHead(200, fixed.headers);
+			return res.end(fixed.body);
+		}
+		if (path === "/landing" || path === "/steal") {
 			res.writeHead(200, { "content-type": "text/html" });
 			return res.end(`<html><body><script>
 				let stored = "";
@@ -236,25 +284,101 @@ describe.each(["read_only", "allowlist"] as const)(
 				JSON.stringify(log),
 			).toBeDefined();
 		});
+
+		it("measures the decoded body, not content-length: a small gzip over the cap is refused", async () => {
+			const { answer, log } = await withBoard(network, async (page) => ({
+				answer: await page.evaluate<string>(
+					`fetch("/big-gz").then((r) => r.text().then((t) => "read " + t.length), (e) => "failed: " + e.message)`,
+				),
+				log: page.networkLog(),
+			}));
+			expect(BIG_GZ.byteLength).toBeLessThan(1024 * 1024);
+			expect(answer).toMatch(/^failed/);
+			expect(
+				log.find(
+					(e) =>
+						!e.allowed &&
+						e.url.endsWith("/big-gz") &&
+						e.reason === TOO_LARGE_REFUSED,
+				),
+				JSON.stringify(log),
+			).toBeDefined();
+		});
+
+		it.each(["post-307", "post-308"])(
+			"%s: a form's POST redirected to another allowed origin is refused before it is fetched",
+			async (to) => {
+				const { log, url } = await withBoard(network, async (page) => {
+					await page.goto(`http://boards.acme.test:${port}/form?to=${to}`);
+					await page.evaluate(`document.getElementById("f").submit()`);
+					await page.waitForTimeout(1_500);
+					return { log: page.networkLog(), url: page.url() };
+				});
+				const posts = hits.filter((h) => h.startsWith("POST "));
+				// A read never sends a form's POST, even one that spells out a GraphQL query; a
+				// submission sends it once, to the form's own site, and never on.
+				expect(posts).toEqual(
+					network === "read_only" ? [] : [`POST boards.acme.test/${to}`],
+				);
+				expect(hits.filter((h) => h.includes("cdn.acme.test"))).toEqual([]);
+				expect(reports, JSON.stringify(reports)).toEqual([]);
+				expect(url).not.toContain("cdn.acme.test");
+				if (network === "allowlist")
+					expect(
+						log.find(
+							(e) =>
+								!e.allowed &&
+								e.url === `http://cdn.acme.test:${port}/landing` &&
+								e.reason ===
+									"main-frame POST redirected to another origin, refused",
+						),
+						JSON.stringify(log),
+					).toBeDefined();
+			},
+		);
 	},
 );
+
+describe("allowlist: a form's POST redirected on its own origin", () => {
+	it("is still followed: the 307 sends it once more, to the same site", async () => {
+		const { url, text } = await withBoard("allowlist", async (page) => {
+			await page.goto(`http://boards.acme.test:${port}/form?to=post-same`);
+			await page.evaluate(`document.getElementById("f").submit()`);
+			await page.waitForTimeout(1_500);
+			return {
+				url: page.url(),
+				text: await page.evaluate<string>("document.body.innerText"),
+			};
+		});
+		expect(hits.filter((h) => h.startsWith("POST "))).toEqual([
+			"POST boards.acme.test/post-same",
+			"POST boards.acme.test/post-landed",
+		]);
+		expect(text).toContain("landed");
+		expect(url).toContain("boards.acme.test");
+	});
+});
 
 describe("allowlist: cookies of a followed hop", () => {
 	let cookieServer: Server;
 	let cookiePort = 0;
+	const cookieHits: string[] = [];
 
 	beforeAll(async () => {
 		cookieServer = createServer((req, res) => {
 			const path = (req.url ?? "").split("?")[0] ?? "";
-			if (path === "/post-chain") {
+			const host = (req.headers.host ?? "").replace(/:\d+$/, "");
+			cookieHits.push(`${req.method} ${host}${path}`);
+			if (path === "/post-chain" || path === "/fetch-chain") {
 				res.writeHead(307, {
 					location: `http://127.0.0.1:${cookiePort}/mid`,
 				});
 				return res.end();
 			}
 			if (path === "/mid") {
+				// Back to the first origin: the chain ends where it began, so it is followed.
 				res.writeHead(307, {
-					location: `http://127.0.0.1:${cookiePort}/final`,
+					location: `http://localhost:${cookiePort}/final`,
 					"set-cookie": "mid=1; Path=/",
 				});
 				return res.end();
@@ -264,7 +388,7 @@ describe("allowlist: cookies of a followed hop", () => {
 					"content-type": "text/html",
 					"set-cookie": [
 						"hop=final; Path=/",
-						"dom=x; Path=/; Domain=localhost",
+						"dom=x; Path=/; Domain=127.0.0.1",
 					],
 				});
 				return res.end("<html><body>sent</body></html>");
@@ -284,33 +408,55 @@ describe("allowlist: cookies of a followed hop", () => {
 		await new Promise<void>((resolve) => cookieServer.close(() => resolve()));
 	});
 
-	it("stores each hop's cookies on that hop's own host only, never on the first", async () => {
+	beforeEach(() => {
+		cookieHits.length = 0;
+	});
+
+	async function withCookieSession<T>(run: (page: Page) => Promise<T>) {
 		const session = await fixtureBrowser().openSession({
 			network: "allowlist",
 			allowedHosts: ["localhost", "127.0.0.1"],
 		});
 		try {
-			const page = await session.newPage();
+			return await run(await session.newPage());
+		} finally {
+			await session.close();
+		}
+	}
+
+	it("stores each hop's cookies on that hop's own host only", async () => {
+		await withCookieSession(async (page) => {
 			await page.goto(`http://localhost:${cookiePort}/form`);
-			await page.evaluate(`document.querySelector("form").submit()`);
-			await page.waitForTimeout(1_500);
+			await page.evaluate(`fetch("/fetch-chain").then((r) => r.text())`);
 			const log = page.networkLog();
 			expect(
 				log.filter((e) => e.reason === REDIRECT_FOLLOWED).map((e) => e.url),
 			).toEqual([
 				`http://127.0.0.1:${cookiePort}/mid`,
-				`http://127.0.0.1:${cookiePort}/final`,
+				`http://localhost:${cookiePort}/final`,
 			]);
-			await page.goto(`http://localhost:${cookiePort}/form`);
 			const onFirst = await page.evaluate<string>("document.cookie");
 			await page.goto(`http://127.0.0.1:${cookiePort}/form`);
 			const onHop = await page.evaluate<string>("document.cookie");
-			expect(onFirst).toBe("");
 			// The fetch context shares the browser context's cookie store: each hop's own cookies
-			// are there, against the hop's real host.
-			expect(onHop.split("; ").sort()).toEqual(["hop=final", "mid=1"]);
-		} finally {
-			await session.close();
-		}
+			// are there, against the hop's real host; a cookie for a domain the hop is not on is
+			// stored nowhere.
+			expect(onFirst).toBe("hop=final");
+			expect(onHop).toBe("mid=1");
+		});
+	});
+
+	it("a form's 307 POST to another origin is refused before it is fetched: no hop, no cookie", async () => {
+		await withCookieSession(async (page) => {
+			await page.goto(`http://localhost:${cookiePort}/form`);
+			await page.evaluate(`document.querySelector("form").submit()`);
+			await page.waitForTimeout(1_500);
+			expect(cookieHits.filter((h) => h.startsWith("POST "))).toEqual([
+				"POST localhost/post-chain",
+			]);
+			expect(cookieHits).not.toContain("POST 127.0.0.1/mid");
+			await page.goto(`http://127.0.0.1:${cookiePort}/form`);
+			expect(await page.evaluate<string>("document.cookie")).toBe("");
+		});
 	});
 });

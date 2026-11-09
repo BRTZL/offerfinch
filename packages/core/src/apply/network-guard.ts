@@ -1,9 +1,11 @@
 /**
  * Decides which requests a read-only browser session may send to a live job board. Used when a
  * real form is inspected or dry-run filled: nothing that could submit, upload or record data
- * leaves the browser. GET and HEAD pass. A POST passes only when it is a GraphQL request whose
- * every operation is a `query` (Ashby loads its form that way); mutations, form posts, file
- * uploads, beacons and every other method are aborted.
+ * leaves the browser. GET and HEAD pass. A POST passes only when it is a GraphQL request sent as
+ * `application/json` whose every operation is a `query` (Ashby loads its form that way, with
+ * `content-type: application/json`, checked live 2026-11-09); mutations, form posts (a
+ * `text/plain` form can still spell out a JSON query), file uploads, beacons and every other
+ * method are aborted.
  */
 export type GuardDecision =
 	| { allow: true; reason: string }
@@ -12,11 +14,15 @@ export type GuardDecision =
 export function readOnlyDecision(
 	method: string,
 	body: string | null,
+	contentType: string | null | undefined,
 ): GuardDecision {
 	const verb = method.toUpperCase();
 	if (verb === "GET" || verb === "HEAD") return { allow: true, reason: verb };
 	if (verb !== "POST" || !body)
 		return { allow: false, reason: `${verb} blocked` };
+	// Only a script can send `application/json`; a page's own form cannot.
+	if (!/^application\/json\s*(?:;|$)/i.test(contentType?.trim() ?? ""))
+		return { allow: false, reason: "POST that is not JSON blocked" };
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(body);

@@ -258,6 +258,13 @@ function nextHop(response: PlaywrightFetchResponseLike, from: Hop): Hop | null {
 /** The reason logged for a frame's or subresource's redirect that ends on another origin. */
 export const CROSS_ORIGIN_REFUSED = "cross-origin redirect refused";
 
+/**
+ * The reason logged for a hop to another origin in a redirect chain the guard follows for a
+ * main-frame POST (a form's 307 or 308): refused before it is fetched, and the navigation aborted.
+ */
+export const CROSS_ORIGIN_POST_REFUSED =
+	"main-frame POST redirected to another origin, refused";
+
 /** The reason logged for an answer the guard fetched that is larger than `MAX_FETCHED_BYTES`. */
 export const TOO_LARGE_REFUSED = "answer too large, refused";
 
@@ -270,14 +277,19 @@ const CREDENTIALS = /^(?:cookie|authorization|proxy-authorization)$/i;
 /**
  * True when `response` is larger than `MAX_FETCHED_BYTES`. Playwright has already read it whole by
  * then (its fetch has no size limit), so the cap bounds what reaches the page, not the download.
- * `content-length` is trusted when present, so the body is not copied out just to be measured.
+ * A `content-length` over the cap refuses it at once; otherwise the decoded body is measured, since
+ * `content-length` counts the compressed bytes (a small gzip can decode past the cap).
  */
 async function tooLarge(
 	response: PlaywrightFetchResponseLike,
 ): Promise<boolean> {
 	const length = response.headers()["content-length"];
-	if (length !== undefined && /^\d+$/.test(length))
-		return Number(length) > MAX_FETCHED_BYTES;
+	if (
+		length !== undefined &&
+		/^\d+$/.test(length) &&
+		Number(length) > MAX_FETCHED_BYTES
+	)
+		return true;
 	const body = await response.body?.();
 	return (body?.byteLength ?? 0) > MAX_FETCHED_BYTES;
 }
@@ -313,15 +325,18 @@ type Followed =
  * context's request client adds the cookies it holds for each hop's own URL, and stores each
  * hop's `Set-Cookie` against that URL (`fulfillFollowed` keeps them from the page).
  *
- * `sameOrigin` (anything but the page's main frame, whose redirect becomes a new navigation): the
- * answer is fulfilled under the first URL, so it would take the first URL's origin; a chain that
- * ends on another origin is refused. An answer larger than `MAX_FETCHED_BYTES` is refused.
+ * The answer is fulfilled under the first URL, so it would take the first URL's origin. Anything
+ * but the page's main frame (whose GET redirect becomes a new navigation): a chain that ends on
+ * another origin is refused. The main frame's POST (a form's 307 or 308, which sends the body
+ * again): a hop to another origin is refused before it is fetched (`CROSS_ORIGIN_POST_REFUSED`),
+ * so the body is sent nowhere else and nothing from there runs as the first origin. An answer
+ * larger than `MAX_FETCHED_BYTES` is refused.
  */
 async function followChecked(
 	route: PlaywrightRouteLike,
 	first: PlaywrightFetchResponseLike,
 	check: (hop: Hop) => string | null,
-	options: { sameOrigin: boolean },
+	options: { mainFrame: boolean },
 ): Promise<Followed> {
 	const request = route.request();
 	const start: Hop = {
@@ -340,8 +355,15 @@ async function followChecked(
 		hop: from,
 		followed: from === start ? followed : followed.slice(0, -1),
 	});
+	const mainFramePost =
+		options.mainFrame && !/^(?:GET|HEAD)$/i.test(start.method);
 	for (let hop = nextHop(response, from); hop; hop = nextHop(response, from)) {
-		const refused = hopLimit(hop, followed.length) ?? check(hop);
+		const refused =
+			hopLimit(hop, followed.length) ??
+			(mainFramePost && originOf(hop.url) !== originOf(start.url)
+				? CROSS_ORIGIN_POST_REFUSED
+				: null) ??
+			check(hop);
 		if (refused) return { refused, hop, followed };
 		// As the browser would: no credentials to another origin, and none again after that.
 		if (originOf(hop.url) !== originOf(from.url))
@@ -358,7 +380,7 @@ async function followChecked(
 		followed.push(hop);
 		from = hop;
 	}
-	if (options.sameOrigin && originOf(from.url) !== originOf(start.url))
+	if (!options.mainFrame && originOf(from.url) !== originOf(start.url))
 		return refuseLast(CROSS_ORIGIN_REFUSED);
 	if (await tooLarge(response)) return refuseLast(TOO_LARGE_REFUSED);
 	return { response, followed };
@@ -383,19 +405,41 @@ function fulfillFollowed(
 	return route.fulfill({ response: result.response as never, headers });
 }
 
-/** A refusal `followChecked` makes that ends the request quietly, never the run. */
-function quietRefusal(reason: string): boolean {
-	return reason === CROSS_ORIGIN_REFUSED || reason === TOO_LARGE_REFUSED;
+/**
+ * A refusal `followChecked` makes after the request itself was sent: the request is logged as
+ * sent, then the refusal. A cross-origin redirect or an answer too large ends the request quietly;
+ * a main-frame POST redirected to another origin ends the run (`destinationProblem`).
+ */
+function refusedAfterSent(reason: string): boolean {
+	return (
+		reason === CROSS_ORIGIN_REFUSED ||
+		reason === TOO_LARGE_REFUSED ||
+		reason === CROSS_ORIGIN_POST_REFUSED
+	);
 }
 
 /**
- * Why a read-only session refuses to follow a redirect `hop` of a request whose body is `body`,
- * or null when it may: to this Mac or a private network, or no longer a read (`readOnlyDecision`).
+ * Why a read-only session refuses to follow a redirect `hop` of a request whose body is `body`
+ * (sent as `contentType`), or null when it may: to this Mac or a private network, or no longer a
+ * read (`readOnlyDecision`).
  */
-function readHopRefusal(hop: Hop, body: string | null): string | null {
+function readHopRefusal(
+	hop: Hop,
+	body: string | null,
+	contentType: string | undefined,
+): string | null {
 	if (privateUrl(hop.url)) return PRIVATE_NETWORK_REFUSED;
-	const read = readOnlyDecision(hop.method, hop.keepsBody ? body : null);
+	const read = hop.keepsBody
+		? readOnlyDecision(hop.method, body, contentType)
+		: readOnlyDecision(hop.method, null, null);
 	return read.allow ? null : read.reason;
+}
+
+/** The `content-type` header `request` was sent with, if any. */
+function contentTypeOf(
+	request: ReturnType<PlaywrightRouteLike["request"]>,
+): string | undefined {
+	return request.headers?.()["content-type"];
 }
 
 /** `url`'s origin, or "" when it is not a URL. */
@@ -905,10 +949,10 @@ class PlaywrightPage implements BrowserPage {
 		const result: Followed = mainHop
 			? { response: first, followed: [] }
 			: await followChecked(route, first, check, {
-					sameOrigin: !navigation,
+					mainFrame: navigation,
 				});
-		// A quiet refusal ends this request only: the request itself was sent and is logged.
-		if ("refused" in result && !quietRefusal(result.refused)) {
+		// Refused after the request itself was sent: it is logged first, then the refusal.
+		if ("refused" in result && !refusedAfterSent(result.refused)) {
 			this.logFollowed(result.followed, seq);
 			return refuseHop(result.hop, result.refused);
 		}
@@ -1043,18 +1087,19 @@ class PlaywrightPage implements BrowserPage {
 			await route.abort("blockedbyclient");
 			return true;
 		}
-		if (!readOnlyDecision(method, request.postData()).allow) return false;
+		const type = contentTypeOf(request);
+		if (!readOnlyDecision(method, request.postData(), type).allow) return false;
 		const first = await route.fetch({ maxRedirects: 0 });
 		// Every hop stays on the hosts and stays a read.
 		const check = (hop: Hop): string | null =>
 			!this.onHosts(hop.url)
 				? DESTINATION_REFUSED
-				: readHopRefusal(hop, request.postData());
+				: readHopRefusal(hop, request.postData(), type);
 		const mainHop = this.mainFrameHop(request, first);
 		const hopRefusal = mainHop && check(mainHop);
 		const result: Followed = mainHop
 			? { response: first, followed: [] }
-			: await followChecked(route, first, check, { sameOrigin: false });
+			: await followChecked(route, first, check, { mainFrame: true });
 		const refused =
 			mainHop && hopRefusal
 				? { refused: hopRefusal, hop: mainHop }
@@ -1120,7 +1165,7 @@ class PlaywrightPage implements BrowserPage {
 		const decision =
 			this.state.mode === "none"
 				? { allow: false, reason: "network closed" }
-				: readOnlyDecision(method, request.postData());
+				: readOnlyDecision(method, request.postData(), contentTypeOf(request));
 		this.state.log.push({
 			method,
 			url: request.url(),
@@ -1155,8 +1200,9 @@ class PlaywrightPage implements BrowserPage {
 			result = await followChecked(
 				route,
 				first,
-				(hop) => readHopRefusal(hop, request.postData()),
-				{ sameOrigin: !mainFrame },
+				(hop) =>
+					readHopRefusal(hop, request.postData(), contentTypeOf(request)),
+				{ mainFrame },
 			);
 		} catch (error) {
 			// Closing the session ends it in `routeUntilClosed`; a host that cannot be reached (an

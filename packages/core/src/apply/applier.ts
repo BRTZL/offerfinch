@@ -1,5 +1,6 @@
 import {
 	type BrowserPage,
+	CROSS_ORIGIN_POST_REFUSED,
 	DESTINATION_REFUSED,
 	type UploadFile,
 	urlOnHosts,
@@ -119,12 +120,28 @@ export interface ApplicationRun {
 	beforeStep?: () => Promise<string | null>;
 }
 
+/**
+ * Why the page's own POST (a form's) never reached where the employer's site redirected it: the
+ * redirect went to another origin and the session refused it (`CROSS_ORIGIN_POST_REFUSED`). The
+ * POST itself was sent once, to the employer's site. Null when no such redirect was refused.
+ */
+export function redirectedElsewhere(page: BrowserPage): string | null {
+	const refused = page
+		.networkLog()
+		.find((r) => r.reason === CROSS_ORIGIN_POST_REFUSED);
+	return refused
+		? `The employer's site redirected the application to another site (${hostOf(refused.url)}); it was not sent there.`
+		: null;
+}
+
 /** A stop when the page left the allowed hosts or tried to; null when it stayed. */
 export function destinationProblem(
 	page: BrowserPage,
 	allowedHosts: string[] | undefined,
 ): string | null {
 	if (!allowedHosts) return null;
+	const redirected = redirectedElsewhere(page);
+	if (redirected) return redirected;
 	const refused = page
 		.networkLog()
 		.find((r) => r.reason === DESTINATION_REFUSED);

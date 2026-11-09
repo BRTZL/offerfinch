@@ -12,6 +12,7 @@ type StopCase =
 	| "unknown_outcome"
 	| "unknown_error_answer"
 	| "unknown_refused"
+	| "unknown_redirected"
 	| "challenge"
 	| "account_wall"
 	| "verification_code"
@@ -156,9 +157,19 @@ const ERROR_ANSWER = /answered HTTP \d+ to the application/;
 const REFUSED =
 	/so the application may not have gone through|employer's answer to the application says|The form showed errors after the click|The page after the click shows an error/;
 
-/** An unknown outcome: an error answer to the application, refusal wording, or no confirmation. */
+/**
+ * An unknown outcome whose application the employer's site redirected to another site, which the
+ * run refused (core apply/applier.ts `redirectedElsewhere`).
+ */
+const REDIRECTED = /redirected the application to another site/;
+
+/**
+ * An unknown outcome: redirected to another site, an error answer to the application, refusal
+ * wording, or no confirmation.
+ */
 function unknownCase(attempt: StopAttempt): StopCase {
 	const reason = attempt.error ?? "";
+	if (REDIRECTED.test(reason)) return "unknown_redirected";
 	if (ERROR_ANSWER.test(reason)) return "unknown_error_answer";
 	if (REFUSED.test(reason)) return "unknown_refused";
 	return "unknown_outcome";
@@ -215,6 +226,12 @@ const COPY: Record<
 	unknown_refused: {
 		title: "The employer's site may have refused it",
 		body: "The application was sent once, but the page or the employer's answer after the click shows an error or refusal wording, so it may not have gone through. Nothing is clicked again on its own. Check your email or the employer's portal.",
+		actions: ["mark", "finish_confirmed", "retry_confirmed"],
+		note: "Retry or Finish it yourself opens only after you confirm it did not go through.",
+	},
+	unknown_redirected: {
+		title: "The employer's site sent it to another site",
+		body: "The application was sent once to the employer's site, which answered by passing it on to another site. OfferFinch stopped there and sent nothing to that site, so it may not have gone through. Nothing is clicked again on its own. Check your email or the employer's portal.",
 		actions: ["mark", "finish_confirmed", "retry_confirmed"],
 		note: "Retry or Finish it yourself opens only after you confirm it did not go through.",
 	},

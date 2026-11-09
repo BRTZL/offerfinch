@@ -11,19 +11,41 @@ import {
 } from "../src/apply/network-guard";
 
 describe("readOnlyDecision", () => {
+	const JSON_TYPE = "application/json";
+	const QUERY = JSON.stringify({
+		operationName: "ApiJobPosting",
+		query: "query ApiJobPosting($id: String!) { jobPosting(id: $id) { id } }",
+	});
+
 	it("lets reads through and GraphQL queries", () => {
-		expect(readOnlyDecision("GET", null).allow).toBe(true);
-		expect(readOnlyDecision("HEAD", null).allow).toBe(true);
-		expect(
-			readOnlyDecision(
-				"POST",
-				JSON.stringify({
-					operationName: "ApiJobPosting",
-					query:
-						"query ApiJobPosting($id: String!) { jobPosting(id: $id) { id } }",
-				}),
-			).allow,
-		).toBe(true);
+		expect(readOnlyDecision("GET", null, null).allow).toBe(true);
+		expect(readOnlyDecision("HEAD", null, null).allow).toBe(true);
+		// Ashby's own queries are sent as `application/json` (checked live, 2026-11-09).
+		for (const type of [
+			JSON_TYPE,
+			"application/json; charset=utf-8",
+			"Application/JSON",
+		])
+			expect(readOnlyDecision("POST", QUERY, type).allow, type).toBe(true);
+	});
+
+	it("counts only an application/json body as a GraphQL query (Codex, 2026-11-09)", () => {
+		// A text/plain form spells out a query from a field's name and value.
+		const fromForm = '{"query":"query {jobs}","pad":"="}';
+		expect(readOnlyDecision("POST", fromForm, JSON_TYPE).allow).toBe(true);
+		for (const type of [
+			"text/plain",
+			"text/plain;charset=UTF-8",
+			"application/x-www-form-urlencoded",
+			"multipart/form-data; boundary=x",
+			"application/jsonp",
+			"",
+			null,
+			undefined,
+		])
+			expect(readOnlyDecision("POST", fromForm, type).allow, `${type}`).toBe(
+				false,
+			);
 	});
 
 	it("blocks mutations, form posts, uploads and other methods", () => {
@@ -44,9 +66,10 @@ describe("readOnlyDecision", () => {
 			["PATCH", "{}"],
 			["DELETE", null],
 		] as const)
-			expect(readOnlyDecision(method, body).allow, `${method} ${body}`).toBe(
-				false,
-			);
+			expect(
+				readOnlyDecision(method, body, "application/json").allow,
+				`${method} ${body}`,
+			).toBe(false);
 	});
 });
 

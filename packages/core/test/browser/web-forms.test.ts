@@ -1021,6 +1021,45 @@ describe("the application request itself is the evidence (Codex re-review, 2026-
 	}, 60_000);
 });
 
+describe("a form's POST the employer's site redirects (Codex, 2026-11-09)", () => {
+	it.each(["post-307-away", "post-308-away"])(
+		"%s: to another allowed origin, refused after the one POST: an unknown outcome, never sent on",
+		async (variant) => {
+			const { deps, calls } = harness(variant, await schemaOf(variant));
+			const reportsBefore = forms.reports.length;
+			const outcome = await submitStep(deps, "u1", "app-1");
+			expect(outcome).toMatchObject({
+				outcome: "needs_human",
+				reason: expect.stringMatching(
+					/^Outcome unknown after a click that may have sent the application: The employer's site redirected the application to another site \(127\.0\.0\.1:\d+\)/,
+				),
+			});
+			expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+			expect(calls[1]?.submitted).toBe(false);
+			expect(calls[1]?.outcome).not.toBe("web_sent");
+			// Exactly one POST, to the form's own site; the other origin never asked at all.
+			expect(forms.count(variant)).toBe(1);
+			expect(
+				forms.other.hits.filter((h) => h.path.startsWith(`/web/${variant}/`)),
+			).toEqual([]);
+			// Nothing ran as the form's site to read its cookie or storage.
+			expect(forms.reports.slice(reportsBefore)).toEqual([]);
+		},
+		60_000,
+	);
+
+	it("on its own origin, the 307 is still followed and the run ends sent", async () => {
+		const variant = "post-307-same";
+		const { deps, calls } = harness(variant, await schemaOf(variant));
+		const outcome = await submitStep(deps, "u1", "app-1");
+		const evidence = expectSent(outcome, calls);
+		expect(evidence?.confirmation).toMatch(/^Thank you for applying/);
+		expect(
+			forms.submissions.filter((s) => s.variant === variant).map((s) => s.path),
+		).toEqual([`/web/${variant}/apply`, `/web/${variant}/received`]);
+	}, 60_000);
+});
+
 describe("stops on an employer's form: nothing is sent", () => {
 	it("stops when the live form asks a required question review never listed", async () => {
 		const { deps, calls } = harness(

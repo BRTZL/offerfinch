@@ -144,6 +144,28 @@ describe("the stop sheet", () => {
 		]);
 	});
 
+	it("an application the employer's site redirected to another site is an unknown outcome of its own", () => {
+		const view = stopView(
+			app({
+				attempts: [
+					attempt(
+						1,
+						"needs_human",
+						"Outcome unknown after a click that may have sent the application: The employer's site redirected the application to another site (127.0.0.1:4100); it was not sent there. Check the employer's portal or your email before retrying.",
+					),
+				],
+				unresolvedAttempt: { attempt: 1 },
+			}),
+		);
+		expect(view?.case).toBe("unknown_redirected");
+		expect(view?.title).toBe("The employer's site sent it to another site");
+		expect(view?.actions).toEqual([
+			"mark",
+			"finish_confirmed",
+			"retry_confirmed",
+		]);
+	});
+
 	it("refusal or error wording after the click is an unknown outcome of its own", () => {
 		for (const said of [
 			'The page after the click says "Your application could not be submitted", so the application may not have gone through.',
