@@ -30,6 +30,10 @@ const SECTIONS: Record<string, ReturnType<typeof lazyNamed>> = {
 		() => import("@/components/pipeline/settings/sources"),
 		"SourcesSettings",
 	),
+	applying: lazyNamed(
+		() => import("@/components/pipeline/settings/applying"),
+		"ApplyingSettings",
+	),
 	notifications: lazyNamed(
 		() => import("@/components/desktop/notifications"),
 		"NotificationSettings",

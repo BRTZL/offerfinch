@@ -4,6 +4,7 @@ import {
 	EyeOff,
 	Filter,
 	Globe,
+	Send,
 	Settings2,
 	SlidersHorizontal,
 } from "lucide-react";
@@ -30,6 +31,7 @@ const GROUPS: {
 				icon: <EyeOff />,
 			},
 			{ href: "/settings/sources", label: "Sources", icon: <Globe /> },
+			{ href: "/settings/applying", label: "Applying", icon: <Send /> },
 		],
 	},
 	{

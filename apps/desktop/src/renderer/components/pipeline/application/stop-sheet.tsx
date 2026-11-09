@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { useDemoMode } from "@/components/desktop/demo";
 import { FileLink } from "@/components/pipeline/bits";
+import { SubmissionsSettingsLink } from "@/components/pipeline/settings/submissions-link";
 import { ActionBarButton } from "@/components/system/action-bar";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -300,6 +301,22 @@ function StopSheet({
 							{view.attempt ? <ProofShots attempt={view.attempt} /> : null}
 							{view.note ? (
 								<p className="text-muted-foreground">{view.note}</p>
+							) : null}
+							{view.case === "paused" ? (
+								<p
+									className="text-muted-foreground"
+									data-testid="stop-submissions-state"
+								>
+									{app.submissionsPaused ? (
+										<>
+											Automatic submissions are still off.{" "}
+											<SubmissionsSettingsLink onClick={onClose} />; Retry
+											appears once they are on.
+										</>
+									) : (
+										"Automatic submissions are on again, so Retry sends it."
+									)}
+								</p>
 							) : null}
 						</div>
 					)}

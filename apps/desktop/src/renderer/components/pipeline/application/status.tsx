@@ -7,6 +7,7 @@ import {
 	DOC_LABEL,
 } from "@/components/pipeline/application/types";
 import { ago } from "@/components/pipeline/bits";
+import { SubmissionsSettingsLink } from "@/components/pipeline/settings/submissions-link";
 import { Button } from "@/components/ui/button";
 import { client, orpc } from "@/lib/orpc";
 import { Link } from "@/lib/router";
@@ -40,7 +41,13 @@ export function StatusStrip({ app }: { app: AppDetail }) {
 	if (app.state === "approved" && app.submissionsPaused && !handoffBoard)
 		items.push({
 			tone: "warn",
-			text: "Automatic submissions are paused, so nothing is sent. Submit it yourself with the steps under Submit it yourself.",
+			text: (
+				<>
+					Automatic submissions are paused, so nothing is sent.{" "}
+					<SubmissionsSettingsLink />, or submit it yourself with the steps
+					under Submit it yourself.
+				</>
+			),
 			testId: "paused",
 		});
 	if (app.state === "applying")

@@ -94,6 +94,7 @@ const SETTINGS: { label: string; href: string; icon: ReactNode }[] = [
 	{ label: "Models", href: "/settings/models", icon: <SlidersHorizontal /> },
 	{ label: "Job search", href: "/settings/job-filter", icon: <Filter /> },
 	{ label: "Sources", href: "/settings/sources", icon: <Globe /> },
+	{ label: "Applying", href: "/settings/applying", icon: <Send /> },
 	{ label: "Notifications", href: "/settings/notifications", icon: <Bell /> },
 	{ label: "General", href: "/settings/general", icon: <Settings2 /> },
 	{ label: "Your data", href: "/settings/your-data", icon: <Database /> },

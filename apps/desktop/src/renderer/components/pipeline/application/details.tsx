@@ -9,6 +9,7 @@ import {
 	DOC_LABEL,
 } from "@/components/pipeline/application/types";
 import { ago, STATE_LABEL, sourceLabel } from "@/components/pipeline/bits";
+import { SubmissionsSettingsLink } from "@/components/pipeline/settings/submissions-link";
 import { Cells, Fit } from "@/components/system/bits";
 import { Disclosure, InspectorSection } from "@/components/system/pane";
 import { useEvidenceLabel } from "@/lib/evidence";
@@ -315,7 +316,8 @@ export function AfterApproveSection({ app }: { app: AppDetail }) {
 					data-testid="after-approve-paused"
 				>
 					Automatic submissions are paused, so approving sends nothing yet: it
-					waits as approved, with every answer ready to submit yourself.
+					waits as approved, with every answer ready to submit yourself.{" "}
+					<SubmissionsSettingsLink />.
 				</p>
 			) : (
 				<p className="text-muted-foreground text-xs">
