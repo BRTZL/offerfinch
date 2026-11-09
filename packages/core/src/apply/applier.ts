@@ -608,7 +608,9 @@ export async function fillForm(
 		run,
 		config.plainLocation === true,
 	);
-	// Before the first interaction of any kind (clicks included): dry runs close the network here.
+	// Before the first interaction of any kind (clicks included): dry runs close the network here,
+	// and a submission fixes the files other hosts may serve.
+	page.freezeAssets();
 	run.beforeFill?.();
 	await declineBoardCookies(page, config);
 	// A combobox lists its options only when open: read them so the question can offer them.

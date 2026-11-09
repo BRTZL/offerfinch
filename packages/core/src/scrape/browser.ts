@@ -71,6 +71,13 @@ export interface BrowserPage {
 	 * ("read_only" or "none"); it can only ever get stricter.
 	 */
 	restrictNetwork(mode: "read_only" | "none"): void;
+	/**
+	 * "allowlist" (a real submission), called before the first keystroke: the set of files the
+	 * page may load from a host that is not a destination (`HostRules` assets and static files) is
+	 * fixed to the exact URLs it loaded so far; any other is refused quietly (a filled value in it
+	 * is still a violation). Widget endpoints keep their own rules. No-op in other modes.
+	 */
+	freezeAssets(): void;
 	/** Every request a guarded page made, with the guard's decision. Empty on open sessions. */
 	networkLog(): NetworkLogEntry[];
 	close(): Promise<void>;
@@ -164,6 +171,9 @@ export function urlOnHosts(url: string, hosts: readonly string[]): boolean {
 		return false;
 	}
 }
+
+/** `boardHostDecision`'s reasons for a file read from a host that is not a destination. */
+const FILE_READS = new Set(["board asset, read", "board static file, read"]);
 
 /** The reason recorded for a request an "allowlist" session refused. */
 export const DESTINATION_REFUSED = "destination not allowed";
@@ -352,6 +362,10 @@ function pageOf(request: { frame(): unknown }): unknown {
 interface GuardState {
 	mode: GuardMode;
 	readonly log: NetworkLogEntry[];
+	/** "allowlist": the other-host files (assets, static files) loaded before `freezeAssets`. */
+	readonly loaded: Set<string>;
+	/** "allowlist": set by `freezeAssets`; only a file in `loaded` may load from then on. */
+	frozen: boolean;
 }
 
 /** The URL of the frame that made a request, or "" when it cannot be told. */
@@ -565,9 +579,13 @@ class PlaywrightPage implements BrowserPage {
 			this.hostRules,
 			this.allowedHosts,
 		);
-		return decision.allow
-			? decision
-			: { allow: false, reason: NOT_A_DESTINATION };
+		if (!decision.allow) return { allow: false, reason: NOT_A_DESTINATION };
+		if (!FILE_READS.has(decision.reason)) return decision;
+		// Files are fixed before the first keystroke: a new path could carry what was typed.
+		if (this.state.frozen && !this.state.loaded.has(url))
+			return { allow: false, reason: NOT_A_DESTINATION };
+		if (!this.state.frozen) this.state.loaded.add(url);
+		return decision;
 	}
 
 	/**
@@ -632,6 +650,10 @@ class PlaywrightPage implements BrowserPage {
 		});
 		if (decision.allow) return route.continue();
 		return route.abort("blockedbyclient");
+	}
+
+	freezeAssets(): void {
+		if (this.state.mode === "allowlist") this.state.frozen = true;
 	}
 
 	restrictNetwork(mode: "read_only" | "none"): void {
@@ -830,7 +852,12 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 			// route() does not see a service worker's fetches, so guarded pages get none.
 			...(network === "open" ? {} : { serviceWorkers: "block" as const }),
 		});
-		const state: GuardState = { mode: network, log: [] };
+		const state: GuardState = {
+			mode: network,
+			log: [],
+			loaded: new Set(),
+			frozen: false,
+		};
 		const pages = new Map<unknown, PlaywrightPage>();
 		if (network !== "open") {
 			if (!context.route || !context.routeWebSocket) {

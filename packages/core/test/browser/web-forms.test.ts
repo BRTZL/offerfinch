@@ -19,6 +19,10 @@ import {
 import { MemoryBlobStore } from "@offerfinch/core/export/export";
 import type { PipelineDeps } from "@offerfinch/core/pipeline/ports";
 import { FakeLlmProvider } from "@offerfinch/core/scoring/fake";
+import {
+	DESTINATION_REFUSED,
+	NOT_A_DESTINATION,
+} from "@offerfinch/core/scrape/browser";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { fixtureBrowser, localBrowser } from "./browser";
 import {
@@ -650,6 +654,49 @@ describe("a step that may send answers waits for the claim (Codex, 2026-11-09)",
 		});
 		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
 		expect(forms.count("two-step")).toBe(before);
+	}, 60_000);
+});
+
+describe("files from another host are fixed before the first keystroke (Codex, 2026-11-09)", () => {
+	it("only a file loaded with the page loads again; a new path is refused quietly", async () => {
+		const schema = await schemaOf("assets");
+		const session = await fixtureBrowser().openSession({
+			network: "allowlist",
+			allowedHosts: ["127.0.0.1"],
+			hostRules: { assets: ["localhost"] },
+			formValues: ["Ada Example", "ada@example.test", "Izmir, Turkey"],
+		});
+		const awayBefore = forms.away.length;
+		try {
+			const page = await session.newPage();
+			const result = await runWebApplication(page, {
+				board: "web",
+				url: urlOf("assets"),
+				mode: "submit",
+				schema: schema.fields,
+				data: data(),
+				files: { cv: CV, coverLetter: null },
+				model: fakeModel(),
+				allowedHosts: ["127.0.0.1"],
+				claim: async () => ({ go: true }),
+			});
+			expect(result.outcome === "stopped" ? result.stop : null).toBeNull();
+			expect(result.outcome).toBe("submitted");
+			const log = page.networkLog();
+			// The pieces were tried, and refused without stopping the run.
+			expect(
+				log.filter(
+					(r) => r.reason === NOT_A_DESTINATION && r.url.endsWith(".png"),
+				).length,
+			).toBeGreaterThan(0);
+			expect(log.filter((r) => r.reason === DESTINATION_REFUSED)).toEqual([]);
+		} finally {
+			await session.close();
+		}
+		const reached = new Set(
+			forms.away.slice(awayBefore).map((a) => `${a.method} ${a.path}`),
+		);
+		expect([...reached]).toEqual(["GET /web/assets/logo.png"]);
 	}, 60_000);
 });
 

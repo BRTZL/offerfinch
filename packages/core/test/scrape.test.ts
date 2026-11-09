@@ -180,6 +180,7 @@ function fakeBrowser(
 		waitForTimeout: async () => {},
 		waitForNetworkIdle: async () => {},
 		restrictNetwork: () => {},
+		freezeAssets: () => {},
 		networkLog: () => [],
 		close: async () => {},
 	};

@@ -1213,6 +1213,8 @@ export async function runWebApplication(
 				await shot(page),
 				[],
 			);
+		// Before the first keystroke: a submission fixes the files other hosts may serve.
+		page.freezeAssets();
 		run.beforeFill?.();
 		const steps = await fillSteps(page, run, opened.scan, state);
 		if (!steps.ok)
