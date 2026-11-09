@@ -383,7 +383,10 @@ export function outcomeLabel(attempt: {
 	status: string;
 	board: string | null;
 	proof?: Record<string, unknown> | null;
+	mode?: string;
 }): string {
+	if (attempt.mode === "manual")
+		return attempt.status === "submitted" ? "Submitted by you" : attempt.status;
 	if (attempt.proof?.outcome === "web_sent") {
 		if (attempt.status === "submitted") return "Sent, and you got the email";
 		if (attempt.status === "not_sent") return "Sent, but it didn't go through";

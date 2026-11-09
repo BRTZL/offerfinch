@@ -337,6 +337,10 @@ describe("an employer's form sent, check your email (decision 2026-11-09)", () =
 		expect(outcomeLabel(sent("not_sent", e))).toBe(
 			"Sent, but it didn't go through",
 		);
+		// Got the email records the user's own attempt: never a board's confirmation.
+		expect(
+			outcomeLabel({ status: "submitted", board: null, mode: "manual" }),
+		).toBe("Submitted by you");
 	});
 
 	it("shows what the run saw as information, a refusal as a warning", () => {
