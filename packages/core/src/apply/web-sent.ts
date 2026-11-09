@@ -74,18 +74,15 @@ export function decodeBody(body: Uint8Array, contentType: string): Decoded {
 }
 
 /**
- * True when `entry` is the application: a request to a destination that is not a read, answered
- * 2xx or 3xx, whose body carries every approved typed value (each as one whole value; spaces and
- * line ends compared loosely), or, when nothing was typed, the CV file.
+ * True when `entry`'s body carries every approved typed value (each as one whole value; spaces
+ * and line ends compared loosely), or, when nothing was typed, the CV file.
  */
-export function carriesApplication(
+export function carriesValues(
 	entry: NetworkLogEntry,
 	values: SentValues,
 ): boolean {
-	const { status, body } = entry;
-	if (status === undefined || status < 200 || status >= 400 || !body)
-		return false;
-	const decoded = decodeBody(body, entry.contentType ?? "");
+	if (!entry.body) return false;
+	const decoded = decodeBody(entry.body, entry.contentType ?? "");
 	const sent = new Set(decoded.texts.map(squash));
 	const typed = values.typed.map(squash).filter(Boolean);
 	if (typed.length > 0) return typed.every((v) => sent.has(v));
@@ -93,4 +90,19 @@ export function carriesApplication(
 		values.cv !== null &&
 		decoded.files.some((f) => f.name === values.cv || f.pdf)
 	);
+}
+
+/** True when the request answered 2xx or 3xx. */
+export const answeredOk = (entry: NetworkLogEntry): boolean =>
+	entry.status !== undefined && entry.status >= 200 && entry.status < 400;
+
+/**
+ * True when `entry` is the application: a request answered 2xx or 3xx whose body carries the
+ * approved values (`carriesValues`).
+ */
+export function carriesApplication(
+	entry: NetworkLogEntry,
+	values: SentValues,
+): boolean {
+	return answeredOk(entry) && carriesValues(entry, values);
 }

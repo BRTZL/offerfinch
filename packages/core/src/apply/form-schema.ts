@@ -35,6 +35,16 @@ export interface FormSchema {
 	formUrl?: string;
 }
 
+/**
+ * Why a form was not read. `handoff`: it was read, and it is one the user finishes (it sends
+ * elsewhere, has unlabelled fields, or no submit button of its own); review shows the reason as is.
+ */
+export interface FormReadRefusal {
+	ok: false;
+	reason: string;
+	handoff?: true;
+}
+
 /** The saved outcome of reading one application's form. */
 export type FormRead =
 	| { status: "read"; schema: FormSchema; readAt: string }

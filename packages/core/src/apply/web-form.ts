@@ -7,7 +7,12 @@ import {
 	type RunResult,
 	type Stop,
 } from "./applier";
-import { type FormSchema, type SchemaField, schemaKey } from "./form-schema";
+import {
+	type FormReadRefusal,
+	type FormSchema,
+	type SchemaField,
+	schemaKey,
+} from "./form-schema";
 import {
 	DUPLICATE,
 	type FillAction,
@@ -32,7 +37,7 @@ import {
 	type WebScan,
 	webCoveredScript,
 } from "./web-scan";
-import { carriesApplication, type SentValues } from "./web-sent";
+import { answeredOk, carriesValues, type SentValues } from "./web-sent";
 
 /**
  * An employer's own application form (the "web" board, docs/auto-apply-plan.md step 6): read
@@ -454,9 +459,15 @@ export async function readWebFormOnPage(
 	page: BrowserPage,
 	url: string,
 	model?: WebFormModel | null,
-): Promise<{ ok: true; schema: FormSchema } | { ok: false; reason: string }> {
+): Promise<{ ok: true; schema: FormSchema } | FormReadRefusal> {
 	const opened = await openWebForm(page, url);
-	if ("stop" in opened) return { ok: false, reason: opened.stop.message };
+	if ("stop" in opened)
+		return {
+			ok: false,
+			reason: opened.stop.message,
+			// Another site or host: read, and the user's to finish there.
+			...(opened.stop.kind === "other_site" ? { handoff: true as const } : {}),
+		};
 	page.restrictNetwork("none");
 	const formHost = webFormHost(opened.formUrl);
 	const fields: { field: WebField; page: number }[] = [];
@@ -466,7 +477,8 @@ export async function readWebFormOnPage(
 	let canSubmit = scan.canSubmit;
 	for (let step = 1; step <= MAX_STEPS; step++) {
 		const unlabelled = unlabelledProblem(scan.fields);
-		if (unlabelled) return { ok: false, reason: unlabelled.message };
+		if (unlabelled)
+			return { ok: false, reason: unlabelled.message, handoff: true };
 		await readComboboxes(page, scan.fields);
 		const before = fields.length;
 		addRead(fields, keys, scan.fields, step);
@@ -481,7 +493,7 @@ export async function readWebFormOnPage(
 		canSubmit ||= scan.canSubmit;
 		// A later step that names another host as where it sends: the user finishes the form.
 		const away = elsewhere(page, scan, formHost);
-		if (away) return { ok: false, reason: away.message };
+		if (away) return { ok: false, reason: away.message, handoff: true };
 	}
 	// Nothing on the form is known to send it (no submit button of its own, shown or kept for a
 	// later step): the user finishes it (review shows why).
@@ -489,6 +501,7 @@ export async function readWebFormOnPage(
 		return {
 			ok: false,
 			reason: "This form has no submit button of its own; finish it yourself.",
+			handoff: true,
 		};
 	const labelled = await modelLabels(
 		fields.map((f) => f.field),
@@ -686,7 +699,7 @@ function stepProblem(
 	return null;
 }
 
-/** Records a filled control, and what the application request must carry (`carriesApplication`). */
+/** Records a filled control, and what the application request must carry (`carriesValues`). */
 function recordFilled(
 	state: RunState,
 	action: FillAction,
@@ -812,27 +825,33 @@ interface BeforeClick {
 }
 
 /**
- * True when, after the click, the application itself went to the form's host: a request that is
- * not a read, answered 2xx or 3xx, whose body carries the approved values (`carriesApplication`).
- * Any other post (an analytics event, a click log) or a navigation alone is not.
+ * Null when, after the click, the application itself went to the form's host: a request that is
+ * not a read, answered 2xx or 3xx, whose body carries the approved values (`carriesValues`).
+ * Otherwise why not: any other post (an analytics event, a click log), a navigation alone, or the
+ * application answered with an error is no evidence.
  */
-function applicationSent(
+function notSent(
 	page: BrowserPage,
 	before: BeforeClick,
 	run: ApplicationRun,
 	state: RunState,
-): boolean {
-	return page
+): string | null {
+	const carrying = page
 		.networkLog()
 		.slice(before.logged)
-		.some(
+		.filter(
 			(r) =>
 				r.allowed &&
 				r.reason === "allowed host" &&
 				urlOnHosts(r.url, run.allowedHosts ?? [state.formHost]) &&
 				!/^(?:GET|HEAD)$/i.test(r.method) &&
-				carriesApplication(r, state.sent),
+				carriesValues(r, state.sent),
 		);
+	if (carrying.some(answeredOk)) return null;
+	const refused = carrying.find((r) => r.status !== undefined);
+	return refused
+		? `The page changed after the click, but the employer's site answered HTTP ${refused.status} to the application.`
+		: "The page changed after the click, but no request carrying the application reached the employer's site.";
 }
 
 /**
@@ -851,11 +870,8 @@ async function readOutcome(
 ): Promise<{ confirmed: string } | { unknown: string }> {
 	const changed = await awaitChange(page, formUrl, run);
 	if ("unknown" in changed) return changed;
-	if (!applicationSent(page, before, run, state))
-		return {
-			unknown:
-				"The page changed after the click, but no request carrying the application reached the employer's site.",
-		};
+	const missing = notSent(page, before, run, state);
+	if (missing) return { unknown: missing };
 	return judge(changed.after, formUrl, run.model, before);
 }
 

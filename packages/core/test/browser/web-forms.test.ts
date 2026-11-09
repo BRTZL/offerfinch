@@ -247,6 +247,36 @@ describe("reading an employer's form before review", () => {
 		});
 	});
 
+	it("a form read as one to finish by hand says so in review, not that it could not be read", async () => {
+		const saved = await readApplicationForm(
+			{
+				store: {} as SubmissionStore,
+				browser: localBrowser(),
+				blobs: new MemoryBlobStore(),
+				allowedHosts: ["127.0.0.1"],
+			},
+			{
+				applicationId: "app-1",
+				source: "web",
+				board: "web",
+				boardFrom: "url",
+				companyKey: "acme-robotics",
+				externalId: "contact-swap",
+				jobUrl: urlOf("contact-swap"),
+				formAnswers: [],
+				coverLetterMarkdown: null,
+				cvPdfKey: null,
+				coverLetterPdfKey: null,
+			},
+			new Date(),
+			fakeModel(),
+		);
+		expect(saved).toMatchObject({
+			status: "failed",
+			note: "This form has unlabelled fields; finish it yourself. The form was read before review, and it is one to fill in on the employer's site.",
+		});
+	});
+
 	it("reads a form in a frame of the same site", async () => {
 		const schema = await schemaOf("framed");
 		expect(schema.fields.map((f) => f.key)).toContain("textarea:why");
@@ -798,7 +828,7 @@ describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09
 		// Only a click event went to the form's host (Codex re-review, 2026-11-09).
 		["telemetry", 1, /no request carrying the application/],
 		// The application went, and the server refused it.
-		["rejected", 1, /no request carrying the application/],
+		["rejected", 1, /answered HTTP 500 to the application/],
 	])(
 		"%s: not a confirmation without a send, a new page and new words",
 		async (variant, posts, why) => {

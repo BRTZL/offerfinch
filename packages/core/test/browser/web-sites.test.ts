@@ -133,6 +133,7 @@ describe("an employer's form sends only to the exact host of its page (Codex re-
 			expect(result).toMatchObject({
 				ok: false,
 				reason: `This form sends to ${host}; finish it yourself.`,
+				handoff: true,
 			});
 			expect(sites.posts("sink")).toEqual([]);
 		},

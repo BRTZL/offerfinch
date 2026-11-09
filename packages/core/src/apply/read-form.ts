@@ -1,6 +1,11 @@
 import type { BrowserPage } from "../scrape/browser";
 import { declineBoardCookies, openForm } from "./applier";
-import { type FormRead, type FormSchema, schemaKey } from "./form-schema";
+import {
+	type FormRead,
+	type FormReadRefusal,
+	type FormSchema,
+	schemaKey,
+} from "./form-schema";
 import {
 	BOARD_CONFIGS,
 	type FormBoard,
@@ -48,7 +53,7 @@ export async function readFormOnPage(
 	board: FormBoard,
 	url: string,
 	model?: WebFormModel | null,
-): Promise<{ ok: true; schema: FormSchema } | { ok: false; reason: string }> {
+): Promise<{ ok: true; schema: FormSchema } | FormReadRefusal> {
 	// An employer's own form: the generic scan (web-form.ts).
 	if (board === "web") return readWebFormOnPage(page, url, model);
 	const config = BOARD_CONFIGS[board];
@@ -142,7 +147,9 @@ export async function readApplicationForm(
 			status: "failed",
 			board,
 			url,
-			note: `The form could not be read before review: ${result.reason}`,
+			note: result.handoff
+				? `${result.reason} The form was read before review, and it is one to fill in on the employer's site.`
+				: `The form could not be read before review: ${result.reason}`,
 			readAt,
 		};
 	} catch (error) {

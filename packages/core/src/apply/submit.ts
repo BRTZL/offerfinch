@@ -15,7 +15,7 @@ import {
 	runApplication,
 } from "./applier";
 import type { SavedAnswer } from "./field-answers";
-import type { FormRead, FormSchema } from "./form-schema";
+import type { FormRead, FormReadRefusal, FormSchema } from "./form-schema";
 import {
 	type ApplicantData,
 	type Board,
@@ -203,9 +203,7 @@ export interface ApplyDeps {
 	readForm?: (input: {
 		board: FormBoard;
 		url: string;
-	}) => Promise<
-		{ ok: true; schema: FormSchema } | { ok: false; reason: string }
-	>;
+	}) => Promise<{ ok: true; schema: FormSchema } | FormReadRefusal>;
 	now?: () => Date;
 }
 
