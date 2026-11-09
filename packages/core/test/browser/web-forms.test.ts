@@ -794,7 +794,11 @@ describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09
 		// Posted and the form went, but the thank-you words were on the page before the click.
 		["echo", 1, /does not bear out/],
 		// A new thank-you replaced the form, but nothing was sent.
-		["silent", 0, /sent nothing/],
+		["silent", 0, /no request carrying the application/],
+		// Only a click event went to the form's host (Codex re-review, 2026-11-09).
+		["telemetry", 1, /no request carrying the application/],
+		// The application went, and the server refused it.
+		["rejected", 1, /no request carrying the application/],
 	])(
 		"%s: not a confirmation without a send, a new page and new words",
 		async (variant, posts, why) => {
@@ -810,6 +814,16 @@ describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09
 		},
 		60_000,
 	);
+});
+
+describe("the application request itself is the evidence (Codex re-review, 2026-11-09)", () => {
+	it("a JSON post carrying every approved value counts", async () => {
+		const { deps, calls } = harness("json", await schemaOf("json"));
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({ outcome: "applied" });
+		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+		expect(forms.count("json")).toBe(1);
+	}, 60_000);
 });
 
 describe("stops on an employer's form: nothing is sent", () => {

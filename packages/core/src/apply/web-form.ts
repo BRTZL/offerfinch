@@ -32,6 +32,7 @@ import {
 	type WebScan,
 	webCoveredScript,
 } from "./web-scan";
+import { carriesApplication, type SentValues } from "./web-sent";
 
 /**
  * An employer's own application form (the "web" board, docs/auto-apply-plan.md step 6): read
@@ -685,6 +686,23 @@ function stepProblem(
 	return null;
 }
 
+/** Records a filled control, and what the application request must carry (`carriesApplication`). */
+function recordFilled(
+	state: RunState,
+	action: FillAction,
+	field: FormField,
+	run: ApplicationRun,
+): void {
+	state.filled.push({
+		label: action.label || field.name,
+		value: filledValue(action, run),
+	});
+	if (action.kind === "fill" || action.kind === "location")
+		state.sent.typed.push(action.value);
+	if (action.kind === "file" && action.file === "cv")
+		state.sent.cv = run.files.cv.name;
+}
+
 /** Fills the step shown now and checks it: every control holds its approved value or nothing. */
 async function fillStep(
 	page: BrowserPage,
@@ -720,10 +738,7 @@ async function fillStep(
 		}
 		const stop = await perform(page, action, field, run.files);
 		if (stop) return { ok: false, stop };
-		state.filled.push({
-			label: action.label || field.name,
-			value: filledValue(action, run),
-		});
+		recordFilled(state, action, field, run);
 	}
 	// An upload the page sent elsewhere is refused by the session and recorded: stop here.
 	const refused = destinationProblem(page, run.allowedHosts);
@@ -797,13 +812,15 @@ interface BeforeClick {
 }
 
 /**
- * True when the page sent something to the form's own hosts after the click: a post (any method
- * but a read) or a navigation of the page itself.
+ * True when, after the click, the application itself went to the form's host: a request that is
+ * not a read, answered 2xx or 3xx, whose body carries the approved values (`carriesApplication`).
+ * Any other post (an analytics event, a click log) or a navigation alone is not.
  */
-function sentAfter(
+function applicationSent(
 	page: BrowserPage,
 	before: BeforeClick,
-	allowedHosts: string[] | undefined,
+	run: ApplicationRun,
+	state: RunState,
 ): boolean {
 	return page
 		.networkLog()
@@ -812,14 +829,15 @@ function sentAfter(
 			(r) =>
 				r.allowed &&
 				r.reason === "allowed host" &&
-				(!allowedHosts || urlOnHosts(r.url, allowedHosts)) &&
-				(r.navigation === true || !/^(?:GET|HEAD)$/i.test(r.method)),
+				urlOnHosts(r.url, run.allowedHosts ?? [state.formHost]) &&
+				!/^(?:GET|HEAD)$/i.test(r.method) &&
+				carriesApplication(r, state.sent),
 		);
 }
 
 /**
- * After the one click: waits for evidence (the page sent the form to its hosts, and the form is
- * gone or the page's path changed), then the model reads the page. Only "confirmed", backed by
+ * After the one click: waits for evidence (the application request reached the form's host, and
+ * the form is gone or the page's path changed), then the model reads the page. Only "confirmed", backed by
  * that evidence, a quote found on the page in confirmation words that were not on it before the
  * click, no refusal or duplicate wording and no visible error, records it applied; anything else
  * is an unknown outcome, never a retry.
@@ -829,13 +847,14 @@ async function readOutcome(
 	formUrl: string,
 	run: ApplicationRun,
 	before: BeforeClick,
+	state: RunState,
 ): Promise<{ confirmed: string } | { unknown: string }> {
 	const changed = await awaitChange(page, formUrl, run);
 	if ("unknown" in changed) return changed;
-	if (!sentAfter(page, before, run.allowedHosts))
+	if (!applicationSent(page, before, run, state))
 		return {
 			unknown:
-				"The page changed after the click, but it sent nothing to the employer's site.",
+				"The page changed after the click, but no request carrying the application reached the employer's site.",
 		};
 	return judge(changed.after, formUrl, run.model, before);
 }
@@ -953,6 +972,8 @@ interface RunState {
 	schema: WebSchemaField[];
 	/** The exact host of the form's page: the only one the application may go to. */
 	formHost: string;
+	/** The approved values filled in so far: what the application request must carry. */
+	sent: SentValues;
 	filled: FilledField[];
 	uploadsCleared: boolean;
 	/** The latest screenshot before a click that may send data. */
@@ -1114,7 +1135,7 @@ async function submitOnce(
 			logged: page.networkLog().length,
 		};
 		await page.click(`[data-jp-control="${submit.ref}"]`);
-		const result = await readOutcome(page, formUrl, run, beforeClick);
+		const result = await readOutcome(page, formUrl, run, beforeClick, state);
 		const after = (await shot(page)) ?? new Uint8Array();
 		return "confirmed" in result
 			? {
@@ -1185,6 +1206,7 @@ export async function runWebApplication(
 	const state: RunState = {
 		schema: (run.schema ?? []) as WebSchemaField[],
 		formHost: webFormHost(run.url),
+		sent: { typed: [], cv: null },
 		filled: [],
 		uploadsCleared: false,
 		before: null,

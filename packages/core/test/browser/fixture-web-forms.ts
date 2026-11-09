@@ -40,6 +40,10 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  *   script-button email and full name; the only button is a plain one ("Submit application") whose
  *                 script posts the form and shows a thank-you
  *   form-attr     email and full name; the submit button sits after the form, naming it with `form=`
+ *   telemetry     email and full name; the submit only posts "event=click" to /web/telemetry/telemetry,
+ *                 then the page shows a thank-you
+ *   rejected      the same, posting the application; the server answers HTTP 500
+ *   json          the same, posting the application as JSON ({"candidate": {...}})
  *   silent        name and email; the submit sends nothing and swaps the form for a thank-you
  *   assets        name, email and location; loads a logo from localhost, and on input asks localhost
  *                 for images whose paths carry pieces of what was typed (base64 pieces, the first word)
@@ -294,6 +298,34 @@ ${text("Email address", "email", { type: "email" })}${text("Full name", "full_na
 </form><p><button type="submit" form="apply">Submit application</button></p>`;
 }
 
+/**
+ * Email and full name with the form's own submit button; on submit the page's script sends what
+ * `SENDS[variant]` says, then swaps the form for a thank-you, whatever the answer.
+ */
+function scriptedBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+const SENDS: Record<string, string> = {
+	// Codex's re-review case: a click event to the form's own host, nothing of the application.
+	telemetry: `fetch('/web/telemetry/telemetry', { method: 'POST', body: 'event=click' })`,
+	// The application, refused by the server (HTTP 500).
+	rejected: `fetch('/web/rejected/apply', { method: 'POST', body: new URLSearchParams(new FormData(form)) })`,
+	// The application as JSON.
+	json: `fetch('/web/json/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ candidate: Object.fromEntries(new FormData(form)) }) })`,
+};
+
+function scripted(variant: string): string {
+	return `const form = document.getElementById('apply');
+form.addEventListener('submit', async (e) => {
+	e.preventDefault();
+	await ${SENDS[variant]}.catch(() => {});
+	form.outerHTML = '<div class="thanks"><h2>Thank you for applying!</h2></div>';
+});`;
+}
+
 function silentBody(): string {
 	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply">
 ${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
@@ -343,6 +375,12 @@ function postAnswer(
 	variant: string,
 	action: string,
 ): { status: number; headers: Record<string, string>; body: string } {
+	if (variant === "rejected")
+		return {
+			status: 500,
+			headers: { "content-type": "application/json" },
+			body: '{"ok":false}',
+		};
 	if (variant === "ambiguous")
 		return {
 			status: 200,
@@ -358,6 +396,8 @@ function postAnswer(
 			"contact-swap",
 			"echo",
 			"script-button",
+			"telemetry",
+			"json",
 		].includes(variant) ||
 		action === "upload"
 	)
@@ -428,6 +468,10 @@ function formPage(
 			return page(formlessBody());
 		case "silent":
 			return page(silentBody(), SILENT);
+		case "telemetry":
+		case "rejected":
+		case "json":
+			return page(scriptedBody(), scripted(variant));
 		case "script-button":
 			return page(scriptButtonBody(), SCRIPT_BUTTON);
 		case "form-attr":

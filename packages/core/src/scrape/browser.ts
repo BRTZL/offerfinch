@@ -95,6 +95,13 @@ export interface NetworkLogEntry {
 	reason: string;
 	/** "allowlist": a navigation of the page itself (its main frame). */
 	navigation?: true;
+	/**
+	 * "allowlist", a request to a destination that is not a read (POST, PUT …): the HTTP status it
+	 * was answered with, its body and content type, so a run can tell what it carried.
+	 */
+	status?: number;
+	body?: Uint8Array;
+	contentType?: string;
 }
 
 export interface BrowserSession {
@@ -225,6 +232,7 @@ interface PlaywrightRouteLike {
 		url(): string;
 		method(): string;
 		postData(): string | null;
+		postDataBuffer?(): Buffer | null;
 		isNavigationRequest(): boolean;
 		frame(): unknown;
 		resourceType?(): string;
@@ -346,6 +354,23 @@ function isUpload(method: string, type: string, body: string | null): boolean {
 		) ||
 		(body ?? "").includes("%PDF-")
 	);
+}
+
+/** What a request to a destination carried, and how it was answered (`NetworkLogEntry`). */
+function sentOf(
+	request: ReturnType<PlaywrightRouteLike["request"]>,
+	status: number,
+): Pick<NetworkLogEntry, "status" | "body" | "contentType"> {
+	const buffer =
+		request.postDataBuffer?.() ??
+		(request.postData() === null
+			? null
+			: Buffer.from(request.postData() ?? "", "utf8"));
+	return {
+		status,
+		...(buffer ? { body: new Uint8Array(buffer) } : {}),
+		contentType: request.headers?.()["content-type"] ?? "",
+	};
 }
 
 /**
@@ -546,6 +571,9 @@ class PlaywrightPage implements BrowserPage {
 			...(request.isNavigationRequest() &&
 			request.frame() === this.page.mainFrame()
 				? { navigation: true as const }
+				: {}),
+			...(destination && !/^(?:GET|HEAD)$/i.test(method)
+				? sentOf(request, response.status())
 				: {}),
 		});
 		return route.fulfill({ response: response as never });
