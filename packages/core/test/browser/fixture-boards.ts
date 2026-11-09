@@ -483,8 +483,14 @@ async function readBody(req: IncomingMessage): Promise<string> {
 	return Buffer.concat(chunks).toString("latin1");
 }
 
-/** Starts the fixture boards on 127.0.0.1 (port 0 = any free port). */
-export async function startFixtureBoards(port = 0): Promise<FixtureBoards> {
+/**
+ * Starts the fixture boards on 127.0.0.1 (port 0 = any free port). `variants` adds variants to
+ * a job id that cannot carry them in its name (the desktop e2e's numeric Greenhouse ids).
+ */
+export async function startFixtureBoards(
+	port = 0,
+	options: { variants?: Record<string, string[]> } = {},
+): Promise<FixtureBoards> {
 	const submissions: FixtureSubmission[] = [];
 	const leaks: FixtureBoards["leaks"] = [];
 	const failedOnce = new Set<string>();
@@ -518,6 +524,7 @@ export async function startFixtureBoards(port = 0): Promise<FixtureBoards> {
 			"location-prefix",
 		])
 			if (jobId.includes(v)) variant.add(v);
+		for (const v of options.variants?.[jobId] ?? []) variant.add(v);
 		const port = (server.address() as { port: number }).port;
 		const onAllowedHost = (req.headers.host ?? "").startsWith("127.0.0.1");
 		awayOrigin = `http://localhost:${port}`;
