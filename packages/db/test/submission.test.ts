@@ -822,46 +822,49 @@ describe("a confirmation names the attempt it is about (review fix)", () => {
 		]);
 	});
 
-	it("is one action for concurrent double clicks on the same attempt", async () => {
+	/** An application whose attempt 1 waits for the user; `pipeline` decides how it ended. */
+	async function waiting(pipeline: PipelineDeps) {
 		const id = await approvedApp();
 		await repo.setSubmissionsPaused("u1", false);
-		const webSent = sending();
-		await beginSubmissionStep(webSent, "u1", id);
-		await submitStep(webSent, "u1", id);
-		const seen = await current(id);
-		const got = () =>
+		await beginSubmissionStep(pipeline, "u1", id);
+		await submitStep(pipeline, "u1", id);
+		return { id, seen: await current(id) };
+	}
+
+	it("is one action for concurrent double clicks on the same attempt", async () => {
+		const got = (id: string, seen: string | null, key: string) =>
 			repo.markSubmittedManually({
 				userId: "u1",
 				applicationId: id,
 				attemptId: seen,
-				idempotencyKey: `twice-${id}`,
+				idempotencyKey: key,
 			});
 		// The same click delivered twice: one event, one manual attempt.
-		const [a, b] = await Promise.all([got(), got()]);
+		const same = await waiting(sending());
+		const [a, b] = await Promise.all([
+			got(same.id, same.seen, `twice-${same.id}`),
+			got(same.id, same.seen, `twice-${same.id}`),
+		]);
 		expect(b).toEqual(a);
-		// Another window's click on the same attempt, after it was resolved: refused, nothing added.
-		await expect(
-			repo.markSubmittedManually({
-				userId: "u1",
-				applicationId: id,
-				attemptId: seen,
-				idempotencyKey: `other-window-${id}`,
-			}),
-		).rejects.toThrow(/Refusing|changed since you opened it/);
-		expect(await attempts(id)).toEqual([
+		expect(await attempts(same.id)).toEqual([
+			{ attempt: 1, status: "submitted", mode: "auto" },
+			{ attempt: 2, status: "submitted", mode: "manual" },
+		]);
+		// Two windows' clicks at once on the same attempt: one goes through, nothing added twice.
+		const two = await waiting(sending());
+		const results = await Promise.allSettled([
+			got(two.id, two.seen, `window-a-${two.id}`),
+			got(two.id, two.seen, `window-b-${two.id}`),
+		]);
+		expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+		expect(await attempts(two.id)).toEqual([
 			{ attempt: 1, status: "submitted", mode: "auto" },
 			{ attempt: 2, status: "submitted", mode: "manual" },
 		]);
 	});
 
 	it("retries once for concurrent double clicks, whatever their keys", async () => {
-		const id = await approvedApp();
-		await repo.setSubmissionsPaused("u1", false);
-		const crashes = crashing();
-		await beginSubmissionStep(crashes, "u1", id);
-		await submitStep(crashes, "u1", id);
-		const seen = await current(id);
-		const retry = (key: string) =>
+		const retry = (id: string, seen: string | null, key: string) =>
 			repo.retrySubmission({
 				userId: "u1",
 				applicationId: id,
@@ -869,17 +872,24 @@ describe("a confirmation names the attempt it is about (review fix)", () => {
 				idempotencyKey: key,
 				confirmedNotSent: true,
 			});
-		const [a, b] = await Promise.all([retry(`k-${id}`), retry(`k-${id}`)]);
+		const same = await waiting(crashing());
+		const [a, b] = await Promise.all([
+			retry(same.id, same.seen, `k-${same.id}`),
+			retry(same.id, same.seen, `k-${same.id}`),
+		]);
 		expect(b).toEqual(a);
+		const two = await waiting(crashing());
 		const results = await Promise.allSettled([
-			retry(`k2-${id}`),
-			retry(`k3-${id}`),
+			retry(two.id, two.seen, `k1-${two.id}`),
+			retry(two.id, two.seen, `k2-${two.id}`),
 		]);
-		expect(results.every((r) => r.status === "rejected")).toBe(true);
-		expect(await repo.getState("u1", id)).toBe("applying");
-		expect(await attempts(id)).toEqual([
-			{ attempt: 1, status: "not_sent", mode: "auto" },
-		]);
+		expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+		for (const id of [same.id, two.id]) {
+			expect(await repo.getState("u1", id)).toBe("applying");
+			expect(await attempts(id)).toEqual([
+				{ attempt: 1, status: "not_sent", mode: "auto" },
+			]);
+		}
 	});
 });
 
