@@ -354,7 +354,9 @@ async function prepareRun(
 			board: context.board,
 			url,
 			mode,
-			...(read?.status === "read" ? { schema: read.schema.fields } : {}),
+			...(read?.status === "read"
+				? { schema: read.schema.fields, sendsTo: read.schema.sendsTo ?? [] }
+				: {}),
 			// The drafting model reads an employer's buttons and its page after the click; the
 			// applicant's email and phone never reach it.
 			...(context.board === "web"
@@ -466,7 +468,7 @@ function stopper(
  */
 function runHosts(run: ApplicationRun, apply: ApplyDeps) {
 	return run.board === "web"
-		? webSessionHosts(run.url)
+		? webSessionHosts(run.url, run.sendsTo)
 		: sessionHosts(run.board, apply.allowedHosts ?? LOCAL_HOSTS);
 }
 

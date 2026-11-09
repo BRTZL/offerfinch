@@ -26,6 +26,12 @@ export interface FormSchema {
 	fields: SchemaField[];
 	/** The submit control's text; null when the form shows none. */
 	submit: string | null;
+	/**
+	 * An employer's form: the hosts the read saw it send to (where it was read, its `action`,
+	 * its buttons' `formaction`), same site only. Submission sends data there and to the form's
+	 * own host, nowhere else (web-hosts.ts `webFormHosts`).
+	 */
+	sendsTo?: string[];
 }
 
 /** The saved outcome of reading one application's form. */

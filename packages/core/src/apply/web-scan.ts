@@ -44,6 +44,8 @@ export interface WebScan {
 	/** Words saying the page wants a sign-in before applying, when there is no form. */
 	signIn: string | null;
 	errors: string[];
+	/** Where the form says it sends: its `action` and its buttons' `formaction`, as absolute URLs. */
+	endpoints: string[];
 }
 
 /** Visible error messages of a generic form. */
@@ -72,7 +74,7 @@ export const WEB_SCAN_SCRIPT = String.raw`(() => {
 	};
 	const CONTROLS = "input, select, textarea, [role=combobox]:not(input)";
 	for (const el of document.querySelectorAll("[data-jp], [data-jp-control], [data-jp-form]")) { el.removeAttribute("data-jp"); el.removeAttribute("data-jp-control"); el.removeAttribute("data-jp-form"); }
-	const result = { frameUrl: null, frameHost: null, fields: [], controls: [], password: false, code: null, signIn: null, errors: [] };
+	const result = { frameUrl: null, frameHost: null, fields: [], controls: [], password: false, code: null, signIn: null, errors: [], endpoints: [] };
 	result.password = [...document.querySelectorAll("input[type=password]")].some(shown);
 	// The form: the <form> with the most visible questions, else the page when it has some.
 	const score = (root) => [...root.querySelectorAll(CONTROLS)].filter((el) => fillable(el) && (shown(el) || el.type === "file")).length;
@@ -95,6 +97,7 @@ export const WEB_SCAN_SCRIPT = String.raw`(() => {
 		return result;
 	}
 	root.setAttribute("data-jp-form", "1");
+	if (root.tagName === "FORM" && root.getAttribute("action")) result.endpoints.push(root.action);
 	const labelText = (id) => textOf(document.getElementById(id));
 	const byIds = (ids) => (ids || "").split(/\s+/).filter(Boolean).map(labelText).join(" ").trim();
 	const forLabel = (el) => { if (!el.id) return ""; const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]'); return l ? textOf(l) : ""; };
@@ -199,6 +202,7 @@ export const WEB_SCAN_SCRIPT = String.raw`(() => {
 		if (type === "link") continue;
 		const ref = String(++c);
 		b.setAttribute("data-jp-control", ref);
+		if (b.hasAttribute("formaction") && b.formAction) result.endpoints.push(b.formAction);
 		result.controls.push({ ref, text: text.slice(0, 80), type });
 	}
 	result.errors = [...document.querySelectorAll(${JSON.stringify(WEB_ERRORS)})].filter(shown).map((e) => textOf(e)).filter(Boolean).slice(0, 10);

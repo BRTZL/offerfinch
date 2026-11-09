@@ -1,3 +1,4 @@
+import { getDomain } from "tldts";
 import type { HostRules } from "../scrape/browser";
 import { GOOGLE_FONTS, joinRules } from "./host-rules";
 
@@ -6,23 +7,11 @@ import { GOOGLE_FONTS, joinRules } from "./host-rules";
  * the application to, and which it may only read from (docs/decisions.md, 2026-11-09 step 6).
  */
 
-/** Two-label public suffixes a registrable domain sits under (`example.co.uk`). */
-const MULTI_LABEL_SUFFIXES = new Set(
-	[
-		"co.uk org.uk ac.uk gov.uk me.uk ltd.uk plc.uk net.uk sch.uk",
-		"com.au net.au org.au edu.au gov.au co.nz org.nz net.nz co.jp ne.jp or.jp ac.jp",
-		"co.kr or.kr com.br net.br org.br com.mx org.mx com.ar com.tr gen.tr org.tr net.tr",
-		"co.in net.in org.in com.cn net.cn org.cn com.hk com.sg com.tw co.za org.za com.pl",
-		"co.il org.il com.ua com.my com.ph com.vn co.id com.co com.pe com.sa com.eg co.th",
-		"com.ng com.pk co.ke com.bd com.uy com.ec com.do com.gt co.at or.at com.cy com.mt",
-	]
-		.join(" ")
-		.split(" "),
-);
-
 /**
- * Suffixes under which anyone can have a site of their own (hosting, site builders, form
- * services): two of their subdomains belong to different people, so only the exact host counts.
+ * Hosts under which anyone can have a site of their own that the public suffix list does not
+ * split (form services, a big provider's shared domains): two of their subdomains belong to
+ * different people, so only the exact host counts. Hosting suffixes the list does name
+ * (`github.io`, `netlify.app` …) are held here too, so they never widen either.
  */
 const SHARED_HOSTING = new Set(
 	[
@@ -37,22 +26,19 @@ const SHARED_HOSTING = new Set(
 );
 
 /**
- * The registrable domain of `host` (`jobs.example.co.uk` gives `example.co.uk`), or null when it
- * cannot be told safely: an IP address, `localhost` or another single label, or a host on a
- * shared-hosting suffix (`acme.github.io`). Null means the exact host alone is that site. Without
- * the full public-suffix list an unknown two-label suffix reads as a domain, so callers never
- * widen past one label in front of it (`hostMatches`' `*.`).
+ * The registrable domain of `host` (`jobs.acme.com.es` gives `acme.com.es`), from the public
+ * suffix list (`tldts`, private suffixes included), or null when it cannot be told safely: an IP
+ * address, `localhost` or another single label, a public suffix itself (`com.es`), or a host on
+ * a shared-hosting suffix (`acme.github.io`). Null means the exact host alone is that site.
  */
 export function siteOfHost(host: string): string | null {
 	const name = host.toLowerCase().replace(/\.$/, "");
 	if (/^[\d.]+$/.test(name) || name.includes(":") || !name.includes("."))
 		return null;
 	const labels = name.split(".");
-	const take = MULTI_LABEL_SUFFIXES.has(labels.slice(-2).join(".")) ? 3 : 2;
-	if (labels.length < take) return null;
 	for (let i = 0; i < labels.length - 1; i++)
 		if (SHARED_HOSTING.has(labels.slice(i).join("."))) return null;
-	return labels.slice(-take).join(".");
+	return getDomain(name, { allowPrivateDomains: true }) ?? null;
 }
 
 /** True when both hosts are the same site (`siteOfHost`), or the same host when it has none. */
@@ -64,13 +50,33 @@ export function sameSite(a: string, b: string): boolean {
 	return site !== null && site === siteOfHost(two);
 }
 
+/** A plain host name (no wildcard, no port, no path): what may be listed as a destination. */
+const PLAIN_HOST =
+	/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/;
+
 /**
- * The hosts an employer's form may send the application to: the form's own host, its
- * registrable domain, and one label in front of it (`example.com`, `jobs.example.com`,
- * `api.example.com`; not `a.b.example.com` unless it is the form's own host). A host with no
- * safe registrable domain (an IP, `localhost`, `acme.github.io`) is its own and only destination.
+ * The hosts an employer's form may send the application to, and only these, never a wildcard:
+ * the form's own host, and the hosts the read before review saw the form send to (`sendsTo`:
+ * where the form was read after a redirect or a frame of the same site, its `action`, its
+ * buttons' `formaction`), each only when it is the same registrable domain as the form's host.
  */
-export function webFormHosts(formUrl: string): string[] {
+export function webFormHosts(
+	formUrl: string,
+	sendsTo: readonly string[] = [],
+): string[] {
+	const host = new URL(formUrl).hostname.toLowerCase();
+	const known = sendsTo
+		.map((h) => h.toLowerCase())
+		.filter((h) => PLAIN_HOST.test(h) && sameSite(host, h));
+	return [...new Set([host, ...known])];
+}
+
+/**
+ * Where reading an employer's form may go (read-only, nothing typed): the form's own host, its
+ * registrable domain and one label in front of it, so a redirect or a frame on the same site
+ * still reads. What the read finds there becomes `sendsTo`; submission gets only those.
+ */
+export function webReadHosts(formUrl: string): string[] {
 	const host = new URL(formUrl).hostname.toLowerCase();
 	const site = siteOfHost(host);
 	return site ? [...new Set([host, site, `*.${site}`])] : [host];
@@ -92,14 +98,17 @@ export const WEB_READ_HOSTS: readonly string[] = [
 ];
 
 /** The session hosts of a real submission on an employer's form (cf. `sessionHosts` for boards). */
-export function webSessionHosts(formUrl: string): {
+export function webSessionHosts(
+	formUrl: string,
+	sendsTo: readonly string[] = [],
+): {
 	form: string[];
 	rules: HostRules;
 } {
 	// Asset reads only (scripts, styles, fonts, images; no query string but Google Fonts' own):
 	// an employer's scoring widget has no recorded site key, so it gets no posts.
 	return {
-		form: webFormHosts(formUrl),
+		form: webFormHosts(formUrl, sendsTo),
 		rules: joinRules({ assets: [...WEB_READ_HOSTS] }, GOOGLE_FONTS),
 	};
 }

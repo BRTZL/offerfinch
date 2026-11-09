@@ -17,7 +17,7 @@ import {
 	type SubmissionContext,
 } from "./submit";
 import { readWebFormOnPage } from "./web-form";
-import { webFormHosts } from "./web-hosts";
+import { webReadHosts } from "./web-hosts";
 import type { WebFormModel } from "./web-model";
 
 /**
@@ -163,11 +163,11 @@ async function readInSession(
 	model: WebFormModel | null | undefined,
 ): ReturnType<typeof readFormOnPage> {
 	// The page stays on the hosts submission may use, redirects included (an employer's form:
-	// its own site, web-hosts.ts).
+	// its own site, web-hosts.ts; submission then gets only the hosts the read saw it send to).
 	const session = await apply.browser.openSession({
 		network: "read_only",
 		allowedHosts:
-			board === "web" ? webFormHosts(url) : (apply.allowedHosts ?? LOCAL_HOSTS),
+			board === "web" ? webReadHosts(url) : (apply.allowedHosts ?? LOCAL_HOSTS),
 	});
 	try {
 		const page = await session.newPage();

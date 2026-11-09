@@ -123,6 +123,8 @@ describe("reading an employer's form before review", () => {
 			result.schema.fields.find((f) => f.key === "text:#text-1"),
 		).toMatchObject({ labelSource: "model" });
 		expect(result.schema.submit).toBe("Submit application");
+		// The form posts to its own host: no other host may receive it.
+		expect(result.schema.sendsTo).toEqual([]);
 		expect(log.filter((r) => r.allowed && r.method !== "GET")).toEqual([]);
 		expect(forms.count("single")).toBe(0);
 		// The ids change on every load; the keys do not.

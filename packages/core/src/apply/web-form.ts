@@ -371,6 +371,29 @@ async function readComboboxes(page: BrowserPage, fields: WebField[]) {
 	}
 }
 
+/** Adds a scan's new fields to the read, marking a place key met again with other text beside it. */
+function addRead(
+	fields: { field: WebField; page: number }[],
+	keys: Map<string, WebField>,
+	ambiguous: Set<string>,
+	scanned: WebField[],
+	step: number,
+): void {
+	const last = fields.reduce((m, f) => Math.max(m, f.page), 0);
+	for (const field of scanned) {
+		const key = schemaKey(field);
+		const seen = keys.get(key);
+		if (seen) {
+			// A step drawn after "Next" counts its unlabelled boxes from 1 again.
+			if (placed(field) && !sameSpot(field, seen)) ambiguous.add(key);
+			continue;
+		}
+		keys.set(key, field);
+		// Hidden steps count after the one shown; a step drawn after "Next" follows the last read.
+		fields.push({ field, page: step === 1 ? field.step : last + 1 });
+	}
+}
+
 /**
  * Reads an employer's form on a page whose session is read-only, closing the network after the
  * first scan. Steps the page keeps hidden are read as later pages; steps it draws only after
@@ -391,22 +414,12 @@ export async function readWebFormOnPage(
 	const ambiguous = new Set<string>();
 	let scan = opened.scan;
 	let submit: WebControl | null = null;
+	// Where the form was read (after a redirect or a frame of the same site) and where it says it sends.
+	const sends = new Set([page.url(), ...scan.endpoints]);
 	for (let step = 1; step <= MAX_STEPS; step++) {
 		await readComboboxes(page, scan.fields);
 		const before = fields.length;
-		const last = fields.reduce((m, f) => Math.max(m, f.page), 0);
-		for (const field of scan.fields) {
-			const key = schemaKey(field);
-			const seen = keys.get(key);
-			if (seen) {
-				// A step drawn after "Next" counts its unlabelled boxes from 1 again.
-				if (placed(field) && !sameSpot(field, seen)) ambiguous.add(key);
-				continue;
-			}
-			keys.set(key, field);
-			// Hidden steps count after the one shown; a step drawn after "Next" follows the last read.
-			fields.push({ field, page: step === 1 ? field.step : last + 1 });
-		}
+		addRead(fields, keys, ambiguous, scan.fields, step);
 		const roles = await controlRoles(scan.controls, model);
 		submit = roles.submit ?? submit;
 		if (!roles.next || (step > 1 && fields.length === before)) break;
@@ -415,6 +428,7 @@ export async function readWebFormOnPage(
 		const next = await scanOf(page);
 		if (!next || next.fields.length === 0) break;
 		scan = next;
+		for (const endpoint of scan.endpoints) sends.add(endpoint);
 	}
 	const labelled = await modelLabels(
 		fields.map((f) => f.field),
@@ -426,6 +440,7 @@ export async function readWebFormOnPage(
 			board: "web",
 			url,
 			submit: submit?.text ?? null,
+			sendsTo: sendsToOf(url, sends),
 			fields: fields.map(({ field, page: p }) => {
 				const {
 					hint: _h,
@@ -454,6 +469,21 @@ export async function readWebFormOnPage(
 			}),
 		},
 	};
+}
+
+/** The hosts of `urls` that are the form's own site, other than the form's own host. */
+function sendsToOf(formUrl: string, urls: Set<string>): string[] {
+	const own = new URL(formUrl).hostname.toLowerCase();
+	const hosts = new Set<string>();
+	for (const url of urls) {
+		try {
+			const { protocol, hostname } = new URL(url);
+			const host = hostname.toLowerCase();
+			if (/^https?:$/.test(protocol) && host !== own && sameSite(own, host))
+				hosts.add(host);
+		} catch {}
+	}
+	return [...hosts];
 }
 
 /** Labels for the controls nothing names, chosen by the model from the page's own text. */
