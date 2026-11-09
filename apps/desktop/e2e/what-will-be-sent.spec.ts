@@ -15,16 +15,13 @@ import {
  * The form read before review (docs/auto-apply-plan.md, steps 2 and 3): with the Greenhouse
  * board's hosted form served by the local fixture boards, preparing an application reads its
  * form read-only, and review lists every field with the exact value that will be sent, grouped
- * by section, before anything is approved. Nothing is posted to the form. The screenshot goes
- * to docs/screenshots/desktop/what-will-be-sent.png (fabricated fixture data only).
+ * by section, before anything is approved. Nothing is posted to the form. The screenshot goes to
+ * test-results/form-shots (or E2E_SHOTS); docs/screenshots/desktop/what-will-be-sent.png is one
+ * of these (fabricated fixture data only).
  */
 const SHOT = path.resolve(
-	process.env.E2E_SHOTS
-		? path.join(process.env.E2E_SHOTS, "what-will-be-sent.png")
-		: path.join(
-				APP_DIR,
-				"../../docs/screenshots/desktop/what-will-be-sent.png",
-			),
+	process.env.E2E_SHOTS ?? path.join(APP_DIR, "test-results", "form-shots"),
+	"what-will-be-sent.png",
 );
 const userData = tempUserData();
 

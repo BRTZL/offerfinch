@@ -55,7 +55,9 @@ function groups(fields: Line[]): { title: string; fields: Line[] }[] {
  */
 export function WhatWillBeSentSection({ app }: { app: AppDetail }) {
 	const form = app.form;
-	if (!form || !SHOWN_IN.has(app.state)) return null;
+	// A hand-off is submitted by the user: nothing is filled, so there is no list.
+	if (!form || !SHOWN_IN.has(app.state) || app.submission?.mode !== "auto")
+		return null;
 	if (form.status !== "read")
 		return (
 			<InspectorSection
@@ -66,8 +68,10 @@ export function WhatWillBeSentSection({ app }: { app: AppDetail }) {
 					className="text-muted-foreground text-xs"
 					data-testid="what-will-be-sent-note"
 				>
-					{form.note} You approve the CV, letter and form answers; a required
-					field they do not answer stops the run and comes to you.
+					{form.note}
+					{form.status === "failed"
+						? " You approve the CV, letter and form answers; a required field they do not answer stops the run and comes to you."
+						: null}
 				</p>
 			</InspectorSection>
 		);
@@ -78,8 +82,8 @@ export function WhatWillBeSentSection({ app }: { app: AppDetail }) {
 			data-testid="what-will-be-sent"
 		>
 			<p className="text-muted-foreground text-xs">
-				Every field on the form and the exact value it gets. A field the form
-				adds later stops the run; it is never answered on the fly.
+				Every field on the form and the exact value it gets. A required field
+				the form adds later stops the run; it is never answered on the fly.
 			</p>
 			{groups(form.fields).map((group) => (
 				<div
