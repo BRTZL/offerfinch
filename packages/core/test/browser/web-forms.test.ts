@@ -870,6 +870,14 @@ describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09
 		// Codex's third pass: an autosave of the whole form before the click, answered after it;
 		// the click itself sent only a click event.
 		["preclick", 2, /no request carrying the application/],
+		// The same autosave, and the click posts the whole application too: two carry it.
+		[
+			"presave",
+			2,
+			/another request to the employer's site carried the same answers/,
+		],
+		// The click starts a post that never gets an answer, besides the application.
+		["unanswered", 2, /had no answer yet/],
 		// The click sent a click event and then a telemetry post carrying the answers.
 		["later-fetch", 2, /which one was the application cannot be told/],
 		// A native post of only a click event, then the answer page's telemetry carrying them.

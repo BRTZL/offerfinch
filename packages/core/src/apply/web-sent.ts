@@ -125,14 +125,17 @@ export function carriesApplication(
  * Wording that says an application did not go through, or may not have: on the page after the
  * click, or in the HTML the application request was answered with, any of these makes the
  * outcome unknown, whatever else the page says (docs/decisions.md, 2026-11-09, step 6 third
- * pass). Unknown is the safe side: a confirmation page that happens to say "no further action is
+ * pass); it covers every wording of the boards' `REFUSAL` and `DUPLICATE` (forms.ts). Unknown is
+ * the safe side: a confirmation page that happens to say "no further action is
  * required" is checked by hand. Each entry is a regular expression source, matched whole-word,
  * case-insensitive.
  */
 export const OUTCOME_REFUSALS: readonly string[] = [
 	// English
+	// The longer wordings first, so the message quotes them whole.
 	"could ?n[o'’]t be (?:submitted|sent|processed|completed|saved|received)",
 	"could ?n[o'’]t (?:submit|send|process|complete|save)",
+	"could ?n[o'’]t",
 	"unable to (?:submit|send|process|complete|save)",
 	"not (?:been )?(?:submitted|sent|received|accepted|processed)",
 	"(?:something|it) went wrong",
@@ -145,6 +148,7 @@ export const OUTCOME_REFUSALS: readonly string[] = [
 	"already (?:applied|submitted|received|sent)",
 	"duplicate",
 	"rejected",
+	"declined",
 	"unsuccessful",
 	"problem",
 	"please (?:correct|fix|check|review)",

@@ -58,6 +58,9 @@ import {
  *   preclick      email and full name; once both are typed the page autosaves the whole form to
  *                 /web/preclick/autosave (its answer held until the next POST arrives); the submit
  *                 only posts "event=click", then the page shows a thank-you
+ *   presave       the same autosave; the submit then posts the whole application to /web/presave/apply
+ *   unanswered    email and full name; the submit posts to /web/unanswered/hang (never answered),
+ *                 then the whole application to /web/unanswered/apply
  *   later-fetch   email and full name; the submit posts "event=click", then a telemetry post carrying
  *                 both values as JSON, then the page shows a thank-you
  *   later-native  email and full name, posted natively; on submit the page strips the boxes' names and
@@ -380,6 +383,10 @@ const SENDS: Record<string, string> = {
 	// Codex's third pass: the application went before the click (an autosave); the click sent
 	// only a click event.
 	preclick: `fetch('/web/preclick/telemetry', { method: 'POST', body: 'event=click' })`,
+	// The same autosave, then the click posts the whole application too: two requests carry it.
+	presave: `fetch('/web/presave/apply', { method: 'POST', body: new URLSearchParams(new FormData(form)) })`,
+	// The click starts a post that is never answered, then the application.
+	unanswered: `Promise.resolve(void fetch('/web/unanswered/hang', { method: 'POST', body: 'event=view' }).catch(() => {})).then(() => fetch('/web/unanswered/apply', { method: 'POST', body: new URLSearchParams(new FormData(form)) }))`,
 	// The click sent a click event, then a telemetry post that happens to carry the answers.
 	"later-fetch": `fetch('/web/later-fetch/telemetry', { method: 'POST', body: 'event=click' }).then(() => fetch('/web/later-fetch/telemetry', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(form))) }))`,
 	// Codex's re-review case: a click event to the form's own host, nothing of the application.
@@ -395,13 +402,13 @@ const AUTOSAVE = `form.addEventListener('input', () => {
 	const boxes = [...form.querySelectorAll('input')];
 	if (!form.dataset.saved && boxes.every((b) => b.value)) {
 		form.dataset.saved = '1';
-		fetch('/web/preclick/autosave', { method: 'POST', body: new URLSearchParams(new FormData(form)) }).catch(() => {});
+		fetch(location.pathname.replace(/apply$/, 'autosave'), { method: 'POST', body: new URLSearchParams(new FormData(form)) }).catch(() => {});
 	}
 });`;
 
 function scripted(variant: string): string {
 	return `const form = document.getElementById('apply');
-${variant === "preclick" ? AUTOSAVE : ""}
+${variant === "preclick" || variant === "presave" ? AUTOSAVE : ""}
 form.addEventListener('submit', async (e) => {
 	e.preventDefault();
 	await ${SENDS[variant]}.catch(() => {});
@@ -499,6 +506,8 @@ function postAnswer(
 			"telemetry",
 			"json",
 			"preclick",
+			"presave",
+			"unanswered",
 			"later-fetch",
 			"later-native",
 			"invalid-after",
@@ -576,6 +585,8 @@ function formPage(
 		case "rejected":
 		case "json":
 		case "preclick":
+		case "presave":
+		case "unanswered":
 		case "later-fetch":
 			return page(scriptedBody(), scripted(variant));
 		case "later-native":
@@ -608,7 +619,8 @@ async function bodyOf(req: IncomingMessage): Promise<string> {
 }
 
 /**
- * Answers a POST (`postAnswer`). `preclick`'s autosave is answered only once the next post
+ * Answers a POST (`postAnswer`). `unanswered`'s hang is never answered (until the server
+ * closes). An autosave (`preclick`, `presave`) is answered only once the next post
  * arrives, after the click; every other post answers at once and releases those held.
  */
 function answerPost(
@@ -622,7 +634,8 @@ function answerPost(
 		res.writeHead(answer.status, answer.headers);
 		res.end(answer.body);
 	};
-	if (variant === "preclick" && action === "autosave") {
+	if (variant === "unanswered" && action === "hang") return;
+	if (action === "autosave") {
 		held.push(reply);
 		return;
 	}

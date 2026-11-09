@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DUPLICATE, REFUSAL } from "../src/apply/forms";
 import {
 	carriesApplication,
 	decodeBody,
@@ -166,6 +167,36 @@ describe("refusal and error wording after the click (Codex, 2026-11-09, third pa
 		["Por favor, inténtalo de nuevo", "inténtalo de nuevo"],
 	])("finds %j", (text, hit) => {
 		expect(refusalIn(`Thank you for applying! ${text}`)).toBe(hit);
+	});
+
+	it("covers every wording of the boards' refusal and duplicate checks", () => {
+		const old = [
+			"rejected",
+			"declined",
+			"not submitted",
+			"not been received",
+			"not accepted",
+			"unsuccessful",
+			"couldn't",
+			"could not",
+			"failed",
+			"error",
+			"try again",
+			"already applied",
+			"already submitted",
+			"already received",
+			"already sent",
+			"duplicate",
+			"duplicate application",
+		];
+		for (const text of old) {
+			const sentence = `Thank you for applying. Your application was ${text}.`;
+			expect(
+				new RegExp(REFUSAL, "i").test(sentence) ||
+					new RegExp(DUPLICATE, "i").test(sentence),
+			).toBe(true);
+			expect(refusalIn(sentence), text).not.toBeNull();
+		}
 	});
 
 	it.each([

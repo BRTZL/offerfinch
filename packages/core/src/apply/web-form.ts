@@ -894,9 +894,13 @@ function applicationRequest(
 	const until = navigation ? seqOf(navigation) : Number.POSITIVE_INFINITY;
 	const scripted = (r: { seq?: number; url: string; method: string }) =>
 		seqOf(r) > before.started && seqOf(r) < until && isWrite(r);
+	// A request is logged a moment before it leaves the pending set: logged is answered.
+	const logged = new Set(all.map(seqOf));
 	const unanswered = page
 		.networkStarted()
-		.pending.filter((p) => scripted(p) && urlOnHosts(p.url, hosts));
+		.pending.filter(
+			(p) => !logged.has(p.seq) && scripted(p) && urlOnHosts(p.url, hosts),
+		);
 	if (unanswered.length > 0)
 		return {
 			unknown: `The page changed after the click, but ${unanswered.length} request(s) it started to the employer's site had no answer yet, so which one was the application cannot be told.`,
