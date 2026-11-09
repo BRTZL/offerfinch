@@ -29,6 +29,7 @@ async function expectAttempt(
 			id: submissionAttempts.id,
 			attempt: submissionAttempts.attempt,
 			status: submissionAttempts.status,
+			url: submissionAttempts.url,
 		})
 		.from(submissionAttempts)
 		.where(
@@ -263,6 +264,69 @@ export const submissionMethods = {
 					action: "retry_submission",
 				},
 			);
+		});
+	},
+
+	/**
+	 * "It didn't go through", recorded before Finish it yourself opens the form: the named attempt
+	 * (`currentAttempt`), while a click on it may have sent the application, becomes not sent. Only
+	 * after a stop (needs_human); refused when the attempt changed since the user saw it. A repeat
+	 * changes nothing. Returns the attempt's number, or null when nothing needed confirming.
+	 */
+	async confirmNotSent(input: {
+		userId: string;
+		applicationId: string;
+		attemptId: string;
+	}): Promise<{ attempt: number | null }> {
+		return this.database.transaction(async (tx) => {
+			const row = await this.lockOwned(tx, input.userId, input.applicationId);
+			if (row.state !== "needs_human")
+				throw new Error(
+					`Refusing: only a handed-over application can be confirmed not sent (it is ${row.state})`,
+				);
+			const current = await expectAttempt(
+				tx,
+				input.userId,
+				input.applicationId,
+				input.attemptId,
+			);
+			if (current?.status !== "started" && current?.status !== "needs_human")
+				return { attempt: null };
+			await tx
+				.update(submissionAttempts)
+				.set({
+					status: "not_sent",
+					resolution: "The user confirmed it did not go through",
+					finishedAt: new Date(),
+				})
+				.where(unresolvedNamed(input.applicationId, current.id));
+			return { attempt: current.attempt };
+		});
+	},
+
+	/**
+	 * Before the form opens in the user's browser (Finish it yourself, the hand-off's link): the
+	 * application is the user's, approved or stopped, the named attempt is still the current one,
+	 * and no click on it may have sent the application unless the user recorded that it did not
+	 * (`confirmNotSent`). Returns the attempt (its stored URL), or null when there is none.
+	 */
+	async formLinkAttempt(
+		userId: string,
+		applicationId: string,
+		attemptId: string | null,
+	): Promise<{ attempt: number; url: string | null } | null> {
+		return this.database.transaction(async (tx) => {
+			const row = await this.lockOwned(tx, userId, applicationId);
+			if (row.state !== "approved" && row.state !== "needs_human")
+				throw new Error(
+					`Refusing: the form opens from here only before it is submitted (it is ${row.state})`,
+				);
+			const current = await expectAttempt(tx, userId, applicationId, attemptId);
+			if (current?.status === "started" || current?.status === "needs_human")
+				throw new Error(
+					`Refusing: attempt ${current.attempt} may have gone through. Tick "It didn't go through" before finishing it yourself`,
+				);
+			return current ? { attempt: current.attempt, url: current.url } : null;
 		});
 	},
 

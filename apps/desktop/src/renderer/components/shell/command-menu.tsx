@@ -111,7 +111,11 @@ const matches = (c: Command, q: string) =>
  * real sessions) or copy its link.
  */
 function postingCommands(
-	job: { company: { name: string }; job: { title: string; url: string } },
+	job: {
+		id: string;
+		company: { name: string };
+		job: { title: string; url: string };
+	},
 	demo: boolean,
 ): Command[] {
 	const group = `${job.company.name} · ${job.job.title}`;
@@ -132,7 +136,7 @@ function postingCommands(
 			group,
 			label: "Open the posting",
 			icon: <ExternalLink />,
-			run: () => desktop.openExternal(job.job.url),
+			run: () => desktop.openPosting(job.id),
 		},
 		copy,
 	];

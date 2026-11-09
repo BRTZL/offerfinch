@@ -35,7 +35,13 @@ const subscribe = <A extends unknown[]>(
 
 const bridge: DesktopBridge = {
 	info: () => ipcRenderer.invoke(IPC.info),
-	openExternal: (url) => ipcRenderer.invoke(IPC.openExternal, String(url)),
+	openPosting: (id) => ipcRenderer.invoke(IPC.openPosting, String(id)),
+	openApplicationForm: (id, attemptId) =>
+		ipcRenderer.invoke(
+			IPC.openApplicationForm,
+			String(id),
+			attemptId === null ? null : String(attemptId),
+		),
 	openDocument: (id) => ipcRenderer.invoke(IPC.openDocument, String(id)),
 	saveDocument: (id) => ipcRenderer.invoke(IPC.saveDocument, String(id)),
 	saveDataExport: () => ipcRenderer.invoke(IPC.saveDataExport),

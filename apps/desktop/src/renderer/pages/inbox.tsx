@@ -1103,7 +1103,7 @@ function InboxList({
 				: []),
 		]);
 		if (choice === "open-posting")
-			desktop.openExternal(row.url).catch((e: Error) => toast.error(e.message));
+			desktop.openPosting(row.id).catch((e: Error) => toast.error(e.message));
 		else if (choice === "copy-link") {
 			await desktop.copyText(row.url);
 			toast.success("Posting link copied.");

@@ -133,8 +133,7 @@ export function DetailActionBar({
 		if (!loaded) return;
 		const fail = (e: Error) => toast.error(e.message);
 		if (id === "redraft") setRedrafting(true);
-		else if (id === "open-posting")
-			desktop.openExternal(loaded.job.url).catch(fail);
+		else if (id === "open-posting") desktop.openPosting(loaded.id).catch(fail);
 		else if (id === "copy-link")
 			desktop
 				.copyText(loaded.job.url)

@@ -40,6 +40,25 @@ describe("the stop sheet", () => {
 		expect(stopView(app({ state: "approved" }))).toBeNull();
 	});
 
+	it("a click the user said did not go through: finish it yourself or retry, no confirmation", () => {
+		const sent = {
+			...attempt(
+				1,
+				"not_sent",
+				"Sent; check your email. The form was sent once.",
+				{
+					outcome: "web_sent",
+				},
+			),
+			resolution: "The user confirmed it did not go through",
+		};
+		const view = stopView(app({ attempts: [sent] }));
+		expect(view?.case).toBe("confirmed_not_sent");
+		expect(view?.title).toBe("It didn't go through");
+		expect(view?.actions).toEqual(["finish", "mark", "retry"]);
+		expect(view?.body).not.toMatch(/nothing was sent/i);
+	});
+
 	it("a challenge: finish it yourself first, retry only because nothing was clicked", () => {
 		const view = stopView(
 			app({
@@ -90,7 +109,11 @@ describe("the stop sheet", () => {
 		);
 		expect(view?.case).toBe("unknown_outcome");
 		expect(view?.attempt?.attempt).toBe(1);
-		expect(view?.actions).toEqual(["mark", "finish", "retry_confirmed"]);
+		expect(view?.actions).toEqual([
+			"mark",
+			"finish_confirmed",
+			"retry_confirmed",
+		]);
 		expect(view?.actions).not.toContain("retry");
 	});
 
@@ -108,7 +131,11 @@ describe("the stop sheet", () => {
 			}),
 		);
 		expect(view?.case).toBe("unknown_error_answer");
-		expect(view?.actions).toEqual(["mark", "finish", "retry_confirmed"]);
+		expect(view?.actions).toEqual([
+			"mark",
+			"finish_confirmed",
+			"retry_confirmed",
+		]);
 	});
 
 	it("refusal or error wording after the click is an unknown outcome of its own", () => {
@@ -130,7 +157,11 @@ describe("the stop sheet", () => {
 				}),
 			);
 			expect(view?.case).toBe("unknown_refused");
-			expect(view?.actions).toEqual(["mark", "finish", "retry_confirmed"]);
+			expect(view?.actions).toEqual([
+				"mark",
+				"finish_confirmed",
+				"retry_confirmed",
+			]);
 		}
 	});
 

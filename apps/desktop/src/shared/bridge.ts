@@ -216,10 +216,20 @@ export interface DemoStatus {
 export interface DesktopBridge {
 	info(): Promise<AppInfo>;
 	/**
-	 * Opens an http(s) link in the default browser. Anything else is refused. In try-it mode no
-	 * link opens (`onLinkRefused` is called instead).
+	 * Opens one application's posting in the default browser. The worker resolves its link from
+	 * the stored job; the page never names a URL. In try-it mode no link opens (`onLinkRefused`).
 	 */
-	openExternal(url: string): Promise<void>;
+	openPosting(applicationId: string): Promise<void>;
+	/**
+	 * Opens one application's form in the default browser (Finish it yourself, the hand-off's
+	 * link). `attemptId`: the attempt the page showed (`currentAttempt`). The worker resolves the
+	 * stored form and refuses a changed attempt, or one whose click may have sent the
+	 * application before "It didn't go through" is recorded.
+	 */
+	openApplicationForm(
+		applicationId: string,
+		attemptId: string | null,
+	): Promise<void>;
 	/** Writes an exported file (PDF, DOCX) to a temp file and opens it in its default app. */
 	openDocument(documentId: string): Promise<void>;
 	/** Saves an exported file or proof screenshot where the user picks. */
@@ -361,7 +371,8 @@ export const IPC = {
 	themeGet: "theme:get",
 	themeChanged: "theme:changed",
 	windowActive: "window:active",
-	openExternal: "app:open-external",
+	openPosting: "app:open-posting",
+	openApplicationForm: "app:open-application-form",
 	openDocument: "files:open",
 	saveDocument: "files:save",
 	saveDataExport: "files:save-export",

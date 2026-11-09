@@ -353,6 +353,10 @@ const CASES: Record<string, (b: TestUser) => Promise<unknown>> = {
 				idempotencyKey: `b-mark-${id}`,
 			}),
 		),
+	"submission.confirmNotSent": (u) =>
+		refused(ids.app, (id) =>
+			u.rpc.submission.confirmNotSent({ id, attemptId: crypto.randomUUID() }),
+		),
 	"submission.dryRun": (u) =>
 		refused(ids.app, (id) => u.rpc.submission.dryRun({ id })),
 	"submission.readFormAgain": (u) =>

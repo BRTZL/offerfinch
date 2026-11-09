@@ -8,6 +8,7 @@
 
 type StopCase =
 	| "web_sent"
+	| "confirmed_not_sent"
 	| "unknown_outcome"
 	| "unknown_error_answer"
 	| "unknown_refused"
@@ -55,6 +56,8 @@ export interface StopAttempt {
 	url: string | null;
 	error: string | null;
 	proof: Record<string, unknown> | null;
+	/** How the user resolved it ("The user confirmed it did not go through"), if they did. */
+	resolution?: string | null;
 	startedAt: Date | string;
 }
 
@@ -138,6 +141,9 @@ const HANDOFF_CASE: [RegExp, StopCase][] = [
 	],
 ];
 
+/** The resolution db `confirmNotSent` and a confirmed Retry store on the attempt. */
+const CONFIRMED_NOT_SENT = "The user confirmed it did not go through";
+
 /** An unknown outcome whose application request the employer's site answered with an error. */
 const ERROR_ANSWER = /answered HTTP \d+ to the application/;
 
@@ -181,6 +187,11 @@ const COPY: Record<
 	StopCase,
 	{ title: string; body: string; actions: StopAction[]; note?: string }
 > = {
+	confirmed_not_sent: {
+		title: "It didn't go through",
+		body: "You said the application this attempt sent did not arrive. Finish it yourself with your answers below, or retry: the form is filled from what you approved and sent once more.",
+		actions: ["finish", "mark", "retry"],
+	},
 	web_sent: {
 		title: "Sent — check your email",
 		body: "The employer's form was filled from what you approved and sent once. Its page cannot say for sure that it arrived, so the employer's email decides: when it comes, press Got the email. Nothing is sent again on its own.",
@@ -190,20 +201,20 @@ const COPY: Record<
 	unknown_outcome: {
 		title: "Outcome unknown",
 		body: 'A click that may have sent the application was made once (the submit button, or the first "Next" of a form in steps, which can already save answers), but no confirmation came back, so it may or may not have gone through. Nothing is clicked again on its own. Check your email or the employer\'s portal.',
-		actions: ["mark", "finish", "retry_confirmed"],
-		note: "Retry opens only after you confirm it did not go through.",
+		actions: ["mark", "finish_confirmed", "retry_confirmed"],
+		note: "Retry or Finish it yourself opens only after you confirm it did not go through.",
 	},
 	unknown_error_answer: {
 		title: "The employer's site answered with an error",
 		body: "The application was sent once, and the employer's site answered it with an error, so it most likely did not go through, but that is not certain. Nothing is clicked again on its own. Check your email or the employer's portal.",
-		actions: ["mark", "finish", "retry_confirmed"],
-		note: "Retry opens only after you confirm it did not go through.",
+		actions: ["mark", "finish_confirmed", "retry_confirmed"],
+		note: "Retry or Finish it yourself opens only after you confirm it did not go through.",
 	},
 	unknown_refused: {
 		title: "The employer's site may have refused it",
 		body: "The application was sent once, but the page or the employer's answer after the click shows an error or refusal wording, so it may not have gone through. Nothing is clicked again on its own. Check your email or the employer's portal.",
-		actions: ["mark", "finish", "retry_confirmed"],
-		note: "Retry opens only after you confirm it did not go through.",
+		actions: ["mark", "finish_confirmed", "retry_confirmed"],
+		note: "Retry or Finish it yourself opens only after you confirm it did not go through.",
 	},
 	challenge: {
 		title: "The site asked for a human check",
@@ -313,6 +324,9 @@ export function stopView<A extends StopAttempt>(
 		app.attempts.find((a) => a.status === "not_sent" && a.mode === "auto") ??
 		null;
 	let kind: StopCase = unknown ? unknownCase(unknown) : caseOf(stop);
+	// A click the user said did not go through ("It didn't go through", before Finish it yourself).
+	if (!unknown && stop?.resolution === CONFIRMED_NOT_SENT)
+		kind = "confirmed_not_sent";
 	if (unknown && isWebSent(unknown)) kind = "web_sent";
 	if (!unknown && (open || kind === "question"))
 		kind = isLocationChoice(open) ? "location_choice" : "question";

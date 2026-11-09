@@ -17,6 +17,7 @@ import type {
 import { WorkerApp } from "./app";
 import { diagnosticsSummary } from "./diagnostics";
 import { dismissFromNotice } from "./dismissals";
+import { applicationFormLink, postingLink } from "./links";
 import { bindApp, desktopAppRouter } from "./router";
 import { LOCAL_USER_EMAIL, LOCAL_USER_ID } from "./settings";
 
@@ -186,6 +187,16 @@ async function answer(method: WorkerMethod, args: unknown[]): Promise<unknown> {
 			if (!bytes) throw new Error("Not found");
 			return { name: `proof-${which}.png`, bytes };
 		}
+		// Links the page asks to open, resolved from stored data (worker/links.ts).
+		case "postingLink":
+			return postingLink(repo, LOCAL_USER_ID, String(args[0]));
+		case "formLink":
+			return applicationFormLink(
+				repo,
+				LOCAL_USER_ID,
+				String(args[0]),
+				typeof args[1] === "string" ? args[1] : null,
+			);
 		case "interviewEvent":
 			return interviewEvent(app.db, LOCAL_USER_ID, String(args[0]));
 		case "dataExport":

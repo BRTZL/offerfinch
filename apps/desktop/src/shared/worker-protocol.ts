@@ -97,6 +97,8 @@ export type MainToWorker =
 export type WorkerMethod =
 	| "fileBytes"
 	| "proofBytes"
+	| "postingLink"
+	| "formLink"
 	| "dataExport"
 	| "interviewEvent"
 	| "status"

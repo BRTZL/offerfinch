@@ -2,7 +2,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, CircleHelp } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
-import { useDemoMode } from "@/components/desktop/demo";
 import { FileLink } from "@/components/pipeline/bits";
 import { SubmissionsSettingsLink } from "@/components/pipeline/settings/submissions-link";
 import { ActionBarButton } from "@/components/system/action-bar";
@@ -18,9 +17,9 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { desktop } from "@/lib/desktop";
 import { client, orpc } from "@/lib/orpc";
 import { useRouter } from "@/lib/router";
+import { useOpenForm } from "./open-form";
 import { ProofShots } from "./proof";
 import { type StopAction, type StopView, stopView } from "./stop-model";
 import { CopyRow, today } from "./submission";
@@ -167,12 +166,14 @@ function StopActions({
 	view,
 	actions,
 	onFinish,
+	finishPending,
 	onClose,
 }: {
 	app: AppDetail;
 	view: StopView<AppDetail["attempts"][number]>;
 	actions: ApplicationActions;
 	onFinish: () => void;
+	finishPending: boolean;
 	onClose: () => void;
 }) {
 	const router = useRouter();
@@ -253,7 +254,8 @@ function StopActions({
 								(action === "reread" && reread.isPending) ||
 								((action === "mark" || action === "got_email") &&
 									actions.markSubmitted.isPending) ||
-								(action.startsWith("retry") && actions.retry.isPending)
+								(action.startsWith("retry") && actions.retry.isPending) ||
+								(action.startsWith("finish") && finishPending)
 							}
 							disabled={
 								(action === "retry_confirmed" ||
@@ -291,15 +293,11 @@ function StopSheet({
 	onClose: () => void;
 }) {
 	const [finishing, setFinishing] = useState(false);
-	const demo = useDemoMode();
 	const formUrl = view.attempt?.url || app.handoff.formUrl;
-	const finish = () => {
-		setFinishing(true);
-		if (!demo)
-			desktop
-				.openExternal(formUrl)
-				.catch((error: Error) => toast.error(error.message));
-	};
+	const openForm = useOpenForm(app);
+	// The panel shows once the worker let the form open (and recorded "It didn't go through").
+	const finish = () =>
+		openForm.mutate(undefined, { onSuccess: () => setFinishing(true) });
 	return (
 		<Dialog open onOpenChange={(o) => !o && onClose()}>
 			<DialogContent data-testid="stop-sheet" data-case={view.case}>
@@ -367,6 +365,7 @@ function StopSheet({
 							view={view}
 							actions={actions}
 							onFinish={finish}
+							finishPending={openForm.isPending}
 							onClose={onClose}
 						/>
 					)}

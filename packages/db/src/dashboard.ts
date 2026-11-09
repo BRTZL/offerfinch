@@ -168,6 +168,16 @@ export class DashboardRepository extends DrizzlePipelineRepository {
 		return submissionMethods.retrySubmission.apply(this, args);
 	}
 
+	confirmNotSent(...args: Parameters<typeof submissionMethods.confirmNotSent>) {
+		return submissionMethods.confirmNotSent.apply(this, args);
+	}
+
+	formLinkAttempt(
+		...args: Parameters<typeof submissionMethods.formLinkAttempt>
+	) {
+		return submissionMethods.formLinkAttempt.apply(this, args);
+	}
+
 	readFormAgainRefusal(
 		...args: Parameters<typeof submissionMethods.readFormAgainRefusal>
 	) {

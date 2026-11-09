@@ -616,6 +616,27 @@ export const pipelineRouter = {
 					return { ok: true };
 				}),
 			),
+		/**
+		 * "It didn't go through", recorded before Finish it yourself opens the form (the form
+		 * opens only once this is recorded for a click that may have sent the application).
+		 */
+		confirmNotSent: protectedProcedure
+			.input(
+				z.object({
+					id: z.string().uuid(),
+					/** The attempt the user saw (`currentAttempt`). */
+					attemptId: z.string().uuid(),
+				}),
+			)
+			.handler(({ context, input }) =>
+				refusal(() =>
+					repoOf(context).confirmNotSent({
+						userId: context.session.user.id,
+						applicationId: input.id,
+						attemptId: input.attemptId,
+					}),
+				),
+			),
 		readFormAgain: protectedProcedure
 			.input(
 				z.object({

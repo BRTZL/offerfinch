@@ -13,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { desktop } from "@/lib/desktop";
 import { client, orpc } from "@/lib/orpc";
+import { useOpenForm } from "./open-form";
 import { AttemptList } from "./proof";
 import { isWebSent } from "./stop-model";
 
@@ -100,6 +101,43 @@ function useHandoffCheck(app: AppDetail) {
 		void queryClient.invalidateQueries({ queryKey: orpc.application.key() });
 		void queryClient.invalidateQueries({ queryKey: ["inbox"] });
 	}, [closed, queryClient]);
+}
+
+/**
+ * The hand-off's link to the form. The worker opens it (worker/links.ts) for this application and
+ * the attempt shown; after a click that may have sent the application it opens only once the user
+ * ticked "It didn't go through", which is recorded first.
+ */
+function FormLink({
+	app,
+	confirmed,
+	children,
+}: {
+	app: AppDetail;
+	confirmed: boolean;
+	children: ReactNode;
+}) {
+	const openForm = useOpenForm(app);
+	if (app.unresolvedAttempt && !confirmed)
+		return (
+			<span
+				data-testid="handoff-link"
+				title="Tick It didn't go through below first"
+			>
+				{children}
+			</span>
+		);
+	return (
+		<button
+			type="button"
+			onClick={() => openForm.mutate()}
+			disabled={openForm.isPending}
+			className="text-primary text-left hover:underline"
+			data-testid="handoff-link"
+		>
+			{children} ↗
+		</button>
+	);
 }
 
 /**
@@ -197,15 +235,9 @@ export function SubmissionPanel({
 								demo ? (
 									<span data-testid="handoff-link">{formLink}</span>
 								) : (
-									<a
-										href={app.handoff.formUrl}
-										target="_blank"
-										rel="noreferrer"
-										className="text-primary hover:underline"
-										data-testid="handoff-link"
-									>
-										{formLink} ↗
-									</a>
+									<FormLink app={app} confirmed={confirmedNotSent}>
+										{formLink}
+									</FormLink>
 								)
 							}
 						>

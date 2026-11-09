@@ -1,5 +1,6 @@
 import { ArrowUpRight, ExternalLink, PanelLeft } from "lucide-react";
 import type { ReactNode } from "react";
+import { toast } from "sonner";
 import { useDemoMode } from "@/components/desktop/demo";
 import { AddedProgress, linkHost } from "@/components/pipeline/added";
 import { Locations } from "@/components/pipeline/application/locations";
@@ -16,6 +17,7 @@ import { ReadingColumn, ReadingPage } from "@/components/system/document";
 import { FocusBackdrop } from "@/components/system/focus-backdrop";
 import { ResizeHandle } from "@/components/system/resize-handle";
 import { Button } from "@/components/ui/button";
+import { desktop } from "@/lib/desktop";
 import { cn } from "@/lib/utils";
 import { DetailActionBar, type DocumentExports } from "./action-bar";
 import { barKind, exportTarget } from "./bar-model";
@@ -330,19 +332,25 @@ function DetailTitle({
 					Posting
 				</Button>
 			) : step || demo ? null : (
-				<a
-					href={app.job.url}
-					target="_blank"
-					rel="noreferrer"
+				<button
+					type="button"
+					onClick={() => openPosting(app.id)}
 					className="text-primary mt-1 flex shrink-0 items-center gap-1 text-sm hover:underline"
 					data-testid="open-posting"
 				>
 					{fromFeedLabel(app.job.source)}
 					<ArrowUpRight className="size-3.5" />
-				</a>
+				</button>
 			)}
 		</div>
 	);
+}
+
+/** The posting in the browser: the worker resolves its link from the stored job (worker/links.ts). */
+function openPosting(applicationId: string) {
+	desktop
+		.openPosting(applicationId)
+		.catch((e: Error) => toast.error(e.message));
 }
 
 /** The header's link to the posting: "Open on Remotive" for a feed that asks to be credited. */
@@ -376,15 +384,14 @@ function PostingLinks({
 				<RereadPosting id={id} className="ml-auto" />
 			)}
 			{external && !demo ? (
-				<a
-					href={job.url}
-					target="_blank"
-					rel="noreferrer"
+				<button
+					type="button"
+					onClick={() => openPosting(id)}
 					className="text-primary flex items-center gap-1 text-xs hover:underline"
 				>
 					{postingLinkLabel(job.source)}
 					<ExternalLink className="size-3" />
-				</a>
+				</button>
 			) : null}
 		</>
 	);
