@@ -4,12 +4,14 @@ import { schemaKey } from "../src/apply/form-schema";
 import {
 	type ApplicantData,
 	applyUrl,
+	BOARD_CONFIGS,
 	dialCode,
 	exactOption,
 	type FormField,
 	markdownToPlain,
 	planFill,
 	sameQuestion,
+	sessionHosts,
 	verifyFilled,
 } from "../src/apply/forms";
 
@@ -263,5 +265,46 @@ describe("2026-11-09 form drift", () => {
 			kind: "location",
 			value: "Izmir, Izmir, Turkey",
 		});
+	});
+});
+
+describe("a board's other hosts in a real submission", () => {
+	it("adds the board's data hosts to the allowed ones, and its asset and scoring hosts as read-only rules", () => {
+		const hosts = sessionHosts("greenhouse", ["job-boards.greenhouse.io"]);
+		expect(hosts.form).toEqual([
+			"job-boards.greenhouse.io",
+			"email-address-validator.us.greenhouse.io",
+			"grnhse-prod-jben-us-east-1.s3.amazonaws.com",
+		]);
+		expect(hosts.rules.read).toContain("www.recaptcha.net");
+		expect(hosts.rules.read).not.toContain("job-boards.greenhouse.io");
+		// Trackers are never listed: they are refused like any other host.
+		expect(sessionHosts("lever", []).rules.read).not.toContain(
+			"www.googletagmanager.com",
+		);
+	});
+
+	it("never adds a form host: with none allowed, the form's own host is still not allowed", () => {
+		for (const board of ["ashby", "greenhouse", "lever"] as const) {
+			const own = new URL(
+				applyUrl(board, { url: "", externalId: "1", companyKey: "acme" }),
+			).hostname;
+			expect(sessionHosts(board, []).form).not.toContain(own);
+			expect(sessionHosts(board, []).rules.read).not.toContain(own);
+		}
+	});
+
+	it("lists exact names, never a suffix many companies share", () => {
+		for (const config of Object.values(BOARD_CONFIGS))
+			for (const host of [
+				...(config.hosts ?? []),
+				...(config.formHosts ?? []),
+			]) {
+				expect(host).toMatch(/^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/);
+				if (host.startsWith("*.")) expect(host).toMatch(/\.hcaptcha\.com$/);
+				expect(host).not.toMatch(
+					/^(\*\.)?(s3\.amazonaws\.com|amazonaws\.com|cloudfront\.net|googleapis\.com|appspot\.com)$/,
+				);
+			}
 	});
 });

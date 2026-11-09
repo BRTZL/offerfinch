@@ -259,6 +259,8 @@ describe.skipIf(urls.length === 0)("live dry run (no submit)", () => {
 				nonReadsThatLeft: sentData([...readLog, ...fillLog], formHost),
 			};
 			write("network.json", summary);
+			// Every request, for the host list (fabricated data; the folder is gitignored).
+			write("requests.json", { read: readLog, fill: fillLog, closedAt });
 			console.log(
 				JSON.stringify(
 					{

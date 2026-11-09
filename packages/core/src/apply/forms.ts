@@ -1,3 +1,4 @@
+import type { HostRules } from "../scrape/browser";
 import { normalizeForMatch } from "../tailor/profile-rules";
 import type { Contact, FormAnswer } from "../tailor/tailor";
 
@@ -32,6 +33,19 @@ export interface BoardConfig {
 	};
 	/** Visible validation errors. */
 	errors: string;
+	/**
+	 * Hosts besides the form's own that the form needs while it is filled and sent: its assets
+	 * (scripts, styles, fonts, images) and its scoring widget, from the live inspection. A real
+	 * submission's session may read them (GET, HEAD) and nothing more, except that a frame loaded
+	 * from one of them (the widget's) may post to them with xhr or fetch; no request to them may
+	 * carry a filled value (`HostRules`, scrape/browser.ts). Employers' trackers are never listed.
+	 */
+	hosts?: readonly string[];
+	/**
+	 * The board's own hosts besides the form's that receive the application's data (uploads, a
+	 * lookup of the typed email): any method, like the allowed form hosts.
+	 */
+	formHosts?: readonly string[];
 }
 
 export const BOARD_CONFIGS: Record<Board, BoardConfig> = {
@@ -49,6 +63,15 @@ export const BOARD_CONFIGS: Record<Board, BoardConfig> = {
 		},
 		errors:
 			".ashby-application-form-field-entry [class*='error' i]:not(:empty), [role=alert]:not(:empty)",
+		// Seen on a live posting, 2026-11-09 (docs/form-inspection.md).
+		hosts: [
+			"app.ashbyhq.com",
+			"cdn.ashbyprd.com",
+			"fonts.googleapis.com",
+			"fonts.gstatic.com",
+			"www.gstatic.com",
+			"www.recaptcha.net",
+		],
 	},
 	greenhouse: {
 		board: "greenhouse",
@@ -62,6 +85,21 @@ export const BOARD_CONFIGS: Record<Board, BoardConfig> = {
 		},
 		errors:
 			".error-message:not(:empty), .helper-text--error:not(:empty), [role=alert]:not(:empty)",
+		hosts: [
+			"boards.greenhouse.io",
+			"job-boards.cdn.greenhouse.io",
+			"my.greenhouse.io",
+			"s2-recruiting.cdn.greenhouse.io",
+			"fonts.gstatic.com",
+			"www.gstatic.com",
+			"www.recaptcha.net",
+		],
+		formHosts: [
+			// Checks the typed email: it gets the address in its URL.
+			"email-address-validator.us.greenhouse.io",
+			// Greenhouse's upload bucket (a POST of each chosen file); this bucket only.
+			"grnhse-prod-jben-us-east-1.s3.amazonaws.com",
+		],
 	},
 	lever: {
 		board: "lever",
@@ -75,8 +113,38 @@ export const BOARD_CONFIGS: Record<Board, BoardConfig> = {
 		},
 		errors:
 			".error-message:not(:empty), .application-error:not(:empty), [role=alert]:not(:empty)",
+		hosts: [
+			"cdn.lever.co",
+			"lever-client-logos.s3.us-west-2.amazonaws.com",
+			"hcaptcha.com",
+			"js.hcaptcha.com",
+			"newassets.hcaptcha.com",
+			"api.hcaptcha.com",
+			"api2.hcaptcha.com",
+			// hCaptcha's per-session hosts (a random label each time); hCaptcha owns the name.
+			"*.w.hcaptcha.com",
+		],
 	},
 };
+
+/**
+ * What a real submission's session may reach: the allowed form hosts plus the board's own data
+ * hosts (`formHosts`, any method), and its asset and scoring hosts (`hosts`, read-only) as rules.
+ * Every other host is refused (quietly unless the request could carry the application). The form URL itself is still checked against the allowed
+ * hosts only, so with none allowed nothing opens.
+ */
+export function sessionHosts(
+	board: Board,
+	allowed: string[],
+): { form: string[]; rules: HostRules } {
+	const config = BOARD_CONFIGS[board];
+	return {
+		form: [...new Set([...allowed, ...(config.formHosts ?? [])])],
+		rules: {
+			read: [...(config.hosts ?? [])],
+		},
+	};
+}
 
 /** A board's hosted form URL for a job, or null when the job's URL is not on that board. */
 export function applyUrl(

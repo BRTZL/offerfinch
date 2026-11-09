@@ -1,7 +1,11 @@
 import type { BlobStore } from "../export/export";
 import type { PipelineDeps } from "../pipeline/ports";
 import type { ProfileSnapshot } from "../profile/types";
-import type { BrowserProvider, NetworkLogEntry } from "../scrape/browser";
+import type {
+	BrowserProvider,
+	HostRules,
+	NetworkLogEntry,
+} from "../scrape/browser";
 import { evidenceProfile } from "../tailor/profile-rules";
 import { type FormAnswer, parseContact } from "../tailor/tailor";
 import {
@@ -20,6 +24,7 @@ import {
 	exactOption,
 	markdownToPlain,
 	sameQuestion,
+	sessionHosts,
 	type UnknownQuestion,
 } from "./forms";
 import { submissionModeForSource } from "./modes";
@@ -340,15 +345,32 @@ async function prepareRun(
 	};
 }
 
+/** Every value the form may be filled with: none may reach a host outside the form's hosts. */
+function formValuesOf(data: ApplicationRun["data"]): string[] {
+	const { contact } = data;
+	return [
+		...Object.values(contact),
+		...contact.name.split(/\s+/),
+		...data.answers.map((a) => a.answer),
+		data.coverLetterText ?? "",
+	].filter(Boolean);
+}
+
 async function openAndRun(
 	apply: ApplyDeps,
 	run: ApplicationRun,
 	network: "allowlist" | "read_only",
+	hostRules?: HostRules | null,
 ): Promise<RunResult & { networkLog?: unknown[] }> {
 	if (apply.run) return apply.run(run);
 	const session = await apply.browser.openSession(
 		network === "allowlist"
-			? { network, allowedHosts: run.allowedHosts }
+			? {
+					network,
+					allowedHosts: run.allowedHosts,
+					...(hostRules ? { hostRules } : {}),
+					formValues: formValuesOf(run.data),
+				}
 			: { network },
 	);
 	try {
@@ -457,13 +479,16 @@ export async function submitStep(
 				run.board,
 				run.url,
 			);
+		// The board's own data hosts, and its asset and scoring hosts read-only
+		// (docs/form-inspection.md, 2026-11-09).
+		const hosts = sessionHosts(run.board, apply.allowedHosts ?? LOCAL_HOSTS);
 		const result = await openAndRun(
 			apply,
 			{
 				...run,
 				// The run stays on these hosts: redirects, navigations, uploads and the submission
 				// itself are refused anywhere else, and the page is checked again before the claim.
-				allowedHosts: apply.allowedHosts ?? LOCAL_HOSTS,
+				allowedHosts: hosts.form,
 				// Boards upload a file as soon as it is chosen: re-check the switch first, so a
 				// pause during the fill stops before the CV leaves.
 				beforeUpload: async () =>
@@ -491,6 +516,7 @@ export async function submitStep(
 				},
 			},
 			"allowlist",
+			hosts.rules,
 		);
 		const proof = { filled: result.filled, board: run.board };
 		switch (result.outcome) {

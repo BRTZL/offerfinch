@@ -1,4 +1,9 @@
-import { readOnlyDecision } from "../apply/network-guard";
+import {
+	carriesFormData,
+	formValueNeedles,
+	hostMatches,
+	readOnlyDecision,
+} from "../apply/network-guard";
 
 /**
  * Browser abstraction shared by desktop site reads and headless browser safety tests.
@@ -89,15 +94,23 @@ export interface SessionOptions {
 	/**
 	 * "none" aborts every request the page makes; "read_only" lets only GET, HEAD and GraphQL
 	 * queries through (`readOnlyDecision`). "allowlist" (a real submission) keeps the page on
-	 * `allowedHosts`: a top-level navigation or redirect elsewhere, and any request that sends
-	 * data (every method but GET and HEAD, uploads included) to another host, is aborted and
-	 * recorded as a violation; reads from other hosts (scripts, images) still load. Guarded
+	 * `allowedHosts` (the destinations): a request elsewhere is aborted unless `hostRules` lets
+	 * it through (a board's asset and scoring hosts, `BoardConfig.hosts` in apply/forms.ts). It is
+	 * recorded as a violation (the run stops) when it could be the application leaving: the
+	 * page's own navigation, an upload, or a filled value; anything else is refused quietly. Guarded
 	 * sessions also block service workers and close WebSockets (in "allowlist", those to other
 	 * hosts) and close pop-up windows, so nothing slips past the request filter. Default "open".
 	 */
 	network?: "open" | "read_only" | "none" | "allowlist" | "pinned";
 	/** Hosts an "allowlist" session may navigate to and send data to. */
 	allowedHosts?: string[];
+	/** "allowlist": other hosts, by what they may receive (see `HostRules`). */
+	hostRules?: HostRules;
+	/**
+	 * "allowlist": the values the form will hold. A request to a host outside `allowedHosts` that
+	 * carries one (in its URL, or a widget post's body) is refused as a violation.
+	 */
+	formValues?: string[];
 	/**
 	 * "pinned" (a page a user linked, from anywhere): the browser has no network of its own (it
 	 * is started behind a proxy that refuses everything, with every host name unresolvable), and
@@ -132,13 +145,13 @@ export const NO_NETWORK_ARGS = [
 	"--dns-prefetch-disable",
 ];
 
-/** True when `url` is http(s) on one of `hosts` (hostname match, any port). */
-export function urlOnHosts(url: string, hosts: string[]): boolean {
+/** True when `url` is http(s) on one of `hosts` (hostname match, any port; `*.` for one label). */
+export function urlOnHosts(url: string, hosts: readonly string[]): boolean {
 	try {
 		const parsed = new URL(url);
 		if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
 			return false;
-		return hosts.includes(parsed.hostname);
+		return hosts.some((h) => hostMatches(parsed.hostname, h));
 	} catch {
 		return false;
 	}
@@ -146,6 +159,23 @@ export function urlOnHosts(url: string, hosts: string[]): boolean {
 
 /** The reason recorded for a request an "allowlist" session refused. */
 export const DESTINATION_REFUSED = "destination not allowed";
+
+/**
+ * The reason recorded for a request an "allowlist" session refused quietly: it went to a host
+ * that is neither a destination nor one of the board's asset hosts and carried nothing of the
+ * form (analytics, error reporting). The run goes on.
+ */
+export const NOT_A_DESTINATION = "not a destination, refused";
+
+/**
+ * Hosts an "allowlist" session may use beyond `allowedHosts` (exact names, or `*.` for one
+ * label). `read` (a board's asset and scoring hosts): GET and HEAD, never the page's own
+ * navigation; besides, a frame loaded from one of them (a scoring widget's) may post to them
+ * with xhr or fetch, never as a document. Never with a filled value or a file.
+ */
+export interface HostRules {
+	read: string[];
+}
 
 export const UNTRUSTED_CONTENT: SessionOptions = {
 	javaScriptEnabled: false,
@@ -183,6 +213,7 @@ interface PlaywrightRouteLike {
 		postData(): string | null;
 		isNavigationRequest(): boolean;
 		frame(): unknown;
+		resourceType?(): string;
 		headers?(): Record<string, string>;
 	};
 	continue(): Promise<void>;
@@ -284,19 +315,41 @@ export interface PlaywrightBrowserLike {
 
 type GuardMode = "open" | "read_only" | "none" | "allowlist" | "pinned";
 
+/** The URL of the frame that made a request, or "" when it cannot be told. */
+function frameUrl(request: { frame(): unknown }): string {
+	try {
+		const frame = request.frame() as { url?: () => string } | null;
+		return frame?.url?.() ?? "";
+	} catch {
+		return "";
+	}
+}
+
 class PlaywrightPage implements BrowserPage {
 	private readonly log: NetworkLogEntry[] = [];
 	private mode: GuardMode;
+	private readonly needles: string[];
 	/** "pinned": the main frame has its document; later navigations are refused. */
 	private landed = false;
+
+	private readonly allowedHosts: string[];
+	private readonly fetcher?: PinnedFetcher;
+	private readonly hostRules?: HostRules;
 
 	constructor(
 		private readonly page: PlaywrightPageLike,
 		mode: GuardMode = "open",
-		private readonly allowedHosts: string[] = [],
-		private readonly fetcher?: PinnedFetcher,
+		options: Pick<
+			SessionOptions,
+			"allowedHosts" | "fetcher" | "hostRules" | "formValues"
+		> = {},
 	) {
 		this.mode = mode;
+		this.allowedHosts = options.allowedHosts ?? [];
+		this.fetcher = options.fetcher;
+		// Host classes and the form-value check apply to a real submission only.
+		this.hostRules = mode === "allowlist" ? options.hostRules : undefined;
+		this.needles = formValueNeedles(options.formValues ?? []);
 	}
 
 	/** "pinned": every http(s) request is fetched by the checking, pinning fetcher. */
@@ -361,12 +414,13 @@ class PlaywrightPage implements BrowserPage {
 	}
 
 	/**
-	 * "allowlist" (a page holding the applicant's data): every request, whatever its method, must
-	 * go to an allowed host: navigations, form posts and uploads, and also fetches, images,
-	 * iframes and scripts, since a GET can carry typed values out in its URL. Each is fetched here
-	 * with redirects off, so a redirect to another host (which the browser would follow without
-	 * asking, re-posting the body on 307/308) is refused before it is followed. Scraping uses
-	 * "open" sessions and is not affected.
+	 * "allowlist" (a page holding the applicant's data): a request to an allowed host (a
+	 * destination) passes, whatever its method. Any other request is decided by
+	 * `otherHostDecision`: read from a board's asset or scoring host, refused quietly, or refused
+	 * as a violation that stops the run. Each passing request is fetched here with redirects off,
+	 * so a redirect is checked before it is followed (the browser would follow it without asking,
+	 * re-posting the body on 307/308): a destination's must stay on the destinations, an asset
+	 * host's must meet the same rule as a new request. Scraping uses "open" sessions.
 	 */
 	private async allowlistRoute(route: PlaywrightRouteLike): Promise<void> {
 		const request = route.request();
@@ -374,21 +428,69 @@ class PlaywrightPage implements BrowserPage {
 		const url = request.url();
 		// data:, blob: and about: stay inside the browser.
 		if (!/^https?:/.test(url)) return route.continue();
-		if (!urlOnHosts(url, this.allowedHosts)) {
-			this.refuse(method, url);
-			return route.abort("blockedbyclient");
+		const destination = urlOnHosts(url, this.allowedHosts);
+		if (!destination) {
+			const refusal = this.otherHostDecision(request, url);
+			if (refusal) {
+				this.log.push({ method, url, allowed: false, reason: refusal });
+				return route.abort("blockedbyclient");
+			}
 		}
 		const response = await route.fetch({ maxRedirects: 0 });
 		const location = response.headers().location;
 		if (response.status() >= 300 && response.status() < 400 && location) {
 			const target = new URL(location, url).href;
-			if (!urlOnHosts(target, this.allowedHosts)) {
-				this.refuse(method, target);
+			const refusal = destination
+				? urlOnHosts(target, this.allowedHosts)
+					? null
+					: DESTINATION_REFUSED
+				: urlOnHosts(target, this.allowedHosts)
+					? null
+					: this.otherHostDecision(request, target);
+			if (refusal) {
+				this.log.push({ method, url: target, allowed: false, reason: refusal });
 				return route.abort("blockedbyclient");
 			}
 		}
-		this.log.push({ method, url, allowed: true, reason: "allowed host" });
+		this.log.push({
+			method,
+			url,
+			allowed: true,
+			reason: destination ? "allowed host" : "board asset host, read",
+		});
 		return route.fulfill({ response: response as never });
+	}
+
+	/**
+	 * How a request to `url`, not a destination, is refused, or null when it may go: a board's
+	 * asset or scoring host (`hostRules.read`) may be read (GET, HEAD), and posted to by a frame
+	 * loaded from one of them (xhr or fetch only: a scoring widget's own frame, which cannot read
+	 * the form). Anything else is refused quietly (analytics, error reporting: the run goes on),
+	 * except what could be the application leaving: the page's own navigation, a file upload, or
+	 * any request carrying a filled value (in its URL or body). Those are violations and stop it.
+	 */
+	private otherHostDecision(
+		request: ReturnType<PlaywrightRouteLike["request"]>,
+		url: string,
+	): string | null {
+		const method = request.method();
+		const mainFrame = request.frame() === this.page.mainFrame();
+		const type = request.headers?.()["content-type"] ?? "";
+		if (
+			(request.isNavigationRequest() && mainFrame) ||
+			/^multipart\/form-data/i.test(type) ||
+			carriesFormData(url, this.needles) ||
+			carriesFormData(request.postData(), this.needles)
+		)
+			return DESTINATION_REFUSED;
+		const assets = this.hostRules?.read ?? [];
+		if (!urlOnHosts(url, assets)) return NOT_A_DESTINATION;
+		if (method === "GET" || method === "HEAD") return null;
+		const kind = request.resourceType?.() ?? "";
+		const fromWidget = !mainFrame && urlOnHosts(frameUrl(request), assets);
+		return (kind === "xhr" || kind === "fetch") && fromWidget
+			? null
+			: NOT_A_DESTINATION;
 	}
 
 	/**
@@ -466,8 +568,9 @@ class PlaywrightPage implements BrowserPage {
 				method: "WEBSOCKET",
 				url: ws.url(),
 				allowed: false,
+				// Closed, never opened: nothing goes out over it, so the run goes on.
 				reason:
-					this.mode === "allowlist" ? DESTINATION_REFUSED : "WebSocket closed",
+					this.mode === "allowlist" ? NOT_A_DESTINATION : "WebSocket closed",
 			});
 			return ws.close();
 		});
@@ -682,8 +785,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 				const page = new PlaywrightPage(
 					await context.newPage(),
 					network,
-					options.allowedHosts ?? [],
-					options.fetcher,
+					options,
 				);
 				await page.guard();
 				return page;

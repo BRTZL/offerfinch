@@ -5,11 +5,8 @@ import {
 } from "@offerfinch/core/apply/submit";
 import { MemoryBlobStore } from "@offerfinch/core/export/export";
 import type { PipelineDeps } from "@offerfinch/core/pipeline/ports";
-import { PlaywrightBrowserProvider } from "@offerfinch/core/scrape/browser";
-import { USER_AGENT } from "@offerfinch/core/sources/types";
-import { chromium } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { chromePath } from "./browser";
+import { fixtureBrowser } from "./browser";
 import { type FixtureBoards, startFixtureBoards } from "./fixture-boards";
 
 /**
@@ -17,25 +14,6 @@ import { type FixtureBoards, startFixtureBoards } from "./fixture-boards";
  * redirects, navigates or posts elsewhere must stop the run before anything is sent there.
  * Only 127.0.0.1 is allowed here; localhost stands in for the disallowed host.
  */
-
-/**
- * Headless Chromium with its Local Network Access checks off. A page the guard fulfills has no
- * address, so Chromium treats it as public and blocks its requests to localhost by itself, which
- * would hide a leak to the away host these tests look for. Test-only; never used on a real board.
- */
-const fixtureBrowser = () =>
-	new PlaywrightBrowserProvider(
-		"fixture-playwright",
-		() =>
-			chromium.launch({
-				headless: true,
-				executablePath: chromePath,
-				args: [
-					"--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights",
-				],
-			}),
-		USER_AGENT,
-	);
 
 let boards: FixtureBoards;
 beforeAll(async () => {
