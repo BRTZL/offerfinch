@@ -111,7 +111,11 @@ export interface ApplicationRun {
 	 * after the click says. Null or unset: those stay deterministic (and an unread outcome unknown).
 	 */
 	model?: WebFormModel | null;
-	/** An employer's multi-step form: called before the first "Next"; a reason stops the run. */
+	/**
+	 * An employer's multi-step form: the claim comes before its first "Next" (a step may send
+	 * answers); this is called before every later click that may send ("Next" or the submit). A
+	 * reason ends the run as an unknown outcome, since an earlier step may have sent answers.
+	 */
 	beforeStep?: () => Promise<string | null>;
 }
 

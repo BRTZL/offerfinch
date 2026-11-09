@@ -241,7 +241,7 @@ describe.each(NEW_BOARDS)("%s fixture form", (board) => {
 		);
 		if (!CONFIRMS.has(board))
 			expect(calls[1]?.reason).toMatch(
-				/^Outcome unknown after the submit click/,
+				/^Outcome unknown after a click that may have sent the application/,
 			);
 		expect(boards.count(jobId)).toBe(1);
 		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);

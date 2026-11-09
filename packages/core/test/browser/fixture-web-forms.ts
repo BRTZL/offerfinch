@@ -29,6 +29,8 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  *   preview       email and full name, help text already saying "Thank you for applying!"; the only
  *                 button changes the query string and sends nothing
  *   echo          the same help text above the form; the submit posts and swaps the form for "Saved."
+ *   posting-next  email and full name shown, phone and location in a hidden step; its "Next" is a
+ *                 native submit button: clicking it posts the first step (and redirects to /thanks)
  */
 
 export interface WebSubmission {
@@ -216,6 +218,14 @@ form.addEventListener('submit', async (e) => {
 	if (res.ok) form.outerHTML = '<p>Saved.</p>';
 });`;
 
+/** A "Next" that is the form's own submit button: the first step leaves with it. */
+function postingNextBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply" method="post" action="/web/posting-next/apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<div style="display:none">${text("Phone number", "phone", { type: "tel" })}${text("Where are you based?", "location")}</div>
+<p><button>Next</button></p></form>`;
+}
+
 /** Posts every box as "label or nearby text = value", as the page shows it. */
 const NAMELESS = `const form = document.getElementById('apply');
 form.addEventListener('submit', async (e) => {
@@ -297,6 +307,8 @@ function formPage(
 			return page(previewBody());
 		case "echo":
 			return page(echoBody(), ECHO);
+		case "posting-next":
+			return page(postingNextBody());
 		default:
 			return null;
 	}

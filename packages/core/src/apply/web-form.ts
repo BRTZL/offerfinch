@@ -646,11 +646,7 @@ async function fillStep(
 	page: BrowserPage,
 	run: ApplicationRun,
 	scan: WebScan,
-	state: {
-		schema: WebSchemaField[];
-		filled: FilledField[];
-		uploadsCleared: boolean;
-	},
+	state: RunState,
 ): Promise<StepResult> {
 	const wall = wallOf(scan);
 	if (wall) return { ok: false, stop: wall };
@@ -921,16 +917,105 @@ function stopped(
 	return { outcome: "stopped", stop, screenshot, filled };
 }
 
-/** Steps through the form, filling each, up to the final submit control (not clicked here). */
+interface RunState {
+	schema: WebSchemaField[];
+	filled: FilledField[];
+	uploadsCleared: boolean;
+	/** The latest screenshot before a click that may send data. */
+	before: Uint8Array | null;
+	/** True once the claim agreed: from then on every end is an unknown outcome. */
+	claimed: boolean;
+}
+
+/** After the claim, any end but the outcome reader's: unknown, never "nothing was sent". */
+async function unknownAfterClaim(
+	page: BrowserPage,
+	state: RunState,
+	reason: string,
+): Promise<RunResult> {
+	const after = await shot(page);
+	return {
+		outcome: "unknown",
+		before: state.before ?? after ?? new Uint8Array(),
+		after,
+		reason,
+		finalUrl: page.url(),
+		filled: state.filled,
+	};
+}
+
+/** A stop: before the claim nothing was sent; after it, the outcome is unknown. */
+async function ended(
+	page: BrowserPage,
+	state: RunState,
+	stop: Stop,
+): Promise<RunResult> {
+	if (!state.claimed) return stopped(stop, await shot(page), state.filled);
+	return unknownAfterClaim(
+		page,
+		state,
+		`${stop.message} This was after the form's "Next" was clicked, so the employer's site may already hold some answers.`,
+	);
+}
+
+/**
+ * The gate before any click that may send data ("Next" or the submit, submit mode only): the page
+ * is still on the form's hosts with the control clickable; then the claim the first time, and the
+ * pause switch every later time. A result ends the run; null lets the click happen.
+ */
+async function beforeSending(
+	page: BrowserPage,
+	run: ApplicationRun,
+	state: RunState,
+	control: WebControl,
+): Promise<RunResult | null> {
+	const away = destinationProblem(page, run.allowedHosts);
+	const covered = await safeEvaluate<string | null>(
+		page,
+		webCoveredScript(control.ref),
+	);
+	state.before = (await shot(page)) ?? state.before;
+	if (away || covered)
+		return ended(page, state, {
+			kind: away ? "other_site" : "unrecognized_page",
+			message: away ?? (covered as string),
+		});
+	if (state.claimed) {
+		const paused = (await run.beforeStep?.()) ?? null;
+		return paused
+			? ended(page, state, { kind: "error", message: paused })
+			: null;
+	}
+	const claimed = run.claim
+		? await run.claim(state.before ?? new Uint8Array(), state.filled)
+		: ({ go: false, reason: "no claim gate" } as const);
+	if (!claimed.go)
+		return {
+			outcome: "not_claimed",
+			reason: claimed.reason,
+			screenshot: state.before ?? new Uint8Array(),
+			filled: state.filled,
+		};
+	state.claimed = true;
+	return null;
+}
+
+/**
+ * Steps through the form, filling each, up to the final submit control (not clicked here). In a
+ * submission the first "Next" waits for the claim (`beforeSending`): a step may send answers.
+ */
 async function fillSteps(
 	page: BrowserPage,
 	run: ApplicationRun,
 	first: WebScan,
-	state: Parameters<typeof fillStep>[3],
-): Promise<{ ok: true; submit: WebControl } | { ok: false; stop: Stop }> {
+	state: RunState,
+): Promise<
+	| { ok: true; submit: WebControl }
+	| { ok: false; stop: Stop }
+	| { ok: false; result: RunResult }
+> {
 	const lastPage = state.schema.reduce((m, f) => Math.max(m, f.page), 1);
 	let scan = first;
-	let stepped = false;
 	for (let step = 1; step <= MAX_STEPS; step++) {
 		const done = await fillStep(page, run, scan, state);
 		if (!done.ok) return done;
@@ -938,12 +1023,11 @@ async function fillSteps(
 		// "Next" only while the reviewed form has a later step: otherwise any control that may send
 		// is the final submit, clicked once after the claim.
 		if (roles.next && step < lastPage) {
-			if (!stepped) {
-				const refused = (await run.beforeStep?.()) ?? null;
-				if (refused)
-					return { ok: false, stop: { kind: "error", message: refused } };
-				stepped = true;
-			}
+			const gate =
+				run.mode === "submit"
+					? await beforeSending(page, run, state, roles.next)
+					: null;
+			if (gate) return { ok: false, result: gate };
 			await page.click(`[data-jp-control="${roles.next.ref}"]`);
 			await page.waitForTimeout(500);
 			await page.waitForNetworkIdle(5_000);
@@ -967,7 +1051,7 @@ async function fillSteps(
 				ok: false,
 				stop: {
 					kind: "unrecognized_page",
-					message: `Could not tell which control sends the application (${done.scan.controls.map((c) => `"${c.text}"`).join(", ") || "none"}); nothing was clicked.`,
+					message: `Could not tell which control sends the application (${done.scan.controls.map((c) => `"${c.text}"`).join(", ") || "none"}); nothing more was clicked.`,
 				},
 			};
 		return { ok: true, submit: roles.submit };
@@ -981,19 +1065,95 @@ async function fillSteps(
 	};
 }
 
+/** Clicks the final submit once and reads the outcome; never throws. */
+async function submitOnce(
+	page: BrowserPage,
+	run: ApplicationRun,
+	state: RunState,
+	submit: WebControl,
+): Promise<RunResult> {
+	const formUrl = page.url();
+	const before = state.before ?? new Uint8Array();
+	try {
+		const beforeClick = {
+			text: (await safeEvaluate<string>(page, PAGE_TEXT_SCRIPT)) ?? "",
+			logged: page.networkLog().length,
+		};
+		await page.click(`[data-jp-control="${submit.ref}"]`);
+		const result = await readOutcome(page, formUrl, run, beforeClick);
+		const after = (await shot(page)) ?? new Uint8Array();
+		return "confirmed" in result
+			? {
+					outcome: "submitted",
+					before,
+					after,
+					confirmation: result.confirmed,
+					finalUrl: page.url(),
+					filled: state.filled,
+				}
+			: {
+					outcome: "unknown",
+					before,
+					after,
+					reason: result.unknown,
+					finalUrl: page.url(),
+					filled: state.filled,
+				};
+	} catch (error) {
+		return unknownAfterClaim(
+			page,
+			state,
+			`Error after the submit click: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+}
+
+/** A dry run's end: the filled form, short of the submit. */
+async function dryRunEnd(
+	page: BrowserPage,
+	run: ApplicationRun,
+	state: RunState,
+	submit: WebControl,
+): Promise<RunResult> {
+	const before = await page.screenshot({ fullPage: true });
+	const away = destinationProblem(page, run.allowedHosts);
+	const covered = await safeEvaluate<string | null>(
+		page,
+		webCoveredScript(submit.ref),
+	);
+	if (away || covered)
+		return stopped(
+			{
+				kind: away ? "other_site" : "unrecognized_page",
+				message: away ?? (covered as string),
+			},
+			before,
+			state.filled,
+		);
+	return {
+		outcome: "dry_run",
+		screenshot: before,
+		filled: state.filled,
+		blank: [],
+	};
+}
+
 /**
  * One run on an employer's form: open, fill each step from the approved plan, screenshot, and
- * (submit mode, after the claim) click the final submit once and read the outcome. Never throws
- * after the click: errors become `unknown`.
+ * (submit mode) click the final submit once and read the outcome. The claim comes before the
+ * first click that may send data: the first "Next" of a multi-step form, else the submit. After
+ * it nothing is ever "not sent": every end is an unknown outcome. Never throws.
  */
 export async function runWebApplication(
 	page: BrowserPage,
 	run: ApplicationRun,
 ): Promise<RunResult> {
-	const state = {
+	const state: RunState = {
 		schema: (run.schema ?? []) as WebSchemaField[],
-		filled: [] as FilledField[],
+		filled: [],
 		uploadsCleared: false,
+		before: null,
+		claimed: false,
 	};
 	try {
 		if (!run.schema)
@@ -1025,81 +1185,24 @@ export async function runWebApplication(
 			);
 		run.beforeFill?.();
 		const steps = await fillSteps(page, run, opened.scan, state);
-		if (!steps.ok) return stopped(steps.stop, await shot(page), state.filled);
-		const before = await page.screenshot({ fullPage: true });
-		const away = destinationProblem(page, run.allowedHosts);
-		const covered = await safeEvaluate<string | null>(
-			page,
-			webCoveredScript(steps.submit.ref),
-		);
-		if (away || covered)
-			return stopped(
-				{
-					kind: away ? "other_site" : "unrecognized_page",
-					message: away ?? (covered as string),
-				},
-				before,
-				state.filled,
-			);
+		if (!steps.ok)
+			return "result" in steps
+				? steps.result
+				: await ended(page, state, steps.stop);
 		if (run.mode === "dry_run")
-			return {
-				outcome: "dry_run",
-				screenshot: before,
-				filled: state.filled,
-				blank: [],
-			};
-		const claimed = run.claim
-			? await run.claim(before, state.filled)
-			: ({ go: false, reason: "no claim gate" } as const);
-		if (!claimed.go)
-			return {
-				outcome: "not_claimed",
-				reason: claimed.reason,
-				screenshot: before,
-				filled: state.filled,
-			};
-		const formUrl = page.url();
-		try {
-			const beforeClick = {
-				text: (await safeEvaluate<string>(page, PAGE_TEXT_SCRIPT)) ?? "",
-				logged: page.networkLog().length,
-			};
-			await page.click(`[data-jp-control="${steps.submit.ref}"]`);
-			const result = await readOutcome(page, formUrl, run, beforeClick);
-			const after = (await shot(page)) ?? new Uint8Array();
-			return "confirmed" in result
-				? {
-						outcome: "submitted",
-						before,
-						after,
-						confirmation: result.confirmed,
-						finalUrl: page.url(),
-						filled: state.filled,
-					}
-				: {
-						outcome: "unknown",
-						before,
-						after,
-						reason: result.unknown,
-						finalUrl: page.url(),
-						filled: state.filled,
-					};
-		} catch (error) {
-			return {
-				outcome: "unknown",
-				before,
-				after: await shot(page),
-				reason: `Error after the submit click: ${error instanceof Error ? error.message : String(error)}`,
-				finalUrl: page.url(),
-				filled: state.filled,
-			};
-		}
+			return await dryRunEnd(page, run, state, steps.submit);
+		const gate = await beforeSending(page, run, state, steps.submit);
+		if (gate) return gate;
+		return await submitOnce(page, run, state, steps.submit);
 	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (state.claimed)
+			return unknownAfterClaim(page, state, `Error: ${message}`);
 		const away = destinationProblem(page, run.allowedHosts);
 		return stopped(
 			{
 				kind: away ? "other_site" : "error",
-				message: `${away ?? (error instanceof Error ? error.message : String(error))} (before submitting; nothing was sent)`,
+				message: `${away ?? message} (before submitting; nothing was sent)`,
 			},
 			await shot(page),
 			state.filled,

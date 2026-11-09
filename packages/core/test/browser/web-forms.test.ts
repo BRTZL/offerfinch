@@ -570,6 +570,87 @@ describe("submitting an employer's form", () => {
 	}, 60_000);
 });
 
+describe("a step that may send answers waits for the claim (Codex, 2026-11-09)", () => {
+	async function runNext(claim: ApplicationRun["claim"]) {
+		const schema = await schemaOf("posting-next");
+		const session = await fixtureBrowser().openSession({
+			network: "allowlist",
+			allowedHosts: ["127.0.0.1"],
+		});
+		try {
+			const page = await session.newPage();
+			return await runWebApplication(page, {
+				board: "web",
+				url: urlOf("posting-next"),
+				mode: "submit",
+				schema: schema.fields,
+				data: data(),
+				files: { cv: CV, coverLetter: null },
+				model: fakeModel(),
+				allowedHosts: ["127.0.0.1"],
+				confirmTimeoutMs: 3_000,
+				claim,
+			});
+		} finally {
+			await session.close();
+		}
+	}
+
+	it("a refused claim before the first Next sends nothing", async () => {
+		const schema = await schemaOf("posting-next");
+		expect(schema.fields.map((f) => [f.key, f.page])).toEqual([
+			["text:email", 1],
+			["text:full_name", 1],
+			["text:phone", 2],
+			["text:location", 2],
+		]);
+		const claim = vi.fn(async () => ({
+			go: false as const,
+			reason: "Submissions are paused.",
+		}));
+		const result = await runNext(claim);
+		expect(result).toMatchObject({ outcome: "not_claimed" });
+		expect(claim).toHaveBeenCalledTimes(1);
+		expect(forms.count("posting-next")).toBe(0);
+	}, 60_000);
+
+	it("after the claim, a step that ends the run is an unknown outcome, never a plain stop", async () => {
+		const { deps, calls } = harness(
+			"posting-next",
+			await schemaOf("posting-next"),
+		);
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(
+				/^Outcome unknown .*Step 2 of the form showed no questions.*"Next" was clicked/,
+			),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+		expect(calls[1]?.submitted).toBe(false);
+		expect(forms.count("posting-next")).toBe(1);
+	}, 60_000);
+
+	it("a pause after the first Next ends the run as unknown, with no further click", async () => {
+		const { deps, calls } = harness("two-step", await schemaOf("two-step"));
+		const store = deps.apply?.store;
+		if (!store) throw new Error("no store");
+		// Not paused when the form opens; paused at the next check, on step 2 (after the claim).
+		let checks = 0;
+		store.submissionsPaused = async () => ++checks > 1;
+		const before = forms.count("two-step");
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(
+				/^Outcome unknown .*Submissions were paused before .*"Next" was clicked/,
+			),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+		expect(forms.count("two-step")).toBe(before);
+	}, 60_000);
+});
+
 describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09)", () => {
 	it.each([
 		// The button only changed the query string: nothing was sent, the form stayed.

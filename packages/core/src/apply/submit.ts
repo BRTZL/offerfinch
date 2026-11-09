@@ -552,7 +552,8 @@ export async function submitStep(
 					(await db.submissionsPaused(userId))
 						? "Submissions were paused before the files were uploaded."
 						: null,
-				// A multi-step form may save a step on the employer's site at "Next": same check.
+				// A multi-step form claims before its first "Next" (a step may save answers on the
+				// employer's site); every later step checks the switch again.
 				beforeStep: pausedBefore(db, userId, "the form's next step"),
 				claim: async (before, filled) => {
 					const beforeKey = await store(
@@ -589,7 +590,7 @@ export async function submitStep(
 				const submitted = result.outcome === "submitted";
 				const reason = submitted
 					? `Submitted; ${confirmer(run.board)} confirmed: "${result.confirmation}"`
-					: `Outcome unknown after the submit click: ${result.reason} Check the employer's portal or your email before retrying.`;
+					: `Outcome unknown after a click that may have sent the application: ${result.reason} Check the employer's portal or your email before retrying.`;
 				await db.finishSubmission(userId, applicationId, attemptId ?? "", {
 					submitted,
 					afterKey,
