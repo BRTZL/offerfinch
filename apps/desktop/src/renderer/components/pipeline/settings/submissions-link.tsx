@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Link } from "@/lib/router";
 
 /** Settings › Applying, where the switch for automatic submissions is. */
-export const SUBMISSIONS_SETTINGS = "/settings/applying";
+const SUBMISSIONS_SETTINGS = "/settings/applying";
 
 /**
  * "Turn them on in Settings": every place that says submissions are paused links to the switch.
