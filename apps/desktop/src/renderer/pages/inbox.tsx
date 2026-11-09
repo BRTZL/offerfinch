@@ -100,7 +100,7 @@ const VIEWS: Record<
 		label: "All",
 		emptyTitle: "No jobs yet",
 		empty:
-			"Every hour OfferFinch searches your sources; jobs that reach your minimum fit land here.",
+			"OfferFinch searches your sources on a schedule; jobs that reach your minimum fit land here.",
 	},
 	matches: {
 		label: "Matches",

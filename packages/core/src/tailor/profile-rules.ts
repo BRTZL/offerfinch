@@ -710,6 +710,8 @@ function excerptAround(text: string, index: number): string {
 /** The cover letter's word range (the owner's decision, 2026-11-03: 220, was 250). */
 export const LETTER_MIN_WORDS = 220;
 export const LETTER_MAX_WORDS = 400;
+/** The most words a CV may have: more cannot fit two pages. */
+export const CV_MAX_WORDS = 1100;
 
 /** Every deterministic rule for one document. Notes are private, so only placeholders apply there. */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Profile rules keep evidence and issue emission in order so each finding retains its source context.
@@ -772,12 +774,15 @@ export function checkDocumentRules(
 				message: `Cover letter has ${words} words; it must be ${LETTER_MIN_WORDS} to ${LETTER_MAX_WORDS}.`,
 			});
 	}
-	if (kind === "cv" && wordCount(text) > 1100)
-		issues.push({
-			rule: "length",
-			document: kind,
-			message: `CV has ${wordCount(text)} words; that cannot fit two pages.`,
-		});
+	if (kind === "cv") {
+		const words = wordCount(text);
+		if (words > CV_MAX_WORDS)
+			issues.push({
+				rule: "length",
+				document: kind,
+				message: `CV has ${words} words; at most ${CV_MAX_WORDS} fit two pages, so cut at least ${words - CV_MAX_WORDS}.`,
+			});
+	}
 
 	// A company name is a proper noun: any other spelling is wrong. A role title can also be a
 	// plain description of the candidate ("senior full-stack engineer"), so it is only required

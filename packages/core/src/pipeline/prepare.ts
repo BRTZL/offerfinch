@@ -170,6 +170,7 @@ export async function draftStep(
 				askedQuestions: budget.asked,
 				questionsAllowed: questionsAllowed(budget),
 				...(formQuestions.length > 0 ? { formQuestions } : {}),
+				writingStyle: await deps.writingStyle?.(userId),
 			},
 		);
 	} catch (error) {
@@ -352,6 +353,7 @@ export async function reviewStep(
 					content: byKind.cover_letter.content,
 				},
 			],
+			look: await deps.documentLook?.(),
 		});
 		for (const record of exported.records)
 			await deps.repo.saveExport(userId, app.applicationId, record);

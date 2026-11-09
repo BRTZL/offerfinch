@@ -2,8 +2,10 @@ import {
 	Bell,
 	Database,
 	EyeOff,
+	FileText,
 	Filter,
 	Globe,
+	PenLine,
 	Send,
 	Settings2,
 	SlidersHorizontal,
@@ -32,6 +34,12 @@ const GROUPS: {
 			},
 			{ href: "/settings/sources", label: "Sources", icon: <Globe /> },
 			{ href: "/settings/applying", label: "Applying", icon: <Send /> },
+			{
+				href: "/settings/documents",
+				label: "Documents",
+				icon: <FileText />,
+			},
+			{ href: "/settings/writing", label: "Writing", icon: <PenLine /> },
 		],
 	},
 	{

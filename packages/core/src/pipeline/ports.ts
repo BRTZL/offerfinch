@@ -23,6 +23,7 @@ import type { RuleIssue } from "../tailor/profile-rules";
 import type { AskedQuestion } from "../tailor/questions";
 import type { RedraftDocument, RedraftRequest } from "../tailor/redraft";
 import type { CitedUnit } from "../tailor/stale";
+import type { WritingStyle } from "../tailor/writing-style";
 import type { ApplicationWorkflowParams } from "../workflow/types";
 import type { ProviderRun, ScanProvider } from "./providers";
 
@@ -451,6 +452,11 @@ export interface PipelineDeps {
 	tailorLlm?: LlmProvider;
 	/** The independent claims check: a different provider from `llm`. Required to prepare applications. */
 	claimsLlm?: LlmProvider;
+	/**
+	 * The user's saved writing style (Settings › Writing), read at each draft and redraft so a
+	 * save applies at once. Unset: the default style (today's prompt).
+	 */
+	writingStyle?: (userId: string) => Promise<WritingStyle>;
 	notifier: Notifier;
 	workflows: WorkflowStarter;
 	/**
@@ -483,6 +489,8 @@ export interface PipelineDeps {
 	apply?: ApplyDeps;
 	/** Cost tracking and the spending cap; every LLM call for a user goes through it when set. */
 	spend?: SpendStore;
+	/** How exports look (Settings › Documents), read at each export; unset: the default look. */
+	documentLook?: () => Promise<import("../export/look").DocumentLook>;
 	/** Replaces browser + blob export (tests). */
 	exporter?: (input: ExportInput) => Promise<ExportResult>;
 	/** Clock for letter dates; tests pin it. */

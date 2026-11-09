@@ -257,6 +257,12 @@ await run(copy(), async ({ page, go, shot }) => {
 	await go("/settings/job-filter");
 	await page.waitForTimeout(800);
 	await shot("13b-settings-job-search");
+	await go("/settings/documents");
+	await page.getByTestId("look-preview").waitFor();
+	await shot("13c-settings-documents");
+	await go("/settings/writing");
+	await page.getByTestId("writing-tone").waitFor();
+	await shot("13d-settings-writing");
 	await go("/settings/general");
 	await page.getByTestId("about-version").waitFor();
 	await shot("15-settings-general");

@@ -12,6 +12,20 @@ at the top, above the newest version. Only what is merged into main belongs here
 
 - A job in your Inbox counts as read as soon as you open it, so its blue dot goes away right
   away instead of after five seconds.
+- Settings › Documents picks how exported CVs and cover letters look: a template (Classic, as
+  before; Modern; or Compact, which fits more on a page), a font, an accent color for headings
+  and rules, and A4 or US Letter paper, with a live preview. Every look keeps the one-column,
+  real-text layout ATS parsers read. Word documents get the font, page size and accent too, and
+  their headings are no longer Word's default blue. Documents already exported keep their look;
+  the new one applies from the next export.
+- Settings › Writing sets how your drafts read: a plain, formal or warm tone, a shorter or
+  fuller cover letter (always 220 to 400 words), words never to use, and your own "always /
+  never" guidance. It applies to new drafts, redrafts, the chat and the answer helper; facts
+  still come only from your profile, and every draft is checked as before.
+- Settings › General › Running has a scan interval (every 1, 3, 6, 12 or 24 hours) and quiet
+  hours (off by default; 22:00–07:00 when turned on, in your Mac's time). In quiet hours no
+  scheduled scan starts and notifications wait, then arrive together when quiet hours end. Scan
+  now still works at any time. "Pause hourly scans" is now "Pause scans".
 
 ## 0.4.0 (2026-11-08)
 

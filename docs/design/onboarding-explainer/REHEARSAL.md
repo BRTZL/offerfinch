@@ -12,7 +12,7 @@ Source: `apps/desktop/src/renderer/components/desktop/setup/flow-explainer.tsx` 
 | Score | 2 Scores them on your CV | Nimbus Labs 94 and Orbit Freight 86 get their fit and "Match" |
 | Set aside | 3 Sets aside misfits | Halcyon Health says "Set aside: on-site in São Paulo", Kestrel Bank "41 Below your minimum fit"; both fold into "2 set aside" (the Inbox's own words) |
 | Draft | 4 Drafts when you ask | The cursor picks Nimbus Labs and presses Prepare; CV and Letter check off, 12 of 12 claims traced, "Ready for review", "You read it and apply yourself. Nothing is sent." |
-| Reset | | The cursor leaves, the draft closes, the rows leave, the status returns to "Checks every hour" |
+| Reset | | The cursor leaves, the draft closes, the rows leave, the status returns to "Checks on a schedule" |
 
 Poster (reduced motion, thumbnails): the finished state, Nimbus Labs ready for review with the draft open and step 4 lit.
 

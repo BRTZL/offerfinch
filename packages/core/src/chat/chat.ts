@@ -24,6 +24,7 @@ import {
 	profileBlock,
 	type TailorJob,
 } from "../tailor/tailor";
+import { type WritingStyle, writingStyleBlock } from "../tailor/writing-style";
 
 /**
  * The chat beside an application and beside the profile. The model answers in text and may
@@ -258,6 +259,8 @@ export interface ApplicationChatInput {
 	/** The conversation, oldest first, ending with the user's new message. */
 	history: ChatTurnMessage[];
 	today: string;
+	/** The user's saved writing style (Settings › Writing), for the edits: below every rule. */
+	writingStyle?: WritingStyle;
 }
 
 export interface ProfileChatInput {
@@ -297,7 +300,7 @@ Edits:
 - Only change what the user asked for. One edit per document; for form answers one edit per answer changed, with its question copied exactly.
 - cv, cover_letter and notes: give the whole new document, copying every unchanged line exactly.
 - Keep the {{email}} and {{phone}} tokens exactly as they are. No other placeholders, nothing else in braces or angle brackets.
-- CV: ATS-safe Markdown, single column, standard section names, no tables, images or icons, dates as "MMM YYYY – MMM YYYY" or "Present".
+- CV: ATS-safe Markdown, single column, standard section names, no tables, images or icons, dates as "MMM YYYY – MMM YYYY" or "Present", at most 1,100 words.
 - Cover letter: 220 to 400 words, 3 to 4 paragraphs, keep the header, date, greeting and sign-off. Plain, specific and human; no clichés ("I am excited to", "passionate", "thrive", "leverage", "stands out"); no em dashes; no negatives about the candidate.
 - Form answers: the first sentence answers the question; open questions 40 to 100 words; a single value one short line, never a number the profile does not state.
 - Documents can be edited only in review (ready_for_review) or after approval (approved). In any other state propose no edits and say why. An edit after approval withdraws the approval; say so when the state is approved.`;
@@ -387,7 +390,7 @@ ${promptText(input.job.descriptionText)}
 <application state="${promptAttr(input.state)}">
 ${docs}
 </application>
-
+${writingStyleBlock(input.writingStyle, known, "chat")}
 ${conversationBlock(input.history, known)}
 
 Today is ${input.today}. Answer the user's last message.`,

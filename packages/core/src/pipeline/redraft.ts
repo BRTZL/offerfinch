@@ -97,6 +97,7 @@ async function redraftStep(
 				profile,
 				fit: app.fit,
 				today: nowIso(deps).slice(0, 10),
+				writingStyle: await deps.writingStyle?.(userId),
 				redraft: {
 					documents,
 					instruction: request.instruction,

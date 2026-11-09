@@ -26,6 +26,10 @@ const SECTIONS: Record<string, ReturnType<typeof lazyNamed>> = {
 		() => import("@/components/pipeline/settings/hidden-companies"),
 		"HiddenCompaniesSettings",
 	),
+	documents: lazyNamed(
+		() => import("@/components/pipeline/settings/documents"),
+		"DocumentSettings",
+	),
 	sources: lazyNamed(
 		() => import("@/components/pipeline/settings/sources"),
 		"SourcesSettings",
@@ -33,6 +37,10 @@ const SECTIONS: Record<string, ReturnType<typeof lazyNamed>> = {
 	applying: lazyNamed(
 		() => import("@/components/pipeline/settings/applying"),
 		"ApplyingSettings",
+	),
+	writing: lazyNamed(
+		() => import("@/components/pipeline/settings/writing"),
+		"WritingSettings",
 	),
 	notifications: lazyNamed(
 		() => import("@/components/desktop/notifications"),

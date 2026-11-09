@@ -73,13 +73,29 @@ export function settingsFor(latest: boolean) {
 			// An object stored before this switch existed reads it as on: notices.test.ts.
 			followup: false,
 		},
+		writingStyle: {
+			tone: "formal",
+			coverLetterLength: "shorter",
+			avoidWords: ["synergy", "rockstar"],
+			guidance: "Always say team, never squad.",
+		},
 		onboarding: {
 			done: ["ai", "resume", "profile", "rules"],
 			skipped: ["login"],
 			dismissed: true,
 			completedAt: iso(1),
 		},
+		documentLook: {
+			template: "compact",
+			font: "georgia",
+			accent: "navy",
+			pageSize: "Letter",
+		},
 		paused: true,
+		scanSchedule: {
+			every: 6,
+			quietHours: { enabled: true, start: "23:00", end: "06:30" },
+		},
 		shellPath: "/opt/fixture/bin:/usr/bin:/bin",
 		linkedinEnabled: true,
 		movedSearches: "An earlier note the user has not dismissed.",
@@ -91,6 +107,8 @@ export function settingsFor(latest: boolean) {
 		// Older databases were filtered with version 0 (the start re-filters them once).
 		jobSearchVersion: latest ? 2 : 0,
 		noticeWatermark: at(5),
+		// Nothing waiting: a notice here would go out on the upgrade's first start.
+		heldNotices: [],
 		// Set already: the start notes removed keys only once, and never undoes a dismissal.
 		keysRemoved: { steps: ["claims"], dismissed: true },
 		whatsNewSeen: "0.0.9",

@@ -80,7 +80,11 @@ export function ReadingColumn({
 				onContextMenu={onContextMenu}
 			>
 				{/* Room at the foot for the detail's floating action bar. */}
-				<div className="mx-auto flex w-full max-w-192 flex-col gap-4 px-6 pb-28">
+				{/* Find searches here (components/system/find-bar.tsx). */}
+				<div
+					className="mx-auto flex w-full max-w-192 flex-col gap-4 px-6 pb-28"
+					data-findable
+				>
 					{children}
 				</div>
 			</div>

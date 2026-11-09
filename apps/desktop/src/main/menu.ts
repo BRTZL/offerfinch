@@ -19,6 +19,60 @@ export function buildMenu() {
 	Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate()));
 }
 
+/**
+ * Edit: what Electron's `editMenu` role gives on each platform, then Find (⌘F, ⌘G, ⇧⌘G), which
+ * the page answers in an open application (components/system/find-bar.tsx).
+ */
+function editMenu(platform: NodeJS.Platform): MenuItemConstructorOptions {
+	const mac = platform === "darwin";
+	const find = (id: "find" | "find-next" | "find-previous", label: string) => ({
+		id,
+		label,
+		accelerator: accelerator(id, mac),
+		click: () => sendCommand(id),
+	});
+	return {
+		label: "Edit",
+		submenu: [
+			{ role: "undo" },
+			{ role: "redo" },
+			{ type: "separator" },
+			{ role: "cut" },
+			{ role: "copy" },
+			{ role: "paste" },
+			...(mac
+				? ([
+						{ role: "pasteAndMatchStyle" },
+						{ role: "delete" },
+						{ role: "selectAll" },
+					] satisfies MenuItemConstructorOptions[])
+				: ([
+						{ role: "delete" },
+						{ type: "separator" },
+						{ role: "selectAll" },
+					] satisfies MenuItemConstructorOptions[])),
+			{ type: "separator" },
+			{
+				label: "Find",
+				submenu: [
+					find("find", "Find…"),
+					find("find-next", "Find Next"),
+					find("find-previous", "Find Previous"),
+				],
+			},
+			...(mac
+				? ([
+						{ type: "separator" },
+						{
+							label: "Speech",
+							submenu: [{ role: "startSpeaking" }, { role: "stopSpeaking" }],
+						},
+					] satisfies MenuItemConstructorOptions[])
+				: []),
+		],
+	};
+}
+
 /** The menu bar's items, apart from building them (tests read the accelerators). */
 export function menuTemplate(
 	platform: NodeJS.Platform = process.platform,
@@ -72,7 +126,7 @@ export function menuTemplate(
 				{ role: "close" },
 			],
 		},
-		{ role: "editMenu" },
+		editMenu(platform),
 		{
 			label: "View",
 			submenu: [

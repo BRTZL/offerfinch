@@ -13,6 +13,7 @@ import {
 	Keyboard,
 	MessageCircleQuestion,
 	Pause,
+	PenLine,
 	Play,
 	Plus,
 	RefreshCw,
@@ -95,6 +96,7 @@ const SETTINGS: { label: string; href: string; icon: ReactNode }[] = [
 	{ label: "Job search", href: "/settings/job-filter", icon: <Filter /> },
 	{ label: "Sources", href: "/settings/sources", icon: <Globe /> },
 	{ label: "Applying", href: "/settings/applying", icon: <Send /> },
+	{ label: "Writing", href: "/settings/writing", icon: <PenLine /> },
 	{ label: "Notifications", href: "/settings/notifications", icon: <Bell /> },
 	{ label: "General", href: "/settings/general", icon: <Settings2 /> },
 	{ label: "Your data", href: "/settings/your-data", icon: <Database /> },
@@ -190,9 +192,7 @@ export default function CommandMenu({ onClose }: { onClose: () => void }) {
 	const pause = useMutation({
 		mutationFn: (paused: boolean) => client.desktop.setPaused({ paused }),
 		onSuccess: (r) => {
-			toast.success(
-				r.paused ? "Hourly scans paused." : "Hourly scans resumed.",
-			);
+			toast.success(r.paused ? "Scans paused." : "Scans resumed.");
 			void queryClient.invalidateQueries({ queryKey: orpc.desktop.key() });
 		},
 		onError: (e) => toast.error(e.message),
@@ -252,7 +252,7 @@ export default function CommandMenu({ onClose }: { onClose: () => void }) {
 			{
 				id: "pause",
 				group: "Scans",
-				label: paused ? "Resume hourly scans" : "Pause hourly scans",
+				label: paused ? "Resume scans" : "Pause scans",
 				icon: paused ? <Play /> : <Pause />,
 				run: () => pause.mutate(!paused),
 			},
