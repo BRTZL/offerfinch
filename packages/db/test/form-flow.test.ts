@@ -23,7 +23,12 @@ import {
 	importProfile,
 	seedCompanies,
 } from "@offerfinch/db";
-import { applications, companies } from "@offerfinch/db/schema/pipeline";
+import {
+	applications,
+	approvals,
+	companies,
+	profiles,
+} from "@offerfinch/db/schema/pipeline";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -112,6 +117,7 @@ beforeAll(async () => {
 						field("1", "text", "first_name", "First Name", { required: true }),
 						field("2", "text", "last_name", "Last Name", { required: true }),
 						field("3", "text", "email", "Email", { required: true }),
+						field("8", "text", "phone", "Phone", { required: true }),
 						field("4", "file", "resume", "Resume/CV", { required: true }),
 						field("5", "text", "question_1", WHY, { required: true }),
 						// Planted: the profile cannot answer it.
@@ -285,5 +291,78 @@ describe("the form read before review", () => {
 		expect(reads).toBe(before);
 		expect(await repo.getState(a.id, slowApp)).toBe("ready_for_review");
 		expect(await repo.formRead(a.id, slowApp)).toBeNull();
+	});
+});
+
+describe("Approve waits on an empty required field (plan step 7)", () => {
+	/** The profile's files as stored: the test edits them the way another window's edit would. */
+	const files = async () =>
+		(
+			await t.db
+				.select({ files: profiles.files })
+				.from(profiles)
+				.where(eq(profiles.userId, a.id))
+		)[0]?.files ?? [];
+	const saveFiles = (next: Awaited<ReturnType<typeof files>>) =>
+		t.db.update(profiles).set({ files: next }).where(eq(profiles.userId, a.id));
+
+	it("refuses the approval when the value goes after review checked it, in the approval itself", async () => {
+		// The drafted lines the fake model flags are confirmed, so only the field decides.
+		const flagged = await a.rpc.application.get({ id: appId });
+		for (const f of flagged.flags.filter((x) => x.state === "open"))
+			await a.rpc.application.confirmFlag({ id: appId, flagId: f.id });
+		// This test's exporter does not finish the PDF check; the review records it as passed.
+		const review = await repo.latestReview(a.id, appId);
+		await repo.completeReview(a.id, review?.id ?? "", []);
+		// The review page's check passes: Phone has the profile's value.
+		const app = await a.rpc.application.get({ id: appId });
+		expect(app.approvable).toBe(true);
+		expect(app.state).toBe("ready_for_review");
+		expect(app.missingRequired).toEqual([]);
+		const phone =
+			app.form?.status === "read"
+				? app.form.fields.find((f) => f.label === "Phone")?.value
+				: undefined;
+		expect(phone).toBe("+1 555 010 0199");
+		// Between that check and the approval, the phone leaves the profile.
+		const before = await files();
+		await saveFiles(
+			before.map((f) =>
+				f.path === "personal.md"
+					? { ...f, content: f.content.replace(/^- \*\*Phone:\*\*.*$/m, "") }
+					: f,
+			),
+		);
+		await expect(
+			repo.approve({
+				userId: a.id,
+				applicationId: appId,
+				approvedHashes: app.currentHashes ?? {},
+				idempotencyKey: "approve-race-direct",
+			}),
+		).rejects.toThrow(/required fields would be sent empty: "Phone"/);
+		await expect(
+			a.rpc.application.approve({
+				id: appId,
+				hashes: app.currentHashes ?? {},
+				idempotencyKey: "approve-race-rpc",
+			}),
+		).rejects.toThrow(/required fields would be sent empty: "Phone"/);
+		expect(await repo.getState(a.id, appId)).toBe("ready_for_review");
+		expect(
+			await t.db
+				.select()
+				.from(approvals)
+				.where(eq(approvals.applicationId, appId)),
+		).toEqual([]);
+		// With the value back, the same approval goes through.
+		await saveFiles(before);
+		await repo.approve({
+			userId: a.id,
+			applicationId: appId,
+			approvedHashes: app.currentHashes ?? {},
+			idempotencyKey: "approve-race-after",
+		});
+		expect(await repo.getState(a.id, appId)).toBe("approved");
 	});
 });

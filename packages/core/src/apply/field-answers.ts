@@ -263,3 +263,18 @@ export function whatWillBeSent(
 		}),
 	};
 }
+
+/**
+ * Required fields of "What will be sent" that would go out empty (plan step 7, follow-up from
+ * step 2): Approve waits until each has a value. Only where the form is filled automatically.
+ * Review shows these, and the approval itself is refused on them (db `recordUserAction`).
+ */
+export function missingRequired(
+	form: WhatWillBeSent | null,
+	mode: { mode: string },
+): string[] {
+	if (mode.mode !== "auto" || form?.status !== "read") return [];
+	return form.fields
+		.filter((f) => f.required && f.value === null)
+		.map((f) => f.label);
+}

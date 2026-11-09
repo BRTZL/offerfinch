@@ -1,5 +1,11 @@
+import {
+	missingRequired,
+	whatWillBeSent,
+} from "@offerfinch/core/apply/field-answers";
 import type { FormRead } from "@offerfinch/core/apply/form-schema";
 import { sameQuestion } from "@offerfinch/core/apply/forms";
+import { submissionModeAfterRead } from "@offerfinch/core/apply/modes";
+import { applicantData, modeOf } from "@offerfinch/core/apply/submit";
 import {
 	type FormAnswer,
 	parseFormAnswers,
@@ -35,6 +41,34 @@ export const formsMethods = {
 			note: row.note ?? "The form could not be read before review.",
 			readAt,
 		};
+	},
+
+	/**
+	 * Required fields of "What will be sent" that would go out empty, from the profile, the saved
+	 * form read and the form answers as they are inside the caller's transaction (plan step 7).
+	 * The approval is recorded only when this is empty, so a value removed after the review page
+	 * checked it still holds the approval. Empty where the form is not filled automatically.
+	 */
+	async missingRequiredFields(
+		t: Tx,
+		userId: string,
+		applicationId: string,
+	): Promise<string[]> {
+		const context = await this.submissionContext(userId, applicationId);
+		const read = await this.formRead(userId, applicationId);
+		const profile = await this.getProfile(userId, t);
+		if (!context || !read || !profile) return [];
+		const mode = submissionModeAfterRead(modeOf(context), context.board, read);
+		// Approval needs a finished review, which exports the letter: a drafted letter is attached.
+		const data = applicantData(
+			profile,
+			context,
+			context.coverLetterMarkdown !== null,
+		);
+		return missingRequired(
+			whatWillBeSent(read, data, await this.savedAnswers(userId)),
+			mode,
+		);
 	},
 
 	/** Only while preparing: an approval never covers a list that changed after it. */

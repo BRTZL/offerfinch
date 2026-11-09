@@ -20,4 +20,6 @@ export type DrizzlePipelineRepositoryContext = Pick<
 	resumeWithFormAnswers: DrizzlePipelineRepository["resumeWithFormAnswers"];
 	writeFormRead: DrizzlePipelineRepository["writeFormRead"];
 	mergeFormAnswers: DrizzlePipelineRepository["mergeFormAnswers"];
+	missingRequiredFields: DrizzlePipelineRepository["missingRequiredFields"];
+	refuseEmptyRequired: DrizzlePipelineRepository["refuseEmptyRequired"];
 };

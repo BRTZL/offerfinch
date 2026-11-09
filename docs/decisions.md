@@ -1085,3 +1085,12 @@ no real employer form was submitted, and `SUBMIT_ALLOWED_HOSTS` stays empty in t
 | The boards (Ashby, Greenhouse, Lever, Workable, Recruitee, Teamtailor, Personio) are unchanged: a board's confirmation still records applied; Teamtailor and Personio still end unknown | The decision keeps them |
 | The stop sheet's `unknown_error_answer` and `unknown_refused` cases now apply only to attempts recorded before this change | New employer-form attempts are `web_sent` |
 | e2e: `apps/desktop/e2e/web-sent.spec.ts` sends a stand-in employer form once and moves it to Applied with Got the email. A job added by hand is always a hand-off, so the spec sets the job's source to `web` (the web search) before Interested. Screenshots: `docs/screenshots/desktop/web-sent.png`, `web-sent-applied.png` | No e2e fixture source links out to an employer's form |
+
+## 2026-11-09: Review fixes on PR #149 (confirmations bound to an attempt, the required-field hold, the form link)
+
+Codex review findings on `feat/playwright-job-applications`. Fixtures and unit tests only; no real
+form was submitted.
+
+| Decision | Why |
+|---|---|
+| Approve's hold on an empty required field is checked inside the transaction that records the approval (db `recordUserAction` › `refuseEmptyRequired`), from the profile, the saved form read and the form answers read in that transaction; the router no longer checks it first. Review's `missingRequired` and the refusal share core `missingRequired`. Every approval goes through `recordUserAction` (the one `insert(approvals)`; no shortcut, menu item, notice or bulk action approves) | A required contact value removed between the router's check and the approval let it through with Phone empty. Supersedes, in step 7, "The approve call is refused on the server too" as a separate check before the approval |

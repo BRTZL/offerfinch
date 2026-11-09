@@ -249,6 +249,12 @@ export class DrizzlePipelineRepository
 		return eventsMethods.consumeEvent.apply(this, args);
 	}
 
+	protected refuseEmptyRequired(
+		...args: Parameters<typeof eventsMethods.refuseEmptyRequired>
+	) {
+		return eventsMethods.refuseEmptyRequired.apply(this, args);
+	}
+
 	recordUserAction(...args: Parameters<typeof eventsMethods.recordUserAction>) {
 		return eventsMethods.recordUserAction.apply(this, args);
 	}
@@ -346,6 +352,12 @@ export class DrizzlePipelineRepository
 
 	formRead(...args: Parameters<typeof formsMethods.formRead>) {
 		return formsMethods.formRead.apply(this, args);
+	}
+
+	protected missingRequiredFields(
+		...args: Parameters<typeof formsMethods.missingRequiredFields>
+	) {
+		return formsMethods.missingRequiredFields.apply(this, args);
 	}
 
 	saveFormRead(...args: Parameters<typeof formsMethods.saveFormRead>) {

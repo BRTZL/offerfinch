@@ -1,4 +1,5 @@
 import {
+	missingRequired,
 	type WhatWillBeSent,
 	whatWillBeSent,
 } from "@offerfinch/core/apply/field-answers";
@@ -63,20 +64,6 @@ async function whatWillBeSentFor(
 		applicantData(profile, context, context.coverLetterMarkdown !== null),
 		await repo.savedAnswers(userId),
 	);
-}
-
-/**
- * Required fields of the approved list that would go out empty (plan step 7, follow-up from step
- * 2): Approve waits until each has a value. Only where the form is filled automatically.
- */
-function missingRequiredOf(
-	form: WhatWillBeSent | null,
-	mode: { mode: string },
-): string[] {
-	if (mode.mode !== "auto" || form?.status !== "read") return [];
-	return form.fields
-		.filter((f) => f.required && f.value === null)
-		.map((f) => f.label);
 }
 
 /**
@@ -231,7 +218,7 @@ export const pipelineRouter = {
 					input.id,
 					profile,
 				);
-				const missingRequired = missingRequiredOf(form, mode);
+				const missingFields = missingRequired(form, mode);
 				const approvable =
 					detail.state === "ready_for_review" &&
 					!detail.redraft &&
@@ -239,7 +226,7 @@ export const pipelineRouter = {
 					review.passed &&
 					review.atsChecked &&
 					staleProfile.length === 0 &&
-					missingRequired.length === 0;
+					missingFields.length === 0;
 				const docOf = (kind: string) =>
 					detail.documents.find((d) => d.kind === kind)?.content ?? "";
 				const flagDocs = {
@@ -313,7 +300,7 @@ export const pipelineRouter = {
 							: null,
 					approvable,
 					/** Required fields of "What will be sent" with no value: Approve waits for them. */
-					missingRequired,
+					missingRequired: missingFields,
 					/** Cited facts edited or removed since the check: approval waits for Check again. */
 					staleProfile,
 					/** claims_flagged: the user resolves each flag before approving. */
@@ -536,28 +523,7 @@ export const pipelineRouter = {
 			)
 			.handler(({ context, input }) =>
 				refusal(async () => {
-					const userId = context.session.user.id;
-					const repo = repoOf(context);
-					const detail = await repo.getApplication(userId, input.id);
-					if (detail) {
-						const { mode } = await submissionView(repo, userId, input.id, {
-							job: detail.job,
-							companyKey: detail.company.key,
-						});
-						const missing = missingRequiredOf(
-							await whatWillBeSentFor(
-								repo,
-								userId,
-								input.id,
-								await repo.getProfile(userId),
-							),
-							mode,
-						);
-						if (missing.length > 0)
-							throw new ORPCError("CONFLICT", {
-								message: `Refusing: required fields would be sent empty: ${missing.map((m) => `"${m}"`).join(", ")}`,
-							});
-					}
+					// Required values are checked inside the approval's transaction (db approve).
 					const event = await repoOf(context).approve({
 						userId: context.session.user.id,
 						applicationId: input.id,
