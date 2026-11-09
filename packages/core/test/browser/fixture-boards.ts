@@ -159,7 +159,7 @@ function ashbyForm(company: string, variant: Set<string>): string {
 				]
 			: []),
 	];
-	const eeo = `<div class="ashby-application-form-section-container"><div class="ashby-application-form-field-entry"><fieldset><legend class="ashby-application-form-question-title">Gender</legend>${[
+	const eeo = `<div class="ashby-application-form-section-container"><h3 class="ashby-application-form-section-header">Voluntary self-identification</h3><div class="ashby-application-form-field-entry"><fieldset><legend class="ashby-application-form-question-title">Gender</legend>${[
 		"Male",
 		"Female",
 		"Decline to self-identify",
@@ -247,6 +247,7 @@ function greenhouseForm(company: string, variant: Set<string>): string {
 					),
 				]
 			: []),
+		"<h3>Voluntary self-identification</h3>",
 		variant.has("defaults")
 			? wrapper(
 					`<label for="gender" class="label">Gender</label><select id="gender" name="gender"><option value="">Select...</option><option selected>Male</option><option>Female</option><option>Decline To Self Identify</option></select>`,

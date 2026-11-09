@@ -1,5 +1,6 @@
 import type { BlobStore } from "../export/export";
 import type { PipelineDeps } from "../pipeline/ports";
+import type { ProfileSnapshot } from "../profile/types";
 import type { BrowserProvider, NetworkLogEntry } from "../scrape/browser";
 import { evidenceProfile } from "../tailor/profile-rules";
 import { type FormAnswer, parseContact } from "../tailor/tailor";
@@ -9,7 +10,10 @@ import {
 	type RunResult,
 	runApplication,
 } from "./applier";
+import type { SavedAnswer } from "./field-answers";
+import type { FormRead, FormSchema } from "./form-schema";
 import {
+	type ApplicantData,
 	BOARDS,
 	type Board,
 	applyUrl as boardApplyUrl,
@@ -131,8 +135,28 @@ export interface SubmissionStore {
 		applicationId: string,
 		input: AttemptInput & { afterKey?: null },
 	): Promise<string>;
-	/** The user's saved answers (question inbox), for reuse. */
-	savedAnswers(userId: string): Promise<FormAnswer[]>;
+	/** The user's saved answers (question inbox), for reuse, with their record ids. */
+	savedAnswers(userId: string): Promise<SavedAnswer[]>;
+	/** The form read before review (step 2 of docs/auto-apply-plan.md), or null when never read. */
+	formRead?(userId: string, applicationId: string): Promise<FormRead | null>;
+	/**
+	 * Saves the read, replacing an earlier one; only while the application is preparing, so a
+	 * read never changes what an approval covered. False when it was not saved.
+	 */
+	saveFormRead?(
+		userId: string,
+		applicationId: string,
+		read: FormRead,
+	): Promise<boolean>;
+	/**
+	 * Adds answers to the form answers as a new version (same question: replaced), while the
+	 * application is preparing. Returns how many changed.
+	 */
+	addFormAnswers?(
+		userId: string,
+		applicationId: string,
+		answers: FormAnswer[],
+	): Promise<number>;
 	/**
 	 * Applications left in `applying` since before `before` (the worker running the submission
 	 * died, so nothing will wake them): a `started` attempt becomes an unknown outcome, otherwise
@@ -159,6 +183,13 @@ export interface ApplyDeps {
 	run?: (
 		run: ApplicationRun,
 	) => Promise<RunResult & { networkLog?: unknown[] }>;
+	/** Replaces the browser read of a form before review (tests). */
+	readForm?: (input: {
+		board: Board;
+		url: string;
+	}) => Promise<
+		{ ok: true; schema: FormSchema } | { ok: false; reason: string }
+	>;
 	now?: () => Date;
 }
 
@@ -229,6 +260,42 @@ export async function beginSubmissionStep(
 	return deps.apply.store.beginSubmission(userId, applicationId);
 }
 
+/**
+ * What the form is filled from: the profile's contact details, the approved form answers and
+ * letter. Shared by the submission, the dry run and the "What will be sent" list.
+ */
+export function applicantData(
+	profile: ProfileSnapshot,
+	context: Pick<SubmissionContext, "formAnswers" | "coverLetterMarkdown">,
+	hasCoverLetterFile: boolean,
+): ApplicantData {
+	return {
+		contact: parseContact(evidenceProfile(profile)),
+		answers: context.formAnswers,
+		coverLetterText: context.coverLetterMarkdown
+			? markdownToPlain(context.coverLetterMarkdown)
+			: null,
+		hasCoverLetterFile,
+	};
+}
+
+/** The board's form URL for this application (fixture bases replace the real hosts). */
+export function formUrlOf(
+	context: Pick<SubmissionContext, "jobUrl" | "externalId" | "companyKey">,
+	board: Board,
+	bases?: ApplyDeps["boardBases"],
+): string {
+	return boardApplyUrl(
+		board,
+		{
+			url: context.jobUrl,
+			externalId: context.externalId,
+			companyKey: context.companyKey,
+		},
+		bases,
+	);
+}
+
 /** What a run needs from the approved application: URL, answers and the approved PDFs. */
 async function prepareRun(
 	deps: PipelineDeps,
@@ -239,15 +306,7 @@ async function prepareRun(
 ): Promise<{ run: ApplicationRun } | { stop: string }> {
 	if (!context.board)
 		return { stop: "This board has no automatic form filling; apply by hand." };
-	const url = boardApplyUrl(
-		context.board,
-		{
-			url: context.jobUrl,
-			externalId: context.externalId,
-			companyKey: context.companyKey,
-		},
-		apply.boardBases,
-	);
+	const url = formUrlOf(context, context.board, apply.boardBases);
 	if (!context.cvPdfKey)
 		return { stop: "The approved CV has no PDF export to upload." };
 	const cv = await apply.blobs.get(context.cvPdfKey);
@@ -258,19 +317,15 @@ async function prepareRun(
 		return { stop: `The approved CV PDF is missing from ${apply.blobs.name}.` };
 	const profile = await deps.repo.getProfile(userId);
 	if (!profile) return { stop: "No profile to read contact details from." };
+	// The form read before review: its fields are what the user approved values for.
+	const read = await apply.store.formRead?.(userId, context.applicationId);
 	return {
 		run: {
 			board: context.board,
 			url,
 			mode,
-			data: {
-				contact: parseContact(evidenceProfile(profile)),
-				answers: context.formAnswers,
-				coverLetterText: context.coverLetterMarkdown
-					? markdownToPlain(context.coverLetterMarkdown)
-					: null,
-				hasCoverLetterFile: letter !== null,
-			},
+			...(read?.status === "read" ? { schema: read.schema.fields } : {}),
+			data: applicantData(profile, context, letter !== null),
 			files: {
 				cv: { name: "CV.pdf", mimeType: "application/pdf", buffer: cv },
 				coverLetter: letter

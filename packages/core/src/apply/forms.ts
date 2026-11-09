@@ -129,6 +129,8 @@ export interface FormField {
 	current?: string[];
 	/** A select that has an option with an empty value, so it can be left unanswered. */
 	emptyOption?: boolean;
+	/** The heading the field sits under inside the form ("Voluntary self-identification"); empty when none. */
+	section?: string;
 }
 
 /**
@@ -186,6 +188,12 @@ export function scanScript(config: BoardConfig): string {
 		if (kind === "combobox") return comboValue(el);
 		return el.value && el.value.trim() ? [el.value] : [];
 	};
+	const headings = root.querySelectorAll("h2, h3, h4, [class*=section-header], [class*=section-title]");
+	const sectionOf = (el) => {
+		let found = "";
+		for (const h of headings) if (h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) found = textOf(h);
+		return found;
+	};
 	const fields = [];
 	const seen = new Set();
 	let n = 0;
@@ -195,7 +203,7 @@ export function scanScript(config: BoardConfig): string {
 		const hidden = yesno.querySelector("input");
 		if (hidden) seen.add(hidden);
 		const buttons = [...yesno.querySelectorAll("button")];
-		fields.push({ ref: stamp(yesno), kind: "yesno", label: textOf(box && box.querySelector(cfg.label)), required: requiredMark(box), name: hidden ? hidden.name : "", options: buttons.map(textOf), visible: true, current: buttons.filter((b) => b.getAttribute("aria-pressed") === "true").map(textOf) });
+		fields.push({ ref: stamp(yesno), kind: "yesno", label: textOf(box && box.querySelector(cfg.label)), required: requiredMark(box), name: hidden ? hidden.name : "", options: buttons.map(textOf), visible: true, current: buttons.filter((b) => b.getAttribute("aria-pressed") === "true").map(textOf), section: sectionOf(yesno) });
 	}
 	for (const el of root.querySelectorAll("input, textarea, select")) {
 		if (seen.has(el)) continue;
@@ -213,7 +221,7 @@ export function scanScript(config: BoardConfig): string {
 			const fieldset = el.closest("fieldset");
 			const legend = fieldset && fieldset.querySelector("legend");
 			const label = textOf(box && box.querySelector(cfg.label)) || textOf(legend) || (group.length === 1 ? optionText(el) : "");
-			fields.push({ ref, kind: type, label, required: group.some((g) => g.required || g.getAttribute("aria-required") === "true") || requiredMark(box), name: el.name || el.id, options: group.map(optionText), visible: group.some(visible), current: group.filter((g) => g.checked).map(optionText) });
+			fields.push({ ref, kind: type, label, required: group.some((g) => g.required || g.getAttribute("aria-required") === "true") || requiredMark(box), name: el.name || el.id, options: group.map(optionText), visible: group.some(visible), current: group.filter((g) => g.checked).map(optionText), section: sectionOf(el) });
 			continue;
 		}
 		seen.add(el);
@@ -228,6 +236,7 @@ export function scanScript(config: BoardConfig): string {
 			visible: kind === "file" ? true : visible(el),
 			current: currentOf(el, kind),
 			emptyOption: el.tagName === "SELECT" ? [...el.options].some((o) => o.value === "") : undefined,
+			section: sectionOf(el),
 		});
 	}
 	return fields;
@@ -519,11 +528,33 @@ function contactValue(role: SystemRole, data: ApplicantData): string {
 	}
 }
 
+/** An option that declines to self-identify ("Decline to self-identify", "I prefer not to say"). */
+const DECLINE =
+	/\b(?:decline|declined|prefer not|rather not|do not wish|don ?t wish|not wish to|choose not to|not to (?:say|disclose|answer|identify|self identify))\b/;
+
+/** The option of a self-identification question that declines to answer, or null. */
+export function declineOption(field: FormField): string | null {
+	return field.options.find((o) => DECLINE.test(questionKeyOf(o))) ?? null;
+}
+
+export interface PlanOptions {
+	/**
+	 * Self-identification questions without an approved answer take their "decline to answer"
+	 * option when they offer one. Only for a form read before review, whose values the user
+	 * approved in the "What will be sent" list (docs/auto-apply-plan.md, step 3).
+	 */
+	declineVoluntary?: boolean;
+}
+
 /**
  * Decides every field's value from approved data only. File fields come last so nothing is
  * uploaded (some boards upload on selection) before the rest of the form is known to be fillable.
  */
-export function planFill(fields: FormField[], data: ApplicantData): FillPlan {
+export function planFill(
+	fields: FormField[],
+	data: ApplicantData,
+	options: PlanOptions = {},
+): FillPlan {
 	const plan: FillPlan = { actions: [], unknown: [], blank: [] };
 	const files: FillAction[] = [];
 	const ask = (field: FormField, extra: Partial<UnknownQuestion> = {}) =>
@@ -588,8 +619,14 @@ export function planFill(fields: FormField[], data: ApplicantData): FillPlan {
 			continue;
 		}
 		if (role === "voluntary") {
-			// Self-identification is the user's to give; an approved answer is used, nothing else.
+			// Self-identification is the user's to give: an approved answer is used, or, on a form
+			// read before review, the field's own "decline" option, shown in the approved list.
 			const answer = findAnswer(field.label, data.answers);
+			const decline = options.declineVoluntary ? declineOption(field) : null;
+			if (!answer && decline) {
+				plan.actions.push(declineAction(field, decline));
+				continue;
+			}
 			if (!answer) {
 				unknown(field);
 				continue;
@@ -679,6 +716,20 @@ export function planFill(fields: FormField[], data: ApplicantData): FillPlan {
 	}
 	plan.actions.push(...files);
 	return plan;
+}
+
+function declineAction(field: FormField, option: string): FillAction {
+	const base = { ref: field.ref, label: field.label };
+	switch (field.kind) {
+		case "select":
+			return { ...base, kind: "select", value: option };
+		case "combobox":
+			return { ...base, kind: "combobox", value: option };
+		case "yesno":
+			return { ...base, kind: "yesno", value: option };
+		default:
+			return { ...base, kind: "choose", values: [option] };
+	}
 }
 
 const fieldKey = (f: FormField) => `${f.kind}|${f.name}|${f.label}`;

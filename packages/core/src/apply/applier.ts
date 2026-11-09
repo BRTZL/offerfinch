@@ -4,6 +4,7 @@ import {
 	type UploadFile,
 	urlOnHosts,
 } from "../scrape/browser";
+import { alignWithSchema, type SchemaField } from "./form-schema";
 import {
 	type ApplicantData,
 	BOARD_CONFIGS,
@@ -34,6 +35,8 @@ import {
 export type StopKind =
 	| "challenge"
 	| "unknown_questions"
+	/** The live form asks a required question the form read before review did not have. */
+	| "form_changed"
 	| "validation"
 	| "unrecognized_page"
 	| "error";
@@ -60,6 +63,12 @@ export interface ApplicationRun {
 	mode: "submit" | "dry_run";
 	data: ApplicantData;
 	files: FormFiles;
+	/**
+	 * The form as read before review, whose values the user approved. When set, a required
+	 * question the live form adds stops the run, and self-identification questions take their
+	 * "decline" option, as listed in review.
+	 */
+	schema?: SchemaField[];
 	/** Called once the form is read, before the first click or keystroke (dry runs close the network). */
 	beforeFill?: () => void;
 	/** Called before the first file is chosen (boards upload on selection); a reason stops the run. */
@@ -346,29 +355,56 @@ async function perform(
 	}
 }
 
+/**
+ * The scanned form, lined up with the schema read before review. Only what the user approved is
+ * answered: a required question the form added since then stops the run, before the first
+ * keystroke. Without a schema, the scan as it is.
+ */
+function againstSchema(
+	scanned: FormField[] | null,
+	schema: SchemaField[] | undefined,
+): { fields: FormField[] } | { stop: Stop } {
+	if (!scanned)
+		return {
+			stop: {
+				kind: "unrecognized_page",
+				message: "The form disappeared while reading it.",
+			},
+		};
+	if (!schema) return { fields: scanned };
+	const aligned = alignWithSchema(scanned, schema);
+	if (aligned.unexpected.length === 0) return { fields: aligned.fields };
+	return {
+		stop: {
+			kind: "form_changed",
+			message: `The form now asks ${aligned.unexpected
+				.map((q) => `"${q.label}"`)
+				.join(", ")}, which was not in the approved list of what will be sent.`,
+		},
+	};
+}
+
 /** Scans, plans and fills. Stops before the first keystroke when a required question is unknown. */
 export async function fillForm(
 	page: BrowserPage,
 	config: BoardConfig,
 	run: Pick<
 		ApplicationRun,
-		"data" | "files" | "beforeFill" | "beforeUpload" | "allowedHosts"
+		"data" | "files" | "beforeFill" | "beforeUpload" | "allowedHosts" | "schema"
 	>,
 ): Promise<
 	| { ok: true; plan: FillPlan; filled: FilledField[] }
 	| { ok: false; stop: Stop; filled: FilledField[] }
 > {
-	const fields = await page.evaluate<FormField[] | null>(scanScript(config));
-	if (!fields)
-		return {
-			ok: false,
-			filled: [],
-			stop: {
-				kind: "unrecognized_page",
-				message: "The form disappeared while reading it.",
-			},
-		};
-	const plan = planFill(fields, run.data);
+	const checked = againstSchema(
+		await page.evaluate<FormField[] | null>(scanScript(config)),
+		run.schema,
+	);
+	if ("stop" in checked) return { ok: false, filled: [], stop: checked.stop };
+	const { fields } = checked;
+	const plan = planFill(fields, run.data, {
+		declineVoluntary: run.schema !== undefined,
+	});
 	// Before the first interaction of any kind (clicks included): dry runs close the network here.
 	run.beforeFill?.();
 	// A combobox lists its options only when open: read them so the question can offer them.
