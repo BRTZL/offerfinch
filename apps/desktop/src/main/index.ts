@@ -12,6 +12,7 @@ import {
 import { IPC } from "../shared/bridge";
 import type { WorkerInit } from "../shared/worker-protocol";
 import { createUpdates } from "./app-updates";
+import { applyFixturesAllowed } from "./apply-fixtures";
 import { isAutomated } from "./automation";
 import { recoverInterruptedRestore } from "./backup";
 import { moveDatabaseOnce } from "./database-file";
@@ -114,6 +115,12 @@ async function workerInit(): Promise<WorkerInit> {
 			.join(outDir, "worker", "claude-host.mjs")
 			.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`),
 		...(demo ? { demo: true } : {}),
+		...(applyFixturesAllowed({
+			testMode: TEST_MODE,
+			isPackaged: app.isPackaged,
+		})
+			? { applyFixtures: true }
+			: {}),
 		test,
 	};
 }

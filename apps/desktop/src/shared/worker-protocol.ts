@@ -20,6 +20,12 @@ export interface WorkerInit {
 	 * own switch, not a test hook: it works in a shipped build, and wins over `test`.
 	 */
 	demo?: boolean;
+	/**
+	 * Submissions and form reads may use the local stand-in boards (`ApplyDeps.fixtures`). Main
+	 * sets it only for an unpackaged build in test mode (main/apply-fixtures.ts), never from the
+	 * worker's `test` input: a shipped app launched with `OFFERFINCH_TEST=1` never gets it.
+	 */
+	applyFixtures?: boolean;
 	/** Test runs: fake models, fixture boards, a fixed clock offset. */
 	test?: {
 		fakeModels?: boolean;

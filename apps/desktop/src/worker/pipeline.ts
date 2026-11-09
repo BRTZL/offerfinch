@@ -136,6 +136,11 @@ export interface PipelineInputs {
 	/** Test runs: sites served by a local stand-in, and no pause between their pages. */
 	test?: boolean;
 	/**
+	 * Submissions and form reads may open the local stand-in boards on this Mac
+	 * (`WorkerInit.applyFixtures`: an unpackaged build in test mode only). Not implied by `test`.
+	 */
+	applyFixtures?: boolean;
+	/**
 	 * Test runs: the hosts a local stand-in answers (`fetchRewrite`). A remote feed on any other
 	 * host is refused in a test run unless `OFFERFINCH_REAL_SITES=1`.
 	 */
@@ -243,8 +248,8 @@ export function buildPipeline(input: PipelineInputs): {
 		llm,
 		claimsLlm,
 		log: input.log,
-		// Only a test run's submissions may open the local stand-in boards on this Mac.
-		applyFixtures: Boolean(input.test),
+		// Only an unpackaged test build's submissions may open the local stand-in boards on this Mac.
+		applyFixtures: Boolean(input.applyFixtures),
 	});
 	deps.tailorLlm = tailorLlm;
 	deps.notifier = input.notifier;
