@@ -1,6 +1,7 @@
-import type { HostRules } from "../scrape/browser";
 import { normalizeForMatch } from "../tailor/profile-rules";
 import type { Contact, FormAnswer } from "../tailor/tailor";
+import { BOARD_HOST_RULES, joinRules } from "./host-rules";
+import type { HostRules } from "./network-guard";
 
 /**
  * What the applier knows about each board's hosted application form, from the read-only
@@ -45,11 +46,11 @@ export interface BoardConfig {
 	/** Visible validation errors. */
 	errors: string;
 	/**
-	 * Hosts besides the form's own that the form needs while it is filled and sent: its assets
-	 * (scripts, styles, fonts, images) and its scoring widget, from the live inspection. A real
-	 * submission's session may read them (GET, HEAD) and nothing more, except that a frame loaded
-	 * from one of them (the widget's) may post to them with xhr or fetch; no request to them may
-	 * carry a filled value (`HostRules`, scrape/browser.ts). Employers' trackers are never listed.
+	 * Hosts besides the form's own that serve the form's files (scripts, styles, fonts, images),
+	 * from the live inspection. A real submission's session may load those files from them (GET,
+	 * HEAD; no xhr or fetch) with no query string, unless the board's rules list its parameters;
+	 * its scoring widget's frames and endpoints are in `BOARD_HOST_RULES` (host-rules.ts). No
+	 * request to them may carry a filled value. Employers' trackers are never listed.
 	 */
 	hosts?: readonly string[];
 	/**
@@ -107,7 +108,6 @@ export const BOARD_CONFIGS: Record<Board, BoardConfig> = {
 			"fonts.googleapis.com",
 			"fonts.gstatic.com",
 			"www.gstatic.com",
-			"www.recaptcha.net",
 		],
 	},
 	greenhouse: {
@@ -123,15 +123,14 @@ export const BOARD_CONFIGS: Record<Board, BoardConfig> = {
 		errors:
 			".error-message:not(:empty), .helper-text--error:not(:empty), [role=alert]:not(:empty)",
 		hosts: [
-			"boards.greenhouse.io",
 			"job-boards.cdn.greenhouse.io",
-			"my.greenhouse.io",
 			"s2-recruiting.cdn.greenhouse.io",
 			"fonts.gstatic.com",
 			"www.gstatic.com",
-			"www.recaptcha.net",
 		],
 		formHosts: [
+			// Hands out the upload's presigned fields (an xhr GET before each file).
+			"boards.greenhouse.io",
 			// Checks the typed email: it gets the address in its URL.
 			"email-address-validator.us.greenhouse.io",
 			// Greenhouse's upload bucket (a POST of each chosen file); this bucket only.
@@ -153,11 +152,6 @@ export const BOARD_CONFIGS: Record<Board, BoardConfig> = {
 		hosts: [
 			"cdn.lever.co",
 			"lever-client-logos.s3.us-west-2.amazonaws.com",
-			"hcaptcha.com",
-			"js.hcaptcha.com",
-			"newassets.hcaptcha.com",
-			"api.hcaptcha.com",
-			"api2.hcaptcha.com",
 			// hCaptcha's per-session hosts (a random label each time); hCaptcha owns the name.
 			"*.w.hcaptcha.com",
 		],
@@ -270,9 +264,7 @@ export function sessionHosts(
 	const config = BOARD_CONFIGS[board];
 	return {
 		form: [...new Set([...allowed, ...(config.formHosts ?? [])])],
-		rules: {
-			read: [...(config.hosts ?? [])],
-		},
+		rules: joinRules({ assets: config.hosts ?? [] }, BOARD_HOST_RULES[board]),
 	};
 }
 

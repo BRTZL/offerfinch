@@ -1,9 +1,14 @@
 import {
+	boardHostDecision,
 	carriesFormData,
 	formValueNeedles,
+	type GuardDecision,
+	type HostRules,
 	hostMatches,
 	readOnlyDecision,
 } from "../apply/network-guard";
+
+export type { HostRules } from "../apply/network-guard";
 
 /**
  * Browser abstraction shared by desktop site reads and headless browser safety tests.
@@ -95,7 +100,8 @@ export interface SessionOptions {
 	 * "none" aborts every request the page makes; "read_only" lets only GET, HEAD and GraphQL
 	 * queries through (`readOnlyDecision`). "allowlist" (a real submission) keeps the page on
 	 * `allowedHosts` (the destinations): a request elsewhere is aborted unless `hostRules` lets
-	 * it through (a board's asset and scoring hosts, `BoardConfig.hosts` in apply/forms.ts). It is
+	 * it through by its structure (a board's asset files and its scoring widget's own endpoints,
+	 * `boardHostDecision` in apply/network-guard.ts). It is
 	 * recorded as a violation (the run stops) when it could be the application leaving: the
 	 * page's own navigation, an upload, or a filled value; anything else is refused quietly. Guarded
 	 * sessions also block service workers and close WebSockets (in "allowlist", those to other
@@ -166,16 +172,6 @@ export const DESTINATION_REFUSED = "destination not allowed";
  * form (analytics, error reporting). The run goes on.
  */
 export const NOT_A_DESTINATION = "not a destination, refused";
-
-/**
- * Hosts an "allowlist" session may use beyond `allowedHosts` (exact names, or `*.` for one
- * label). `read` (a board's asset and scoring hosts): GET and HEAD, never the page's own
- * navigation; besides, a frame loaded from one of them (a scoring widget's) may post to them
- * with xhr or fetch, never as a document. Never with a filled value or a file.
- */
-export interface HostRules {
-	read: string[];
-}
 
 export const UNTRUSTED_CONTENT: SessionOptions = {
 	javaScriptEnabled: false,
@@ -334,17 +330,6 @@ function isUpload(method: string, type: string, body: string | null): boolean {
 	);
 }
 
-function hostOf(url: string): string {
-	try {
-		return new URL(url).hostname;
-	} catch {
-		return "";
-	}
-}
-
-/** The last two labels of a host name ("hcaptcha.com" for "api.hcaptcha.com"). */
-const siteOf = (host: string) => host.split(".").slice(-2).join(".");
-
 /**
  * The page a request belongs to, or null when it cannot be told: a pop-up's first request comes
  * before its frame exists.
@@ -496,24 +481,31 @@ class PlaywrightPage implements BrowserPage {
 		// data:, blob: and about: stay inside the browser.
 		if (!/^https?:/.test(url)) return route.continue();
 		const destination = urlOnHosts(url, this.allowedHosts);
+		let reason = "allowed host";
 		if (!destination) {
-			const refusal = this.otherHostDecision(request, url);
-			if (refusal) {
-				this.state.log.push({ method, url, allowed: false, reason: refusal });
+			const decision = this.otherHostDecision(request, url);
+			if (!decision.allow) {
+				this.state.log.push({
+					method,
+					url,
+					allowed: false,
+					reason: decision.reason,
+				});
 				return route.abort("blockedbyclient");
 			}
+			reason = decision.reason;
 		}
 		const response = await route.fetch({ maxRedirects: 0 });
 		const location = response.headers().location;
 		if (response.status() >= 300 && response.status() < 400 && location) {
 			const target = new URL(location, url).href;
-			const refusal = destination
-				? urlOnHosts(target, this.allowedHosts)
-					? null
-					: DESTINATION_REFUSED
-				: urlOnHosts(target, this.allowedHosts)
-					? null
+			// A hop to another host meets the same rules as a new request from the same frame.
+			const hop = urlOnHosts(target, this.allowedHosts)
+				? null
+				: destination
+					? { allow: false, reason: DESTINATION_REFUSED }
 					: this.otherHostDecision(request, target);
+			const refusal = hop && !hop.allow ? hop.reason : null;
 			if (refusal) {
 				this.state.log.push({
 					method,
@@ -528,24 +520,23 @@ class PlaywrightPage implements BrowserPage {
 			method,
 			url,
 			allowed: true,
-			reason: destination ? "allowed host" : "board asset host, read",
+			reason,
 		});
 		return route.fulfill({ response: response as never });
 	}
 
 	/**
-	 * How a request to `url`, not a destination, is refused, or null when it may go: a board's
-	 * asset or scoring host (`hostRules.read`) may be read (GET, HEAD), and posted to by a frame
-	 * loaded from one of them (xhr or fetch only: a scoring widget's own frame, which cannot read
-	 * the form). Anything else is refused quietly (analytics, error reporting: the run goes on),
-	 * except what could be the application leaving: the page's own navigation, a file upload, or
-	 * any request carrying a filled value (in its URL or body). Those are violations and stop it.
+	 * How a request to `url`, not a destination, is decided. What could be the application leaving
+	 * is refused as a violation that stops the run: the page's own navigation, a file upload, or a
+	 * request carrying a filled value (in its URL or body; plain, encoded or escaped copies). The
+	 * rest passes only when the board's rules allow it by structure (`boardHostDecision`: an asset
+	 * file with no query the board does not use, or a scoring widget's own frame calling its own
+	 * endpoints); everything else is refused quietly (analytics, error reports) and the run goes on.
 	 */
 	private otherHostDecision(
 		request: ReturnType<PlaywrightRouteLike["request"]>,
 		url: string,
-	): string | null {
-		const method = request.method();
+	): GuardDecision {
 		const mainFrame = request.frame() === this.page.mainFrame();
 		const type = request.headers?.()["content-type"] ?? "";
 		if (
@@ -554,20 +545,23 @@ class PlaywrightPage implements BrowserPage {
 			carriesFormData(url, this.needles) ||
 			carriesFormData(request.postData(), this.needles)
 		)
-			return DESTINATION_REFUSED;
-		const assets = this.hostRules?.read ?? [];
-		if (!urlOnHosts(url, assets)) return NOT_A_DESTINATION;
-		if (method === "GET" || method === "HEAD") return null;
-		const kind = request.resourceType?.() ?? "";
-		// Only to the widget's own company: a frame on one listed host never posts to another.
-		const from = frameUrl(request);
-		const fromWidget =
-			!mainFrame &&
-			urlOnHosts(from, assets) &&
-			siteOf(hostOf(from)) === siteOf(hostOf(url));
-		return (kind === "xhr" || kind === "fetch") && fromWidget
-			? null
-			: NOT_A_DESTINATION;
+			return { allow: false, reason: DESTINATION_REFUSED };
+		if (!this.hostRules) return { allow: false, reason: NOT_A_DESTINATION };
+		const decision = boardHostDecision(
+			{
+				method: request.method(),
+				url,
+				resourceType: request.resourceType?.() ?? "",
+				navigation: request.isNavigationRequest(),
+				mainFrame,
+				frameUrl: frameUrl(request),
+			},
+			this.hostRules,
+			this.allowedHosts,
+		);
+		return decision.allow
+			? decision
+			: { allow: false, reason: NOT_A_DESTINATION };
 	}
 
 	/**

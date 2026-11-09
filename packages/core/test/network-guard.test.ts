@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { sessionHosts } from "../src/apply/forms";
 import {
+	boardHostDecision,
 	carriesFormData,
 	formValueNeedles,
 	hostMatches,
+	type RequestFacts,
 	readOnlyDecision,
 } from "../src/apply/network-guard";
 
@@ -134,6 +137,11 @@ describe("carriesFormData on the URLs the real forms load (2026-11-09)", () => {
 			"https://www.googletagmanager.com/gtag/js?id=",
 			"https://cdn.lever.co/fonts/linkedin.woff2",
 			"https://jobs.lever.co/searchLocations?text=Lisbon",
+			"https://www.recaptcha.net/recaptcha/enterprise/bframe?hl=en&v=bSuJ2xBC8cFy7pM4Z3Hu9boH&k=6LezdY0tAAAAAEnollNLCAI0z1VDGwM7AzGrU4XZ&bft=0dAFcWeA5AKr7zIhws48i2RjJeT9-Mo0uNf0ZrKQkIc3Se-0xBzKgEr5_Yx07WZSUn7_J8G2BQeCibUFTju81ounXhuIZ9LNGHnw",
+			"https://www.recaptcha.net/recaptcha/enterprise/anchor?ar=1&k=6LezdY0tAAAAAEnollNLCAI0z1VDGwM7AzGrU4XZ&co=aHR0cHM6Ly9qb2JzLmFzaGJ5aHEuY29tOjQ0Mw..&hl=en&v=eiVW-J8HuKsDxSGNYMZ-9XFQ&size=invisible&anchor-ms=20000&execute-ms=30000&ovv=CADq00gF&cb=ed3hz57kie7j",
+			"https://cdn.ashbyprd.com/frontend_non_user/9a61009d0135a9b1d820849e25de8c916f4233b0/.vite/manifest.json",
+			"https://job-boards.cdn.greenhouse.io/locales/en/job_post.xARVcwpAozf1DR3o13mc-j7C04Jk3mAj0ab7ua2",
+			"https://newassets.hcaptcha.com/captcha/v1/58a2633848099317cef7deac21e607b1a41a5b9d/static/hcaptcha.html",
 		])
 			expect(carriesFormData(url, needles), url).toBe(false);
 	});
@@ -151,5 +159,200 @@ describe("carriesFormData on the URLs the real forms load (2026-11-09)", () => {
 		expect(
 			carriesFormData("https://x.test/t?e=mark.example%40example.com", needles),
 		).toBe(true);
+	});
+});
+
+describe("carriesFormData through a script's encodings (Codex review, 2026-11-09)", () => {
+	const EMAIL = "ada@example.test";
+	const needles = formValueNeedles([EMAIL, "Ada Example"]);
+	const b64 = Buffer.from(EMAIL).toString("base64");
+
+	it("finds a value base64-encoded, URL-encoded twice, or JSON-escaped", () => {
+		for (const text of [
+			`https://x.test/p.png?d=${b64}`,
+			`https://x.test/p.png?d=${b64.replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_")}`,
+			`https://x.test/p.png?d=${encodeURIComponent(encodeURIComponent(EMAIL))}`,
+			'{"e":"ada\\u0040example.test"}',
+			`https://x.test/p?d=${encodeURIComponent('{"e":"ada\\u0040example.test"}')}`,
+		])
+			expect(carriesFormData(text, needles), text).toBe(true);
+	});
+
+	it("cannot find a value split across requests (the structural rules refuse those)", () => {
+		expect(carriesFormData("https://x.test/p.png?a=ada@exa", needles)).toBe(
+			false,
+		);
+	});
+});
+
+describe("boardHostDecision on the boards' own requests (2026-11-09 inspection)", () => {
+	const facts = (f: Partial<RequestFacts>): RequestFacts => ({
+		method: "GET",
+		url: "",
+		resourceType: "script",
+		navigation: false,
+		mainFrame: true,
+		frameUrl: "",
+		...f,
+	});
+	const ashby = sessionHosts("ashby", ["jobs.ashbyhq.com"]);
+	const lever = sessionHosts("lever", ["jobs.lever.co"]);
+	const ASHBY_KEY = "6LezdY0tAAAAAEnollNLCAI0z1VDGwM7AzGrU4XZ";
+	const LEVER_KEY = "e33f87f8-88ec-4e1a-9a13-df9bbb1d8120";
+	const ANCHOR = `https://www.recaptcha.net/recaptcha/enterprise/anchor?ar=1&k=${ASHBY_KEY}&co=aHR0cHM6Ly9qb2JzLmFzaGJ5aHEuY29tOjQ0Mw..&hl=en&v=eiVW-J8HuKsDxSGNYMZ-9XFQ&size=invisible&anchor-ms=20000&execute-ms=30000&ovv=CADq00gF&cb=ed3hz57kie7j`;
+	const HFRAME = `https://newassets.hcaptcha.com/captcha/v1/58a2633848099317cef7deac21e607b1a41a5b9d/static/hcaptcha.html#frame=checkbox-invisible&host=jobs.lever.co&sitekey=${LEVER_KEY}`;
+	const ashbyOk = (f: Partial<RequestFacts>) =>
+		boardHostDecision(facts(f), ashby.rules, ashby.form).allow;
+	const leverOk = (f: Partial<RequestFacts>) =>
+		boardHostDecision(facts(f), lever.rules, lever.form).allow;
+
+	it("lets the boards' files, scripts and widget frames load", () => {
+		expect(
+			ashbyOk({
+				url: "https://cdn.ashbyprd.com/frontend_non_user/9a61/.vite/manifest.json",
+				resourceType: "script",
+			}),
+		).toBe(true);
+		expect(
+			ashbyOk({
+				url: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap",
+				resourceType: "stylesheet",
+			}),
+		).toBe(true);
+		expect(
+			ashbyOk({
+				url: `https://www.recaptcha.net/recaptcha/enterprise.js?render=${ASHBY_KEY}&onload=onLoadReCaptcha`,
+			}),
+		).toBe(true);
+		expect(
+			ashbyOk({
+				url: "https://www.recaptcha.net/recaptcha/enterprise/webworker.js?hl=en&v=bSuJ2xBC8cFy7pM4Z3Hu9boH",
+			}),
+		).toBe(true);
+		expect(
+			ashbyOk({
+				url: ANCHOR,
+				resourceType: "document",
+				navigation: true,
+				mainFrame: false,
+			}),
+		).toBe(true);
+		expect(
+			leverOk({
+				url: "https://js.hcaptcha.com/1/api.js?host=jobs.lever.co&se=58a2633848099317cef7deac21e607b1a41a5b9d&onload=_onLoad",
+			}),
+		).toBe(true);
+		expect(
+			leverOk({
+				url: "https://0e6bacb29f97.w.hcaptcha.com/logo.png",
+				resourceType: "image",
+				mainFrame: false,
+				frameUrl: HFRAME,
+			}),
+		).toBe(true);
+	});
+
+	it("lets only the widget's own frame, with the board's key, post to its endpoints", () => {
+		const reload = `https://www.recaptcha.net/recaptcha/enterprise/reload?k=${ASHBY_KEY}`;
+		const post = { method: "POST", resourceType: "fetch", mainFrame: false };
+		expect(ashbyOk({ ...post, url: reload, frameUrl: ANCHOR })).toBe(true);
+		const check = `https://api2.hcaptcha.com/checksiteconfig?v=58a2&host=jobs.lever.co&sitekey=${LEVER_KEY}&sc=1`;
+		expect(
+			leverOk({ ...post, resourceType: "xhr", url: check, frameUrl: HFRAME }),
+		).toBe(true);
+		for (const frameUrl of [
+			"about:blank",
+			"about:srcdoc",
+			"blob:https://jobs.ashbyhq.com/1d2c",
+			"data:text/html,x",
+			"https://jobs.ashbyhq.com/acme/1/application",
+			ANCHOR.replace(ASHBY_KEY, "6LattackerKey0000000000000000000000000000"),
+			"https://www.recaptcha.net/recaptcha/enterprise/other",
+		])
+			expect(ashbyOk({ ...post, url: reload, frameUrl }), frameUrl).toBe(false);
+		// From the main frame, as a document, or to another path: never.
+		expect(
+			ashbyOk({ ...post, url: reload, mainFrame: true, frameUrl: ANCHOR }),
+		).toBe(false);
+		expect(
+			ashbyOk({
+				...post,
+				url: reload,
+				resourceType: "document",
+				frameUrl: ANCHOR,
+			}),
+		).toBe(false);
+		expect(
+			ashbyOk({
+				...post,
+				url: "https://www.recaptcha.net/recaptcha/enterprise/score",
+				frameUrl: ANCHOR,
+			}),
+		).toBe(false);
+		// Turnstile's key is not recorded for Workable: none of its frames qualifies.
+		const workable = sessionHosts("workable", ["apply.workable.com"]);
+		expect(
+			boardHostDecision(
+				facts({
+					...post,
+					url: "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/flow/ov1/x",
+					frameUrl:
+						"https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0/rcv/a/0x4AAAAAAAkey/auto/fbE/new/normal",
+				}),
+				workable.rules,
+				workable.form,
+			).allow,
+		).toBe(false);
+	});
+
+	it("refuses an asset request that carries anything the board does not use", () => {
+		const b64 = Buffer.from("ada@example.test").toString("base64");
+		for (const url of [
+			`https://cdn.ashbyprd.com/x.png?d=${b64}`,
+			`https://cdn.ashbyprd.com/x.png?d=${encodeURIComponent(encodeURIComponent("ada@example.test"))}`,
+			"https://cdn.ashbyprd.com/x.png?a=ada@exa",
+			`https://fonts.googleapis.com/css2?family=Inter&display=swap&d=${b64}`,
+			`https://fonts.googleapis.com/css2?family=${b64}`,
+			`https://www.recaptcha.net/recaptcha/enterprise.js?render=${ASHBY_KEY}&onload=${b64}`,
+			"https://www.recaptcha.net/recaptcha/enterprise.js?render=6LattackerKey&onload=x",
+		])
+			expect(ashbyOk({ url, resourceType: "image" }), url).toBe(false);
+		// The same anchor frame from another origin's page (`co`), or with a parameter added.
+		expect(
+			ashbyOk({
+				url: ANCHOR.replace(
+					"aHR0cHM6Ly9qb2JzLmFzaGJ5aHEuY29tOjQ0Mw..",
+					Buffer.from("https://evil.test:443").toString("base64"),
+				),
+				resourceType: "document",
+				navigation: true,
+				mainFrame: false,
+			}),
+		).toBe(false);
+		expect(
+			ashbyOk({
+				url: `${ANCHOR}&d=x`,
+				resourceType: "document",
+				navigation: true,
+				mainFrame: false,
+			}),
+		).toBe(false);
+		// Not a file load: xhr, fetch, a beacon, a ping, a frame, or a POST.
+		for (const resourceType of [
+			"xhr",
+			"fetch",
+			"ping",
+			"beacon",
+			"other",
+			"document",
+			"",
+		])
+			expect(
+				ashbyOk({ url: "https://cdn.ashbyprd.com/x.js", resourceType }),
+				resourceType,
+			).toBe(false);
+		expect(
+			ashbyOk({ url: "https://cdn.ashbyprd.com/x.js", method: "POST" }),
+		).toBe(false);
 	});
 });

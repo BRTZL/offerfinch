@@ -101,7 +101,7 @@ describe("answer matching", () => {
 		const hosts = sessionHosts("personio", ["acme.jobs.personio.de"]);
 		// Only the form's own hosts receive data; asset and scoring hosts are read-only rules.
 		expect(hosts.form).toEqual(["acme.jobs.personio.de"]);
-		expect(hosts.rules.read).toEqual([
+		expect(hosts.rules.assets).toEqual([
 			"assets.cdn.personio.de",
 			"challenges.cloudflare.com",
 		]);
@@ -407,13 +407,21 @@ describe("a board's other hosts in a real submission", () => {
 		const hosts = sessionHosts("greenhouse", ["job-boards.greenhouse.io"]);
 		expect(hosts.form).toEqual([
 			"job-boards.greenhouse.io",
+			"boards.greenhouse.io",
 			"email-address-validator.us.greenhouse.io",
 			"grnhse-prod-jben-us-east-1.s3.amazonaws.com",
 		]);
-		expect(hosts.rules.read).toContain("www.recaptcha.net");
-		expect(hosts.rules.read).not.toContain("job-boards.greenhouse.io");
+		expect(hosts.rules.assets).toContain("www.recaptcha.net");
+		expect(hosts.rules.assets).not.toContain("job-boards.greenhouse.io");
+		// Only reCAPTCHA's own frames, with Greenhouse's key, may post, and only to two paths.
+		expect(hosts.rules.widgets?.map((w) => w.endpoints)).toEqual([
+			[
+				"www.recaptcha.net/recaptcha/enterprise/reload",
+				"www.recaptcha.net/recaptcha/enterprise/clr",
+			],
+		]);
 		// Trackers are never listed: they are refused like any other host.
-		expect(sessionHosts("lever", []).rules.read).not.toContain(
+		expect(sessionHosts("lever", []).rules.assets).not.toContain(
 			"www.googletagmanager.com",
 		);
 	});
@@ -424,7 +432,7 @@ describe("a board's other hosts in a real submission", () => {
 				applyUrl(board, { url: "", externalId: "1", companyKey: "acme" }),
 			).hostname;
 			expect(sessionHosts(board, []).form).not.toContain(own);
-			expect(sessionHosts(board, []).rules.read).not.toContain(own);
+			expect(sessionHosts(board, []).rules.assets).not.toContain(own);
 		}
 	});
 
