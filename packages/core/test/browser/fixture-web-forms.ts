@@ -26,6 +26,9 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  *                 the email box's place; a native POST that redirects to /thanks
  *   shifted       full name, then "Contact details" with an unlabelled email and phone box; from
  *                 the second load on an unlabelled box appears first in that group; posts as JSON
+ *   preview       email and full name, help text already saying "Thank you for applying!"; the only
+ *                 button changes the query string and sends nothing
+ *   echo          the same help text above the form; the submit posts and swaps the form for "Saved."
  */
 
 export interface WebSubmission {
@@ -191,6 +194,28 @@ form.addEventListener('submit', async (e) => {
 	if (res.ok) form.outerHTML = '<div class="thanks"><h2>Thank you for your application!</h2></div>';
 });`;
 
+/** Help text that already holds confirmation words, before anything is sent. */
+const ALREADY_THANKED = `<p class="note">When it is done you will see: Thank you for applying!</p>`;
+
+function previewBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1>${ALREADY_THANKED}<form id="apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<p><button type="button" onclick="history.pushState({}, '', '?preview=1')">Submit application</button></p></form>`;
+}
+
+function echoBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1>${ALREADY_THANKED}<form id="apply" method="post" action="/web/echo/apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+const ECHO = `const form = document.getElementById('apply');
+form.addEventListener('submit', async (e) => {
+	e.preventDefault();
+	const res = await fetch('/web/echo/apply', { method: 'POST', body: new URLSearchParams(new FormData(form)) });
+	if (res.ok) form.outerHTML = '<p>Saved.</p>';
+});`;
+
 /** Posts every box as "label or nearby text = value", as the page shows it. */
 const NAMELESS = `const form = document.getElementById('apply');
 form.addEventListener('submit', async (e) => {
@@ -217,7 +242,7 @@ function postAnswer(
 			body: page("<h1>Acme Robotics</h1><p>Your request has been noted.</p>"),
 		};
 	if (
-		["two-step", "stays", "nameless", "shifted"].includes(variant) ||
+		["two-step", "stays", "nameless", "shifted", "echo"].includes(variant) ||
 		action === "upload"
 	)
 		return {
@@ -268,6 +293,10 @@ function formPage(
 			return page(swappedBody(load > 1));
 		case "shifted":
 			return page(shiftedBody(load > 1), SHIFTED);
+		case "preview":
+			return page(previewBody());
+		case "echo":
+			return page(echoBody(), ECHO);
 		default:
 			return null;
 	}

@@ -570,6 +570,29 @@ describe("submitting an employer's form", () => {
 	}, 60_000);
 });
 
+describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09)", () => {
+	it.each([
+		// The button only changed the query string: nothing was sent, the form stayed.
+		["preview", 0, /the form is still on the page/],
+		// Posted and the form went, but the thank-you words were on the page before the click.
+		["echo", 1, /does not bear out/],
+	])(
+		"%s: confirmation words already on the page are not a confirmation",
+		async (variant, posts, why) => {
+			const { deps, calls } = harness(variant, await schemaOf(variant));
+			const outcome = await submitStep(deps, "u1", "app-1");
+			expect(outcome).toMatchObject({
+				outcome: "needs_human",
+				reason: expect.stringMatching(why),
+			});
+			expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+			expect(calls[1]?.submitted).toBe(false);
+			expect(forms.count(variant)).toBe(posts);
+		},
+		60_000,
+	);
+});
+
 describe("stops on an employer's form: nothing is sent", () => {
 	it("stops when the live form asks a required question review never listed", async () => {
 		const { deps, calls } = harness("unknown", await schemaOf("single"));

@@ -1,4 +1,4 @@
-import type { BrowserPage } from "../scrape/browser";
+import { type BrowserPage, urlOnHosts } from "../scrape/browser";
 import {
 	type ApplicationRun,
 	destinationProblem,
@@ -24,6 +24,7 @@ import {
 import { sameSite } from "./web-hosts";
 import type { ControlRole, WebFormModel } from "./web-model";
 import {
+	PAGE_TEXT_SCRIPT,
 	WEB_AFTER_SCRIPT,
 	WEB_SCAN_SCRIPT,
 	type WebAfter,
@@ -749,25 +750,69 @@ async function fillStep(
 /* --------------------------------------------------------------- outcome */
 
 const plain = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
-const withoutHash = (url: string) => url.replace(/#.*$/, "");
+/** A URL's origin and path: a change of query or fragment alone is no new page. */
+const pathOf = (url: string) => {
+	try {
+		const { origin, pathname } = new URL(url);
+		return `${origin}${pathname}`;
+	} catch {
+		return url;
+	}
+};
+const occurrences = (text: string, part: string) =>
+	part ? text.split(part).length - 1 : 0;
+
+/** The page just before the one click: its text and how far its network log had got. */
+interface BeforeClick {
+	text: string;
+	logged: number;
+}
 
 /**
- * After the one click: waits for evidence (the URL changed, or the form is gone), then the model
- * reads the page. Only "confirmed", backed by that evidence, a quote found on the page in
- * confirmation words, no refusal or duplicate wording and no visible error, records it applied;
- * anything else is an unknown outcome, never a retry.
+ * True when the page sent something to the form's own hosts after the click: a post (any method
+ * but a read) or a navigation of the page itself.
+ */
+function sentAfter(
+	page: BrowserPage,
+	before: BeforeClick,
+	allowedHosts: string[] | undefined,
+): boolean {
+	return page
+		.networkLog()
+		.slice(before.logged)
+		.some(
+			(r) =>
+				r.allowed &&
+				r.reason === "allowed host" &&
+				(!allowedHosts || urlOnHosts(r.url, allowedHosts)) &&
+				(r.navigation === true || !/^(?:GET|HEAD)$/i.test(r.method)),
+		);
+}
+
+/**
+ * After the one click: waits for evidence (the page sent the form to its hosts, and the form is
+ * gone or the page's path changed), then the model reads the page. Only "confirmed", backed by
+ * that evidence, a quote found on the page in confirmation words that were not on it before the
+ * click, no refusal or duplicate wording and no visible error, records it applied; anything else
+ * is an unknown outcome, never a retry.
  */
 async function readOutcome(
 	page: BrowserPage,
 	formUrl: string,
 	run: ApplicationRun,
+	before: BeforeClick,
 ): Promise<{ confirmed: string } | { unknown: string }> {
 	const changed = await awaitChange(page, formUrl, run);
 	if ("unknown" in changed) return changed;
-	return judge(changed.after, formUrl, run.model);
+	if (!sentAfter(page, before, run.allowedHosts))
+		return {
+			unknown:
+				"The page changed after the click, but it sent nothing to the employer's site.",
+		};
+	return judge(changed.after, formUrl, run.model, before);
 }
 
-/** Polls until the URL changed or the form is gone; an unknown outcome when it never does. */
+/** Polls until the page's path changed or the form is gone; an unknown outcome when it never does. */
 async function awaitChange(
 	page: BrowserPage,
 	formUrl: string,
@@ -783,10 +828,7 @@ async function awaitChange(
 		const challenge = await challengeOf(page);
 		if (challenge) return { unknown: `${challenge} appeared after the click.` };
 		after = (await safeEvaluate<WebAfter>(page, WEB_AFTER_SCRIPT)) ?? after;
-		if (
-			after &&
-			(withoutHash(after.url) !== withoutHash(formUrl) || !after.formShown)
-		) {
+		if (after && (pathOf(after.url) !== pathOf(formUrl) || !after.formShown)) {
 			await page.waitForNetworkIdle(3_000);
 			return {
 				after: (await safeEvaluate<WebAfter>(page, WEB_AFTER_SCRIPT)) ?? after,
@@ -800,13 +842,36 @@ async function awaitChange(
 	};
 }
 
+/**
+ * True when the quote is the page's own new confirmation: on the page now, in confirmation
+ * words, and neither the quote nor those words were on the page before the click.
+ */
+function newConfirmation(
+	quote: string,
+	after: WebAfter,
+	before: BeforeClick,
+): boolean {
+	const said = plain(quote);
+	const now = plain(after.text);
+	const was = plain(before.text);
+	const words = plain(said.match(CONFIRMED)?.[0] ?? "");
+	return (
+		said.length > 0 &&
+		now.includes(said) &&
+		!was.includes(said) &&
+		words.length > 0 &&
+		occurrences(now, words) > occurrences(was, words)
+	);
+}
+
 /** The model's reading of the changed page, believed only where the page bears it out. */
 async function judge(
 	after: WebAfter,
 	formUrl: string,
 	model: WebFormModel | null | undefined,
+	before: BeforeClick,
 ): Promise<{ confirmed: string } | { unknown: string }> {
-	const urlChanged = withoutHash(after.url) !== withoutHash(formUrl);
+	const urlChanged = pathOf(after.url) !== pathOf(formUrl);
 	if (!model)
 		return {
 			unknown:
@@ -835,9 +900,7 @@ async function judge(
 			unknown: `The page after the click does not say the application was received${quote ? `: "${quote}"` : "."}`,
 		};
 	const supported =
-		quote.length > 0 &&
-		plain(after.text).includes(plain(quote)) &&
-		CONFIRMED.test(quote) &&
+		newConfirmation(quote, after, before) &&
 		!new RegExp(REFUSAL, "i").test(quote) &&
 		!new RegExp(DUPLICATE, "i").test(after.text) &&
 		after.errors.length === 0;
@@ -997,8 +1060,12 @@ export async function runWebApplication(
 			};
 		const formUrl = page.url();
 		try {
+			const beforeClick = {
+				text: (await safeEvaluate<string>(page, PAGE_TEXT_SCRIPT)) ?? "",
+				logged: page.networkLog().length,
+			};
 			await page.click(`[data-jp-control="${steps.submit.ref}"]`);
-			const result = await readOutcome(page, formUrl, run);
+			const result = await readOutcome(page, formUrl, run, beforeClick);
 			const after = (await shot(page)) ?? new Uint8Array();
 			return "confirmed" in result
 				? {

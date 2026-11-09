@@ -81,6 +81,8 @@ export interface NetworkLogEntry {
 	url: string;
 	allowed: boolean;
 	reason: string;
+	/** "allowlist": a navigation of the page itself (its main frame). */
+	navigation?: true;
 }
 
 export interface BrowserSession {
@@ -521,6 +523,10 @@ class PlaywrightPage implements BrowserPage {
 			url,
 			allowed: true,
 			reason,
+			...(request.isNavigationRequest() &&
+			request.frame() === this.page.mainFrame()
+				? { navigation: true as const }
+				: {}),
 		});
 		return route.fulfill({ response: response as never });
 	}

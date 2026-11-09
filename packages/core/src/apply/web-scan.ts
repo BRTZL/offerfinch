@@ -238,3 +238,6 @@ export const WEB_AFTER_SCRIPT = String.raw`(() => {
 	const errors = [...document.querySelectorAll(${JSON.stringify(WEB_ERRORS)})].filter(shown).map((e) => (e.textContent || "").replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 10);
 	return { url: location.href, title: document.title, formShown, errors, text: (document.body.innerText || "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, 6000) };
 })()`;
+
+/** Page script: all the text the page shows, uncut (what was there before the submit click). */
+export const PAGE_TEXT_SCRIPT = `(document.body ? document.body.innerText || "" : "")`;
