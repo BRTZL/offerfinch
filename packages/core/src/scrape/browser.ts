@@ -282,10 +282,6 @@ interface PlaywrightPageLike {
 		state: "networkidle",
 		options?: { timeout?: number },
 	): Promise<void>;
-	routeWebSocket?(
-		url: RegExp,
-		handler: (ws: PlaywrightWebSocketRouteLike) => unknown,
-	): Promise<void>;
 }
 
 const MAX_REDIRECTS = 10;
@@ -293,6 +289,15 @@ const MAX_REDIRECTS = 10;
 interface PlaywrightContextLike {
 	newPage(): Promise<PlaywrightPageLike>;
 	close(): Promise<void>;
+	/** Covers every page of the context, pop-ups included, from their first request. */
+	route?(
+		url: string,
+		handler: (route: PlaywrightRouteLike) => Promise<void>,
+	): Promise<unknown>;
+	routeWebSocket?(
+		url: RegExp,
+		handler: (ws: PlaywrightWebSocketRouteLike) => unknown,
+	): Promise<void>;
 	on?(
 		event: "page",
 		handler: (page: {
@@ -340,6 +345,28 @@ function hostOf(url: string): string {
 /** The last two labels of a host name ("hcaptcha.com" for "api.hcaptcha.com"). */
 const siteOf = (host: string) => host.split(".").slice(-2).join(".");
 
+/**
+ * The page a request belongs to, or null when it cannot be told: a pop-up's first request comes
+ * before its frame exists.
+ */
+function pageOf(request: { frame(): unknown }): unknown {
+	try {
+		const frame = request.frame() as { page?: () => unknown } | null;
+		return frame?.page?.() ?? null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * What every page of one guarded session shares: the mode (closing the network on one page
+ * closes it on all), and one log, so a pop-up's refused request shows on the page that opened it.
+ */
+interface GuardState {
+	mode: GuardMode;
+	readonly log: NetworkLogEntry[];
+}
+
 /** The URL of the frame that made a request, or "" when it cannot be told. */
 function frameUrl(request: { frame(): unknown }): string {
 	try {
@@ -351,8 +378,7 @@ function frameUrl(request: { frame(): unknown }): string {
 }
 
 class PlaywrightPage implements BrowserPage {
-	private readonly log: NetworkLogEntry[] = [];
-	private mode: GuardMode;
+	private readonly state: GuardState;
 	private readonly needles: string[];
 	/** "pinned": the main frame has its document; later navigations are refused. */
 	private landed = false;
@@ -363,13 +389,14 @@ class PlaywrightPage implements BrowserPage {
 
 	constructor(
 		private readonly page: PlaywrightPageLike,
-		mode: GuardMode = "open",
+		state: GuardState,
 		options: Pick<
 			SessionOptions,
 			"allowedHosts" | "fetcher" | "hostRules" | "formValues"
 		> = {},
 	) {
-		this.mode = mode;
+		const { mode } = state;
+		this.state = state;
 		this.allowedHosts = options.allowedHosts ?? [];
 		this.fetcher = options.fetcher;
 		// Host classes and the form-value check apply to a real submission only.
@@ -385,7 +412,12 @@ class PlaywrightPage implements BrowserPage {
 		// data: and blob: stay inside the browser; nothing else is allowed out.
 		if (/^(?:data|blob|about):/.test(url)) return route.continue();
 		if (!/^https?:/.test(url) || (method !== "GET" && method !== "HEAD")) {
-			this.log.push({ method, url, allowed: false, reason: "not a read" });
+			this.state.log.push({
+				method,
+				url,
+				allowed: false,
+				reason: "not a read",
+			});
 			return route.abort("blockedbyclient");
 		}
 		const fetcher = this.fetcher;
@@ -396,7 +428,12 @@ class PlaywrightPage implements BrowserPage {
 			request.isNavigationRequest() &&
 			request.frame() === this.page.mainFrame();
 		if (mainNavigation && this.landed) {
-			this.log.push({ method, url, allowed: false, reason: "late navigation" });
+			this.state.log.push({
+				method,
+				url,
+				allowed: false,
+				reason: "late navigation",
+			});
 			return route.fulfill({ status: 204, headers: {}, body: Buffer.alloc(0) });
 		}
 		try {
@@ -405,7 +442,7 @@ class PlaywrightPage implements BrowserPage {
 				if (/^(?:host|connection|accept-encoding|cookie)$/i.test(name))
 					delete headers[name];
 			const response = await fetcher({ url, method, headers });
-			this.log.push({
+			this.state.log.push({
 				method,
 				url,
 				allowed: true,
@@ -424,7 +461,7 @@ class PlaywrightPage implements BrowserPage {
 				body: response.body,
 			});
 		} catch (error) {
-			this.log.push({
+			this.state.log.push({
 				method,
 				url,
 				allowed: false,
@@ -435,7 +472,12 @@ class PlaywrightPage implements BrowserPage {
 	}
 
 	private refuse(method: string, url: string): void {
-		this.log.push({ method, url, allowed: false, reason: DESTINATION_REFUSED });
+		this.state.log.push({
+			method,
+			url,
+			allowed: false,
+			reason: DESTINATION_REFUSED,
+		});
 	}
 
 	/**
@@ -457,7 +499,7 @@ class PlaywrightPage implements BrowserPage {
 		if (!destination) {
 			const refusal = this.otherHostDecision(request, url);
 			if (refusal) {
-				this.log.push({ method, url, allowed: false, reason: refusal });
+				this.state.log.push({ method, url, allowed: false, reason: refusal });
 				return route.abort("blockedbyclient");
 			}
 		}
@@ -473,11 +515,16 @@ class PlaywrightPage implements BrowserPage {
 					? null
 					: this.otherHostDecision(request, target);
 			if (refusal) {
-				this.log.push({ method, url: target, allowed: false, reason: refusal });
+				this.state.log.push({
+					method,
+					url: target,
+					allowed: false,
+					reason: refusal,
+				});
 				return route.abort("blockedbyclient");
 			}
 		}
-		this.log.push({
+		this.state.log.push({
 			method,
 			url,
 			allowed: true,
@@ -557,69 +604,51 @@ class PlaywrightPage implements BrowserPage {
 				return true;
 			}
 		}
-		this.log.push({ method, url, allowed: true, reason: "allowed host" });
+		this.state.log.push({ method, url, allowed: true, reason: "allowed host" });
 		await route.fulfill({ response: response as never });
 		return true;
 	}
 
-	/** Installs the request filter for a guarded page. Called once, before the first navigation. */
-	async guard(): Promise<void> {
-		if (this.mode === "open") return;
-		await this.page.route("**/*", async (route) => {
-			if (this.mode === "allowlist") return this.allowlistRoute(route);
-			if (this.mode === "pinned") return this.pinnedRoute(route);
-			const request = route.request();
-			const method = request.method();
-			if (this.mode === "read_only" && this.allowedHosts.length > 0)
-				if (await this.refusedNavigation(route)) return;
-			const decision =
-				this.mode === "none"
-					? { allow: false, reason: "network closed" }
-					: readOnlyDecision(method, request.postData());
-			this.log.push({
-				method,
-				url: request.url(),
-				allowed: decision.allow,
-				reason: decision.reason,
-			});
-			if (decision.allow) return route.continue();
-			return route.abort("blockedbyclient");
+	/**
+	 * Decides one request of this page. Called by the session's filter, which the context installs
+	 * before any page exists, so it sees every request of every page, pop-ups included.
+	 */
+	async handle(route: PlaywrightRouteLike): Promise<void> {
+		if (this.state.mode === "allowlist") return this.allowlistRoute(route);
+		if (this.state.mode === "pinned") return this.pinnedRoute(route);
+		const request = route.request();
+		const method = request.method();
+		if (this.state.mode === "read_only" && this.allowedHosts.length > 0)
+			if (await this.refusedNavigation(route)) return;
+		const decision =
+			this.state.mode === "none"
+				? { allow: false, reason: "network closed" }
+				: readOnlyDecision(method, request.postData());
+		this.state.log.push({
+			method,
+			url: request.url(),
+			allowed: decision.allow,
+			reason: decision.reason,
 		});
-		await this.page.routeWebSocket?.(/.*/, (ws) => {
-			if (
-				this.mode === "allowlist" &&
-				urlOnHosts(ws.url().replace(/^ws/, "http"), this.allowedHosts) &&
-				ws.connectToServer
-			) {
-				ws.connectToServer();
-				return;
-			}
-			this.log.push({
-				method: "WEBSOCKET",
-				url: ws.url(),
-				allowed: false,
-				// Closed, never opened: nothing goes out over it, so the run goes on.
-				reason:
-					this.mode === "allowlist" ? NOT_A_DESTINATION : "WebSocket closed",
-			});
-			return ws.close();
-		});
+		if (decision.allow) return route.continue();
+		return route.abort("blockedbyclient");
 	}
 
 	restrictNetwork(mode: "read_only" | "none"): void {
-		if (this.mode === "open")
+		if (this.state.mode === "open")
 			throw new Error(
 				"restrictNetwork needs a session opened with a guarded network",
 			);
-		if (this.mode === "allowlist" || this.mode === "pinned")
+		if (this.state.mode === "allowlist" || this.state.mode === "pinned")
 			throw new Error(
-				`restrictNetwork does not apply to a ${this.mode} session`,
+				`restrictNetwork does not apply to a ${this.state.mode} session`,
 			);
-		if (mode === "none" || this.mode === "read_only") this.mode = mode;
+		if (mode === "none" || this.state.mode === "read_only")
+			this.state.mode = mode;
 	}
 
 	networkLog(): NetworkLogEntry[] {
-		return [...this.log];
+		return [...this.state.log];
 	}
 
 	async evaluate<T>(script: string): Promise<T> {
@@ -652,12 +681,11 @@ class PlaywrightPage implements BrowserPage {
 			waitUntil: options.waitUntil ?? "load",
 		};
 		const { beforeRedirect } = options;
-		// Allowlist and pinned pages already check every request, every hop, in their guard.
-		if (
-			!beforeRedirect ||
-			this.mode === "allowlist" ||
-			this.mode === "pinned"
-		) {
+		// Its hop handler is a page route, which runs before the session's filter and would let
+		// requests past it; guarded sessions check every hop in their filter instead.
+		if (beforeRedirect && this.state.mode !== "open")
+			throw new Error("beforeRedirect is only for open sessions");
+		if (!beforeRedirect) {
 			const response = await this.page.goto(url, gotoOptions);
 			return { status: response?.status() ?? null, url: this.page.url() };
 		}
@@ -802,22 +830,69 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 			// route() does not see a service worker's fetches, so guarded pages get none.
 			...(network === "open" ? {} : { serviceWorkers: "block" as const }),
 		});
-		// route() covers one page; a pop-up the form opens would escape it.
-		if (network !== "open")
+		const state: GuardState = { mode: network, log: [] };
+		const pages = new Map<unknown, PlaywrightPage>();
+		if (network !== "open") {
+			if (!context.route || !context.routeWebSocket) {
+				await context.close().catch(() => {});
+				await browser.close();
+				throw new Error(
+					"A guarded session needs a browser that filters a whole context",
+				);
+			}
+			const allowed = options.allowedHosts ?? [];
+			// One filter for the whole context, installed before the first page: a pop-up's first
+			// request (and every later one) passes through it too, never around it.
+			await context.route("**/*", async (route) => {
+				const page = pages.get(pageOf(route.request()));
+				if (page) return page.handle(route);
+				// A window the session did not open (a pop-up): nothing it asks for is fetched.
+				const request = route.request();
+				const url = request.url();
+				state.log.push({
+					method: request.method(),
+					url,
+					allowed: false,
+					reason:
+						state.mode === "allowlist" && !urlOnHosts(url, allowed)
+							? DESTINATION_REFUSED
+							: "pop-up refused",
+				});
+				return route.abort("blockedbyclient");
+			});
+			await context.routeWebSocket(/.*/, (ws) => {
+				if (
+					state.mode === "allowlist" &&
+					urlOnHosts(ws.url().replace(/^ws/, "http"), allowed) &&
+					ws.connectToServer
+				) {
+					ws.connectToServer();
+					return;
+				}
+				state.log.push({
+					method: "WEBSOCKET",
+					url: ws.url(),
+					allowed: false,
+					// Closed, never opened: nothing goes out over it, so the run goes on.
+					reason:
+						state.mode === "allowlist" ? NOT_A_DESTINATION : "WebSocket closed",
+				});
+				return ws.close();
+			});
+			// A backstop: the window itself is closed as soon as it shows.
 			context.on?.("page", (popup) => {
+				if (pages.has(popup)) return;
 				void popup
 					.opener()
 					.then((opener) => (opener ? popup.close() : undefined))
 					.catch(() => {});
 			});
+		}
 		return {
 			newPage: async () => {
-				const page = new PlaywrightPage(
-					await context.newPage(),
-					network,
-					options,
-				);
-				await page.guard();
+				const raw = await context.newPage();
+				const page = new PlaywrightPage(raw, state, options);
+				pages.set(raw, page);
 				return page;
 			},
 			close: async () => {
