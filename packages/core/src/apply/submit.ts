@@ -376,6 +376,49 @@ export type SubmitOutcome =
 	| { outcome: "paused"; reason: string }
 	| { outcome: "skipped"; state: string };
 
+/** Records a stop before the click as a `not_sent` attempt and hands the application over. */
+function stopper(
+	db: ApplyDeps["store"],
+	userId: string,
+	applicationId: string,
+) {
+	return async (
+		reason: string,
+		board = "",
+		url = "",
+		screenshotKey: string | null = null,
+		proof: Record<string, unknown> = {},
+	) => {
+		await db.stopSubmission(userId, applicationId, {
+			board,
+			url,
+			screenshotKey,
+			reason: `${reason} Nothing was submitted.`,
+			proof,
+		});
+		return { outcome: "needs_human" as const, reason };
+	};
+}
+
+/** The gates before any browser opens; null when the run may open the form. */
+async function gateBeforeOpen(
+	db: ApplyDeps["store"],
+	userId: string,
+	stop: ReturnType<typeof stopper>,
+	context: SubmissionContext,
+): Promise<SubmitOutcome | null> {
+	const board = context.board ?? "";
+	// The hard gate: on a hand-off board no browser opens, whatever moved it to applying.
+	const mode = modeOf(context);
+	if (mode.mode === "handoff") return stop(mode.reason, board);
+	// A pause after approval stops before the browser opens: typing on a live form can send
+	// answers through the page's own scripts, long before the upload or the click.
+	if (!(await db.submissionsPaused(userId))) return null;
+	const reason = "Submissions were paused before the form was opened.";
+	await stop(reason, board);
+	return { outcome: "paused", reason };
+}
+
 /**
  * One submission. Never throws: a stop before the click records a `not_sent` attempt; an error
  * after the claim becomes an unknown outcome for the user to resolve, never a retry.
@@ -397,33 +440,10 @@ export async function submitStep(
 				"An earlier attempt was interrupted after it was cleared to submit; check before retrying.",
 		};
 	const context = await db.submissionContext(userId, applicationId);
-	const stop = async (
-		reason: string,
-		board = "",
-		url = "",
-		screenshotKey: string | null = null,
-		proof: Record<string, unknown> = {},
-	) => {
-		await db.stopSubmission(userId, applicationId, {
-			board,
-			url,
-			screenshotKey,
-			reason: `${reason} Nothing was submitted.`,
-			proof,
-		});
-		return { outcome: "needs_human" as const, reason };
-	};
+	const stop = stopper(db, userId, applicationId);
 	if (!context) return stop("The application's job could not be read.");
-	// The hard gate: on a hand-off board no browser opens, whatever moved it to applying.
-	const mode = modeOf(context);
-	if (mode.mode === "handoff") return stop(mode.reason, context.board ?? "");
-	// A pause after approval stops before the browser opens: typing on a live form can send
-	// answers through the page's own scripts, long before the upload or the click.
-	if (await db.submissionsPaused(userId)) {
-		const reason = "Submissions were paused before the form was opened.";
-		await stop(reason, context.board ?? "");
-		return { outcome: "paused" as const, reason };
-	}
+	const gated = await gateBeforeOpen(db, userId, stop, context);
+	if (gated) return gated;
 	let attemptId: string | null = null;
 	let pausedAtClaim = false;
 	try {
@@ -436,7 +456,6 @@ export async function submitStep(
 				run.board,
 				run.url,
 			);
-		pausedAtClaim = false;
 		const result = await openAndRun(
 			apply,
 			{
