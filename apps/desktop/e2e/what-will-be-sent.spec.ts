@@ -100,7 +100,8 @@ test("review lists every field of the form and the value it gets", async () => {
 				has: page.locator("dt", { hasText: label }),
 			});
 		// Every field of the fixture's Greenhouse form, with its exact value.
-		await expect(list.getByTestId("sent-field")).toHaveCount(10);
+		// Includes the Country picker beside the phone (2026-11-09), set by the page from the number.
+		await expect(list.getByTestId("sent-field")).toHaveCount(11);
 		await expect(line("First Name").getByTestId("sent-value")).toHaveText(/\S/);
 		await expect(line("Email").getByTestId("sent-value")).toContainText("@");
 		await expect(line("Resume/CV").getByTestId("sent-value")).toHaveText(
