@@ -1,5 +1,12 @@
 # OfferFinch
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/readme/welcome-dark.gif">
+    <img src="docs/readme/welcome-light.gif" width="560" alt="The Welcome screen's demo: OfferFinch searches job boards, scores four roles against your CV, sets two aside, and drafts a CV and letter when you press Prepare.">
+  </picture>
+</p>
+
 OfferFinch is a local macOS app that finds matching jobs, scores fit, and prepares a CV,
 cover letter, and answers when you choose **Prepare**. Review the documents and their
 claims before approving. Jobs come from job-board search (Greenhouse, Lever, Ashby,
@@ -12,6 +19,38 @@ The app runs in the menu bar, scans while the Mac is awake, and resumes durable 
 a crash. Closing its window keeps scans running; **Quit** stops the app. There are no
 accounts or hosted services to deploy. The retired web product and its database migration
 tool have been removed.
+
+## A look around
+
+Every job lands in the **Inbox** with a fit score and what matches or is missing from your
+profile. Press **Interested** and OfferFinch drafts a tailored CV, letter and answers, then
+checks every claim against your profile before you approve.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/inbox-review-dark.png">
+  <img src="docs/readme/inbox-review-light.png" alt="Inbox with a prepared job: a 100 fit score, a tailored CV, and Approve and Reject buttons.">
+</picture>
+
+<table>
+  <tr>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/readme/inbox-match-dark.png">
+        <img src="docs/readme/inbox-match-light.png" alt="A match in the Inbox: a 78 fit score with what matches and what's missing.">
+      </picture>
+      <p align="center"><sub>Fit score, with what matches and what's missing</sub></p>
+    </td>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/readme/profile-dark.png">
+        <img src="docs/readme/profile-light.png" alt="Profile experience records imported from a resume.">
+      </picture>
+      <p align="center"><sub>Your profile, the only source drafts may claim from</sub></p>
+    </td>
+  </tr>
+</table>
+
+All screens above show the built-in sample data (**Try it with sample data**); none of it is real.
 
 ## Try it
 
