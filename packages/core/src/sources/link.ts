@@ -54,6 +54,16 @@ export function isPrivateAddress(address: string): boolean {
 }
 
 /**
+ * True for a host name that is this Mac or a private network by its literal form: `localhost`,
+ * `.local` and the other private names, 127.0.0.0/8, ::1, 0.0.0.0, 10/8, 172.16/12, 192.168/16,
+ * 169.254/16 and the rest of `isPrivateAddress`. A trailing dot names the same host.
+ */
+export function isPrivateHost(hostname: string): boolean {
+	const host = hostname.toLowerCase().replace(/\.+$/, "");
+	return PRIVATE_NAMES.test(host) || isPrivateAddress(host);
+}
+
+/**
  * The URL the user pasted, if it may be read: http or https, no user name or password, and a
  * public host. The WHATWG parser has already turned decimal, octal and hex IPv4 forms into
  * dotted quads, so "http://2130706433" is seen as 127.0.0.1.
@@ -78,7 +88,7 @@ export function checkJobLink(input: string): LinkCheck {
 	const host = url.hostname.toLowerCase().replace(/\.+$/, "");
 	if (!host.includes(".") && !host.includes(":") && !ipv4(host))
 		return { ok: false, reason: "That link has no public host name." };
-	if (PRIVATE_NAMES.test(host) || isPrivateAddress(host))
+	if (isPrivateHost(host))
 		return {
 			ok: false,
 			reason: "Links to this Mac or a private network are not read.",

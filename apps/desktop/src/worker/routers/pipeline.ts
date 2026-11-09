@@ -4,7 +4,11 @@ import {
 	whatWillBeSent,
 } from "@offerfinch/core/apply/field-answers";
 import { formTargetFor } from "@offerfinch/core/apply/form-target";
-import { applyUrl, BOARDS } from "@offerfinch/core/apply/forms";
+import {
+	applyUrl,
+	BOARDS,
+	companyKeyProblem,
+} from "@offerfinch/core/apply/forms";
 import {
 	BOARD_SUBMISSION_MODES,
 	submissionModeAfterRead,
@@ -95,11 +99,12 @@ export async function submissionView(
 	const { job } = posting;
 	const target = formTargetFor({ ...job, companyKey: posting.companyKey });
 	// The posting's own apply form on the real board (the board, not a fixture, decides);
-	// otherwise the employer's own apply link when the listing showed one, else the posting.
+	// otherwise the employer's own apply link when the listing showed one, else the posting. A
+	// company key that cannot name the board's form (not one DNS label) builds no form address.
 	const postingForm =
 		target.board === "web"
 			? target.url
-			: target.board
+			: target.board && !companyKeyProblem(target.board, target.companyKey)
 				? applyUrl(target.board, target)
 				: (job.applyUrl ?? job.url);
 	const mode = submissionModeAfterRead(

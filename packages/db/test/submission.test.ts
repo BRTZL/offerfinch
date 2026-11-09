@@ -155,6 +155,7 @@ function deps(behave: (run: ApplicationRun) => Promise<RunResult>) {
 		blobs,
 		// Greenhouse submits automatically; these tests drive the applier on a local stand-in.
 		boardBases: { greenhouse: "http://127.0.0.1:9/greenhouse" },
+		fixtures: true,
 		run: async (run) => {
 			runs.push(run);
 			return behave(run);
@@ -399,7 +400,11 @@ describe("submission on approval", () => {
 	it("stops before opening a browser on a real board that is not opened", async () => {
 		const id = await approvedApp();
 		const { pipeline, runs } = deps(submits({ n: 0 }));
-		(pipeline.apply as ApplyDeps).boardBases = {};
+		// The real configuration: real board hosts, no fixtures.
+		Object.assign(pipeline.apply as ApplyDeps, {
+			boardBases: {},
+			fixtures: false,
+		});
 		await repo.setSubmissionsPaused("u1", false);
 		expect(await beginSubmissionStep(pipeline, "u1", id)).toEqual({
 			outcome: "started",
@@ -437,7 +442,11 @@ describe("submission on approval", () => {
 	it("sends an opened real board's form only from a field list read before review", async () => {
 		const id = await approvedApp();
 		const { pipeline, runs } = deps(submits({ n: 0 }));
-		(pipeline.apply as ApplyDeps).boardBases = {};
+		// The real configuration: real board hosts, no fixtures.
+		Object.assign(pipeline.apply as ApplyDeps, {
+			boardBases: {},
+			fixtures: false,
+		});
 		await repo.setBoardOpen("u1", "greenhouse", true);
 		await repo.setSubmissionsPaused("u1", false);
 		await beginSubmissionStep(pipeline, "u1", id);
@@ -454,7 +463,11 @@ describe("submission on approval", () => {
 		const id = await approvedApp();
 		const { pipeline, runs } = deps(submits({ n: 0 }));
 		// The run itself is a stub (`apply.run`) and the browser throws: no site is contacted.
-		(pipeline.apply as ApplyDeps).boardBases = {};
+		// The real configuration: real board hosts, no fixtures.
+		Object.assign(pipeline.apply as ApplyDeps, {
+			boardBases: {},
+			fixtures: false,
+		});
 		// The form read before review, while Greenhouse was open.
 		const schema = {
 			board: "greenhouse",
@@ -478,10 +491,9 @@ describe("submission on approval", () => {
 		expect(runs[0]?.url).toMatch(
 			/^https:\/\/job-boards\.greenhouse\.io\/acme\/jobs\//,
 		);
-		// Greenhouse's form host and its own upload and lookup hosts; not Lever's.
+		// Greenhouse's form host and its own upload and lookup hosts; not Lever's, and never this
+		// Mac (127.0.0.1, localhost) in the real configuration.
 		expect(runs[0]?.allowedHosts).toEqual([
-			"127.0.0.1",
-			"localhost",
 			"job-boards.greenhouse.io",
 			"boards.greenhouse.io",
 			"email-address-validator.us.greenhouse.io",

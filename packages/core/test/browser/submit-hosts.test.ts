@@ -1,12 +1,16 @@
+import type { FormRead } from "@offerfinch/core/apply/form-schema";
 import type { Board } from "@offerfinch/core/apply/forms";
+import { readApplicationForm } from "@offerfinch/core/apply/read-form";
 import {
+	type ApplyDeps,
+	type SubmissionContext,
 	type SubmissionStore,
 	submitStep,
 } from "@offerfinch/core/apply/submit";
 import { MemoryBlobStore } from "@offerfinch/core/export/export";
 import type { PipelineDeps } from "@offerfinch/core/pipeline/ports";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { fixtureBrowser } from "./browser";
+import { fixtureBrowser, siteBrowser } from "./browser";
 import { type FixtureBoards, startFixtureBoards } from "./fixture-boards";
 
 /**
@@ -88,6 +92,7 @@ function harness(board: Board, jobId: string, source: string = board) {
 			browser: fixtureBrowser(),
 			blobs,
 			allowedHosts: ["127.0.0.1"],
+			fixtures: true,
 			boardBases: { [board]: `${boards.url}/${board}` },
 		},
 	} as unknown as PipelineDeps;
@@ -179,3 +184,78 @@ describe.each(["ashby", "greenhouse", "lever"] as const)(
 		}, 60_000);
 	},
 );
+
+/**
+ * Codex review of PR #149 (2026-11-09), P1: the real app allowed 127.0.0.1 and localhost in every
+ * run, so a board host that redirected to this Mac (and a `POST /mutate` there) was followed. Here
+ * the board is on a public-looking name (`boards.acme.test`, answered by the local fixture server
+ * through `siteBrowser`), with the hosts the desktop used to pass (`submitAllowedHosts`: its own
+ * and 127.0.0.1, localhost) and no `fixtures`: the real configuration. Its form 302s to
+ * `http://localhost:<port>/…`, which must be refused, in the submission and in the form read.
+ */
+describe("the real configuration: a redirect to this Mac is refused", () => {
+	const jobId = "greenhouse-redirect-away";
+	const port = () => new URL(boards.url).port;
+	const base = () => `http://boards.acme.test:${port()}/greenhouse`;
+	const allowedHosts = ["boards.acme.test", "127.0.0.1", "localhost"];
+	const context = (): SubmissionContext => ({
+		applicationId: "app-1",
+		source: "greenhouse",
+		board: "greenhouse",
+		companyKey: "acme-robotics",
+		externalId: jobId,
+		jobUrl: "",
+		formAnswers: [],
+		coverLetterMarkdown: null,
+		cvPdfKey: "cv.pdf",
+		coverLetterPdfKey: null,
+	});
+
+	it("stops the submission at the redirect, before anything is filled or sent", async () => {
+		const { deps, calls } = harness("greenhouse", jobId);
+		const url = `${base()}/acme-robotics/jobs/${jobId}`;
+		const read: FormRead = {
+			status: "read",
+			schema: {
+				board: "greenhouse",
+				url,
+				submit: "Submit application",
+				fields: [],
+			},
+			readAt: new Date().toISOString(),
+		};
+		const apply = deps.apply as ApplyDeps;
+		Object.assign(apply, {
+			browser: siteBrowser(Number(port())),
+			boardBases: { greenhouse: base() },
+			allowedHosts,
+			fixtures: undefined,
+		});
+		Object.assign(apply.store, { formRead: async () => read });
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(/localhost/),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["stop"]);
+		expect(away(jobId)).toEqual([]);
+	}, 60_000);
+
+	it("reads no form there before review", async () => {
+		const read = await readApplicationForm(
+			{
+				store: {} as SubmissionStore,
+				browser: siteBrowser(Number(port())),
+				blobs: new MemoryBlobStore(),
+				boardBases: { greenhouse: base() },
+				allowedHosts,
+			},
+			context(),
+		);
+		// The navigation is refused at its redirect to localhost: nothing is read there.
+		expect(read).toMatchObject({
+			status: "failed",
+			note: expect.stringMatching(/ERR_BLOCKED_BY_CLIENT/),
+		});
+	}, 60_000);
+});

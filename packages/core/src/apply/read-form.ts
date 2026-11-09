@@ -8,6 +8,7 @@ import {
 } from "./form-schema";
 import {
 	BOARD_CONFIGS,
+	companyKeyProblem,
 	type FormBoard,
 	type FormField,
 	optionsScript,
@@ -131,6 +132,17 @@ export async function readApplicationForm(
 			note: mode.reason || "This board has no automatic form filling.",
 			readAt,
 		};
+	// A company key that is not one DNS label would make the form's host another site.
+	const badKey =
+		board === "web" ? null : companyKeyProblem(board, context.companyKey);
+	if (badKey)
+		return {
+			status: "skipped",
+			board,
+			url: context.jobUrl,
+			note: `The form was not read before review: ${badKey}`,
+			readAt,
+		};
 	const url = formUrlOf(context, board, apply.boardBases);
 	// The same hosts a submission of this job may open: none on a board the user has not opened.
 	const allowed = allowedHostsFor(apply, context, url);
@@ -182,6 +194,8 @@ async function readInSession(
 	const session = await apply.browser.openSession({
 		network: "read_only",
 		allowedHosts: board === "web" ? webReadHosts(url) : allowed,
+		// A real read never reaches this Mac or a private network; only a fixture read may.
+		refusePrivateNetwork: !apply.fixtures,
 	});
 	try {
 		const page = await session.newPage();

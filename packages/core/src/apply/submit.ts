@@ -6,6 +6,7 @@ import type {
 	HostRules,
 	NetworkLogEntry,
 } from "../scrape/browser";
+import { isPrivateHost } from "../sources/link";
 import { evidenceProfile } from "../tailor/profile-rules";
 import { type FormAnswer, parseContact } from "../tailor/tailor";
 import {
@@ -20,6 +21,7 @@ import {
 	type ApplicantData,
 	type Board,
 	applyUrl as boardApplyUrl,
+	companyKeyProblem,
 	exactOption,
 	type FormBoard,
 	markdownToPlain,
@@ -195,12 +197,22 @@ export interface ApplyDeps {
 	browser: BrowserProvider;
 	blobs: BlobStore;
 	/**
-	 * Hosts automatic submission may click submit on. Anything else stops before opening the form
-	 * and hands over. Default: only the local fixture boards.
+	 * Hosts automatic submission may click submit on, besides the board the user opened in
+	 * Settings › Applying. Anything else stops before opening the form and hands over. This Mac
+	 * and private networks are never among them unless `fixtures` is set. Default: none (with
+	 * `fixtures`: the local fixture hosts, 127.0.0.1 and localhost).
 	 */
 	allowedHosts?: string[];
 	/** Base URL per board, replacing the real hosts (fixtures and tests). */
 	boardBases?: Partial<Record<Board, string>>;
+	/**
+	 * Fixture configuration (test code and the desktop's test mode only; never read from the
+	 * environment in the packaged app): forms on this Mac (127.0.0.1, localhost) may be opened,
+	 * a fixture board fills from its scan without a read before review, and sessions may reach
+	 * the local network. Unset, every run refuses this Mac and private networks: in its allowed
+	 * hosts, its redirects and every request its pages make.
+	 */
+	fixtures?: boolean;
 	/** Replaces the browser run (tests). */
 	run?: (
 		run: ApplicationRun,
@@ -215,10 +227,7 @@ export interface ApplyDeps {
 
 export const LOCAL_HOSTS = ["127.0.0.1", "localhost"];
 
-export function hostAllowed(
-	url: string,
-	allowed: string[] = LOCAL_HOSTS,
-): boolean {
+export function hostAllowed(url: string, allowed: string[]): boolean {
 	const host = new URL(url).hostname;
 	return allowed.some((h) => h === host);
 }
@@ -318,6 +327,15 @@ export function modeOf(context: SubmissionContext) {
  * approved -> applying, only on a board whose mode is "auto". A hand-off board stays approved:
  * the dashboard shows the hand-off and the user records the submission.
  */
+/** Why this job's company key cannot name its form (a company-subdomain board), or null. */
+function keyProblem(
+	context: Pick<SubmissionContext, "board" | "companyKey">,
+): string | null {
+	return context.board && context.board !== "web"
+		? companyKeyProblem(context.board, context.companyKey)
+		: null;
+}
+
 export async function beginSubmissionStep(
 	deps: PipelineDeps,
 	userId: string,
@@ -397,6 +415,8 @@ async function prepareRun(
 ): Promise<{ run: ApplicationRun } | { stop: string }> {
 	if (!context.board)
 		return { stop: "This board has no automatic form filling; apply by hand." };
+	const badKey = keyProblem(context);
+	if (badKey) return { stop: badKey };
 	const url = formUrlOf(context, context.board, apply.boardBases);
 	if (!context.cvPdfKey)
 		return { stop: "The approved CV has no PDF export to upload." };
@@ -416,12 +436,12 @@ async function prepareRun(
 			stop: "The employer's form was not read before review, so no list of what will be sent was approved for it; apply on the employer's site yourself.",
 		};
 	// A real board's form is filled only from a field list review showed, like an employer's: a
-	// form not read before review (its board was closed then) goes back to review first. The
-	// local fixture boards keep filling from the scan, as before step 2.
+	// form not read before review (its board was closed then) goes back to review first. Only
+	// the local fixture boards of a fixture run keep filling from the scan, as before step 2.
 	if (
 		context.board !== "web" &&
 		read?.status !== "read" &&
-		!hostAllowed(url, LOCAL_HOSTS)
+		!(apply.fixtures && hostAllowed(url, LOCAL_HOSTS))
 	)
 		return {
 			stop: "The form was not read before review, so no list of what will be sent was approved for it. Read the form again to review it.",
@@ -487,6 +507,8 @@ async function openAndRun(
 	hostRules?: HostRules | null,
 ): Promise<RunResult & { networkLog?: unknown[] }> {
 	if (apply.run) return apply.run(run);
+	// A real run never reaches this Mac or a private network; only a fixture run may.
+	const refusePrivateNetwork = !apply.fixtures;
 	const session = await apply.browser.openSession(
 		network === "allowlist"
 			? {
@@ -494,8 +516,9 @@ async function openAndRun(
 					allowedHosts: run.allowedHosts,
 					...(hostRules ? { hostRules } : {}),
 					formValues: formValuesOf(run.data),
+					refusePrivateNetwork,
 				}
-			: { network },
+			: { network, refusePrivateNetwork },
 	);
 	try {
 		const page = await session.newPage();
@@ -550,15 +573,23 @@ function stopper(
 }
 
 /**
- * The form hosts a run on `url` may open: the local fixture hosts (`ApplyDeps.allowedHosts`), plus
- * this board's exact form host when the user opened it in Settings › Applying (open-boards.ts).
+ * The form hosts a run on `url` may open: `ApplyDeps.allowedHosts`, plus this board's exact form
+ * host when the user opened it in Settings › Applying (open-boards.ts). Outside a fixture run
+ * (`ApplyDeps.fixtures`) this Mac and private networks are never among them, whatever the
+ * company key, the employer's link or `allowedHosts` say.
  */
 export function allowedHostsFor(
-	apply: Pick<ApplyDeps, "allowedHosts">,
+	apply: Pick<ApplyDeps, "allowedHosts" | "fixtures">,
 	context: SubmissionContext,
 	url: string,
 ): string[] {
-	return runFormHosts(apply.allowedHosts ?? LOCAL_HOSTS, context, url);
+	if (keyProblem(context)) return [];
+	const hosts = runFormHosts(
+		apply.allowedHosts ?? (apply.fixtures ? LOCAL_HOSTS : []),
+		context,
+		url,
+	);
+	return apply.fixtures ? hosts : hosts.filter((h) => !isPrivateHost(h));
 }
 
 /**
@@ -618,6 +649,11 @@ async function gateBeforeOpen(
 	// The hard gate: on a hand-off board no browser opens, whatever moved it to applying.
 	const mode = modeOf(context);
 	if (mode.mode === "handoff") return stop(mode.reason, board);
+	// A company key that is not one DNS label would make the form's host another site (this Mac
+	// included): refused before any URL is built or any browser opens, opened board or not.
+	const badKey = keyProblem(context);
+	if (badKey)
+		return stop(badKey, board, "", null, { stop: "host_not_allowed" });
 	// A pause after approval stops before the browser opens: typing on a live form can send
 	// answers through the page's own scripts, long before the upload or the click.
 	if (!(await apply.store.submissionsPaused(userId)))

@@ -307,6 +307,27 @@ export function boardFormHost(board: Board, companyKey: string): string | null {
 	return DNS_LABEL.test(label) ? `${label}.${at.companyDomain}` : null;
 }
 
+/** True for a board whose form lives on the company's own subdomain (Recruitee, Teamtailor, Personio). */
+export function companySubdomainBoard(board: Board): boolean {
+	return "companyDomain" in FORM_HOST[board];
+}
+
+/**
+ * Why `companyKey` cannot name this board's form: on a company-subdomain board the key becomes
+ * the host, so anything but one DNS label (`localhost:8123#`, `evil.com#`, `a.b`) is refused
+ * before any URL is built or any browser opens. Null when the key is fine (or the board's host is
+ * fixed, the key only a path segment).
+ */
+export function companyKeyProblem(
+	board: Board,
+	companyKey: string,
+): string | null {
+	if (!companySubdomainBoard(board)) return null;
+	return DNS_LABEL.test(companyKey.toLowerCase())
+		? null
+		: "The job's company key is not one company name on this board, so its form address cannot be built.";
+}
+
 /** The hosts Settings shows for a board: its form host (or `<company>.<domain>`) and `formHosts`. */
 export function boardShownHosts(board: Board): string[] {
 	const at = FORM_HOST[board];
@@ -324,6 +345,9 @@ function companyBase(
 ): string {
 	const at = FORM_HOST[board];
 	const domain = "companyDomain" in at ? at.companyDomain : at.host;
+	// The key is the host (or, on a fixture base, a path segment): one DNS label or nothing.
+	const problem = companyKeyProblem(board, company);
+	if (problem) throw new Error(problem);
 	return base
 		? `${base.replace(/\/+$/, "")}/${company}`
 		: `https://${company.toLowerCase()}.${domain}`;

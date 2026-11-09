@@ -221,6 +221,7 @@ function harness(
 			browser: fixtureBrowser(),
 			blobs,
 			allowedHosts: ["127.0.0.1"],
+			fixtures: true,
 			boardBases: { [board]: `${boards.url}/${board}` },
 		},
 	} as unknown as PipelineDeps;

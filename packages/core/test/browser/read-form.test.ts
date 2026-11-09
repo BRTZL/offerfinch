@@ -278,6 +278,7 @@ describe("reading before review: the gates", () => {
 			store: {} as ApplyDeps["store"],
 			blobs: new MemoryBlobStore(),
 			allowedHosts: ["127.0.0.1"],
+			fixtures: true,
 			boardBases: bases,
 			browser: {
 				name: browser.name,

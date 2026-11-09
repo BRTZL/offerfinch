@@ -4,6 +4,7 @@ import {
 	BOARDS,
 	type Board,
 	boardFormHost,
+	companyKeyProblem,
 } from "../src/apply/forms";
 import {
 	BOARD_RISKS,
@@ -40,14 +41,29 @@ describe("the hosts a run may open", () => {
 
 	it("never lets a company key name another site", () => {
 		for (const board of ["recruitee", "teamtailor", "personio"] as Board[])
-			for (const key of ["evil.com#", "x@evil.com", "a.b", "", "-a", "a/b"])
+			for (const key of [
+				"evil.com#",
+				"x@evil.com",
+				"a.b",
+				"",
+				"-a",
+				"a/b",
+				"localhost:8123#",
+			]) {
 				expect(
 					runFormHosts(
 						LOCAL,
 						{ board, boardOpened: true, companyKey: key },
-						applyUrl(board, job(key)),
+						"https://x.example/",
 					),
 				).toEqual(LOCAL);
+				// No form address is ever built from it, real or fixture.
+				expect(companyKeyProblem(board, key)).not.toBeNull();
+				expect(() => applyUrl(board, job(key))).toThrow(/company key/);
+				expect(() =>
+					applyUrl(board, job(key), { [board]: "http://127.0.0.1:9/x" }),
+				).toThrow(/company key/);
+			}
 	});
 
 	it("adds only this run's board host, and only when that board is opened", () => {

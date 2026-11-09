@@ -272,6 +272,7 @@ describe("reading an employer's form before review", () => {
 			browser: localBrowser(),
 			blobs: new MemoryBlobStore(),
 			allowedHosts: ["127.0.0.1"],
+			fixtures: true,
 		};
 		const prepared = await readApplicationForm(
 			apply,
@@ -299,6 +300,7 @@ describe("reading an employer's form before review", () => {
 				browser: localBrowser(),
 				blobs: new MemoryBlobStore(),
 				allowedHosts: ["127.0.0.1"],
+				fixtures: true,
 			},
 			{
 				applicationId: "app-1",
@@ -506,6 +508,7 @@ function harness(
 			browser: fixtureBrowser(),
 			blobs,
 			allowedHosts: ["127.0.0.1"],
+			fixtures: true,
 		},
 	} as unknown as PipelineDeps;
 	return { deps, calls, blobs };

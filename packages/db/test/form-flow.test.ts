@@ -107,6 +107,7 @@ beforeAll(async () => {
 			},
 			blobs: new MemoryBlobStore(),
 			boardBases: { greenhouse: "http://127.0.0.1:9/greenhouse" },
+			fixtures: true,
 			readForm: async ({ board, url }) => {
 				reads++;
 				const schema: FormSchema = {

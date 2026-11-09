@@ -7,6 +7,7 @@ import {
 	hostMatches,
 	readOnlyDecision,
 } from "../apply/network-guard";
+import { isPrivateHost } from "../sources/link";
 
 export type { HostRules } from "../apply/network-guard";
 
@@ -160,6 +161,14 @@ export interface SessionOptions {
 	 */
 	formValues?: string[];
 	/**
+	 * "allowlist" and "read_only" (a submission or a form read): refuse every request and
+	 * navigation to this Mac or a private network (`localhost`, 127.0.0.0/8, ::1, 0.0.0.0, 10/8,
+	 * 172.16/12, 192.168/16, 169.254/16, `.local` …) by its host, whatever `allowedHosts` and
+	 * `hostRules` say: a redirect there, a page's fetch, a frame, a WebSocket. Set for every real
+	 * run; only the fixture runs (local stand-in boards) leave it off.
+	 */
+	refusePrivateNetwork?: boolean;
+	/**
 	 * "pinned" (a page a user linked, from anywhere): the browser has no network of its own (it
 	 * is started behind a proxy that refuses everything, with every host name unresolvable), and
 	 * every request the page makes, of any kind (documents, frames, scripts, images, fetches,
@@ -204,6 +213,18 @@ export function urlOnHosts(url: string, hosts: readonly string[]): boolean {
 		return false;
 	}
 }
+
+/** True when `url`'s host is this Mac or a private network (`isPrivateHost`); false if no URL. */
+export function privateUrl(url: string): boolean {
+	try {
+		return isPrivateHost(new URL(url).hostname);
+	} catch {
+		return false;
+	}
+}
+
+/** The reason recorded for a request to this Mac or a private network a real run refused. */
+export const PRIVATE_NETWORK_REFUSED = "private network refused";
 
 /** `boardHostDecision`'s reasons for a file read from a host that is not a destination. */
 const FILE_READS = new Set(["board asset, read", "board static file, read"]);
@@ -442,6 +463,8 @@ interface GuardState {
 	readonly pending: Map<number, PendingRequest>;
 	/** Set when the session starts closing: requests still in flight end with it. */
 	closing: boolean;
+	/** `SessionOptions.refusePrivateNetwork`: no request may reach this Mac or a private network. */
+	readonly refusePrivate: boolean;
 }
 
 /** The reason recorded for a request the session's closing (or its page's) cut off. */
@@ -508,6 +531,14 @@ class PlaywrightPage implements BrowserPage {
 		// Host classes and the form-value check apply to a real submission only.
 		this.hostRules = mode === "allowlist" ? options.hostRules : undefined;
 		this.needles = formValueNeedles(options.formValues ?? []);
+	}
+
+	/** On the destinations, and not on a private network when the session refuses one. */
+	private onHosts(url: string): boolean {
+		return (
+			urlOnHosts(url, this.allowedHosts) &&
+			!(this.state.refusePrivate && privateUrl(url))
+		);
 	}
 
 	/** "pinned": every http(s) request is fetched by the checking, pinning fetcher. */
@@ -620,7 +651,7 @@ class PlaywrightPage implements BrowserPage {
 		const request = route.request();
 		const method = request.method();
 		const url = request.url();
-		const destination = urlOnHosts(url, this.allowedHosts);
+		const destination = this.onHosts(url);
 		let reason = "allowed host";
 		if (!destination) {
 			const decision = this.otherHostDecision(request, url);
@@ -641,7 +672,7 @@ class PlaywrightPage implements BrowserPage {
 		if (response.status() >= 300 && response.status() < 400 && location) {
 			const target = new URL(location, url).href;
 			// A hop to another host meets the same rules as a new request from the same frame.
-			const hop = urlOnHosts(target, this.allowedHosts)
+			const hop = this.onHosts(target)
 				? null
 				: destination
 					? { allow: false, reason: DESTINATION_REFUSED }
@@ -697,6 +728,9 @@ class PlaywrightPage implements BrowserPage {
 			carriesFormData(request.postData(), this.needles)
 		)
 			return { allow: false, reason: DESTINATION_REFUSED };
+		// This Mac or a private network is never reached from a real run, whatever the rules say.
+		if (this.state.refusePrivate && privateUrl(url))
+			return { allow: false, reason: PRIVATE_NETWORK_REFUSED };
 		if (!this.hostRules) return { allow: false, reason: NOT_A_DESTINATION };
 		const decision = boardHostDecision(
 			{
@@ -737,7 +771,7 @@ class PlaywrightPage implements BrowserPage {
 		const method = request.method();
 		const url = request.url();
 		if (!/^https?:/.test(url)) return false;
-		if (!urlOnHosts(url, this.allowedHosts)) {
+		if (!this.onHosts(url)) {
 			this.refuse(method, url);
 			await route.abort("blockedbyclient");
 			return true;
@@ -747,7 +781,7 @@ class PlaywrightPage implements BrowserPage {
 		const location = response.headers().location;
 		if (response.status() >= 300 && response.status() < 400 && location) {
 			const target = new URL(location, url).href;
-			if (!urlOnHosts(target, this.allowedHosts)) {
+			if (!this.onHosts(target)) {
 				this.refuse(method, target);
 				await route.abort("blockedbyclient");
 				return true;
@@ -767,6 +801,19 @@ class PlaywrightPage implements BrowserPage {
 		if (this.state.mode === "pinned") return this.pinnedRoute(route);
 		const request = route.request();
 		const method = request.method();
+		// A form read: its page, frames and fetches never reach this Mac or a private network.
+		if (this.state.refusePrivate && privateUrl(request.url())) {
+			const leaving =
+				request.isNavigationRequest() &&
+				request.frame() === this.page.mainFrame();
+			this.state.log.push({
+				method,
+				url: request.url(),
+				allowed: false,
+				reason: leaving ? DESTINATION_REFUSED : PRIVATE_NETWORK_REFUSED,
+			});
+			return route.abort("blockedbyclient");
+		}
 		if (this.state.mode === "read_only" && this.allowedHosts.length > 0)
 			if (await this.refusedNavigation(route)) return;
 		const decision =
@@ -1008,6 +1055,9 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 			started: 0,
 			pending: new Map(),
 			closing: false,
+			refusePrivate:
+				Boolean(options.refusePrivateNetwork) &&
+				(network === "allowlist" || network === "read_only"),
 		};
 		const pages = new Map<unknown, PlaywrightPage>();
 		if (network !== "open") {
@@ -1032,7 +1082,9 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 					url,
 					allowed: false,
 					reason:
-						state.mode === "allowlist" && !urlOnHosts(url, allowed)
+						state.mode === "allowlist" &&
+						(!urlOnHosts(url, allowed) ||
+							(state.refusePrivate && privateUrl(url)))
 							? DESTINATION_REFUSED
 							: "pop-up refused",
 				});
@@ -1042,9 +1094,11 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 				routeUntilClosed(state, route, filter),
 			);
 			await context.routeWebSocket(/.*/, (ws) => {
+				const wsUrl = ws.url().replace(/^ws/, "http");
 				if (
 					state.mode === "allowlist" &&
-					urlOnHosts(ws.url().replace(/^ws/, "http"), allowed) &&
+					urlOnHosts(wsUrl, allowed) &&
+					!(state.refusePrivate && privateUrl(wsUrl)) &&
 					ws.connectToServer
 				) {
 					ws.connectToServer();

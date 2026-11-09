@@ -243,6 +243,8 @@ export function buildPipeline(input: PipelineInputs): {
 		llm,
 		claimsLlm,
 		log: input.log,
+		// Only a test run's submissions may open the local stand-in boards on this Mac.
+		applyFixtures: Boolean(input.test),
 	});
 	deps.tailorLlm = tailorLlm;
 	deps.notifier = input.notifier;

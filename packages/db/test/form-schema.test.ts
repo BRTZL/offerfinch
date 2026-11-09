@@ -284,6 +284,7 @@ describe("application form schema", () => {
 			},
 			blobs,
 			boardBases: { greenhouse: "http://127.0.0.1:9/greenhouse" },
+			fixtures: true,
 			run: async (run) => {
 				runs.push(run);
 				return {
