@@ -118,11 +118,11 @@ describe("carriesFormData on the URLs the real forms load (2026-11-09)", () => {
 		"Mark Example",
 		"mark.example@example.com",
 		"+1 555 010 0199",
-		"Ankara",
+		"Lisbon",
 		"https://www.linkedin.com/in/mark-example-1234567890",
 		"https://github.com/mark-example",
 		"LinkedIn",
-		"Yes, I am willing to relocate to Istanbul.",
+		"Yes, I am willing to relocate to Lisbon.",
 	]);
 
 	it("matches none of the boards' own requests", () => {
@@ -133,7 +133,7 @@ describe("carriesFormData on the URLs the real forms load (2026-11-09)", () => {
 			"https://www.recaptcha.net/recaptcha/enterprise/anchor?ar=1&k=6LdQ&co=aHR0cHM6Ly9qb2ItYm9hcmRzLmdyZWVuaG91c2UuaW86NDQz&hl=en&v=gYdqkxiddE5aXrugNbBbKgtN&size=invisible&cb=mark",
 			"https://www.googletagmanager.com/gtag/js?id=",
 			"https://cdn.lever.co/fonts/linkedin.woff2",
-			"https://jobs.lever.co/searchLocations?text=Ankara",
+			"https://jobs.lever.co/searchLocations?text=Lisbon",
 		])
 			expect(carriesFormData(url, needles), url).toBe(false);
 	});
