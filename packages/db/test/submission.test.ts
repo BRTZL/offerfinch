@@ -65,10 +65,12 @@ afterAll(async () => {
 });
 
 /** An application approved for exactly its current documents, with a CV PDF stored. */
-async function approvedApp(): Promise<string> {
+async function approvedApp(
+	source: NormalizedJob["source"] = "greenhouse",
+): Promise<string> {
 	n++;
 	const job: NormalizedJob = {
-		source: "greenhouse",
+		source,
 		externalId: `sub-${n}`,
 		url: `https://boards.greenhouse.io/acme/jobs/sub-${n}`,
 		title: "Engineer",
@@ -148,9 +150,8 @@ function deps(behave: (run: ApplicationRun) => Promise<RunResult>) {
 			},
 		},
 		blobs,
+		// Greenhouse submits automatically; these tests drive the applier on a local stand-in.
 		boardBases: { greenhouse: "http://127.0.0.1:9/greenhouse" },
-		// Greenhouse is a hand-off board; these tests drive the applier on a local stand-in.
-		autoSubmitFixtures: true,
 		run: async (run) => {
 			runs.push(run);
 			return behave(run);
@@ -352,33 +353,44 @@ describe("submission on approval", () => {
 		});
 	});
 
-	it("never fills or submits on a real Ashby, Greenhouse or Lever host, whatever is turned on", async () => {
+	it("stops before opening a browser on a real host that is not allowed", async () => {
 		const id = await approvedApp();
 		const { pipeline, runs } = deps(submits({ n: 0 }));
-		const apply = pipeline.apply as ApplyDeps;
-		apply.boardBases = {};
-		apply.allowedHosts = [
-			"jobs.ashbyhq.com",
-			"job-boards.greenhouse.io",
-			"jobs.lever.co",
-		];
+		(pipeline.apply as ApplyDeps).boardBases = {};
+		await repo.setSubmissionsPaused("u1", false);
+		expect(await beginSubmissionStep(pipeline, "u1", id)).toEqual({
+			outcome: "started",
+		});
+		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(/boards\.greenhouse\.io is not turned on/),
+		});
+		expect(runs).toHaveLength(0);
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "not_sent", mode: "auto" },
+		]);
+	});
+
+	it("never fills or submits a hand-off source's job, even on a fixture board", async () => {
+		const id = await approvedApp("linkedin");
+		const { pipeline, runs } = deps(submits({ n: 0 }));
 		await repo.setSubmissionsPaused("u1", false);
 		expect(await beginSubmissionStep(pipeline, "u1", id)).toMatchObject({
 			outcome: "handoff",
-			reason: expect.stringMatching(/Submit this one yourself/),
+			reason: expect.stringMatching(/Easy Apply is never used/),
 		});
 		expect(await repo.getState("u1", id)).toBe("approved");
 		await expect(dryRunApplication(pipeline, "u1", id)).rejects.toThrow(
-			/Submit this one yourself/,
+			/Easy Apply is never used/,
 		);
-		// Even an application forced into applying opens no browser on a hand-off board.
+		// Even an application forced into applying opens no browser for a hand-off source.
 		await execute(
 			db,
 			sql`update applications set state = 'applying' where id = ${id}`,
 		);
 		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
 			outcome: "needs_human",
-			reason: expect.stringMatching(/Submit this one yourself/),
+			reason: expect.stringMatching(/Easy Apply is never used/),
 		});
 		expect(runs).toHaveLength(0);
 	});

@@ -55,15 +55,16 @@ const PROFILE = {
 	],
 };
 
-function harness(board: Board, jobId: string) {
+function harness(board: Board, jobId: string, source: string = board) {
 	const blobs = new MemoryBlobStore();
 	void blobs.put("cv.pdf", new TextEncoder().encode("%PDF-1.4 cv"), "x");
-	const calls: { method: string; reason?: string }[] = [];
+	const calls: { method: string; reason?: string; key?: string | null }[] = [];
 	const store = {
 		submissionsPaused: async () => false,
 		resolveInterrupted: async () => false,
 		submissionContext: async () => ({
 			applicationId: "app-1",
+			source,
 			board,
 			companyKey: "acme-robotics",
 			externalId: jobId,
@@ -79,12 +80,16 @@ function harness(board: Board, jobId: string) {
 			cvPdfKey: "cv.pdf",
 			coverLetterPdfKey: null,
 		}),
-		claimSubmission: vi.fn(async () => {
-			calls.push({ method: "claim" });
+		claimSubmission: vi.fn(async (_u, _a, input) => {
+			calls.push({ method: "claim", key: input.beforeKey });
 			return { go: true as const, attemptId: "attempt-1" };
 		}),
 		finishSubmission: vi.fn(async (_u, _a, _id, input) => {
-			calls.push({ method: "finish", reason: input.reason });
+			calls.push({
+				method: "finish",
+				reason: input.reason,
+				key: input.afterKey,
+			});
 		}),
 		stopSubmission: vi.fn(async (_u, _a, input) => {
 			calls.push({ method: "stop", reason: input.reason });
@@ -105,11 +110,10 @@ function harness(board: Board, jobId: string) {
 			browser: fixtureBrowser(),
 			blobs,
 			allowedHosts: ["127.0.0.1"],
-			autoSubmitFixtures: true,
 			boardBases: { [board]: `${boards.url}/${board}` },
 		},
 	} as unknown as PipelineDeps;
-	return { deps, calls };
+	return { deps, calls, blobs };
 }
 
 const away = (jobId: string) =>
@@ -165,6 +169,35 @@ describe.each(["ashby", "greenhouse", "lever"] as const)(
 			// The click happened, so it is an unknown outcome naming the refused host.
 			expect(calls.at(-1)?.method).toBe("finish");
 			expect(calls.at(-1)?.reason).toMatch(/localhost/);
+		}, 60_000);
+	},
+);
+
+describe.each(["ashby", "greenhouse", "lever"] as const)(
+	"%s: submission on approval",
+	(board) => {
+		it("fills and submits once, with screenshots before and after", async () => {
+			const jobId = `${board}-auto-submit`;
+			const { deps, calls, blobs } = harness(board, jobId);
+			const outcome = await submitStep(deps, "u1", "app-1");
+			expect(outcome.outcome).toBe("applied");
+			expect(boards.count(jobId)).toBe(1);
+			expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+			expect(calls[1]?.reason).toMatch(/^Submitted; the board confirmed/);
+			for (const c of calls) {
+				expect(c.key).toBeTruthy();
+				expect(await blobs.get(c.key ?? "")).not.toBeNull();
+			}
+		}, 60_000);
+
+		it("sends nothing for a hand-off source's job, even on this board", async () => {
+			const jobId = `${board}-handoff-source`;
+			const { deps, calls } = harness(board, jobId, "linkedin");
+			const outcome = await submitStep(deps, "u1", "app-1");
+			expect(outcome.outcome).toBe("needs_human");
+			expect(boards.count(jobId)).toBe(0);
+			expect(calls.map((c) => c.method)).toEqual(["stop"]);
+			expect(calls[0]?.reason).toMatch(/Easy Apply is never used/);
 		}, 60_000);
 	},
 );

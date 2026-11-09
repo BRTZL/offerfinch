@@ -42,6 +42,8 @@ Postgres stays the source of truth. A timeout never approves anything. Queues we
 
 ## Submission on scored boards (2026-10-31)
 
+**Superseded (2026-11-09, user's choice):** approved applications submit automatically on these boards; see "2026-11-09: Approved applications submit automatically". Kept for the reasoning.
+
 Ashby, Greenhouse and Lever score browsers invisibly at submit time. The user chose never to auto-submit on those boards: after approval the application goes straight to the hand-off, with answers and files ready to copy, and the user submits and marks it done. No form is filled automatically there. The form-filling code stays behind this setting, disabled for these boards. Auto-submission covers only boards without such scoring, and none is confirmed yet.
 
 How it is built: a per-board mode (`handoff` or `auto`) fixed in `packages/core/src/apply/modes.ts`, enforced in core at every entry (begin, submit, dry run, the CLI's live dry run), so the UI is not the only gate. Changing a board to `auto` is a code change. The applier's fixture tests enable it only for 127.0.0.1/localhost stand-ins, from test code. Superseded by this: "Real board hosts need `SUBMIT_ALLOWED_HOSTS`" now only limits where an `auto` board's run may go.
@@ -852,3 +854,21 @@ whether a plan may spend paid usage is the user's own account setting, as in T3 
 | Paid stops are gone: no `vendor_stopped` refusal, no `recordPaidStop`, no Settings › Models stop notice or Resume, no Home "stopped after a paid call" item. Old `subscription_pauses` rows stay in the database and hold nothing back | Nothing creates a stop any more; a row left from before must not block calls |
 | Kept: the login checks, the daily call budget, the usage-limit pause, plan usage in Settings › Models, and the cap for pay-per-use calls | They do not decide on paid usage |
 | Supersedes the extra-usage, headroom and paid-stop rows of 2026-11-04 and 2026-11-06 | |
+
+## 2026-11-09: Approved applications submit automatically
+
+The user reversed the 2026-10-31 hand-off: every approved application is submitted with
+Playwright, on every board and on employers' own forms, with proof attached. The plan and its
+steps are in `docs/auto-apply-plan.md`; this records step 1.
+
+| Decision | Why |
+|---|---|
+| Ashby, Greenhouse and Lever are `auto` in `apply/modes.ts`. Approval moves the application to applying; the applier fills the form once from the approved documents and clicks submit once | The user's choice |
+| The table in `modes.ts` stays the only switch for a board's mode: no setting, environment variable or dashboard action changes it. Each board's `why` is now its known risk | One place to read and change, enforced in core at begin, submit and dry run |
+| The invisible scoring stays a known risk: a thank-you page is recorded as the board's confirmation, not as proof the employer received it | These boards score the browser at submit; a low score can drop an application behind a normal confirmation |
+| The test-only `autoSubmitFixtures` option is removed | With every board `auto` it changed nothing |
+| Hand-off stays for jobs added by hand, LinkedIn (Easy Apply never used), Indeed and Glassdoor's own apply, and try-it samples. SmartRecruiters, Workable, Recruitee, Teamtailor, Personio, the web and the feeds stay hand-off until their form filler lands (plan steps 5 and 6); their notes say automatic filling is not available yet | No filler exists for them yet; LinkedIn, Indeed and Glassdoor apply sit behind account walls and bot checks |
+| A hand-off source decides before its board, unchanged: a LinkedIn job whose apply link is on Greenhouse stays hand-off (its board is read from the job's source) | Kept for this step; the employer-link path is plan step 6 |
+| Kept: the claim before the click, no retry after it, the allowlist session, the stop on a visible challenge, and the submissions switch (`submission_settings.paused`, on until turned off). Real board hosts still need `SUBMIT_ALLOWED_HOSTS`, which the desktop leaves empty, so a real posting stops before any browser opens | The first real submission is one the user picks and watches (plan step 8); until then nothing reaches a real board |
+| Supersedes "Submission on scored boards (2026-10-31)" | |
+

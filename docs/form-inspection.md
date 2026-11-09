@@ -1,6 +1,6 @@
 # Application forms: what the three boards ask for
 
-**Since 2026-10-31 all three are hand-off boards** (`decisions.md`): nothing is filled or submitted automatically on them, and `forms:dry-run` refuses them. This record of their forms stays as the reference for the applier, which runs only against local stand-ins.
+**Since 2026-11-09 all three submit automatically** (`decisions.md`, `docs/auto-apply-plan.md`), replacing the 2026-10-31 hand-off. This record of their forms is the reference for the applier and its local stand-ins; the forms are checked again on real postings before the first real submission (plan step 4), since they may have changed since 2026-10-30.
 
 Inspected 2026-10-30 with local Playwright (`pnpm cli forms:inspect <url>`). Read-only: nothing was filled, clicked or uploaded, and every request except GET, HEAD and GraphQL queries was aborted in the browser before it left (`packages/core/src/apply/network-guard.ts`). Full-page screenshots: `screenshots/form-ashby.png`, `form-greenhouse.png`, `form-lever.png`.
 

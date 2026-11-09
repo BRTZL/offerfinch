@@ -28,7 +28,7 @@ import "./flow-explainer.css";
  * drawn with the app's own rows and meters): roles arrive from the job boards, each is scored
  * against the profile and what the user wants, the misfits are set aside with their reason (a
  * low fit, or a place they can't work in), and the one picked is drafted
- * and checked. It ends on what the user keeps: they apply, nothing is sent.
+ * and checked. It ends on what the user keeps: they approve, nothing is sent before that.
  *
  * Every company and role is made up. Under reduced motion the stage shows the poster, the loop's
  * finished state. The steps under it are a list for screen readers; the stage is decoration.
@@ -266,7 +266,7 @@ function DraftPanel({ s }: { s: S }) {
 				</span>
 			</span>
 			<span className="text-muted-foreground">
-				You read it and apply yourself. Nothing is sent.
+				You read it and approve it. Nothing is sent before you do.
 			</span>
 		</span>
 	);

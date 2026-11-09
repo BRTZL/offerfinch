@@ -266,7 +266,10 @@ export function JobFlagsSection({ app }: { app: AppDetail }) {
 	);
 }
 
-/** Before approval: what happens once you approve, so the hand-off is no surprise. */
+/**
+ * Before approval: what happens once you approve. On an automatic board approval submits once,
+ * unless submissions are paused; elsewhere it opens the hand-off.
+ */
 export function AfterApproveSection({ app }: { app: AppDetail }) {
 	if (app.state !== "ready_for_review") return null;
 	const handoff = app.submission?.mode !== "auto";
@@ -304,9 +307,23 @@ export function AfterApproveSection({ app }: { app: AppDetail }) {
 			</ol>
 			{handoff ? (
 				<p className="text-muted-foreground text-xs">
-					Nothing is sent from OfferFinch: this board is always yours to submit.
+					Nothing is sent from OfferFinch: you submit this one yourself.
 				</p>
-			) : null}
+			) : app.submissionsPaused ? (
+				<p
+					className="text-muted-foreground text-xs"
+					data-testid="after-approve-paused"
+				>
+					Automatic submissions are paused, so approving sends nothing yet: it
+					waits as approved, with every answer ready to submit yourself.
+				</p>
+			) : (
+				<p className="text-muted-foreground text-xs">
+					Approving submits it. A challenge, an unknown question or an unclear
+					result stops the run and hands it to you; it never clicks submit
+					twice.
+				</p>
+			)}
 		</InspectorSection>
 	);
 }

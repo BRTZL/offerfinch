@@ -21,10 +21,12 @@ import {
 import { submissionModeForSource } from "./modes";
 
 /**
- * Submission on approval (phase 3). `beginSubmissionStep` moves approved -> applying when the
- * user's switch allows; `submitStep` opens the board's form, fills it from the approved
- * documents and submits once. Postgres decides at every gate: the claim before the click is a
- * locked transaction that checks the approval, the switch and every earlier attempt.
+ * Submission on approval (phase 3; automatic since 2026-11-09, docs/auto-apply-plan.md).
+ * `beginSubmissionStep` moves approved -> applying on an "auto" board (`modes.ts`) when the
+ * user's switch (`submission_settings.paused`) allows; `submitStep` opens the board's form, fills
+ * it from the approved documents and submits once. The database decides at every gate: the claim
+ * before the click is a locked transaction that checks the approval, the switch and every earlier
+ * attempt.
  */
 
 export interface SubmissionContext {
@@ -153,11 +155,6 @@ export interface ApplyDeps {
 	allowedHosts?: string[];
 	/** Base URL per board, replacing the real hosts (fixtures and tests). */
 	boardBases?: Partial<Record<Board, string>>;
-	/**
-	 * Lets the applier run against the local fixture boards for a hand-off board (tests only; see
-	 * `submissionModeFor`). Real hosts stay hand-off whatever this says.
-	 */
-	autoSubmitFixtures?: boolean;
 	/** Replaces the browser run (tests). */
 	run?: (
 		run: ApplicationRun,
@@ -201,22 +198,9 @@ async function store(
 	return key;
 }
 
-/** The board's submission mode for this application, with the URL the applier would open. */
-export function modeOf(apply: ApplyDeps, context: SubmissionContext) {
-	const url = context.board
-		? boardApplyUrl(
-				context.board,
-				{
-					url: context.jobUrl,
-					externalId: context.externalId,
-					companyKey: context.companyKey,
-				},
-				apply.boardBases,
-			)
-		: null;
-	return submissionModeForSource(context.source ?? "", context.board, url, {
-		autoSubmitFixtures: apply.autoSubmitFixtures,
-	});
+/** The submission mode for this application: its source, then its board. */
+export function modeOf(context: SubmissionContext) {
+	return submissionModeForSource(context.source ?? "", context.board);
 }
 
 /**
@@ -239,7 +223,7 @@ export async function beginSubmissionStep(
 			outcome: "skipped",
 			reason: "the application's job could not be read",
 		};
-	const mode = modeOf(deps.apply, context);
+	const mode = modeOf(context);
 	if (mode.mode === "handoff")
 		return { outcome: "handoff", reason: mode.reason };
 	return deps.apply.store.beginSubmission(userId, applicationId);
@@ -376,7 +360,7 @@ export async function submitStep(
 	};
 	if (!context) return stop("The application's job could not be read.");
 	// The hard gate: on a hand-off board no browser opens, whatever moved it to applying.
-	const mode = modeOf(apply, context);
+	const mode = modeOf(context);
 	if (mode.mode === "handoff") return stop(mode.reason, context.board ?? "");
 	let attemptId: string | null = null;
 	let pausedAtClaim = false;
@@ -571,7 +555,7 @@ export async function dryRunApplication(
 	const context = await apply.store.submissionContext(userId, applicationId);
 	if (!context) throw new Error(`Application ${applicationId} not found`);
 	// A dry run fills the form too: never on a hand-off board.
-	const mode = modeOf(apply, context);
+	const mode = modeOf(context);
 	if (mode.mode === "handoff") throw new Error(mode.reason);
 	const prepared = await prepareRun(deps, apply, userId, context, "dry_run");
 	if ("stop" in prepared) {

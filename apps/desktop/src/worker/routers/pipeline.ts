@@ -156,11 +156,7 @@ export const pipelineRouter = {
 							companyKey: detail.company.key,
 						})
 					: (detail.job.applyUrl ?? detail.job.url);
-				const mode = submissionModeForSource(
-					detail.job.source,
-					board,
-					postingForm,
-				);
+				const mode = submissionModeForSource(detail.job.source, board);
 				const docOf = (kind: string) =>
 					detail.documents.find((d) => d.kind === kind)?.content ?? "";
 				const flagDocs = {
@@ -258,7 +254,10 @@ export const pipelineRouter = {
 								: (detail.attempts.find((a) => a.url)?.url ?? detail.job.url),
 						contact,
 					},
-					/** "handoff": after approval the user submits it; nothing is filled automatically. */
+					/**
+					 * "auto": approval fills the form and submits once (unless submissions are paused).
+					 * "handoff": after approval the user submits it; nothing is filled automatically.
+					 */
 					submission: mode,
 					/**
 					 * How old the posting is; `mayBeClosed` for LinkedIn, Indeed and Glassdoor

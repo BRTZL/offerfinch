@@ -56,9 +56,10 @@ export interface ModelConfig {
 	/** Fake claims check only: "1" makes every check throw (e2e of a failing check). */
 	FAKE_CLAIMS_FAIL?: string;
 	/**
-	 * Comma-separated hosts automatic submission may click submit on, e.g.
+	 * Comma-separated hosts automatic submission may open and click submit on, e.g.
 	 * "jobs.ashbyhq.com,job-boards.greenhouse.io,jobs.lever.co". Default: none but 127.0.0.1 and
-	 * localhost, so a real board gets the handoff until the user turns it on.
+	 * localhost, so an approved application on a real board stops before any browser opens
+	 * (needs_human) until real hosts are allowed (docs/auto-apply-plan.md, step 8).
 	 */
 	SUBMIT_ALLOWED_HOSTS?: string;
 	/** JSON object of board base URLs replacing the real hosts (fixture boards), e.g. {"lever":"http://127.0.0.1:4010/lever"}. */

@@ -708,18 +708,13 @@ describe("the new boards in the app", () => {
 		}
 	});
 
-	it("are always handed off: nothing is filled or sent automatically", () => {
+	it("are handed off until their form filler lands: nothing is filled or sent", () => {
 		expect([...BOARDS]).toEqual(["ashby", "greenhouse", "lever"]);
 		for (const kind of NEW_BOARDS) {
-			const url = "https://example.com/apply";
-			expect(submissionModeForSource(kind, null, url).mode).toBe("handoff");
-			expect(
-				submissionModeForSource(kind, null, url, { autoSubmitFixtures: true })
-					.mode,
-			).toBe("handoff");
-			expect(submissionModeFor(kind as unknown as Board, url).mode).toBe(
-				"handoff",
-			);
+			const mode = submissionModeForSource(kind, null);
+			expect(mode.mode).toBe("handoff");
+			expect(mode.reason).toMatch(/not available here yet/);
+			expect(submissionModeFor(kind as unknown as Board).mode).toBe("handoff");
 		}
 	});
 

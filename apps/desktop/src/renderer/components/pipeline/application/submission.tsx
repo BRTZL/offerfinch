@@ -110,8 +110,9 @@ function useHandoffCheck(app: AppDetail) {
 }
 
 /**
- * Submission: for a hand-off (every board today) the numbered steps from approval to
- * "I submitted this"; for an automatic board the attempts, dry run and retry.
+ * Submission: for a hand-off the numbered steps from approval to "I submitted this"; for an
+ * automatic board the attempts with their proof, the dry run and the retry, and the same steps
+ * while it waits (paused) or after a stop (needs_human).
  */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keep hand-off presentation and its mutually exclusive submission states together.
 export function SubmissionPanel({
