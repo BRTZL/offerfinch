@@ -136,6 +136,27 @@ function fakeNotes(input: TailorInput): string {
 	].join("\n");
 }
 
+/**
+ * The form's own questions (read before review): the motivation question in the form's words,
+ * and anything a saved answer settles. The rest stays unanswered, never guessed.
+ */
+function answerFormQuestions(
+	input: TailorInput,
+	profile: ProfileSnapshot,
+	formAnswers: TailorOutput["formAnswers"],
+): void {
+	for (const q of input.formQuestions ?? []) {
+		if (formAnswers.some((a) => a.question === q.label)) continue;
+		const why = formAnswers[0];
+		if (/^why do you want to work at\b/i.test(q.label) && why)
+			formAnswers.push({ question: q.label, answer: why.answer });
+		else if (/notice period/i.test(q.label)) {
+			const answer = savedAnswer(profile, /notice period/i);
+			if (answer) formAnswers.push({ question: q.label, answer });
+		}
+	}
+}
+
 export function fakeTailorResponder(
 	request: GenerateObjectRequest<unknown>,
 ): TailorOutput {
@@ -286,6 +307,8 @@ export function fakeTailorResponder(
 				requirement: "application_question",
 			});
 	}
+
+	answerFormQuestions(input, profile, formAnswers);
 
 	const notes = fakeNotes(input);
 

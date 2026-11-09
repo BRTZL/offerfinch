@@ -1,3 +1,4 @@
+import type { SavedAnswer } from "@offerfinch/core/apply/field-answers";
 import { sameQuestion } from "@offerfinch/core/apply/forms";
 import type { AttemptInput, FormQuestion } from "@offerfinch/core/apply/submit";
 import type { Actor } from "@offerfinch/core/pipeline/ports";
@@ -24,22 +25,37 @@ export const questionsMethods = {
 	async askQuestions(
 		userId: string,
 		applicationId: string,
-		asked: { question: string; why: string }[],
+		asked: {
+			question: string;
+			why: string;
+			formField?: {
+				label: string;
+				options: string[];
+				kind: string;
+				board: string;
+			};
+		}[],
 		waitReason?: string,
 	): Promise<{ open: number }> {
 		return this.db.transaction(async (tx) => {
 			await this.lockOwned(tx, userId, applicationId);
-			for (const q of asked)
+			for (const q of asked) {
+				// A form's question reads as the inbox shows form questions, with its options.
+				const text = q.formField
+					? formQuestionText(q.formField.label, q.formField.options)
+					: q.question;
 				await tx
 					.insert(questions)
 					.values({
 						userId,
 						applicationId,
-						key: questionKey(q.question),
-						question: q.question,
+						key: questionKey(text),
+						question: text,
 						context: q.why,
+						...(q.formField ? { formField: q.formField } : {}),
 					})
 					.onConflictDoNothing();
+			}
 			const [row] = await tx
 				.select({ n: sql<number>`count(*)` })
 				.from(questions)
@@ -283,9 +299,13 @@ export const questionsMethods = {
 		});
 	},
 
-	async savedAnswers(userId: string): Promise<FormAnswer[]> {
+	async savedAnswers(userId: string): Promise<SavedAnswer[]> {
 		return this.db
-			.select({ question: profileFacts.question, answer: profileFacts.answer })
+			.select({
+				id: profileFacts.id,
+				question: profileFacts.question,
+				answer: profileFacts.answer,
+			})
 			.from(profileFacts)
 			.where(eq(profileFacts.userId, userId))
 			.orderBy(desc(profileFacts.answeredAt), desc(sql`${profileFacts}.rowid`));

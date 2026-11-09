@@ -11,6 +11,7 @@ import { approvalMethods } from "./repository/approval";
 import type { DrizzlePipelineRepositoryContext } from "./repository/context";
 import { documentsMethods } from "./repository/documents";
 import { eventsMethods } from "./repository/events";
+import { formsMethods } from "./repository/forms";
 import { jobsMethods } from "./repository/jobs";
 import { profileMethods } from "./repository/profile";
 import { questionsMethods } from "./repository/questions";
@@ -341,6 +342,18 @@ export class DrizzlePipelineRepository
 
 	savedAnswers(...args: Parameters<typeof questionsMethods.savedAnswers>) {
 		return questionsMethods.savedAnswers.apply(this, args);
+	}
+
+	formRead(...args: Parameters<typeof formsMethods.formRead>) {
+		return formsMethods.formRead.apply(this, args);
+	}
+
+	saveFormRead(...args: Parameters<typeof formsMethods.saveFormRead>) {
+		return formsMethods.saveFormRead.apply(this, args);
+	}
+
+	addFormAnswers(...args: Parameters<typeof formsMethods.addFormAnswers>) {
+		return formsMethods.addFormAnswers.apply(this, args);
 	}
 
 	markEventSent(...args: Parameters<typeof eventsMethods.markEventSent>) {

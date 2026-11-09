@@ -295,7 +295,17 @@ export interface PipelineRepository {
 	askQuestions(
 		userId: string,
 		applicationId: string,
-		questions: { question: string; why: string }[],
+		questions: {
+			question: string;
+			why: string;
+			/** Set for a question the application form asks: its label, options and board. */
+			formField?: {
+				label: string;
+				options: string[];
+				kind: string;
+				board: string;
+			};
+		}[],
 		waitReason?: string,
 	): Promise<{ open: number }>;
 	/**

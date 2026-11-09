@@ -1,3 +1,4 @@
+import type { FormSchema } from "@offerfinch/core/apply/form-schema";
 import type { ChatProposal, ChatScope } from "@offerfinch/core/chat/chat";
 import type { DocumentHashes } from "@offerfinch/core/domain/approval";
 import { APPLICATION_STATES } from "@offerfinch/core/domain/states";
@@ -693,6 +694,33 @@ export const submissionAttempts = sqliteTable(
 			.on(t.applicationId)
 			.where(sql`${t.status} = 'started'`),
 	],
+);
+
+/**
+ * The application's form as read before review (docs/auto-apply-plan.md, step 2): its fields,
+ * or why it could not be read. One row per application, written only while it is preparing.
+ */
+export const applicationForms = sqliteTable(
+	"application_forms",
+	{
+		id: text("id")
+			.primaryKey()
+			.$defaultFn(() => crypto.randomUUID()),
+		userId: userId(),
+		applicationId: text("application_id")
+			.notNull()
+			.references(() => applications.id, { onDelete: "cascade" }),
+		/** "read", "failed" or "skipped". */
+		status: text("status").notNull(),
+		board: text("board"),
+		url: text("url"),
+		/** The fields, files and submit control (`FormSchema`); null unless read. */
+		schema: text("schema", { mode: "json" }).$type<FormSchema>(),
+		/** Why there is no field list (a challenge, a missing form, a host not turned on). */
+		note: text("note"),
+		readAt: integer("read_at", { mode: "timestamp_ms" }).notNull(),
+	},
+	(t) => [uniqueIndex("application_forms_app_unique").on(t.applicationId)],
 );
 
 /** Per-user submission switch. No row means paused: nothing is submitted until the user turns it on. */

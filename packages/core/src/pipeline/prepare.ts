@@ -40,6 +40,7 @@ import {
 	parseFormAnswers,
 	tailorApplication,
 } from "../tailor/tailor";
+import { formQuestionsForDraft } from "./form-step";
 import {
 	ApplicationNotFoundError,
 	type PipelineDeps,
@@ -144,6 +145,12 @@ export async function draftStep(
 		app.prepareAttempts > 0
 			? await deps.repo.latestReview(userId, app.applicationId)
 			: null;
+	// The form read before drafting: its questions nothing on file answers go to the model.
+	const formQuestions = await formQuestionsForDraft(
+		deps,
+		userId,
+		app.applicationId,
+	);
 	let draft: Awaited<ReturnType<typeof tailorApplication>>;
 	try {
 		draft = await tailorApplication(
@@ -162,6 +169,7 @@ export async function draftStep(
 					previous && !previous.passed ? previous.issues : undefined,
 				askedQuestions: budget.asked,
 				questionsAllowed: questionsAllowed(budget),
+				...(formQuestions.length > 0 ? { formQuestions } : {}),
 			},
 		);
 	} catch (error) {
