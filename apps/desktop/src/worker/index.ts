@@ -7,6 +7,7 @@ import {
 import { ORPCError, onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/message-port";
 
+import { isProofShot } from "../shared/bridge";
 import type {
 	MainToWorker,
 	SiteCall,
@@ -111,6 +112,12 @@ function connect(port: Electron.MessagePortMain) {
 			session: session as never,
 			db: w.db as never,
 			sendEvent: w.sendEvent,
+			readFormAgain: async (userId: string, applicationId: string) => {
+				const { readFormAgain } = await import(
+					"@offerfinch/core/pipeline/reread-form"
+				);
+				return readFormAgain(w.deps, userId, applicationId);
+			},
 			dryRun: async (userId: string, applicationId: string) => {
 				const { dryRunApplication } = await import(
 					"@offerfinch/core/apply/submit"
@@ -173,7 +180,7 @@ async function answer(method: WorkerMethod, args: unknown[]): Promise<unknown> {
 			return { name: `${file.kind}-v${file.version}.${format}`, bytes };
 		}
 		case "proofBytes": {
-			const which = args[1] === "after" ? "after" : "before";
+			const which = isProofShot(args[1]) ? args[1] : "before";
 			const key = await repo.getProof(LOCAL_USER_ID, String(args[0]), which);
 			const bytes = key ? await app.blobs.get(key) : null;
 			if (!bytes) throw new Error("Not found");

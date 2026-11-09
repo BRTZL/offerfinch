@@ -4,7 +4,7 @@ import type {
 } from "@offerfinch/core/pipeline/ports";
 import { parseFormAnswers } from "@offerfinch/core/tailor/tailor";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { publicProof, stepKeysOf } from "../proof-steps";
+import { shownAttempt, unresolvedOf } from "../proof-steps";
 import { firstPer } from "../repository";
 import {
 	applications,
@@ -147,12 +147,7 @@ export const documentsMethods = {
 					)
 					.orderBy(desc(submissionAttempts.attempt)),
 			]);
-		// Storage keys stay here: a multi-step form's earlier steps are a count (`step-N`).
-		const attempts = stored.map((a) => ({
-			...a,
-			proof: publicProof(a.proof),
-			stepShots: stepKeysOf(a.proof).length,
-		}));
+		const attempts = stored.map(shownAttempt);
 		const currentHashes = await this.currentHashes(
 			this.database,
 			userId,
@@ -208,10 +203,7 @@ export const documentsMethods = {
 			/** Why it waits on a subscription (usage limit, logout), with how it resumes. */
 			subscriptionPause: subscriptionPauseOf(row.app.state, cost.calls),
 			/** A clicked attempt the user has not resolved: a retry needs their confirmation. */
-			unresolvedAttempt:
-				attempts.find(
-					(a) => a.status === "needs_human" || a.status === "started",
-				) ?? null,
+			unresolvedAttempt: unresolvedOf(attempts),
 			company: {
 				id: row.company.id,
 				name: row.company.name,

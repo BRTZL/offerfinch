@@ -19,6 +19,14 @@ export type Context = {
 	 */
 	dryRun?: (userId: string, applicationId: string) => Promise<unknown>;
 	/**
+	 * Reads the application's form again, read-only, after a stop on a changed form, and plans
+	 * its fields; saves nothing (the router stores it). Absent where no browser is available.
+	 */
+	readFormAgain?: (
+		userId: string,
+		applicationId: string,
+	) => Promise<import("@offerfinch/core/pipeline/reread-form").FormReadAgain>;
+	/**
 	 * Structures pasted resume text into profile fields with the user's model, metered for that
 	 * user with no application, under their spending cap. Absent where no model is configured.
 	 */

@@ -14,7 +14,7 @@ export function stepKeysOf(proof: unknown): string[] {
 }
 
 /** The proof as the dashboard shows it: everything but the storage keys. */
-export function publicProof(
+function publicProof(
 	proof: Record<string, unknown> | null,
 ): Record<string, unknown> | null {
 	if (!proof) return proof;
@@ -25,8 +25,24 @@ export function publicProof(
 /** A proof screenshot: before or after the click, or a step of a multi-step form (`step-1` …). */
 export type ProofShot = "before" | "after" | `step-${number}`;
 
-export function isProofShot(value: unknown): value is ProofShot {
+/** An attempt as the dashboard shows it: its step screenshots as a count, no storage keys. */
+export function shownAttempt<
+	T extends { proof: Record<string, unknown> | null },
+>(attempt: T): T & { stepShots: number } {
+	return {
+		...attempt,
+		proof: publicProof(attempt.proof),
+		stepShots: stepKeysOf(attempt.proof).length,
+	};
+}
+
+/** The latest attempt that was clicked and not resolved (outcome unknown or still running). */
+export function unresolvedOf<T extends { status: string }>(
+	attempts: T[],
+): T | null {
 	return (
-		typeof value === "string" && /^(before|after|step-\d{1,2})$/.test(value)
+		attempts.find(
+			(a) => a.status === "needs_human" || a.status === "started",
+		) ?? null
 	);
 }

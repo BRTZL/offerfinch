@@ -66,6 +66,20 @@ async function whatWillBeSentFor(
 }
 
 /**
+ * Required fields of the approved list that would go out empty (plan step 7, follow-up from step
+ * 2): Approve waits until each has a value. Only where the form is filled automatically.
+ */
+function missingRequiredOf(
+	form: WhatWillBeSent | null,
+	mode: { mode: string },
+): string[] {
+	if (mode.mode !== "auto" || form?.status !== "read") return [];
+	return form.fields
+		.filter((f) => f.required && f.value === null)
+		.map((f) => f.label);
+}
+
+/**
  * How the application is submitted and the form the hand-off opens, decided as the submission
  * decides it (core apply/form-target.ts): the source's board, else the board or employer form its
  * apply link names; an employer's own form is a hand-off unless its field list was read.
@@ -201,13 +215,6 @@ export const pipelineRouter = {
 								("cited" in review ? review.cited : undefined) ?? [],
 							)
 						: [];
-				const approvable =
-					detail.state === "ready_for_review" &&
-					!detail.redraft &&
-					reviewCurrent &&
-					review.passed &&
-					review.atsChecked &&
-					staleProfile.length === 0;
 				const formAnswers = detail.documents.find(
 					(d) => d.kind === "form_answers",
 				);
@@ -224,6 +231,15 @@ export const pipelineRouter = {
 					input.id,
 					profile,
 				);
+				const missingRequired = missingRequiredOf(form, mode);
+				const approvable =
+					detail.state === "ready_for_review" &&
+					!detail.redraft &&
+					reviewCurrent &&
+					review.passed &&
+					review.atsChecked &&
+					staleProfile.length === 0 &&
+					missingRequired.length === 0;
 				const docOf = (kind: string) =>
 					detail.documents.find((d) => d.kind === kind)?.content ?? "";
 				const flagDocs = {
@@ -296,6 +312,8 @@ export const pipelineRouter = {
 								}
 							: null,
 					approvable,
+					/** Required fields of "What will be sent" with no value: Approve waits for them. */
+					missingRequired,
 					/** Cited facts edited or removed since the check: approval waits for Check again. */
 					staleProfile,
 					/** claims_flagged: the user resolves each flag before approving. */
@@ -518,6 +536,28 @@ export const pipelineRouter = {
 			)
 			.handler(({ context, input }) =>
 				refusal(async () => {
+					const userId = context.session.user.id;
+					const repo = repoOf(context);
+					const detail = await repo.getApplication(userId, input.id);
+					if (detail) {
+						const { mode } = await submissionView(repo, userId, input.id, {
+							job: detail.job,
+							companyKey: detail.company.key,
+						});
+						const missing = missingRequiredOf(
+							await whatWillBeSentFor(
+								repo,
+								userId,
+								input.id,
+								await repo.getProfile(userId),
+							),
+							mode,
+						);
+						if (missing.length > 0)
+							throw new ORPCError("CONFLICT", {
+								message: `Refusing: required fields would be sent empty: ${missing.map((m) => `"${m}"`).join(", ")}`,
+							});
+					}
 					const event = await repoOf(context).approve({
 						userId: context.session.user.id,
 						applicationId: input.id,
@@ -593,6 +633,43 @@ export const pipelineRouter = {
 					});
 					await context.sendEvent(event);
 					return { ok: true };
+				}),
+			),
+		readFormAgain: protectedProcedure
+			.input(
+				z.object({
+					id: z.string().uuid(),
+					idempotencyKey: z.string().min(8).max(100),
+				}),
+			)
+			.handler(({ context, input }) =>
+				refusal(async () => {
+					const userId = context.session.user.id;
+					const repo = repoOf(context);
+					if (!context.readFormAgain)
+						throw new ORPCError("NOT_IMPLEMENTED", {
+							message:
+								"Reading the form needs a browser; none is configured here",
+						});
+					// Nothing opens while an attempt may have gone through; checked again on save.
+					const refused = await repo.readFormAgainRefusal(userId, input.id);
+					if (refused) throw new ORPCError("CONFLICT", { message: refused });
+					const read = await context.readFormAgain(userId, input.id);
+					if (!read.ok)
+						throw new ORPCError("CONFLICT", { message: read.reason });
+					const result = await repo.readFormAgain({
+						userId,
+						applicationId: input.id,
+						read: read.read,
+						add: read.add,
+						ask: read.ask,
+						idempotencyKey: `form-again-${input.idempotencyKey}`,
+					});
+					if (result.event) await context.sendEvent(result.event);
+					return {
+						asked: result.asked,
+						fields: read.read.schema.fields.length,
+					};
 				}),
 			),
 		dryRun: protectedProcedure

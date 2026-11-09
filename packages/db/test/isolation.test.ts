@@ -350,6 +350,10 @@ const CASES: Record<string, (b: TestUser) => Promise<unknown>> = {
 		),
 	"submission.dryRun": (u) =>
 		refused(ids.app, (id) => u.rpc.submission.dryRun({ id })),
+	"submission.readFormAgain": (u) =>
+		refused(ids.app, (id) =>
+			u.rpc.submission.readFormAgain({ id, idempotencyKey: `b-again-${id}` }),
+		),
 	"submission.settings": async (u) => {
 		expect((await u.rpc.submission.settings()).paused).toBe(true);
 	},

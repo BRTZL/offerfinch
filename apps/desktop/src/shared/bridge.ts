@@ -258,7 +258,16 @@ export interface DesktopBridge {
 	 */
 	saveInterviewEvent(stageId: string): Promise<string | null>;
 	/** Opens a submission screenshot in the default viewer. */
-	openProof(attemptId: string, which: "before" | "after"): Promise<void>;
+	openProof(attemptId: string, which: ProofShot): Promise<void>;
+	/**
+	 * A submission screenshot as a PNG data URL: `thumb` scaled to 480 px wide for the proof's
+	 * thumbnails, `full` as stored. Before or after the click, or a multi-step form's step.
+	 */
+	proofImage(
+		attemptId: string,
+		which: ProofShot,
+		size: "thumb" | "full",
+	): Promise<string>;
 	/** Help › Export Diagnostics: builds and redacts the bundle, then saves it where the user picks. */
 	diagnostics: {
 		prepare(): Promise<DiagnosticsPreview>;
@@ -337,6 +346,15 @@ export interface DesktopBridge {
 }
 
 /** IPC channel names, shared by main and preload. */
+/** A submission screenshot: before or after the click, or a step of a multi-step form. */
+export type ProofShot = "before" | "after" | `step-${number}`;
+
+export function isProofShot(value: unknown): value is ProofShot {
+	return (
+		typeof value === "string" && /^(before|after|step-\d{1,2})$/.test(value)
+	);
+}
+
 export const IPC = {
 	info: "app:info",
 	/** The one theme source: main answers light or dark and tells the page when it changes. */
@@ -356,6 +374,7 @@ export const IPC = {
 	demoLeave: "demo:leave",
 	saveInterviewEvent: "files:save-interview",
 	openProof: "files:proof",
+	proofImage: "files:proof-image",
 	diagnosticsPrepare: "diagnostics:prepare",
 	diagnosticsSave: "diagnostics:save",
 	diagnosticsDiscard: "diagnostics:discard",

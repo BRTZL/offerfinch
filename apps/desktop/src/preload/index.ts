@@ -54,6 +54,8 @@ const bridge: DesktopBridge = {
 		ipcRenderer.invoke(IPC.saveInterviewEvent, String(id)),
 	openProof: (id, which) =>
 		ipcRenderer.invoke(IPC.openProof, String(id), which),
+	proofImage: (id, which, size) =>
+		ipcRenderer.invoke(IPC.proofImage, String(id), which, size),
 	diagnostics: {
 		prepare: () => ipcRenderer.invoke(IPC.diagnosticsPrepare),
 		save: (id) => ipcRenderer.invoke(IPC.diagnosticsSave, String(id)),
