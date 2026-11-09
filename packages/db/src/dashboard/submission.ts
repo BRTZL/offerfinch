@@ -1,4 +1,8 @@
+import type { FieldPlan } from "@offerfinch/core/apply/field-answers";
+import type { FormRead } from "@offerfinch/core/apply/form-schema";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { type ProofShot, stepKeysOf } from "../proof-steps";
+import { formQuestionText, questionKey } from "../repository/shared";
 import {
 	applications,
 	questions,
@@ -198,12 +202,142 @@ export const submissionMethods = {
 		});
 	},
 
-	/** A proof screenshot the user owns. */
-	async getProof(userId: string, attemptId: string, which: "before" | "after") {
+	/**
+	 * Why the form cannot be read again for this application, or null when it can: only after a
+	 * stop (needs_human) and only when no attempt reached the click (docs/auto-apply-plan.md, step 7).
+	 */
+	async readFormAgainRefusal(
+		userId: string,
+		applicationId: string,
+	): Promise<string | null> {
+		return this.database.transaction(async (tx) => {
+			const row = await this.lockOwned(tx, userId, applicationId);
+			if (row.state !== "needs_human")
+				return `Refusing: the form is read again only after a stop (it is ${row.state})`;
+			const blocking = await this.blockingAttempt(tx, applicationId);
+			return blocking
+				? `Refusing: attempt ${blocking.attempt} may have gone through. Check the employer's portal or your email first`
+				: null;
+		});
+	},
+
+	/**
+	 * After a stop on a changed form: stores the new read, adds the saved answers it needs to the
+	 * form answers (a new version), asks the questions nothing answers, revokes the approval and,
+	 * with no question open, sends the application back to review. One transaction; refused while
+	 * an attempt may have gone through. `event` wakes the workflow when the state moved.
+	 */
+	async readFormAgain(input: {
+		userId: string;
+		applicationId: string;
+		read: Extract<FormRead, { status: "read" }>;
+		add: FieldPlan["add"];
+		ask: FieldPlan["ask"];
+		idempotencyKey: string;
+	}): Promise<{ event: PendingEvent | null; asked: number }> {
+		return this.database.transaction(async (tx) => {
+			const repeat = await this.existingEvent(
+				tx,
+				input.userId,
+				input.idempotencyKey,
+			);
+			if (repeat) return { event: repeat, asked: 0 };
+			const { userId, applicationId } = input;
+			const row = await this.lockOwned(tx, userId, applicationId);
+			if (row.state !== "needs_human")
+				throw new Error(
+					`Refusing: the form is read again only after a stop (it is ${row.state})`,
+				);
+			const blocking = await this.blockingAttempt(tx, applicationId);
+			if (blocking)
+				throw new Error(
+					`Refusing: attempt ${blocking.attempt} may have gone through. Check the employer's portal or your email first`,
+				);
+			await this.writeFormRead(tx, userId, applicationId, input.read);
+			await this.mergeFormAnswers(
+				tx,
+				userId,
+				applicationId,
+				input.add.map(({ question, answer }) => ({ question, answer })),
+			);
+			const board = input.read.schema.board;
+			for (const q of input.ask) {
+				const text = formQuestionText(q.label, q.options);
+				const formField = {
+					label: q.label,
+					options: q.options,
+					kind: q.kind,
+					board,
+				};
+				const context = `Asked by the ${board === "web" ? "employer's" : board} application form (required), read again after it changed.${q.answered ? ` The approved answer "${q.answered}" is not one of its options.` : ""}`;
+				await tx
+					.insert(questions)
+					.values({
+						userId,
+						applicationId,
+						key: questionKey(text),
+						question: text,
+						context,
+						formField,
+					})
+					.onConflictDoUpdate({
+						target: [questions.applicationId, questions.key],
+						set: {
+							status: "open",
+							answer: null,
+							answeredAt: null,
+							suggestion: null,
+							context,
+							formField,
+						},
+					});
+			}
+			await this.revokeApproval(
+				tx,
+				userId,
+				applicationId,
+				"The application form was read again after it changed",
+			);
+			const [open] = await tx
+				.select({ n: sql<number>`count(*)` })
+				.from(questions)
+				.where(
+					and(
+						eq(questions.applicationId, applicationId),
+						eq(questions.status, "open"),
+					),
+				);
+			const asked = open?.n ?? 0;
+			// Questions open: it waits here; answering the last one sends it back to review.
+			if (asked > 0) return { event: null, asked };
+			await this.move(
+				userId,
+				applicationId,
+				["needs_human"],
+				"ready_for_review",
+				"The application form was read again after it changed; review what will be sent and approve again",
+				"user",
+				{ approvedAt: null },
+				tx,
+			);
+			const event = await this.addEvent(
+				tx,
+				userId,
+				applicationId,
+				input.idempotencyKey,
+				{ action: "form_read_again" },
+			);
+			return { event, asked };
+		});
+	},
+
+	/** A proof screenshot the user owns: before or after the click, or a step (`step-1` …). */
+	async getProof(userId: string, attemptId: string, which: ProofShot) {
 		const [row] = await this.database
 			.select({
 				before: submissionAttempts.screenshotBeforeKey,
 				after: submissionAttempts.screenshotAfterKey,
+				proof: submissionAttempts.proof,
 			})
 			.from(submissionAttempts)
 			.where(
@@ -212,6 +346,8 @@ export const submissionMethods = {
 					eq(submissionAttempts.userId, userId),
 				),
 			);
-		return (which === "before" ? row?.before : row?.after) ?? null;
+		if (!row) return null;
+		if (which === "before" || which === "after") return row[which] ?? null;
+		return stepKeysOf(row.proof)[Number(which.slice(5)) - 1] ?? null;
 	},
 } satisfies Record<string, unknown> & ThisType<DashboardRepositoryContext>;

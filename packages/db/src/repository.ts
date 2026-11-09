@@ -356,6 +356,18 @@ export class DrizzlePipelineRepository
 		return formsMethods.addFormAnswers.apply(this, args);
 	}
 
+	protected writeFormRead(
+		...args: Parameters<typeof formsMethods.writeFormRead>
+	) {
+		return formsMethods.writeFormRead.apply(this, args);
+	}
+
+	protected mergeFormAnswers(
+		...args: Parameters<typeof formsMethods.mergeFormAnswers>
+	) {
+		return formsMethods.mergeFormAnswers.apply(this, args);
+	}
+
 	markEventSent(...args: Parameters<typeof eventsMethods.markEventSent>) {
 		return eventsMethods.markEventSent.apply(this, args);
 	}

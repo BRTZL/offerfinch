@@ -4,6 +4,7 @@ import type {
 } from "@offerfinch/core/pipeline/ports";
 import { parseFormAnswers } from "@offerfinch/core/tailor/tailor";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { publicProof, stepKeysOf } from "../proof-steps";
 import { firstPer } from "../repository";
 import {
 	applications,
@@ -58,7 +59,7 @@ export const documentsMethods = {
 				),
 			);
 		if (!row) return null;
-		const [docs, exports, review, approval, appQuestions, history, attempts] =
+		const [docs, exports, review, approval, appQuestions, history, stored] =
 			await Promise.all([
 				this.latestDocuments(userId, applicationId),
 				this.database
@@ -146,6 +147,12 @@ export const documentsMethods = {
 					)
 					.orderBy(desc(submissionAttempts.attempt)),
 			]);
+		// Storage keys stay here: a multi-step form's earlier steps are a count (`step-N`).
+		const attempts = stored.map((a) => ({
+			...a,
+			proof: publicProof(a.proof),
+			stepShots: stepKeysOf(a.proof).length,
+		}));
 		const currentHashes = await this.currentHashes(
 			this.database,
 			userId,

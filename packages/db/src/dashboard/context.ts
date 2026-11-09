@@ -23,4 +23,6 @@ export type DashboardRepositoryContext = Pick<
 	insertStop: DashboardRepository["insertStop"];
 	appendFormAnswers: DashboardRepository["appendFormAnswers"];
 	resumeWithFormAnswers: DashboardRepository["resumeWithFormAnswers"];
+	writeFormRead: DashboardRepository["writeFormRead"];
+	mergeFormAnswers: DashboardRepository["mergeFormAnswers"];
 };

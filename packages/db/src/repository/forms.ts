@@ -7,6 +7,7 @@ import {
 import { and, desc, eq } from "drizzle-orm";
 import { applicationForms, documents } from "../schema/pipeline";
 import type { DrizzlePipelineRepositoryContext } from "./context";
+import type { Tx } from "./shared";
 
 /** The form read before review (docs/auto-apply-plan.md, step 2) and the answers it adds. */
 export const formsMethods = {
@@ -45,33 +46,43 @@ export const formsMethods = {
 		return this.db.transaction(async (tx) => {
 			const row = await this.lockOwned(tx, userId, applicationId);
 			if (row.state !== "preparing") return false;
-			const values =
-				read.status === "read"
-					? {
-							status: read.status,
-							board: read.schema.board,
-							url: read.schema.url,
-							schema: read.schema,
-							note: null,
-							readAt: new Date(read.readAt),
-						}
-					: {
-							status: read.status,
-							board: read.board || null,
-							url: read.url || null,
-							schema: null,
-							note: read.note.slice(0, 2000),
-							readAt: new Date(read.readAt),
-						};
-			await tx
-				.insert(applicationForms)
-				.values({ userId, applicationId, ...values })
-				.onConflictDoUpdate({
-					target: applicationForms.applicationId,
-					set: values,
-				});
+			await this.writeFormRead(tx, userId, applicationId, read);
 			return true;
 		});
+	},
+
+	/** Stores a read, replacing the application's earlier one. The caller holds the lock. */
+	async writeFormRead(
+		tx: Tx,
+		userId: string,
+		applicationId: string,
+		read: FormRead,
+	): Promise<void> {
+		const values =
+			read.status === "read"
+				? {
+						status: read.status,
+						board: read.schema.board,
+						url: read.schema.url,
+						schema: read.schema,
+						note: null,
+						readAt: new Date(read.readAt),
+					}
+				: {
+						status: read.status,
+						board: read.board || null,
+						url: read.url || null,
+						schema: null,
+						note: read.note.slice(0, 2000),
+						readAt: new Date(read.readAt),
+					};
+		await tx
+			.insert(applicationForms)
+			.values({ userId, applicationId, ...values })
+			.onConflictDoUpdate({
+				target: applicationForms.applicationId,
+				set: values,
+			});
 	},
 
 	async addFormAnswers(
@@ -82,42 +93,55 @@ export const formsMethods = {
 		return this.db.transaction(async (tx) => {
 			const row = await this.lockOwned(tx, userId, applicationId);
 			if (row.state !== "preparing") return 0;
-			const [latest] = await tx
-				.select({ content: documents.content })
-				.from(documents)
-				.where(
-					and(
-						eq(documents.applicationId, applicationId),
-						eq(documents.userId, userId),
-						eq(documents.kind, "form_answers"),
-						eq(documents.format, "json"),
-					),
-				)
-				.orderBy(desc(documents.version))
-				.limit(1);
-			const current = parseFormAnswers(latest?.content ?? "[]");
-			let changed = 0;
-			for (const answer of answers) {
-				const existing = current.find((a) =>
-					sameQuestion(a.question, answer.question),
-				);
-				if (existing?.answer === answer.answer) continue;
-				if (existing) existing.answer = answer.answer;
-				else current.push({ ...answer });
-				changed++;
-			}
-			if (changed === 0) return 0;
-			await this.insertVersion(
-				tx,
-				userId,
-				applicationId,
-				"form_answers",
-				"json",
-				JSON.stringify(current, null, 2),
-				"workflow",
-			);
-			return changed;
+			return this.mergeFormAnswers(tx, userId, applicationId, answers);
 		});
+	},
+
+	/**
+	 * Adds answers to the form answers as a new version (same question: replaced). The caller
+	 * holds the lock and decides the state. Returns how many changed.
+	 */
+	async mergeFormAnswers(
+		tx: Tx,
+		userId: string,
+		applicationId: string,
+		answers: FormAnswer[],
+	): Promise<number> {
+		const [latest] = await tx
+			.select({ content: documents.content })
+			.from(documents)
+			.where(
+				and(
+					eq(documents.applicationId, applicationId),
+					eq(documents.userId, userId),
+					eq(documents.kind, "form_answers"),
+					eq(documents.format, "json"),
+				),
+			)
+			.orderBy(desc(documents.version))
+			.limit(1);
+		const current = parseFormAnswers(latest?.content ?? "[]");
+		let changed = 0;
+		for (const answer of answers) {
+			const existing = current.find((a) =>
+				sameQuestion(a.question, answer.question),
+			);
+			if (existing?.answer === answer.answer) continue;
+			if (existing) existing.answer = answer.answer;
+			else current.push({ ...answer });
+			changed++;
+		}
+		if (changed === 0) return 0;
+		await this.insertVersion(
+			tx,
+			userId,
+			applicationId,
+			"form_answers",
+			"json",
+			JSON.stringify(current, null, 2),
+			"workflow",
+		);
+		return changed;
 	},
 } satisfies Record<string, unknown> &
 	ThisType<DrizzlePipelineRepositoryContext>;

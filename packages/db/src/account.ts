@@ -11,6 +11,7 @@ import {
 import { SQLiteTable } from "drizzle-orm/sqlite-core";
 
 import type { Database } from "./client";
+import { stepKeysOf } from "./proof-steps";
 import * as authSchema from "./schema/auth";
 import { user } from "./schema/auth";
 import * as dismissalSchema from "./schema/dismissals";
@@ -58,12 +59,13 @@ async function blobKeys(db: Database, userId: string): Promise<string[]> {
 		.select({
 			before: submissionAttempts.screenshotBeforeKey,
 			after: submissionAttempts.screenshotAfterKey,
+			proof: submissionAttempts.proof,
 		})
 		.from(submissionAttempts)
 		.where(eq(submissionAttempts.userId, userId));
 	return [
 		...docs.map((d) => d.key),
-		...shots.flatMap((s) => [s.before, s.after]),
+		...shots.flatMap((s) => [s.before, s.after, ...stepKeysOf(s.proof)]),
 	].filter((k): k is string => Boolean(k));
 }
 

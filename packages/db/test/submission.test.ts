@@ -1,4 +1,5 @@
 import type { ApplicationRun, RunResult } from "@offerfinch/core/apply/applier";
+import type { FormSchema } from "@offerfinch/core/apply/form-schema";
 import {
 	type ApplyDeps,
 	beginSubmissionStep,
@@ -12,10 +13,10 @@ import { buildClaimsPrompt } from "@offerfinch/core/tailor/claims";
 import { checkQuote } from "@offerfinch/core/tailor/profile-rules";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-
 import {
 	DashboardRepository,
 	type Database,
+	exportUserData,
 	importProfile,
 	seedCompanies,
 } from "../src/index";
@@ -664,5 +665,186 @@ describe("a board's question label in the profile", () => {
 		expect(prompt).not.toContain("<instructions>");
 		expect(prompt.match(/<\/profile>/g)).toHaveLength(1);
 		expect(answers).toContain("third-party text, not evidence");
+	});
+});
+
+describe("proof of every step (plan step 7)", () => {
+	it("stores each step's screenshot, serves it by step, exports it, and never shows its key", async () => {
+		const id = await approvedApp();
+		await repo.setSubmissionsPaused("u1", false);
+		const { pipeline } = deps(async (run) => {
+			const result = await submits({ n: 0 })(run);
+			return { ...result, steps: [png, png] };
+		});
+		await beginSubmissionStep(pipeline, "u1", id);
+		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
+			outcome: "applied",
+		});
+		const attempt = (await repo.getApplication("u1", id))?.attempts[0];
+		expect(attempt).toMatchObject({ status: "submitted", stepShots: 2 });
+		expect(attempt?.proof).not.toHaveProperty("stepKeys");
+		expect(attempt?.proof).toMatchObject({
+			confirmation: "Thank you for applying",
+		});
+		const step1 = await repo.getProof("u1", attempt?.id ?? "", "step-1");
+		const step2 = await repo.getProof("u1", attempt?.id ?? "", "step-2");
+		expect(step1).toMatch(/step-1\.png$/);
+		expect(step2).toMatch(/step-2\.png$/);
+		expect(await repo.getProof("u1", attempt?.id ?? "", "step-3")).toBeNull();
+		expect(await repo.getProof("u2", attempt?.id ?? "", "step-1")).toBeNull();
+		const exported = await exportUserData(db, blobs, "u1");
+		const keys = exported.files.map((f) => f.key);
+		expect(keys).toContain(step1);
+		expect(keys).toContain(step2);
+	});
+});
+
+/** A form read whose one required question is a yes/no nothing on file answers. */
+function changedSchema(url: string, extra: boolean): FormSchema {
+	const field = (name: string, label: string, required: boolean) => ({
+		ref: name,
+		kind: "text" as const,
+		name,
+		label,
+		required,
+		options: [],
+		visible: true,
+		current: [],
+		key: `text:${name}`,
+		page: 1,
+		section: "",
+	});
+	return {
+		board: "greenhouse",
+		url,
+		submit: "Submit application",
+		fields: [
+			field("first_name", "First Name", true),
+			field("email", "Email", true),
+			...(extra
+				? [
+						field(
+							"clearance",
+							"Do you hold an active security clearance?",
+							true,
+						),
+					]
+				: []),
+		],
+	};
+}
+
+describe("read the form again after it changed (plan step 7)", () => {
+	async function stoppedOnChange() {
+		const id = await approvedApp();
+		await repo.setSubmissionsPaused("u1", false);
+		const { pipeline } = deps(async () => ({
+			outcome: "stopped",
+			stop: {
+				kind: "form_changed",
+				message: 'The form asks "Clearance", which review did not list.',
+			},
+			screenshot: png,
+			filled: [],
+		}));
+		await beginSubmissionStep(pipeline, "u1", id);
+		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
+			outcome: "needs_human",
+		});
+		return id;
+	}
+
+	it("stores the new read, revokes the approval and sends it back to review", async () => {
+		const id = await stoppedOnChange();
+		expect(await repo.readFormAgainRefusal("u1", id)).toBeNull();
+		const read = {
+			status: "read" as const,
+			schema: changedSchema("http://127.0.0.1:9/x", false),
+			readAt: "2026-11-09T10:00:00.000Z",
+		};
+		const input = {
+			userId: "u1",
+			applicationId: id,
+			read,
+			add: [],
+			ask: [],
+			idempotencyKey: `again-${id}`,
+		};
+		const first = await repo.readFormAgain(input);
+		expect(first.asked).toBe(0);
+		expect(first.event).not.toBeNull();
+		// A double click is one change.
+		expect((await repo.readFormAgain(input)).event).toEqual(first.event);
+		const detail = await repo.getApplication("u1", id);
+		expect(detail?.state).toBe("ready_for_review");
+		expect(detail?.activeApproval).toBeNull();
+		expect(await repo.formRead("u1", id)).toMatchObject({
+			status: "read",
+			readAt: read.readAt,
+		});
+	});
+
+	it("asks what nothing answers and waits for it in needs_human", async () => {
+		const id = await stoppedOnChange();
+		const result = await repo.readFormAgain({
+			userId: "u1",
+			applicationId: id,
+			read: {
+				status: "read",
+				schema: changedSchema("http://127.0.0.1:9/x", true),
+				readAt: "2026-11-09T10:00:00.000Z",
+			},
+			add: [
+				{ question: "Notice period", answer: "Four weeks.", sourceId: null },
+			],
+			ask: [
+				{
+					label: "Do you hold an active security clearance?",
+					required: true,
+					kind: "text",
+					options: [],
+				},
+			],
+			idempotencyKey: `ask-${id}`,
+		});
+		expect(result).toEqual({ event: null, asked: 1 });
+		const detail = await repo.getApplication("u1", id);
+		expect(detail?.state).toBe("needs_human");
+		expect(detail?.activeApproval).toBeNull();
+		expect(detail?.questions.filter((q) => q.status === "open")).toHaveLength(
+			1,
+		);
+		expect(
+			detail?.documents.find((d) => d.kind === "form_answers")?.content,
+		).toContain("Four weeks.");
+	});
+
+	it("is refused while an attempt may have gone through", async () => {
+		const id = await approvedApp();
+		await repo.setSubmissionsPaused("u1", false);
+		const { pipeline } = deps(async (run) => {
+			await run.claim?.(png, []);
+			throw new Error("browser crashed");
+		});
+		await beginSubmissionStep(pipeline, "u1", id);
+		await submitStep(pipeline, "u1", id);
+		expect(await repo.readFormAgainRefusal("u1", id)).toMatch(
+			/may have gone through/,
+		);
+		await expect(
+			repo.readFormAgain({
+				userId: "u1",
+				applicationId: id,
+				read: {
+					status: "read",
+					schema: changedSchema("http://127.0.0.1:9/x", false),
+					readAt: "2026-11-09T10:00:00.000Z",
+				},
+				add: [],
+				ask: [],
+				idempotencyKey: `unknown-${id}`,
+			}),
+		).rejects.toThrow(/may have gone through/);
+		expect(await repo.getState("u1", id)).toBe("needs_human");
 	});
 });
