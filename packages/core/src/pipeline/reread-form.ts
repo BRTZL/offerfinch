@@ -44,10 +44,13 @@ export async function readFormAgain(
 	if (read.status !== "read")
 		return {
 			ok: false,
-			reason: read.note.replace(
-				"The form could not be read before review",
-				"The form could not be read again",
-			),
+			// A hand-off read (2026-11-09 re-review) says it was read, not that it failed.
+			reason: read.note
+				.replace(
+					"The form could not be read before review",
+					"The form could not be read again",
+				)
+				.replace("The form was read before review", "The form was read again"),
 		};
 	const profile = await deps.repo.getProfile(userId);
 	if (!profile)

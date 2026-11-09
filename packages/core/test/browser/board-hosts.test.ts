@@ -201,7 +201,8 @@ const violations = (log: NetworkLogEntry[]) =>
 	log.filter((r) => r.reason === DESTINATION_REFUSED);
 const quiet = (log: NetworkLogEntry[]) =>
 	log.filter((r) => r.reason === NOT_A_DESTINATION);
-const seen = (list: Hit[]) => list.map((h) => `${h.method} ${h.path}`);
+/** The requests that arrived, sorted: frames and scripts load in parallel, in no fixed order. */
+const seen = (list: Hit[]) => list.map((h) => `${h.method} ${h.path}`).sort();
 
 describe("asset and scoring hosts in a real submission's session", () => {
 	it("are read with GET", async () => {
@@ -279,8 +280,8 @@ describe("asset and scoring hosts in a real submission's session", () => {
 		const { log, away } = await open("widget-form-target", ASSET);
 		expect(quiet(log).map((r) => r.method)).toEqual(["POST"]);
 		expect(seen(away)).toEqual([
-			"GET /recaptcha/enterprise/anchor",
 			"GET /captcha/v1/58a2633848099317cef7deac21e607b1a41a5b9d/static/idle.html",
+			"GET /recaptcha/enterprise/anchor",
 		]);
 	});
 

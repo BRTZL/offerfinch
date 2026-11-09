@@ -8,6 +8,7 @@
 
 type StopCase =
 	| "unknown_outcome"
+	| "unknown_error_answer"
 	| "challenge"
 	| "account_wall"
 	| "verification_code"
@@ -20,6 +21,9 @@ type StopCase =
 	| "validation"
 	| "interrupted"
 	| "not_automatic"
+	| "sends_elsewhere"
+	| "unlabelled"
+	| "no_submit"
 	| "other";
 
 /**
@@ -112,7 +116,33 @@ const REASON_CASE: [RegExp, StopCase][] = [
 	[/shows errors before submitting/, "validation"],
 ];
 
+/**
+ * An employer's form that is the user's to finish (core apply/web-form.ts, 2026-11-09 re-review):
+ * read before the kind, which is only `other_site` or `form_changed` for these, and where Read the
+ * form again or Retry would end the same way.
+ */
+const HANDOFF_CASE: [RegExp, StopCase][] = [
+	[/this form sends to \S+; finish it yourself/i, "sends_elsewhere"],
+	[/unlabelled fields|share one name or label/, "unlabelled"],
+	[
+		/no submit button of its own|Could not tell which control sends the application/,
+		"no_submit",
+	],
+];
+
+/** An unknown outcome whose application request the employer's site answered with an error. */
+const ERROR_ANSWER = /answered HTTP \d+ to the application/;
+
+/** An unknown outcome: an error answer to the application, or no confirmation. */
+function unknownCase(attempt: StopAttempt): StopCase {
+	return ERROR_ANSWER.test(attempt.error ?? "")
+		? "unknown_error_answer"
+		: "unknown_outcome";
+}
+
 function caseOf(attempt: StopAttempt | null): StopCase {
+	const handoff = HANDOFF_CASE.find(([re]) => re.test(attempt?.error ?? ""));
+	if (handoff) return handoff[1];
 	const kind = attempt?.proof?.stop;
 	const known = typeof kind === "string" ? KIND_CASE[kind] : undefined;
 	if (known) return known;
@@ -137,7 +167,13 @@ const COPY: Record<
 > = {
 	unknown_outcome: {
 		title: "Outcome unknown",
-		body: "The submit button was clicked once, but no confirmation came back, so it may or may not have gone through. It is never clicked again on its own. Check your email or the employer's portal.",
+		body: 'A click that may have sent the application was made once (the submit button, or the first "Next" of a form in steps, which can already save answers), but no confirmation came back, so it may or may not have gone through. Nothing is clicked again on its own. Check your email or the employer\'s portal.',
+		actions: ["mark", "finish", "retry_confirmed"],
+		note: "Retry opens only after you confirm it did not go through.",
+	},
+	unknown_error_answer: {
+		title: "The employer's site answered with an error",
+		body: "The application was sent once, and the employer's site answered it with an error, so it most likely did not go through, but that is not certain. Nothing is clicked again on its own. Check your email or the employer's portal.",
 		actions: ["mark", "finish", "retry_confirmed"],
 		note: "Retry opens only after you confirm it did not go through.",
 	},
@@ -205,6 +241,21 @@ const COPY: Record<
 		body: "This site is not filled automatically, so nothing was sent. Send it yourself with your answers below.",
 		actions: ["finish", "mark"],
 	},
+	sends_elsewhere: {
+		title: "This form sends to another site",
+		body: "The form sends your answers somewhere other than the page it is on. Data only goes to the form's own page, so it is yours to finish, and nothing was sent. Finish it yourself with your answers below.",
+		actions: ["finish", "mark"],
+	},
+	unlabelled: {
+		title: "This form has unlabelled fields",
+		body: "Some fields on the form have no name or label of their own, or share one, so they cannot be told apart. A value is never typed into a box by its place, so it is yours to finish, and nothing was sent. Finish it yourself with your answers below.",
+		actions: ["finish", "mark"],
+	},
+	no_submit: {
+		title: "This form has no submit button of its own",
+		body: "Nothing on the form is known to send it (no submit button that belongs to the form), so nothing was clicked to send it and nothing was sent. Finish it yourself with your answers below.",
+		actions: ["finish", "mark"],
+	},
 	other: {
 		title: "The submission stopped",
 		body: "Something on the page did not match what was reviewed, so it stopped before the click and nothing was sent.",
@@ -228,7 +279,7 @@ export function stopView<A extends StopAttempt>(
 		unknown ??
 		app.attempts.find((a) => a.status === "not_sent" && a.mode === "auto") ??
 		null;
-	let kind: StopCase = unknown ? "unknown_outcome" : caseOf(stop);
+	let kind: StopCase = unknown ? unknownCase(unknown) : caseOf(stop);
 	if (!unknown && (open || kind === "question"))
 		kind = isLocationChoice(open) ? "location_choice" : "question";
 	const copy = COPY[kind];

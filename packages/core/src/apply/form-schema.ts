@@ -26,6 +26,23 @@ export interface FormSchema {
 	fields: SchemaField[];
 	/** The submit control's text; null when the form shows none. */
 	submit: string | null;
+	/**
+	 * An employer's form: the page the form was read on, the job's link after the HTTP redirects
+	 * the read followed (a script's or a meta refresh's navigation never counts). Submission opens
+	 * it and sends data only to its exact host (web-hosts.ts `webFormHost`). Unset on reads saved
+	 * before 2026-11-09's re-review: then the link itself is the form's page.
+	 */
+	formUrl?: string;
+}
+
+/**
+ * Why a form was not read. `handoff`: it was read, and it is one the user finishes (it sends
+ * elsewhere, has unlabelled fields, or no submit button of its own); review shows the reason as is.
+ */
+export interface FormReadRefusal {
+	ok: false;
+	reason: string;
+	handoff?: true;
 }
 
 /** The saved outcome of reading one application's form. */

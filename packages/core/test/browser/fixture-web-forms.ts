@@ -7,7 +7,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  * `/web/<variant>/apply` on 127.0.0.1; tests allow only that host, so `localhost` is "another
  * site". Control ids change on every load (as many sites' do), so keys must come from names.
  *
- *   single        one page: name, email, phone, a box with no label (only text near it), location,
+ *   single        one page: name, email, phone, a named box with no label (only text near it), location,
  *                 two questions, a CV upload, an optional newsletter box and a hidden honeypot;
  *                 a native POST that redirects to /thanks
  *   two-step      step 1 (contact) shown, step 2 (questions, CV) kept hidden; "Next" checks step 1
@@ -22,6 +22,31 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  *   framed        the single form in a frame of the same site
  *   nameless      no control has a name (a script framework's form); from the second load on an
  *                 unlabelled box appears above the others; posts every box by its label as JSON
+ *   swapped       full name and email; from the second load on an optional "Promo code" box takes
+ *                 the email box's place; a native POST that redirects to /thanks
+ *   shifted       full name, then "Contact details" with an unlabelled email and phone box; from
+ *                 the second load on an unlabelled box appears first in that group; posts as JSON
+ *   contact-swap  full name, then "Contact details" with an email and a phone box that have no name, id
+ *                 or label; from the second load on the two trade places; posts as JSON
+ *   adds-unlabelled email and full name, named and labelled; from the second load on an optional box
+ *                 with no name, id or label appears
+ *   twin-keys     full name, and an email and a phone box that share one name ("contact")
+ *   preview       email and full name, help text already saying "Thank you for applying!"; the only
+ *                 button changes the query string and sends nothing
+ *   echo          the same help text above the form; the submit posts and swaps the form for "Saved."
+ *   posting-next  email and full name shown, phone and location in a hidden step; its "Next" is a
+ *                 native submit button: clicking it posts the first step (and redirects to /thanks)
+ *   formless      name and email with no <form> around them, and a lone untyped "Go" button
+ *   script-button email and full name; the only button is a plain one ("Submit application") whose
+ *                 script posts the form and shows a thank-you
+ *   form-attr     email and full name; the submit button sits after the form, naming it with `form=`
+ *   telemetry     email and full name; the submit only posts "event=click" to /web/telemetry/telemetry,
+ *                 then the page shows a thank-you
+ *   rejected      the same, posting the application; the server answers HTTP 500
+ *   json          the same, posting the application as JSON ({"candidate": {...}})
+ *   silent        name and email; the submit sends nothing and swaps the form for a thank-you
+ *   assets        name, email and location; loads a logo from localhost, and on input asks localhost
+ *                 for images whose paths carry pieces of what was typed (base64 pieces, the first word)
  */
 
 export interface WebSubmission {
@@ -79,9 +104,9 @@ ${text("What is your notice period?", "notice", { required: true })}
 <div><label for="${cv}">Resume / CV *</label><input id="${cv}" name="cv" type="file" accept=".pdf" required> <button type="button" onclick="document.getElementById('${cv}').click()">Upload file</button></div>`;
 }
 
-/** A box no label names: only the text beside it says what it is. */
-function unlabelled(): string {
-	return `<div><div class="hint">Your LinkedIn profile</div><input id="${id("li")}" type="url"></div>`;
+/** A box no label names: only the text beside it says what it is (and its name, when it has one). */
+function unlabelled(name = ""): string {
+	return `<div><div class="hint">Your LinkedIn profile</div><input id="${id("li")}"${name ? ` name="${name}"` : ""} type="url"></div>`;
 }
 
 function singleBody(variant: string): string {
@@ -96,7 +121,7 @@ function singleBody(variant: string): string {
 <form id="apply" method="post" action="/web/${variant}/apply" enctype="multipart/form-data">
 <h2>Your details</h2>
 ${contact()}
-${unlabelled()}
+${unlabelled("profile_url")}
 ${text("Where are you based?", "location")}
 <h2>Questions</h2>
 ${questions()}
@@ -160,6 +185,177 @@ ${box("What is your notice period?", "text", true)}
 <p><button type="submit">Submit application</button></p></form>`;
 }
 
+/** Full name and email; from the second load on, an optional "Promo code" in the email's place. */
+function swappedBody(changed: boolean): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1>
+<form id="apply" method="post" action="/web/swapped/apply">
+${changed ? text("Promo code", "promo") : text("Email address", "email", { type: "email" })}
+${text("Full name", "full_name", { required: true })}
+<p><button type="submit">Submit application</button></p>
+</form>`;
+}
+
+/** Two unlabelled boxes under one text; from the second load on, a third one before them. */
+function shiftedBody(inserted: boolean): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply">
+${text("Full name", "full_name", { required: true })}
+<div><div class="hint">Contact details</div>${inserted ? `<input data-origin="inserted" type="text">` : ""}<input data-origin="email" type="email"><input data-origin="phone" type="tel"></div>
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+/**
+ * Codex's re-review case: under "Contact details" an email and a phone box with no name, id or
+ * label; from the second load on they trade places. The form's own submit posts them as JSON.
+ */
+function contactSwapBody(swapped: boolean): string {
+	const boxes = [
+		`<input data-origin="email" type="text">`,
+		`<input data-origin="phone" type="text">`,
+	];
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply">
+${text("Full name", "full_name", { required: true })}
+<div><div class="hint">Contact details</div>${(swapped ? boxes.reverse() : boxes).join("")}</div>
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+/** Labelled and named on the first load; from the second on, an optional box with nothing of its own. */
+function addsUnlabelledBody(added: boolean): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply" method="post" action="/web/adds-unlabelled/apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+${added ? `<div><div class="hint">Promo code</div><input type="text"></div>` : ""}
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+/** Two boxes with one name: which one is the email and which the phone only their labels say. */
+function twinKeysBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply" method="post" action="/web/twin-keys/apply">
+${text("Full name", "full_name", { required: true })}${text("Email address", "contact", { type: "email" })}${text("Phone number", "contact", { type: "tel" })}
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+const SHIFTED = `const form = document.getElementById('apply');
+form.addEventListener('submit', async (e) => {
+	e.preventDefault();
+	const out = {};
+	for (const el of form.querySelectorAll('input')) out[el.dataset.origin || el.name] = el.value;
+	const res = await fetch('/web/shifted/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(out) });
+	if (res.ok) form.outerHTML = '<div class="thanks"><h2>Thank you for your application!</h2></div>';
+});`;
+
+/** Help text that already holds confirmation words, before anything is sent. */
+const ALREADY_THANKED = `<p class="note">When it is done you will see: Thank you for applying!</p>`;
+
+function previewBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1>${ALREADY_THANKED}<form id="apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<p><button type="button" onclick="history.pushState({}, '', '?preview=1')">Submit application</button></p></form>`;
+}
+
+function echoBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1>${ALREADY_THANKED}<form id="apply" method="post" action="/web/echo/apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+const ECHO = `const form = document.getElementById('apply');
+form.addEventListener('submit', async (e) => {
+	e.preventDefault();
+	const res = await fetch('/web/echo/apply', { method: 'POST', body: new URLSearchParams(new FormData(form)) });
+	if (res.ok) form.outerHTML = '<p>Saved.</p>';
+});`;
+
+/** A "Next" that is the form's own submit button: the first step leaves with it. */
+function postingNextBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply" method="post" action="/web/posting-next/apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<div style="display:none">${text("Phone number", "phone", { type: "tel" })}${text("Where are you based?", "location")}</div>
+<p><button>Next</button></p></form>`;
+}
+
+function formlessBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><div>
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<p><button>Go</button></p></div>`;
+}
+
+/** Codex's re-review case: the only button is a plain one; its script posts the form. */
+function scriptButtonBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<p><button type="button" id="send">Submit application</button></p></form>`;
+}
+
+const SCRIPT_BUTTON = `document.getElementById('send').addEventListener('click', async () => {
+	const form = document.getElementById('apply');
+	const res = await fetch('/web/script-button/apply', { method: 'POST', body: new URLSearchParams(new FormData(form)) });
+	if (res.ok) form.outerHTML = '<div class="thanks"><h2>Thank you for applying!</h2></div>';
+});`;
+
+/** The submit button sits outside the form and names it with its form attribute. */
+function formAttrBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply" method="post" action="/web/form-attr/apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+</form><p><button type="submit" form="apply">Submit application</button></p>`;
+}
+
+/**
+ * Email and full name with the form's own submit button; on submit the page's script sends what
+ * `SENDS[variant]` says, then swaps the form for a thank-you, whatever the answer.
+ */
+function scriptedBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+const SENDS: Record<string, string> = {
+	// Codex's re-review case: a click event to the form's own host, nothing of the application.
+	telemetry: `fetch('/web/telemetry/telemetry', { method: 'POST', body: 'event=click' })`,
+	// The application, refused by the server (HTTP 500).
+	rejected: `fetch('/web/rejected/apply', { method: 'POST', body: new URLSearchParams(new FormData(form)) })`,
+	// The application as JSON.
+	json: `fetch('/web/json/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ candidate: Object.fromEntries(new FormData(form)) }) })`,
+};
+
+function scripted(variant: string): string {
+	return `const form = document.getElementById('apply');
+form.addEventListener('submit', async (e) => {
+	e.preventDefault();
+	await ${SENDS[variant]}.catch(() => {});
+	form.outerHTML = '<div class="thanks"><h2>Thank you for applying!</h2></div>';
+});`;
+}
+
+function silentBody(): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply">
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+const SILENT = `const form = document.getElementById('apply');
+form.addEventListener('submit', (e) => {
+	e.preventDefault();
+	form.outerHTML = '<div class="thanks"><h2>Thank you for applying!</h2></div>';
+});`;
+
+function assetsBody(away: string): string {
+	return `<h1>Robotics Engineer at Acme Robotics</h1><img src="${away}/web/assets/logo.png" alt="">
+<form id="apply" method="post" action="/web/assets/apply">
+${text("Full name", "full_name", { required: true })}${text("Email address", "email", { type: "email" })}${text("Where are you based?", "location")}
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+/** Each typed value leaves in pieces no single one of which is the value: only by path. */
+const ASSETS = `const at = (path) => { new Image().src = window.AWAY_ORIGIN + '/web/assets/' + path + '.png'; };
+const b64 = (t) => btoa(t).replace(/=+$/, '');
+for (const el of document.querySelectorAll('input')) el.addEventListener('input', () => {
+	const v = el.value;
+	at(b64(v.slice(0, 8)));
+	at(b64(v.slice(8)));
+	at(encodeURIComponent(v.split(/[ ,@]/)[0]));
+	at('logo');
+});`;
+
 /** Posts every box as "label or nearby text = value", as the page shows it. */
 const NAMELESS = `const form = document.getElementById('apply');
 form.addEventListener('submit', async (e) => {
@@ -179,6 +375,12 @@ function postAnswer(
 	variant: string,
 	action: string,
 ): { status: number; headers: Record<string, string>; body: string } {
+	if (variant === "rejected")
+		return {
+			status: 500,
+			headers: { "content-type": "application/json" },
+			body: '{"ok":false}',
+		};
 	if (variant === "ambiguous")
 		return {
 			status: 200,
@@ -186,7 +388,17 @@ function postAnswer(
 			body: page("<h1>Acme Robotics</h1><p>Your request has been noted.</p>"),
 		};
 	if (
-		["two-step", "stays", "nameless"].includes(variant) ||
+		[
+			"two-step",
+			"stays",
+			"nameless",
+			"shifted",
+			"contact-swap",
+			"echo",
+			"script-button",
+			"telemetry",
+			"json",
+		].includes(variant) ||
 		action === "upload"
 	)
 		return {
@@ -233,6 +445,39 @@ function formPage(
 			);
 		case "nameless":
 			return page(namelessBody(load > 1), NAMELESS);
+		case "swapped":
+			return page(swappedBody(load > 1));
+		case "shifted":
+			return page(shiftedBody(load > 1), SHIFTED);
+		case "contact-swap":
+			return page(
+				contactSwapBody(load > 1),
+				SHIFTED.replace("/shifted/", "/contact-swap/"),
+			);
+		case "adds-unlabelled":
+			return page(addsUnlabelledBody(load > 1));
+		case "twin-keys":
+			return page(twinKeysBody());
+		case "preview":
+			return page(previewBody());
+		case "echo":
+			return page(echoBody(), ECHO);
+		case "posting-next":
+			return page(postingNextBody());
+		case "formless":
+			return page(formlessBody());
+		case "silent":
+			return page(silentBody(), SILENT);
+		case "telemetry":
+		case "rejected":
+		case "json":
+			return page(scriptedBody(), scripted(variant));
+		case "script-button":
+			return page(scriptButtonBody(), SCRIPT_BUTTON);
+		case "form-attr":
+			return page(formAttrBody());
+		case "assets":
+			return page(assetsBody(awayOrigin), ASSETS, awayOrigin);
 		default:
 			return null;
 	}

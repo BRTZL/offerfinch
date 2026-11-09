@@ -26,6 +26,11 @@ export interface NavigationResult {
 	/** HTTP status of the main document, or null when the browser could not tell. */
 	status: number | null;
 	url: string;
+	/**
+	 * The URL of the document the browser answered with, after the HTTP redirects it followed
+	 * (never a script's or a meta refresh's later navigation); null when it could not tell.
+	 */
+	responseUrl?: string | null;
 }
 
 export interface GotoOptions {
@@ -71,6 +76,13 @@ export interface BrowserPage {
 	 * ("read_only" or "none"); it can only ever get stricter.
 	 */
 	restrictNetwork(mode: "read_only" | "none"): void;
+	/**
+	 * "allowlist" (a real submission), called before the first keystroke: the set of files the
+	 * page may load from a host that is not a destination (`HostRules` assets and static files) is
+	 * fixed to the exact URLs it loaded so far; any other is refused quietly (a filled value in it
+	 * is still a violation). Widget endpoints keep their own rules. No-op in other modes.
+	 */
+	freezeAssets(): void;
 	/** Every request a guarded page made, with the guard's decision. Empty on open sessions. */
 	networkLog(): NetworkLogEntry[];
 	close(): Promise<void>;
@@ -81,6 +93,15 @@ export interface NetworkLogEntry {
 	url: string;
 	allowed: boolean;
 	reason: string;
+	/** "allowlist": a navigation of the page itself (its main frame). */
+	navigation?: true;
+	/**
+	 * "allowlist", a request to a destination that is not a read (POST, PUT …): the HTTP status it
+	 * was answered with, its body and content type, so a run can tell what it carried.
+	 */
+	status?: number;
+	body?: Uint8Array;
+	contentType?: string;
 }
 
 export interface BrowserSession {
@@ -163,6 +184,9 @@ export function urlOnHosts(url: string, hosts: readonly string[]): boolean {
 	}
 }
 
+/** `boardHostDecision`'s reasons for a file read from a host that is not a destination. */
+const FILE_READS = new Set(["board asset, read", "board static file, read"]);
+
 /** The reason recorded for a request an "allowlist" session refused. */
 export const DESTINATION_REFUSED = "destination not allowed";
 
@@ -189,6 +213,7 @@ export interface BrowserProvider {
 
 interface PlaywrightResponseLike {
 	status(): number;
+	url?(): string;
 }
 
 interface PlaywrightFetchResponseLike {
@@ -207,6 +232,7 @@ interface PlaywrightRouteLike {
 		url(): string;
 		method(): string;
 		postData(): string | null;
+		postDataBuffer?(): Buffer | null;
 		isNavigationRequest(): boolean;
 		frame(): unknown;
 		resourceType?(): string;
@@ -330,6 +356,23 @@ function isUpload(method: string, type: string, body: string | null): boolean {
 	);
 }
 
+/** What a request to a destination carried, and how it was answered (`NetworkLogEntry`). */
+function sentOf(
+	request: ReturnType<PlaywrightRouteLike["request"]>,
+	status: number,
+): Pick<NetworkLogEntry, "status" | "body" | "contentType"> {
+	const buffer =
+		request.postDataBuffer?.() ??
+		(request.postData() === null
+			? null
+			: Buffer.from(request.postData() ?? "", "utf8"));
+	return {
+		status,
+		...(buffer ? { body: new Uint8Array(buffer) } : {}),
+		contentType: request.headers?.()["content-type"] ?? "",
+	};
+}
+
 /**
  * The page a request belongs to, or null when it cannot be told: a pop-up's first request comes
  * before its frame exists.
@@ -350,6 +393,10 @@ function pageOf(request: { frame(): unknown }): unknown {
 interface GuardState {
 	mode: GuardMode;
 	readonly log: NetworkLogEntry[];
+	/** "allowlist": the other-host files (assets, static files) loaded before `freezeAssets`. */
+	readonly loaded: Set<string>;
+	/** "allowlist": set by `freezeAssets`; only a file in `loaded` may load from then on. */
+	frozen: boolean;
 }
 
 /** The URL of the frame that made a request, or "" when it cannot be told. */
@@ -521,6 +568,13 @@ class PlaywrightPage implements BrowserPage {
 			url,
 			allowed: true,
 			reason,
+			...(request.isNavigationRequest() &&
+			request.frame() === this.page.mainFrame()
+				? { navigation: true as const }
+				: {}),
+			...(destination && !/^(?:GET|HEAD)$/i.test(method)
+				? sentOf(request, response.status())
+				: {}),
 		});
 		return route.fulfill({ response: response as never });
 	}
@@ -559,9 +613,13 @@ class PlaywrightPage implements BrowserPage {
 			this.hostRules,
 			this.allowedHosts,
 		);
-		return decision.allow
-			? decision
-			: { allow: false, reason: NOT_A_DESTINATION };
+		if (!decision.allow) return { allow: false, reason: NOT_A_DESTINATION };
+		if (!FILE_READS.has(decision.reason)) return decision;
+		// Files are fixed before the first keystroke: a new path could carry what was typed.
+		if (this.state.frozen && !this.state.loaded.has(url))
+			return { allow: false, reason: NOT_A_DESTINATION };
+		if (!this.state.frozen) this.state.loaded.add(url);
+		return decision;
 	}
 
 	/**
@@ -628,6 +686,10 @@ class PlaywrightPage implements BrowserPage {
 		return route.abort("blockedbyclient");
 	}
 
+	freezeAssets(): void {
+		if (this.state.mode === "allowlist") this.state.frozen = true;
+	}
+
 	restrictNetwork(mode: "read_only" | "none"): void {
 		if (this.state.mode === "open")
 			throw new Error(
@@ -681,7 +743,11 @@ class PlaywrightPage implements BrowserPage {
 			throw new Error("beforeRedirect is only for open sessions");
 		if (!beforeRedirect) {
 			const response = await this.page.goto(url, gotoOptions);
-			return { status: response?.status() ?? null, url: this.page.url() };
+			return {
+				status: response?.status() ?? null,
+				url: this.page.url(),
+				responseUrl: response?.url?.() ?? null,
+			};
 		}
 		// Playwright follows redirects inside one request and its route handler never sees the hops,
 		// so main-frame documents are fetched with redirects off and each hop is followed here, after
@@ -724,7 +790,11 @@ class PlaywrightPage implements BrowserPage {
 				}
 				if (failure) throw failure;
 				if (!redirect)
-					return { status: response?.status() ?? null, url: this.page.url() };
+					return {
+						status: response?.status() ?? null,
+						url: this.page.url(),
+						responseUrl: response?.url?.() ?? null,
+					};
 				await beforeRedirect(redirect);
 				target = redirect;
 			}
@@ -824,7 +894,12 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 			// route() does not see a service worker's fetches, so guarded pages get none.
 			...(network === "open" ? {} : { serviceWorkers: "block" as const }),
 		});
-		const state: GuardState = { mode: network, log: [] };
+		const state: GuardState = {
+			mode: network,
+			log: [],
+			loaded: new Set(),
+			frozen: false,
+		};
 		const pages = new Map<unknown, PlaywrightPage>();
 		if (network !== "open") {
 			if (!context.route || !context.routeWebSocket) {

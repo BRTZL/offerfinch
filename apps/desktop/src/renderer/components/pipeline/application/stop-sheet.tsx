@@ -211,8 +211,8 @@ function StopActions({
 						data-testid="stop-confirm-not-sent"
 					/>
 					<span>
-						I checked the employer's portal or my email: attempt{" "}
-						{app.unresolvedAttempt?.attempt} did not go through.
+						I checked the employer's portal or my email: the click in attempt{" "}
+						{app.unresolvedAttempt?.attempt} did not send the application.
 					</span>
 				</label>
 			) : null}

@@ -15,7 +15,7 @@ import {
 	runApplication,
 } from "./applier";
 import type { SavedAnswer } from "./field-answers";
-import type { FormRead, FormSchema } from "./form-schema";
+import type { FormRead, FormReadRefusal, FormSchema } from "./form-schema";
 import {
 	type ApplicantData,
 	type Board,
@@ -203,9 +203,7 @@ export interface ApplyDeps {
 	readForm?: (input: {
 		board: FormBoard;
 		url: string;
-	}) => Promise<
-		{ ok: true; schema: FormSchema } | { ok: false; reason: string }
-	>;
+	}) => Promise<{ ok: true; schema: FormSchema } | FormReadRefusal>;
 	now?: () => Date;
 }
 
@@ -375,7 +373,12 @@ async function prepareRun(
 	return {
 		run: {
 			board: context.board,
-			url,
+			// An employer's form opens where its read landed after HTTP redirects: that exact host
+			// is the only one that receives the application (web-hosts.ts `webFormHost`).
+			url:
+				context.board === "web" && read?.status === "read"
+					? (read.schema.formUrl ?? url)
+					: url,
 			mode,
 			...(read?.status === "read" ? { schema: read.schema.fields } : {}),
 			// The drafting model reads an employer's buttons and its page after the click; the
@@ -484,8 +487,8 @@ function stopper(
 
 /**
  * What a real submission's session may reach. A board: its own data hosts, and its asset and
- * scoring hosts read-only (docs/form-inspection.md, 2026-11-09). An employer's own form: only its
- * own site receives data (web-hosts.ts).
+ * scoring hosts read-only (docs/form-inspection.md, 2026-11-09). An employer's own form: only the
+ * exact host of its page receives data (web-hosts.ts).
  */
 function runHosts(run: ApplicationRun, apply: ApplyDeps) {
 	return run.board === "web"
@@ -577,7 +580,8 @@ export async function submitStep(
 					(await db.submissionsPaused(userId))
 						? "Submissions were paused before the files were uploaded."
 						: null,
-				// A multi-step form may save a step on the employer's site at "Next": same check.
+				// A multi-step form claims before its first "Next" (a step may save answers on the
+				// employer's site); every later step checks the switch again.
 				beforeStep: pausedBefore(db, userId, "the form's next step"),
 				claim: async (before, filled) => {
 					const beforeKey = await store(
@@ -618,7 +622,7 @@ export async function submitStep(
 				const submitted = result.outcome === "submitted";
 				const reason = submitted
 					? `Submitted; ${confirmer(run.board)} confirmed: "${result.confirmation}"`
-					: `Outcome unknown after the submit click: ${result.reason} Check the employer's portal or your email before retrying.`;
+					: `Outcome unknown after a click that may have sent the application: ${result.reason} Check the employer's portal or your email before retrying.`;
 				await db.finishSubmission(userId, applicationId, attemptId ?? "", {
 					submitted,
 					afterKey,

@@ -19,6 +19,10 @@ import {
 import { MemoryBlobStore } from "@offerfinch/core/export/export";
 import type { PipelineDeps } from "@offerfinch/core/pipeline/ports";
 import { FakeLlmProvider } from "@offerfinch/core/scoring/fake";
+import {
+	DESTINATION_REFUSED,
+	NOT_A_DESTINATION,
+} from "@offerfinch/core/scrape/browser";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { fixtureBrowser, localBrowser } from "./browser";
 import {
@@ -83,6 +87,11 @@ async function schemaOf(variant: string): Promise<FormSchema> {
 	return result.schema;
 }
 
+/** The plain form's read, as if the job's link (`variant`) had shown it: the live page differs. */
+async function readAs(from: string, variant: string): Promise<FormSchema> {
+	return { ...(await schemaOf(from)), formUrl: urlOf(variant) };
+}
+
 const data = () =>
 	applicantData(
 		PROFILE,
@@ -111,8 +120,8 @@ describe("reading an employer's form before review", () => {
 			["text:full_name", "Full name", true, 1],
 			["text:email", "Email address", true, 1],
 			["text:phone", "Phone number", false, 1],
-			// No label: the model chose one from the text beside it.
-			["text:#text-1", "LinkedIn", false, 1],
+			// No label, only a name: the model chose a label from the text beside it.
+			["text:profile_url", "LinkedIn", false, 1],
 			["text:location", "Where are you based?", false, 1],
 			["textarea:why", "Why do you want to work at Acme Robotics?", true, 1],
 			["text:notice", "What is your notice period?", true, 1],
@@ -120,9 +129,11 @@ describe("reading an employer's form before review", () => {
 			["checkbox:news", "Send me news about future openings", false, 1],
 		]);
 		expect(
-			result.schema.fields.find((f) => f.key === "text:#text-1"),
+			result.schema.fields.find((f) => f.key === "text:profile_url"),
 		).toMatchObject({ labelSource: "model" });
 		expect(result.schema.submit).toBe("Submit application");
+		// The form's page, where its link landed: the only host that may receive it.
+		expect(result.schema.formUrl).toBe(urlOf("single"));
 		expect(log.filter((r) => r.allowed && r.method !== "GET")).toEqual([]);
 		expect(forms.count("single")).toBe(0);
 		// The ids change on every load; the keys do not.
@@ -136,7 +147,7 @@ describe("reading an employer's form before review", () => {
 		const { result } = await read("single", null);
 		if (!result.ok) throw new Error(result.reason);
 		expect(
-			result.schema.fields.find((f) => f.key === "text:#text-1")?.label,
+			result.schema.fields.find((f) => f.key === "text:profile_url")?.label,
 		).toBe("");
 	});
 
@@ -152,6 +163,50 @@ describe("reading an employer's form before review", () => {
 		]);
 		expect(forms.count("two-step")).toBe(0);
 	});
+
+	it.each([
+		// No <form>: a lone untyped "Go" button sends nothing the page shows.
+		"formless",
+		// The only button is a plain one, whatever its words (Codex re-review, 2026-11-09).
+		"script-button",
+		"preview",
+	])(
+		"%s: a form with no submit button of its own is a hand-off at read time",
+		async (variant) => {
+			const { result } = await read(variant);
+			expect(result).toMatchObject({
+				ok: false,
+				reason:
+					"This form has no submit button of its own; finish it yourself.",
+			});
+			expect(forms.count(variant)).toBe(0);
+		},
+	);
+
+	it("at submit, a plain button that says submit is never clicked: the run stops before the claim (Codex re-review, 2026-11-09)", async () => {
+		// A read saved before this fix, of a form with the same two questions.
+		const { deps, calls } = harness(
+			"script-button",
+			await readAs("silent", "script-button"),
+		);
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(/^Could not tell which control sends/),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["stop"]);
+		expect(forms.count("script-button")).toBe(0);
+	}, 60_000);
+
+	it("a submit button outside the form that names it with form= is its submit", async () => {
+		const schema = await schemaOf("form-attr");
+		expect(schema.submit).toBe("Submit application");
+		const { deps, calls } = harness("form-attr", schema);
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({ outcome: "applied" });
+		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+		expect(forms.count("form-attr")).toBe(1);
+	}, 60_000);
 
 	it("is read in preparation only where submission may go, in its own session", async () => {
 		const context = {
@@ -189,6 +244,36 @@ describe("reading an employer's form before review", () => {
 		).toMatchObject({
 			status: "skipped",
 			note: expect.stringMatching(/not turned on/),
+		});
+	});
+
+	it("a form read as one to finish by hand says so in review, not that it could not be read", async () => {
+		const saved = await readApplicationForm(
+			{
+				store: {} as SubmissionStore,
+				browser: localBrowser(),
+				blobs: new MemoryBlobStore(),
+				allowedHosts: ["127.0.0.1"],
+			},
+			{
+				applicationId: "app-1",
+				source: "web",
+				board: "web",
+				boardFrom: "url",
+				companyKey: "acme-robotics",
+				externalId: "contact-swap",
+				jobUrl: urlOf("contact-swap"),
+				formAnswers: [],
+				coverLetterMarkdown: null,
+				cvPdfKey: null,
+				coverLetterPdfKey: null,
+			},
+			new Date(),
+			fakeModel(),
+		);
+		expect(saved).toMatchObject({
+			status: "failed",
+			note: "This form has unlabelled fields; finish it yourself. The form was read before review, and it is one to fill in on the employer's site.",
 		});
 	});
 
@@ -409,29 +494,122 @@ describe("submitting an employer's form", () => {
 		60_000,
 	);
 
-	it("a box the page adds after review never takes another question's value", async () => {
-		// Read on the first load; from the second on the page adds an unlabelled box above the rest.
-		const schema = await schemaOf("nameless");
-		const keys = schema.fields.map((f) => f.key);
-		expect(keys.filter((k) => k.includes(":#"))).toEqual(["text:#text-1"]);
-		expect(keys.filter((k) => k.includes(":label:"))).toHaveLength(5);
-		const { deps } = harness("nameless", schema);
-		const outcome = await submitStep(deps, "u1", "app-1");
-		expect(outcome).toMatchObject({ outcome: "applied" });
-		const sent = JSON.parse(
-			forms.submissions.find((s) => s.variant === "nameless")?.body ?? "{}",
-		);
-		// The new box stays empty; the unlabelled LinkedIn box moved, so it is left blank too.
-		expect(sent).toEqual({
-			"Promo code": "",
-			"Full name": "Ada Example",
-			"Email address": "ada@example.test",
-			"Your LinkedIn profile": "",
-			"Why do you want to work at Acme Robotics?":
-				"The robotics work matches what I build.",
-			"What is your notice period?": "Four weeks.",
-			"Resume / CV": "CV.pdf",
+	it.each([
+		// No control has a name; one box has no label either (only text beside it).
+		["nameless", /^This form has unlabelled fields; finish it yourself\.$/],
+		// Two boxes under "Contact details" with no name, id or label (Codex re-review, 2026-11-09).
+		["shifted", /^This form has unlabelled fields; finish it yourself\.$/],
+		["contact-swap", /^This form has unlabelled fields; finish it yourself\.$/],
+		// Two boxes with one name.
+		[
+			"twin-keys",
+			/^This form has fields that share one name or label; finish it yourself\.$/,
+		],
+	])(
+		"%s: a field with nothing of its own is a hand-off at read time (Codex re-review, 2026-11-09)",
+		async (variant, why) => {
+			const { result } = await read(variant);
+			expect(result).toMatchObject({
+				ok: false,
+				reason: expect.stringMatching(why),
+			});
+			expect(forms.count(variant)).toBe(0);
+		},
+	);
+
+	it("swapped nameless boxes never take each other's value: the run stops before the claim (Codex re-review, 2026-11-09)", async () => {
+		// The read Codex's case gave before this fix: both boxes keyed by their place.
+		const schema = await readAs("single", "contact-swap");
+		const field = (name: string, label: string) => ({
+			ref: name,
+			kind: "text" as const,
+			label,
+			required: false,
+			name,
+			options: [],
+			visible: true,
+			current: [],
+			section: "",
+			key: `text:${name}`,
+			page: 1,
+			// What the read kept for a place key before this fix.
+			...(name.startsWith("#")
+				? { hint: "Contact details", autocomplete: "" }
+				: {}),
 		});
+		const { deps, calls } = harness("contact-swap", {
+			...schema,
+			fields: [
+				{ ...field("full_name", "Full name"), required: true },
+				field("#text-1", "Email"),
+				field("#text-2", "Phone"),
+			],
+		});
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(
+				/^This form has unlabelled fields; finish it yourself\./,
+			),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["stop"]);
+		expect(forms.count("contact-swap")).toBe(0);
+	}, 60_000);
+
+	it("a box with nothing of its own that appears after review stops the run before the claim (Codex re-review, 2026-11-09)", async () => {
+		const schema = await schemaOf("adds-unlabelled");
+		expect(schema.fields.map((f) => f.key)).toEqual([
+			"text:email",
+			"text:full_name",
+		]);
+		const { deps, calls } = harness("adds-unlabelled", schema);
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(
+				/^This form has unlabelled fields; finish it yourself\./,
+			),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["stop"]);
+		expect(forms.count("adds-unlabelled")).toBe(0);
+	}, 60_000);
+
+	it("a changed box is never paired with a reviewed one by the model (Codex, 2026-11-09)", async () => {
+		// Read with the email box; at submit an optional "Promo code" box stands in its place.
+		const schema = await schemaOf("swapped");
+		expect(schema.fields.map((f) => f.key)).toEqual([
+			"text:email",
+			"text:full_name",
+		]);
+		const pairing = {
+			...fakeModel(),
+			// A model that pairs every changed box with the reviewed email.
+			match: async (request: { live: { ref: string }[] }) =>
+				request.live.map((l) => ({ ref: l.ref, key: "text:email" })),
+		} as unknown as WebFormModel;
+		const session = await fixtureBrowser().openSession({
+			network: "allowlist",
+			allowedHosts: ["127.0.0.1"],
+		});
+		try {
+			const page = await session.newPage();
+			const result = await runWebApplication(page, {
+				board: "web",
+				url: urlOf("swapped"),
+				mode: "submit",
+				schema: schema.fields,
+				data: data(),
+				files: { cv: CV, coverLetter: null },
+				model: pairing,
+				allowedHosts: ["127.0.0.1"],
+				claim: async () => ({ go: true }),
+			});
+			expect(result.filled.map((f) => f.label)).toEqual(["Full name"]);
+		} finally {
+			await session.close();
+		}
+		const sent = forms.submissions.find((s) => s.variant === "swapped");
+		expect(sent?.body).toBe("promo=&full_name=Ada+Example");
 	}, 60_000);
 
 	it("an ambiguous page after the click is an unknown outcome, never a retry", async () => {
@@ -534,9 +712,173 @@ describe("submitting an employer's form", () => {
 	}, 60_000);
 });
 
+describe("a step that may send answers waits for the claim (Codex, 2026-11-09)", () => {
+	async function runNext(claim: ApplicationRun["claim"]) {
+		const schema = await schemaOf("posting-next");
+		const session = await fixtureBrowser().openSession({
+			network: "allowlist",
+			allowedHosts: ["127.0.0.1"],
+		});
+		try {
+			const page = await session.newPage();
+			return await runWebApplication(page, {
+				board: "web",
+				url: urlOf("posting-next"),
+				mode: "submit",
+				schema: schema.fields,
+				data: data(),
+				files: { cv: CV, coverLetter: null },
+				model: fakeModel(),
+				allowedHosts: ["127.0.0.1"],
+				confirmTimeoutMs: 3_000,
+				claim,
+			});
+		} finally {
+			await session.close();
+		}
+	}
+
+	it("a refused claim before the first Next sends nothing", async () => {
+		const schema = await schemaOf("posting-next");
+		expect(schema.fields.map((f) => [f.key, f.page])).toEqual([
+			["text:email", 1],
+			["text:full_name", 1],
+			["text:phone", 2],
+			["text:location", 2],
+		]);
+		const claim = vi.fn(async () => ({
+			go: false as const,
+			reason: "Submissions are paused.",
+		}));
+		const result = await runNext(claim);
+		expect(result).toMatchObject({ outcome: "not_claimed" });
+		expect(claim).toHaveBeenCalledTimes(1);
+		expect(forms.count("posting-next")).toBe(0);
+	}, 60_000);
+
+	it("after the claim, a step that ends the run is an unknown outcome, never a plain stop", async () => {
+		const { deps, calls } = harness(
+			"posting-next",
+			await schemaOf("posting-next"),
+		);
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(
+				/^Outcome unknown .*Step 2 of the form showed no questions.*"Next" was clicked/,
+			),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+		expect(calls[1]?.submitted).toBe(false);
+		expect(forms.count("posting-next")).toBe(1);
+	}, 60_000);
+
+	it("a pause after the first Next ends the run as unknown, with no further click", async () => {
+		const { deps, calls } = harness("two-step", await schemaOf("two-step"));
+		const store = deps.apply?.store;
+		if (!store) throw new Error("no store");
+		// Not paused when the form opens; paused at the next check, on step 2 (after the claim).
+		let checks = 0;
+		store.submissionsPaused = async () => ++checks > 1;
+		const before = forms.count("two-step");
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(
+				/^Outcome unknown .*Submissions were paused before .*"Next" was clicked/,
+			),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+		expect(forms.count("two-step")).toBe(before);
+	}, 60_000);
+});
+
+describe("files from another host are fixed before the first keystroke (Codex, 2026-11-09)", () => {
+	it("only a file loaded with the page loads again; a new path is refused quietly", async () => {
+		const schema = await schemaOf("assets");
+		const session = await fixtureBrowser().openSession({
+			network: "allowlist",
+			allowedHosts: ["127.0.0.1"],
+			hostRules: { assets: ["localhost"] },
+			formValues: ["Ada Example", "ada@example.test", "Izmir, Turkey"],
+		});
+		const awayBefore = forms.away.length;
+		try {
+			const page = await session.newPage();
+			const result = await runWebApplication(page, {
+				board: "web",
+				url: urlOf("assets"),
+				mode: "submit",
+				schema: schema.fields,
+				data: data(),
+				files: { cv: CV, coverLetter: null },
+				model: fakeModel(),
+				allowedHosts: ["127.0.0.1"],
+				claim: async () => ({ go: true }),
+			});
+			expect(result.outcome === "stopped" ? result.stop : null).toBeNull();
+			expect(result.outcome).toBe("submitted");
+			const log = page.networkLog();
+			// The pieces were tried, and refused without stopping the run.
+			expect(
+				log.filter(
+					(r) => r.reason === NOT_A_DESTINATION && r.url.endsWith(".png"),
+				).length,
+			).toBeGreaterThan(0);
+			expect(log.filter((r) => r.reason === DESTINATION_REFUSED)).toEqual([]);
+		} finally {
+			await session.close();
+		}
+		const reached = new Set(
+			forms.away.slice(awayBefore).map((a) => `${a.method} ${a.path}`),
+		);
+		expect([...reached]).toEqual(["GET /web/assets/logo.png"]);
+	}, 60_000);
+});
+
+describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09)", () => {
+	it.each([
+		// Posted and the form went, but the thank-you words were on the page before the click.
+		["echo", 1, /does not bear out/],
+		// A new thank-you replaced the form, but nothing was sent.
+		["silent", 0, /no request carrying the application/],
+		// Only a click event went to the form's host (Codex re-review, 2026-11-09).
+		["telemetry", 1, /no request carrying the application/],
+		// The application went, and the server refused it.
+		["rejected", 1, /answered HTTP 500 to the application/],
+	])(
+		"%s: not a confirmation without a send, a new page and new words",
+		async (variant, posts, why) => {
+			const { deps, calls } = harness(variant, await schemaOf(variant));
+			const outcome = await submitStep(deps, "u1", "app-1");
+			expect(outcome).toMatchObject({
+				outcome: "needs_human",
+				reason: expect.stringMatching(why),
+			});
+			expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+			expect(calls[1]?.submitted).toBe(false);
+			expect(forms.count(variant)).toBe(posts);
+		},
+		60_000,
+	);
+});
+
+describe("the application request itself is the evidence (Codex re-review, 2026-11-09)", () => {
+	it("a JSON post carrying every approved value counts", async () => {
+		const { deps, calls } = harness("json", await schemaOf("json"));
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({ outcome: "applied" });
+		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+		expect(forms.count("json")).toBe(1);
+	}, 60_000);
+});
+
 describe("stops on an employer's form: nothing is sent", () => {
 	it("stops when the live form asks a required question review never listed", async () => {
-		const { deps, calls } = harness("unknown", await schemaOf("single"));
+		const { deps, calls } = harness(
+			"unknown",
+			await readAs("single", "unknown"),
+		);
 		const outcome = await submitStep(deps, "u1", "app-1");
 		expect(outcome).toMatchObject({
 			outcome: "needs_human",
@@ -564,7 +906,7 @@ describe("stops on an employer's form: nothing is sent", () => {
 		"%s: hands it to the user",
 		async (variant, why) => {
 			// The schema of the plain form: the live page is what stops the run.
-			const { deps, calls } = harness(variant, await schemaOf("single"));
+			const { deps, calls } = harness(variant, await readAs("single", variant));
 			const outcome = await submitStep(deps, "u1", "app-1");
 			expect(outcome).toMatchObject({
 				outcome: "needs_human",

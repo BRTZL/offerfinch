@@ -26,7 +26,7 @@ export interface WebField extends FormField {
 export interface WebControl {
 	ref: string;
 	text: string;
-	/** `submit`, `button`, `link` or `other`. */
+	/** `submit` (a submit button that belongs to the form), `button`, `link` or `other`. */
 	type: string;
 }
 
@@ -44,6 +44,13 @@ export interface WebScan {
 	/** Words saying the page wants a sign-in before applying, when there is no form. */
 	signIn: string | null;
 	errors: string[];
+	/** Where the form says it sends: its `action` and its buttons' `formaction`, as absolute URLs. */
+	endpoints: string[];
+	/**
+	 * The form has a submit button of its own, shown or kept hidden in a later step (a `<button>`
+	 * without another type or an `<input type=submit|image>` that belongs to it).
+	 */
+	canSubmit: boolean;
 }
 
 /** Visible error messages of a generic form. */
@@ -72,7 +79,7 @@ export const WEB_SCAN_SCRIPT = String.raw`(() => {
 	};
 	const CONTROLS = "input, select, textarea, [role=combobox]:not(input)";
 	for (const el of document.querySelectorAll("[data-jp], [data-jp-control], [data-jp-form]")) { el.removeAttribute("data-jp"); el.removeAttribute("data-jp-control"); el.removeAttribute("data-jp-form"); }
-	const result = { frameUrl: null, frameHost: null, fields: [], controls: [], password: false, code: null, signIn: null, errors: [] };
+	const result = { frameUrl: null, frameHost: null, fields: [], controls: [], password: false, code: null, signIn: null, errors: [], endpoints: [], canSubmit: false };
 	result.password = [...document.querySelectorAll("input[type=password]")].some(shown);
 	// The form: the <form> with the most visible questions, else the page when it has some.
 	const score = (root) => [...root.querySelectorAll(CONTROLS)].filter((el) => fillable(el) && (shown(el) || el.type === "file")).length;
@@ -95,6 +102,7 @@ export const WEB_SCAN_SCRIPT = String.raw`(() => {
 		return result;
 	}
 	root.setAttribute("data-jp-form", "1");
+	if (root.tagName === "FORM" && root.getAttribute("action")) result.endpoints.push(root.action);
 	const labelText = (id) => textOf(document.getElementById(id));
 	const byIds = (ids) => (ids || "").split(/\s+/).filter(Boolean).map(labelText).join(" ").trim();
 	const forLabel = (el) => { if (!el.id) return ""; const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]'); return l ? textOf(l) : ""; };
@@ -187,18 +195,27 @@ export const WEB_SCAN_SCRIPT = String.raw`(() => {
 	}
 	const codeBox = result.fields.find((f) => f.visible && (f.autocomplete === "one-time-code" || /\b(?:otp|one[- ]?time (?:code|password)|verification code|security code|confirmation code|sms code|code we (?:sent|emailed|texted)|enter the code|2fa)\b/i.test(f.label + " " + f.name + " " + f.hint)));
 	result.code = codeBox ? codeBox.label || codeBox.hint || codeBox.name : null;
-	// Buttons of the form; for a form that is the whole page, every button on it.
+	// Buttons of the form (and those outside it whose form attribute names it); for a form that is
+	// the whole page, every button on it.
+	const BUTTONS = "button, input[type=submit], input[type=button], input[type=image], [role=button], a[href]";
+	const owned = root.tagName === "FORM" ? [...root.elements].filter((el) => el.matches(BUTTONS) && !root.contains(el)) : [];
+	const nativeSubmit = (b) => (b.tagName === "BUTTON" && (b.getAttribute("type") || "submit").toLowerCase() === "submit") || (b.tagName === "INPUT" && /^(?:submit|image)$/i.test(b.type));
+	result.canSubmit = root.tagName === "FORM" && [...root.elements].some((b) => nativeSubmit(b) && !b.disabled);
 	let c = 0;
-	for (const b of root.querySelectorAll("button, input[type=submit], input[type=button], input[type=image], [role=button], a[href]")) {
+	for (const b of [...root.querySelectorAll(BUTTONS), ...owned]) {
 		if (!shown(b)) continue;
 		const tag = b.tagName;
-		const type = tag === "A" ? "link" : tag === "INPUT" ? (b.type === "button" ? "button" : "submit") : tag === "BUTTON" ? ((b.getAttribute("type") || "submit").toLowerCase() === "button" ? "button" : (b.getAttribute("type") || "submit").toLowerCase() === "reset" ? "other" : "submit") : "button";
+		const native = tag === "A" ? "link" : tag === "INPUT" ? (b.type === "button" ? "button" : "submit") : tag === "BUTTON" ? ((b.getAttribute("type") || "submit").toLowerCase() === "button" ? "button" : (b.getAttribute("type") || "submit").toLowerCase() === "reset" ? "other" : "submit") : "button";
+		// A submit button sends only the form it belongs to: outside it, or in another form, it is
+		// a plain button, and a page with no <form> has no submit.
+		const type = native === "submit" && (root.tagName !== "FORM" || b.form !== root) ? "button" : native;
 		const text = clean(tag === "INPUT" ? b.value || b.getAttribute("aria-label") || "" : b.textContent || b.getAttribute("aria-label") || "");
 		if (!text) continue;
 		// Links inside the form (privacy policy, "sign in") are never a step or the submit.
 		if (type === "link") continue;
 		const ref = String(++c);
 		b.setAttribute("data-jp-control", ref);
+		if (b.hasAttribute("formaction") && b.formAction) result.endpoints.push(b.formAction);
 		result.controls.push({ ref, text: text.slice(0, 80), type });
 	}
 	result.errors = [...document.querySelectorAll(${JSON.stringify(WEB_ERRORS)})].filter(shown).map((e) => textOf(e)).filter(Boolean).slice(0, 10);
@@ -238,3 +255,6 @@ export const WEB_AFTER_SCRIPT = String.raw`(() => {
 	const errors = [...document.querySelectorAll(${JSON.stringify(WEB_ERRORS)})].filter(shown).map((e) => (e.textContent || "").replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 10);
 	return { url: location.href, title: document.title, formShown, errors, text: (document.body.innerText || "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, 6000) };
 })()`;
+
+/** Page script: all the text the page shows, uncut (what was there before the submit click). */
+export const PAGE_TEXT_SCRIPT = `(document.body ? document.body.innerText || "" : "")`;

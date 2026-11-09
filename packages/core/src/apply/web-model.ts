@@ -3,14 +3,14 @@ import { promptText } from "../domain/prompt";
 import type { PipelineDeps } from "../pipeline/ports";
 import type { GenerateObjectRequest, LlmProvider } from "../scoring/llm";
 import { meteredFor } from "../scoring/metered";
-import { questionKeyOf, sameQuestion } from "./forms";
+import { questionKeyOf } from "./forms";
 
 /**
  * What the drafting model may do on an employer's own form (docs/auto-apply-plan.md, step 6),
  * and nothing more. Each task answers from a closed list it is given: a label from the page's
- * own text or a standard field name, a role for a button, which reviewed field a control is, and
- * what the page after the click says. It never writes a value: values come from the approved
- * plan alone (`planFill`). Every answer is checked against the list it was given; anything else
+ * own text or a standard field name, a role for a button, and what the page after the click
+ * says. It never lines a control up with a reviewed field (keys alone do, web-form.ts) and never
+ * writes a value: values come from the approved plan alone (`planFill`). Every answer is checked against the list it was given; anything else
  * is dropped. Page text is third-party and escaped, and the applicant's email and phone are
  * redacted from every prompt.
  */
@@ -28,13 +28,6 @@ export interface ControlRequest {
 	controls: { ref: string; text: string; type: string }[];
 }
 
-export interface MatchRequest {
-	/** Controls of the live form that line up with no reviewed field. */
-	live: { ref: string; kind: string; label: string; hint: string }[];
-	/** Reviewed fields no live control lined up with. */
-	approved: { key: string; kind: string; label: string }[];
-}
-
 export interface OutcomeRequest {
 	title: string;
 	text: string;
@@ -47,7 +40,6 @@ export interface WebFormModel {
 	controls(
 		request: ControlRequest,
 	): Promise<{ ref: string; role: ControlRole }[]>;
-	match(request: MatchRequest): Promise<{ ref: string; key: string }[]>;
 	outcome(
 		request: OutcomeRequest,
 	): Promise<{ verdict: OutcomeVerdict; quote: string }>;
@@ -62,9 +54,6 @@ const controlsSchema = z.object({
 	controls: z.array(
 		z.object({ ref: z.string(), role: z.enum(["next", "submit", "other"]) }),
 	),
-});
-const matchSchema = z.object({
-	pairs: z.array(z.object({ ref: z.string(), key: z.string() })),
 });
 const outcomeSchema = z.object({
 	verdict: z.enum(["confirmed", "error", "unclear"]),
@@ -124,23 +113,6 @@ export function llmWebFormModel(
 				() => true,
 			);
 		},
-		async match(request) {
-			const out = await ask({
-				task: "web-form-match",
-				schema: matchSchema,
-				context: request,
-				prompt: `The candidate approved a value for each reviewed field. Some controls on the page now line up with none of them. Pair a control with a reviewed field only when they are clearly the same question and of the same kind; leave the rest out.\n<reviewed>\n${request.approved.map((a) => `- key ${promptText(a.key)} (${a.kind}): ${promptText(a.label)}`).join("\n")}\n</reviewed>\n${page(request.live.map((l) => `ref ${l.ref} (${l.kind}): ${l.label || l.hint}`).join("\n"))}`,
-			});
-			const kinds = new Map(request.approved.map((a) => [a.key, a.kind]));
-			const liveKinds = new Map(request.live.map((l) => [l.ref, l.kind]));
-			const keys = new Set<string>();
-			return closed(out.pairs, new Set(request.live.map((l) => l.ref)), (p) => {
-				if (keys.has(p.key) || kinds.get(p.key) !== liveKinds.get(p.ref))
-					return false;
-				keys.add(p.key);
-				return true;
-			});
-		},
 		async outcome(request) {
 			const out = await ask({
 				task: "web-form-outcome",
@@ -178,7 +150,7 @@ const NEXT_WORDS =
 const SUBMIT_WORDS =
 	/\b(?:submit|apply|send|absenden|bewerben|envoyer|postuler|enviar|finish)\b/i;
 
-/** Deterministic stand-ins for the four tasks (FakeLlmProvider), reading `context`. */
+/** Deterministic stand-ins for the three tasks (FakeLlmProvider), reading `context`. */
 export const fakeWebFormResponders: Record<
 	string,
 	(request: GenerateObjectRequest<unknown>) => unknown
@@ -205,17 +177,6 @@ export const fakeWebFormResponders: Record<
 					: "other",
 		})),
 	}),
-	"web-form-match": (request) => {
-		const input = request.context as MatchRequest;
-		return {
-			pairs: input.live.flatMap((l) => {
-				const match = input.approved.find(
-					(a) => a.kind === l.kind && sameQuestion(a.label, l.label || l.hint),
-				);
-				return match ? [{ ref: l.ref, key: match.key }] : [];
-			}),
-		};
-	},
 	"web-form-outcome": (request) => {
 		const { text } = request.context as OutcomeRequest;
 		const confirmed = text.match(

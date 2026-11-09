@@ -81,7 +81,7 @@ describe("the stop sheet", () => {
 					attempt(
 						1,
 						"needs_human",
-						"Outcome unknown after the submit click: no confirmation within 30 s. Check the employer's portal or your email before retrying.",
+						"Outcome unknown after a click that may have sent the application: No confirmation within 30s: the form is still on the page. Check the employer's portal or your email before retrying.",
 					),
 				],
 				unresolvedAttempt: { attempt: 1 },
@@ -91,6 +91,60 @@ describe("the stop sheet", () => {
 		expect(view?.attempt?.attempt).toBe(1);
 		expect(view?.actions).toEqual(["mark", "finish", "retry_confirmed"]);
 		expect(view?.actions).not.toContain("retry");
+	});
+
+	it("an error answer to the application is an unknown outcome of its own", () => {
+		const view = stopView(
+			app({
+				attempts: [
+					attempt(
+						1,
+						"needs_human",
+						"Outcome unknown after a click that may have sent the application: The page changed after the click, but the employer's site answered HTTP 500 to the application. Check the employer's portal or your email before retrying.",
+					),
+				],
+				unresolvedAttempt: { attempt: 1 },
+			}),
+		);
+		expect(view?.case).toBe("unknown_error_answer");
+		expect(view?.actions).toEqual(["mark", "finish", "retry_confirmed"]);
+	});
+
+	it("an employer's form to finish by hand: no Read the form again, no Retry", () => {
+		const cases = [
+			[
+				"This form sends to sink.acme.test; finish it yourself. Nothing was submitted.",
+				{ stop: "other_site" },
+				"sends_elsewhere",
+			],
+			[
+				"The application form is in a frame from forms.acme.test, not jobs.acme.test: this form sends to forms.acme.test; finish it yourself. Nothing was submitted.",
+				{ stop: "other_site" },
+				"sends_elsewhere",
+			],
+			[
+				"This form has unlabelled fields; finish it yourself. Nothing was submitted.",
+				{ stop: "form_changed" },
+				"unlabelled",
+			],
+			[
+				"This form has fields that share one name or label; finish it yourself. Nothing was submitted.",
+				{ stop: "form_changed" },
+				"unlabelled",
+			],
+			[
+				'Could not tell which control sends the application ("Preview details"); nothing more was clicked. Nothing was submitted.',
+				{ stop: "unrecognized_page" },
+				"no_submit",
+			],
+		] as const;
+		for (const [reason, proof, expected] of cases) {
+			const view = stopView(
+				app({ attempts: [attempt(1, "not_sent", reason, proof)] }),
+			);
+			expect(view?.case).toBe(expected);
+			expect(view?.actions).toEqual(["finish", "mark"]);
+		}
 	});
 
 	it("a changed form offers Read the form again, never a plain retry", () => {

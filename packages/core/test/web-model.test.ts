@@ -43,32 +43,6 @@ describe("the web form model's answers are held to its lists", () => {
 		expect(labels).toEqual([{ ref: "1", label: "Email" }]);
 	});
 
-	it("drops pairings to unknown keys, of another kind, or used twice", async () => {
-		const { llm } = lying({
-			"web-form-match": {
-				pairs: [
-					{ ref: "1", key: "text:why" },
-					{ ref: "2", key: "text:why" },
-					{ ref: "3", key: "file:cv" },
-					{ ref: "4", key: "text:made-up" },
-				],
-			},
-		});
-		const pairs = await llmWebFormModel(llm).match({
-			live: [
-				{ ref: "1", kind: "text", label: "Why us?", hint: "" },
-				{ ref: "2", kind: "text", label: "Why?", hint: "" },
-				{ ref: "3", kind: "text", label: "CV", hint: "" },
-				{ ref: "4", kind: "text", label: "Other", hint: "" },
-			],
-			approved: [
-				{ key: "text:why", kind: "text", label: "Why us?" },
-				{ key: "file:cv", kind: "file", label: "CV" },
-			],
-		});
-		expect(pairs).toEqual([{ ref: "1", key: "text:why" }]);
-	});
-
 	it("escapes the page and redacts the applicant's email and phone", async () => {
 		const { llm, sent } = lying({
 			"web-form-outcome": { verdict: "unclear", quote: "" },
@@ -132,6 +106,53 @@ describe("which button is which", () => {
 			model({ "2": "submit", "1": "other" }),
 		);
 		expect(roles.submit?.ref).toBe("2");
+	});
+
+	it("never lets the model promote a plain button nothing shows may send (Codex, 2026-11-09)", async () => {
+		const preview = { ref: "1", text: "Preview details", type: "button" };
+		expect(
+			(await controlRoles([preview], model({ "1": "submit" }))).submit,
+		).toBeNull();
+		// Two plain buttons that both say submit: neither is known to send.
+		expect(
+			(
+				await controlRoles(
+					[
+						{ ref: "1", text: "Submit application", type: "button" },
+						{ ref: "2", text: "Apply", type: "button" },
+					],
+					model({ "1": "submit", "2": "other" }),
+				)
+			).submit,
+		).toBeNull();
+		// The model only chooses among controls that may send.
+		const roles = await controlRoles(
+			[
+				preview,
+				{ ref: "2", text: "Go", type: "submit" },
+				{ ref: "3", text: "Done", type: "submit" },
+			],
+			model({ "1": "submit", "2": "other", "3": "submit" }),
+		);
+		expect(roles.submit?.ref).toBe("3");
+	});
+
+	it("a plain button is never the submit, whatever its words (Codex re-review, 2026-11-09)", async () => {
+		// Codex's case: a lone plain button that says submit, no evidence it sends the form.
+		expect(
+			await controlRoles(
+				[{ ref: "1", text: "Submit application", type: "button" }],
+				null,
+			),
+		).toEqual({ next: null, submit: null });
+		const roles = await controlRoles(
+			[
+				{ ref: "1", text: "Preview details", type: "button" },
+				{ ref: "2", text: "Submit application", type: "button" },
+			],
+			model({ "2": "submit" }),
+		);
+		expect(roles.submit).toBeNull();
 	});
 
 	it("without words or a model, only a lone submit button is the submit", async () => {
