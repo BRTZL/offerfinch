@@ -72,7 +72,7 @@ export function ApplyingSettings() {
 			toast.success(
 				result.open
 					? `${name} is open for automatic submissions.`
-					: `${name} is closed. Nothing is sent there.`,
+					: `${name} is closed for new runs. A run already started may finish.`,
 			);
 			void queryClient.invalidateQueries({ queryKey: orpc.submission.key() });
 		},

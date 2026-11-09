@@ -170,6 +170,12 @@ test("real job sites start closed; opening Greenhouse names its risks and shows 
 		await expect(dialog).toHaveCount(0);
 		await expect(greenhouse).toHaveAttribute("aria-checked", "false");
 		await expect.poll(() => openSites(userData)).toBe(0);
+		// A run that already started keeps its hosts: closing says so, never "nothing is sent".
+		await expect(
+			page.getByText(
+				"Greenhouse is closed for new runs. A run already started may finish.",
+			),
+		).toBeVisible();
 		expect(errors).toEqual([]);
 	} finally {
 		await app.close();
