@@ -47,6 +47,13 @@ const ASK: Record<
 		icon: <TriangleAlert />,
 		href: (a) => `/applications/${a.id}`,
 	},
+	// An employer's form that was sent waits for the user's email (decision 2026-11-09).
+	sent: {
+		verb: "Check your email for",
+		tone: "primary",
+		icon: <Send />,
+		href: (a) => `/applications/${a.id}`,
+	},
 	ready_for_review: {
 		verb: "Review",
 		tone: "primary",
@@ -72,7 +79,10 @@ function detail(a: Waiting): string {
 		return `${a.questions || "A"} question${a.questions === 1 ? "" : "s"} before it can be drafted`;
 	if (a.state === "approved")
 		return "Approved: submit it on the posting's form, then record it";
-	if (a.state === "needs_human") return "Stopped on the form: finish it there";
+	if (a.state === "needs_human")
+		return a.sentCheckEmail
+			? "Sent — check your email, then press Got the email"
+			: "Stopped on the form: finish it there";
 	return "CV and letter drafted and checked";
 }
 
@@ -363,7 +373,7 @@ export default function HomePage() {
 						<Group data-testid="home-needs">
 							{system}
 							{h.waiting.map((a) => {
-								const ask = ASK[a.state];
+								const ask = ASK[a.sentCheckEmail ? "sent" : a.state];
 								if (!ask) return null;
 								return (
 									<Row

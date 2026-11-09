@@ -7,6 +7,7 @@
  */
 
 type StopCase =
+	| "web_sent"
 	| "unknown_outcome"
 	| "unknown_error_answer"
 	| "unknown_refused"
@@ -31,10 +32,14 @@ type StopCase =
 /**
  * `finish`: Finish it yourself. `answer`: Answer and retry (Questions). `reread`: Read the form
  * again. `mark`: I submitted this. `retry`: Retry, nothing was clicked. `retry_confirmed`: Retry,
- * only after the user confirms an unknown outcome did not go through.
+ * only after the user confirms an unknown outcome did not go through. `got_email`: Got the email
+ * (an employer's form that was sent; the I submitted this path). `finish_confirmed`: Finish it
+ * yourself, only after the user confirms it did not go through.
  */
 export type StopAction =
+	| "got_email"
 	| "finish"
+	| "finish_confirmed"
 	| "answer"
 	| "reread"
 	| "mark"
@@ -176,6 +181,12 @@ const COPY: Record<
 	StopCase,
 	{ title: string; body: string; actions: StopAction[]; note?: string }
 > = {
+	web_sent: {
+		title: "Sent — check your email",
+		body: "The employer's form was filled from what you approved and sent once. Its page cannot say for sure that it arrived, so the employer's email decides: when it comes, press Got the email. Nothing is sent again on its own.",
+		actions: ["got_email", "finish_confirmed", "retry_confirmed"],
+		note: "No email after a day or two? Tick It didn't go through, then Retry or Finish it yourself.",
+	},
 	unknown_outcome: {
 		title: "Outcome unknown",
 		body: 'A click that may have sent the application was made once (the submit button, or the first "Next" of a form in steps, which can already save answers), but no confirmation came back, so it may or may not have gone through. Nothing is clicked again on its own. Check your email or the employer\'s portal.',
@@ -302,6 +313,7 @@ export function stopView<A extends StopAttempt>(
 		app.attempts.find((a) => a.status === "not_sent" && a.mode === "auto") ??
 		null;
 	let kind: StopCase = unknown ? unknownCase(unknown) : caseOf(stop);
+	if (unknown && isWebSent(unknown)) kind = "web_sent";
 	if (!unknown && (open || kind === "question"))
 		kind = isLocationChoice(open) ? "location_choice" : "question";
 	const copy = COPY[kind];
@@ -323,6 +335,46 @@ export function stopView<A extends StopAttempt>(
 	};
 }
 
+/** An employer's form that was sent and waits for the user's email (decision 2026-11-09). */
+export function isWebSent(attempt: { proof: Record<string, unknown> | null }) {
+	return attempt.proof?.outcome === "web_sent";
+}
+
+/** One line of what a run saw after sending an employer's form; `warn` is shown as a warning. */
+export interface EvidenceLine {
+	text: string;
+	warn: boolean;
+}
+
+const str = (v: unknown) => (typeof v === "string" && v ? v : null);
+
+/**
+ * What the run saw after sending an employer's form (`proof.evidence`), as lines for the proof.
+ * Information only: it never decides whether the application arrived.
+ */
+export function evidenceLines(
+	proof: Record<string, unknown> | null,
+): EvidenceLine[] {
+	const e = proof?.outcome === "web_sent" ? proof.evidence : null;
+	if (!e || typeof e !== "object") return [];
+	const evidence = e as Record<string, unknown>;
+	const lines: EvidenceLine[] = [];
+	const warning = str(evidence.warning);
+	if (warning) lines.push({ text: warning, warn: true });
+	const said = str(evidence.confirmation);
+	if (said)
+		lines.push({ text: `The employer's page showed: “${said}”`, warn: false });
+	lines.push({
+		text: evidence.requestSeen
+			? "The application request was seen leaving for the employer's site."
+			: "No application request was seen.",
+		warn: false,
+	});
+	const note = str(evidence.note);
+	if (note) lines.push({ text: note, warn: false });
+	return lines;
+}
+
 /**
  * How a finished attempt reads in the proof. Never says the employer received it: a board's
  * confirmation page is not proof of receipt (docs/auto-apply-plan.md, "Known risk").
@@ -330,7 +382,13 @@ export function stopView<A extends StopAttempt>(
 export function outcomeLabel(attempt: {
 	status: string;
 	board: string | null;
+	proof?: Record<string, unknown> | null;
 }): string {
+	if (attempt.proof?.outcome === "web_sent") {
+		if (attempt.status === "submitted") return "Sent, and you got the email";
+		if (attempt.status === "not_sent") return "Sent, but it didn't go through";
+		return "Sent — check your email";
+	}
 	if (attempt.status === "submitted")
 		return attempt.board === "web"
 			? "Submitted (the employer's page confirmed)"

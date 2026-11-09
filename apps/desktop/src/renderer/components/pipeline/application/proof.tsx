@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ImageOff } from "lucide-react";
+import { ImageOff, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { sourceLabel } from "@/components/pipeline/bits";
 import {
@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { desktop } from "@/lib/desktop";
 import { cn } from "@/lib/utils";
 import type { ProofShot } from "../../../../shared/bridge";
-import { outcomeLabel } from "./stop-model";
+import { evidenceLines, isWebSent, outcomeLabel } from "./stop-model";
 import type { AppDetail } from "./types";
 
 type Attempt = AppDetail["attempts"][number];
@@ -211,6 +211,8 @@ function AttemptProof({ attempt }: { attempt: Attempt }) {
 		text(attempt.proof?.finalUrl) ?? (clicked ? attempt.url : null);
 	const confirmation = text(attempt.proof?.confirmation);
 	const filled = clicked ? filledOf(attempt) : [];
+	const sent = isWebSent(attempt);
+	const evidence = evidenceLines(attempt.proof);
 	const by =
 		attempt.mode === "manual"
 			? "By you"
@@ -232,8 +234,9 @@ function AttemptProof({ attempt }: { attempt: Attempt }) {
 						className={cn(
 							"font-medium",
 							attempt.status === "submitted" && "text-brand",
-							(attempt.status === "needs_human" ||
-								attempt.status === "started") &&
+							!sent &&
+								(attempt.status === "needs_human" ||
+									attempt.status === "started") &&
 								"text-destructive",
 						)}
 						data-testid="attempt-status"
@@ -252,6 +255,25 @@ function AttemptProof({ attempt }: { attempt: Attempt }) {
 				>
 					“{confirmation}”
 				</blockquote>
+			) : null}
+			{evidence.length > 0 ? (
+				<ul className="flex flex-col gap-0.5" data-testid="proof-evidence">
+					{evidence.map((line) => (
+						<li
+							key={line.text}
+							className={cn(
+								"flex items-start gap-1.5",
+								line.warn ? "text-warning" : "text-muted-foreground",
+							)}
+							data-testid={line.warn ? "proof-warning" : "proof-evidence-line"}
+						>
+							{line.warn ? (
+								<TriangleAlert className="mt-px size-3 shrink-0" />
+							) : null}
+							<span>{line.text}</span>
+						</li>
+					))}
+				</ul>
 			) : null}
 			{(attempt.error || attempt.resolution) && !confirmation ? (
 				<p className="text-muted-foreground">

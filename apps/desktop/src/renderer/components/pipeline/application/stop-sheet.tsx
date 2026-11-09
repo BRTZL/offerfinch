@@ -146,7 +146,9 @@ function FinishPanel({
 }
 
 const LABEL: Record<StopAction, string> = {
+	got_email: "Got the email",
 	finish: "Finish it yourself",
+	finish_confirmed: "Finish it yourself",
 	answer: "Answer and retry",
 	reread: "Read the form again",
 	mark: "I submitted this",
@@ -192,11 +194,12 @@ function StopActions({
 	});
 	const confirmed = actions.confirmedNotSent;
 	const run = (action: StopAction) => {
-		if (action === "finish") onFinish();
+		if (action === "finish" || action === "finish_confirmed") onFinish();
 		else if (action === "answer" && view.question)
 			router.push(`/questions/${view.question.id}`);
 		else if (action === "reread") reread.mutate();
-		else if (action === "mark") actions.markSubmitted.mutate(today());
+		else if (action === "mark" || action === "got_email")
+			actions.markSubmitted.mutate(today());
 		else actions.retry.mutate();
 	};
 	return (
@@ -211,8 +214,18 @@ function StopActions({
 						data-testid="stop-confirm-not-sent"
 					/>
 					<span>
-						I checked the employer's portal or my email: the click in attempt{" "}
-						{app.unresolvedAttempt?.attempt} did not send the application.
+						{view.case === "web_sent" ? (
+							<>
+								It didn't go through: no email came, and the employer's portal
+								does not list attempt {app.unresolvedAttempt?.attempt}.
+							</>
+						) : (
+							<>
+								I checked the employer's portal or my email: the click in
+								attempt {app.unresolvedAttempt?.attempt} did not send the
+								application.
+							</>
+						)}
 					</span>
 				</label>
 			) : null}
@@ -227,13 +240,20 @@ function StopActions({
 							onClick={() => run(action)}
 							pending={
 								(action === "reread" && reread.isPending) ||
-								(action === "mark" && actions.markSubmitted.isPending) ||
+								((action === "mark" || action === "got_email") &&
+									actions.markSubmitted.isPending) ||
 								(action.startsWith("retry") && actions.retry.isPending)
 							}
-							disabled={action === "retry_confirmed" && !confirmed}
+							disabled={
+								(action === "retry_confirmed" ||
+									action === "finish_confirmed") &&
+								!confirmed
+							}
 							data-testid={`stop-${action}`}
 						>
-							{action === "finish" ? <ArrowUpRight /> : null}
+							{action === "finish" || action === "finish_confirmed" ? (
+								<ArrowUpRight />
+							) : null}
 							{LABEL[action]}
 						</Button>
 					);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	evidenceLines,
 	outcomeLabel,
 	type StopApp,
 	type StopAttempt,
@@ -283,6 +284,84 @@ describe("the stop sheet", () => {
 		);
 		expect(view?.case).toBe("interrupted");
 		expect(view?.actions[0]).toBe("retry");
+	});
+});
+
+describe("an employer's form sent, check your email (decision 2026-11-09)", () => {
+	const sent = (status: string, evidence: Record<string, unknown>) => ({
+		...attempt(
+			1,
+			status,
+			"Sent; check your email. The employer's form was submitted once; whether it arrived is told by the employer's email, not the page.",
+			{ outcome: "web_sent", evidence, filled: [] },
+		),
+		board: "web",
+	});
+
+	it("whatever the page showed: Got the email first, nothing else until it did not go through", () => {
+		for (const evidence of [
+			{ requestSeen: true, confirmation: "Thank you", warning: null },
+			{
+				requestSeen: true,
+				confirmation: null,
+				warning:
+					"The page changed after the click, but the employer's site answered HTTP 500 to the application.",
+			},
+			{ requestSeen: false, confirmation: null, warning: null },
+		]) {
+			const view = stopView(
+				app({
+					attempts: [sent("needs_human", evidence)],
+					unresolvedAttempt: { attempt: 1 },
+				}),
+			);
+			expect(view?.case).toBe("web_sent");
+			expect(view?.title).toBe("Sent — check your email");
+			expect(view?.actions).toEqual([
+				"got_email",
+				"finish_confirmed",
+				"retry_confirmed",
+			]);
+			expect(view?.actions).not.toContain("retry");
+		}
+	});
+
+	it("reads as sent, then as the user resolved it; never as the page's confirmation", () => {
+		const e = { requestSeen: true, confirmation: "Thank you", warning: null };
+		expect(outcomeLabel(sent("needs_human", e))).toBe(
+			"Sent — check your email",
+		);
+		expect(outcomeLabel(sent("submitted", e))).toBe(
+			"Sent, and you got the email",
+		);
+		expect(outcomeLabel(sent("not_sent", e))).toBe(
+			"Sent, but it didn't go through",
+		);
+	});
+
+	it("shows what the run saw as information, a refusal as a warning", () => {
+		expect(
+			evidenceLines({
+				outcome: "web_sent",
+				evidence: {
+					requestSeen: false,
+					confirmation: "Thanks for applying",
+					warning: 'The page after the click says "could not be submitted"',
+					note: null,
+				},
+			}),
+		).toEqual([
+			{
+				text: 'The page after the click says "could not be submitted"',
+				warn: true,
+			},
+			{
+				text: "The employer's page showed: “Thanks for applying”",
+				warn: false,
+			},
+			{ text: "No application request was seen.", warn: false },
+		]);
+		expect(evidenceLines({ confirmation: "Thank you" })).toEqual([]);
 	});
 });
 
