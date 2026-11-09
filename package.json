@@ -14,7 +14,7 @@
 		"lint:ci": "node --test scripts/check-biome-warnings.test.mjs scripts/release-plan.test.mjs && node scripts/check-biome-warnings.mjs"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.6.2",
+		"@biomejs/biome": "^2.6.6",
 		"@offerfinch/config": "workspace:*",
 		"@types/node": "catalog:",
 		"knip": "^6.44.1",
