@@ -1,4 +1,8 @@
-import { type BrowserPage, urlOnHosts } from "../scrape/browser";
+import {
+	type BrowserPage,
+	type NetworkLogEntry,
+	urlOnHosts,
+} from "../scrape/browser";
 import {
 	type ApplicationRun,
 	destinationProblem,
@@ -822,45 +826,95 @@ const pathOf = (url: string) => {
 const occurrences = (text: string, part: string) =>
 	part ? text.split(part).length - 1 : 0;
 
-/** The page just before the one click: its text and how far its network log had got. */
+/** The page just before the one click: its text, and how many requests had started by then. */
 interface BeforeClick {
 	text: string;
-	logged: number;
+	started: number;
 }
 
-/**
- * Null when, after the click, the application itself went to the form's host: a request that is
- * not a read, answered 2xx or 3xx, whose body carries the approved values (`carriesValues`).
- * Otherwise why not: any other post (an analytics event, a click log), a navigation alone, or the
- * application answered with an error is no evidence.
- */
-function notSent(
-	page: BrowserPage,
-	before: BeforeClick,
-	run: ApplicationRun,
-	state: RunState,
-): string | null {
-	const carrying = page
+const NO_APPLICATION =
+	"The page changed after the click, but no request carrying the application reached the employer's site.";
+const isWrite = (r: { method: string }) => !/^(?:GET|HEAD)$/i.test(r.method);
+const seqOf = (r: { seq?: number }) => r.seq ?? 0;
+
+/** The application request, unless it was answered with an error. */
+function answered(
+	request: NetworkLogEntry,
+): { request: NetworkLogEntry } | { unknown: string } {
+	return answeredOk(request)
+		? { request }
+		: {
+				unknown: `The page changed after the click, but the employer's site answered HTTP ${request.status ?? "nothing"} to the application.`,
+			};
+}
+
+/** The requests to the form's host the guard let through, in the order they started. */
+function toFormHost(page: BrowserPage, hosts: string[]): NetworkLogEntry[] {
+	return page
 		.networkLog()
-		.slice(before.logged)
 		.filter(
 			(r) =>
 				r.allowed &&
 				r.reason === "allowed host" &&
-				urlOnHosts(r.url, run.allowedHosts ?? [state.formHost]) &&
-				!/^(?:GET|HEAD)$/i.test(r.method) &&
-				carriesValues(r, state.sent),
-		);
-	if (carrying.some(answeredOk)) return null;
-	const refused = carrying.find((r) => r.status !== undefined);
-	return refused
-		? `The page changed after the click, but the employer's site answered HTTP ${refused.status} to the application.`
-		: "The page changed after the click, but no request carrying the application reached the employer's site.";
+				r.seq !== undefined &&
+				urlOnHosts(r.url, hosts),
+		)
+		.sort((a, b) => seqOf(a) - seqOf(b));
 }
 
 /**
- * After the one click: waits for evidence (the application request reached the form's host, and
- * the form is gone or the page's path changed), then the model reads the page. Only "confirmed", backed by
+ * The request the submit click itself started that is the application, or why there is none
+ * (docs/decisions.md, 2026-11-09, step 6 third pass). Requests count by when they started
+ * (`seq`), never by when they were answered; one started before the click never counts. A native
+ * submission: the page's own navigation to the form's host, the first one started after the
+ * click, when it posts or its query carries the values; it must carry every approved value
+ * (`carriesValues`). Else a script's: exactly one request to the form's host that is not a read,
+ * started after the click and before the next navigation, carrying every approved value, with no
+ * other request to the form's host carrying them (before the click or after) and none still
+ * unanswered. Anything else is no evidence: an unknown outcome.
+ */
+function applicationRequest(
+	page: BrowserPage,
+	before: BeforeClick,
+	run: ApplicationRun,
+	state: RunState,
+): { request: NetworkLogEntry } | { unknown: string } {
+	const hosts = run.allowedHosts ?? [state.formHost];
+	const all = toFormHost(page, hosts);
+	const carries = (r: NetworkLogEntry) => carriesValues(r, state.sent);
+	const navigation = all.find((r) => seqOf(r) > before.started && r.navigation);
+	if (navigation && (isWrite(navigation) || carries(navigation)))
+		return carries(navigation)
+			? answered(navigation)
+			: { unknown: NO_APPLICATION };
+	const until = navigation ? seqOf(navigation) : Number.POSITIVE_INFINITY;
+	const scripted = (r: { seq?: number; url: string; method: string }) =>
+		seqOf(r) > before.started && seqOf(r) < until && isWrite(r);
+	const unanswered = page
+		.networkStarted()
+		.pending.filter((p) => scripted(p) && urlOnHosts(p.url, hosts));
+	if (unanswered.length > 0)
+		return {
+			unknown: `The page changed after the click, but ${unanswered.length} request(s) it started to the employer's site had no answer yet, so which one was the application cannot be told.`,
+		};
+	const sent = all.filter((r) => scripted(r) && !r.navigation);
+	if (sent.length > 1)
+		return {
+			unknown: `The page changed after the click, but it sent ${sent.length} requests to the employer's site, so which one was the application cannot be told.`,
+		};
+	const request = sent[0];
+	if (!request || !carries(request)) return { unknown: NO_APPLICATION };
+	if (all.some((r) => r !== request && carries(r)))
+		return {
+			unknown:
+				"The page changed after the click, but another request to the employer's site carried the same answers, so which one was the application cannot be told.",
+		};
+	return answered(request);
+}
+
+/**
+ * After the one click: waits for evidence (the application request the click started reached the
+ * form's host, `applicationRequest`, and the form is gone or the page's path changed), then the model reads the page. Only "confirmed", backed by
  * that evidence, a quote found on the page in confirmation words that were not on it before the
  * click, no refusal or duplicate wording and no visible error, records it applied; anything else
  * is an unknown outcome, never a retry.
@@ -874,8 +928,8 @@ async function readOutcome(
 ): Promise<{ confirmed: string } | { unknown: string }> {
 	const changed = await awaitChange(page, formUrl, run);
 	if ("unknown" in changed) return changed;
-	const missing = notSent(page, before, run, state);
-	if (missing) return { unknown: missing };
+	const sent = applicationRequest(page, before, run, state);
+	if ("unknown" in sent) return sent;
 	return judge(changed.after, formUrl, run.model, before);
 }
 
@@ -1152,7 +1206,8 @@ async function submitOnce(
 	try {
 		const beforeClick = {
 			text: (await safeEvaluate<string>(page, PAGE_TEXT_SCRIPT)) ?? "",
-			logged: page.networkLog().length,
+			// Read last, just before the click: the click started every request after this count.
+			started: page.networkStarted().count,
 		};
 		await page.click(`[data-jp-control="${submit.ref}"]`);
 		const result = await readOutcome(page, formUrl, run, beforeClick, state);

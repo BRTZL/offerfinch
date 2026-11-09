@@ -73,16 +73,30 @@ export function decodeBody(body: Uint8Array, contentType: string): Decoded {
 	return { texts: [text], files: [] };
 }
 
+/** What a request carries: its body, decoded; a GET's (a native GET form's) is its query. */
+function carried(entry: NetworkLogEntry): Decoded | null {
+	if (entry.body) return decodeBody(entry.body, entry.contentType ?? "");
+	if (!/^GET$/i.test(entry.method)) return null;
+	try {
+		return {
+			texts: [...new URL(entry.url).searchParams.values()],
+			files: [],
+		};
+	} catch {
+		return null;
+	}
+}
+
 /**
- * True when `entry`'s body carries every approved typed value (each as one whole value; spaces
- * and line ends compared loosely), or, when nothing was typed, the CV file.
+ * True when `entry`'s body (a GET's query) carries every approved typed value (each as one whole
+ * value; spaces and line ends compared loosely), or, when nothing was typed, the CV file.
  */
 export function carriesValues(
 	entry: NetworkLogEntry,
 	values: SentValues,
 ): boolean {
-	if (!entry.body) return false;
-	const decoded = decodeBody(entry.body, entry.contentType ?? "");
+	const decoded = carried(entry);
+	if (!decoded) return false;
 	const sent = new Set(decoded.texts.map(squash));
 	const typed = values.typed.map(squash).filter(Boolean);
 	if (typed.length > 0) return typed.every((v) => sent.has(v));

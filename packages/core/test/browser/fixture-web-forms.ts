@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import {
+	createServer,
+	type IncomingMessage,
+	type Server,
+	type ServerResponse,
+} from "node:http";
 
 /**
  * Local stand-ins for employers' own application forms (the "web" board, plan step 6), on a
@@ -50,6 +55,15 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  *   textless-away the same, with a visible submit button that has no text and a formaction on localhost
  *   outside-away  the same, with a hidden button after the form that names it with form= and posts to
  *                 localhost
+ *   preclick      email and full name; once both are typed the page autosaves the whole form to
+ *                 /web/preclick/autosave (its answer held until the next POST arrives); the submit
+ *                 only posts "event=click", then the page shows a thank-you
+ *   later-fetch   email and full name; the submit posts "event=click", then a telemetry post carrying
+ *                 both values as JSON, then the page shows a thank-you
+ *   later-native  email and full name, posted natively; on submit the page strips the boxes' names and
+ *                 posts only "event=click"; the answer's script posts both values (kept in
+ *                 sessionStorage) to /web/later-native/telemetry and shows a thank-you
+ *   native-get    email and full name in a native GET form to /web/native-get/sent, which thanks
  *   assets        name, email and location; loads a logo from localhost, and on input asks localhost
  *                 for images whose paths carry pieces of what was typed (base64 pieces, the first word)
  */
@@ -303,6 +317,30 @@ ${text("Email address", "email", { type: "email" })}${text("Full name", "full_na
 </form><p><button type="submit" form="apply">Submit application</button></p>`;
 }
 
+/** Email and full name, posted natively to the form's own page (`later-native`, `native-get`). */
+function nativeBody(variant: string): string {
+	const method =
+		variant === "native-get"
+			? `method="get" action="/web/${variant}/sent"`
+			: `method="post" action="/web/${variant}/apply"`;
+	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply" ${method}>
+${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
+<p><button type="submit">Submit application</button></p></form>`;
+}
+
+/** On submit: keeps the answers aside, strips the boxes' names and posts only "event=click". */
+const LATER_NATIVE = `const form = document.getElementById('apply');
+form.addEventListener('submit', () => {
+	sessionStorage.payload = JSON.stringify(Object.fromEntries(new FormData(form)));
+	for (const box of form.querySelectorAll('input')) box.removeAttribute('name');
+	const click = document.createElement('input');
+	click.type = 'hidden'; click.name = 'event'; click.value = 'click';
+	form.append(click);
+});`;
+
+/** The answer to `later-native`'s post: its script sends the kept answers, then thanks. */
+const LATER_NATIVE_ANSWER = `fetch('/web/later-native/telemetry', { method: 'POST', headers: { 'content-type': 'application/json' }, body: sessionStorage.payload }).then(() => { document.body.insertAdjacentHTML('beforeend', '<h2>Thank you for applying!</h2>'); });`;
+
 /** Email and full name with the form's own submit button, and another one that sends to `away`. */
 function awayButtonBody(variant: string, away: string): string {
 	const to = `${away}/web/${variant}/collect`;
@@ -332,6 +370,11 @@ ${text("Email address", "email", { type: "email" })}${text("Full name", "full_na
 }
 
 const SENDS: Record<string, string> = {
+	// Codex's third pass: the application went before the click (an autosave); the click sent
+	// only a click event.
+	preclick: `fetch('/web/preclick/telemetry', { method: 'POST', body: 'event=click' })`,
+	// The click sent a click event, then a telemetry post that happens to carry the answers.
+	"later-fetch": `fetch('/web/later-fetch/telemetry', { method: 'POST', body: 'event=click' }).then(() => fetch('/web/later-fetch/telemetry', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(form))) }))`,
 	// Codex's re-review case: a click event to the form's own host, nothing of the application.
 	telemetry: `fetch('/web/telemetry/telemetry', { method: 'POST', body: 'event=click' })`,
 	// The application, refused by the server (HTTP 500).
@@ -340,8 +383,18 @@ const SENDS: Record<string, string> = {
 	json: `fetch('/web/json/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ candidate: Object.fromEntries(new FormData(form)) }) })`,
 };
 
+/** Once every box is filled, the whole form is saved (before any click). */
+const AUTOSAVE = `form.addEventListener('input', () => {
+	const boxes = [...form.querySelectorAll('input')];
+	if (!form.dataset.saved && boxes.every((b) => b.value)) {
+		form.dataset.saved = '1';
+		fetch('/web/preclick/autosave', { method: 'POST', body: new URLSearchParams(new FormData(form)) }).catch(() => {});
+	}
+});`;
+
 function scripted(variant: string): string {
 	return `const form = document.getElementById('apply');
+${variant === "preclick" ? AUTOSAVE : ""}
 form.addEventListener('submit', async (e) => {
 	e.preventDefault();
 	await ${SENDS[variant]}.catch(() => {});
@@ -404,6 +457,12 @@ function postAnswer(
 			headers: { "content-type": "application/json" },
 			body: '{"ok":false}',
 		};
+	if (variant === "later-native" && action === "apply")
+		return {
+			status: 200,
+			headers: { "content-type": "text/html; charset=utf-8" },
+			body: page("<h1>Acme Robotics</h1>", LATER_NATIVE_ANSWER),
+		};
 	if (variant === "ambiguous")
 		return {
 			status: 200,
@@ -421,6 +480,9 @@ function postAnswer(
 			"script-button",
 			"telemetry",
 			"json",
+			"preclick",
+			"later-fetch",
+			"later-native",
 		].includes(variant) ||
 		action === "upload"
 	)
@@ -494,7 +556,13 @@ function formPage(
 		case "telemetry":
 		case "rejected":
 		case "json":
+		case "preclick":
+		case "later-fetch":
 			return page(scriptedBody(), scripted(variant));
+		case "later-native":
+			return page(nativeBody(variant), LATER_NATIVE);
+		case "native-get":
+			return page(nativeBody(variant));
 		case "script-button":
 			return page(scriptButtonBody(), SCRIPT_BUTTON);
 		case "form-attr":
@@ -516,10 +584,34 @@ async function bodyOf(req: IncomingMessage): Promise<string> {
 	return Buffer.concat(chunks).toString("latin1");
 }
 
+/**
+ * Answers a POST (`postAnswer`). `preclick`'s autosave is answered only once the next post
+ * arrives, after the click; every other post answers at once and releases those held.
+ */
+function answerPost(
+	res: ServerResponse,
+	variant: string,
+	action: string,
+	held: (() => void)[],
+): void {
+	const answer = postAnswer(variant, action);
+	const reply = () => {
+		res.writeHead(answer.status, answer.headers);
+		res.end(answer.body);
+	};
+	if (variant === "preclick" && action === "autosave") {
+		held.push(reply);
+		return;
+	}
+	reply();
+	for (const release of held.splice(0)) release();
+}
+
 export async function startFixtureWebForms(): Promise<FixtureWebForms> {
 	const submissions: WebSubmission[] = [];
 	const away: { method: string; path: string }[] = [];
 	const loads = new Map<string, number>();
+	const held: (() => void)[] = [];
 	const server = createServer(async (req, res) => {
 		const host = (req.headers.host ?? "").split(":")[0] ?? "";
 		const port = (req.headers.host ?? "").split(":")[1] ?? "";
@@ -542,12 +634,9 @@ export async function startFixtureWebForms(): Promise<FixtureWebForms> {
 				fields: [...body.matchAll(/name="([^"]+)"/g)].map((m) => m[1] ?? ""),
 				body,
 			});
-			const answer = postAnswer(variant, action);
-			res.writeHead(answer.status, answer.headers);
-			res.end(answer.body);
-			return;
+			return answerPost(res, variant, action, held);
 		}
-		if (action === "thanks")
+		if (action === "thanks" || (variant === "native-get" && action === "sent"))
 			return html(
 				200,
 				page(

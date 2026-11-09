@@ -122,4 +122,22 @@ describe("what counts as the application request", () => {
 		).toBe(true);
 		expect(carriesApplication(post("a=b", "text/plain"), only)).toBe(false);
 	});
+
+	it("reads a native GET form's query, never a POST's (Codex, 2026-11-09, third pass)", () => {
+		const query = new URLSearchParams({
+			email: "ada@example.test",
+			name: "Ada Example",
+			why: "Line one\nLine two",
+		});
+		const get = (method: string): NetworkLogEntry => ({
+			method,
+			url: `https://jobs.acme.com/sent?${query}`,
+			allowed: true,
+			reason: "allowed host",
+			navigation: true,
+			status: 200,
+		});
+		expect(carriesApplication(get("GET"), VALUES)).toBe(true);
+		expect(carriesApplication(get("POST"), VALUES)).toBe(false);
+	});
 });

@@ -867,6 +867,13 @@ describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09
 		["telemetry", 1, /no request carrying the application/],
 		// The application went, and the server refused it.
 		["rejected", 1, /answered HTTP 500 to the application/],
+		// Codex's third pass: an autosave of the whole form before the click, answered after it;
+		// the click itself sent only a click event.
+		["preclick", 2, /no request carrying the application/],
+		// The click sent a click event and then a telemetry post carrying the answers.
+		["later-fetch", 2, /which one was the application cannot be told/],
+		// A native post of only a click event, then the answer page's telemetry carrying them.
+		["later-native", 2, /no request carrying the application/],
 	])(
 		"%s: not a confirmation without a send, a new page and new words",
 		async (variant, posts, why) => {
@@ -885,6 +892,13 @@ describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09
 });
 
 describe("the application request itself is the evidence (Codex re-review, 2026-11-09)", () => {
+	it("a native GET form whose query carries every approved value counts", async () => {
+		const { deps, calls } = harness("native-get", await schemaOf("native-get"));
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({ outcome: "applied" });
+		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+	}, 60_000);
+
 	it("a JSON post carrying every approved value counts", async () => {
 		const { deps, calls } = harness("json", await schemaOf("json"));
 		const outcome = await submitStep(deps, "u1", "app-1");
