@@ -363,7 +363,7 @@ async function perform(
 function againstSchema(
 	scanned: FormField[] | null,
 	schema: SchemaField[] | undefined,
-): { fields: FormField[] } | { stop: Stop } {
+): { fields: FormField[]; unreviewed: Set<string> } | { stop: Stop } {
 	if (!scanned)
 		return {
 			stop: {
@@ -371,9 +371,10 @@ function againstSchema(
 				message: "The form disappeared while reading it.",
 			},
 		};
-	if (!schema) return { fields: scanned };
+	if (!schema) return { fields: scanned, unreviewed: new Set<string>() };
 	const aligned = alignWithSchema(scanned, schema);
-	if (aligned.unexpected.length === 0) return { fields: aligned.fields };
+	if (aligned.unexpected.length === 0)
+		return { fields: aligned.fields, unreviewed: aligned.unreviewed };
 	return {
 		stop: {
 			kind: "form_changed",
@@ -401,10 +402,17 @@ export async function fillForm(
 		run.schema,
 	);
 	if ("stop" in checked) return { ok: false, filled: [], stop: checked.stop };
-	const { fields } = checked;
-	const plan = planFill(fields, run.data, {
+	const { fields, unreviewed } = checked;
+	const planned = planFill(fields, run.data, {
 		declineVoluntary: run.schema !== undefined,
 	});
+	// Only reviewed fields get a value; a field the review never listed is at most emptied.
+	const plan = {
+		...planned,
+		actions: planned.actions.filter(
+			(a) => !unreviewed.has(a.ref) || a.kind === "clear",
+		),
+	};
 	// Before the first interaction of any kind (clicks included): dry runs close the network here.
 	run.beforeFill?.();
 	// A combobox lists its options only when open: read them so the question can offer them.

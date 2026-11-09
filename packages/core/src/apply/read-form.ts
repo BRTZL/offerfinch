@@ -151,7 +151,11 @@ async function readInSession(
 	board: Board,
 	url: string,
 ): ReturnType<typeof readFormOnPage> {
-	const session = await apply.browser.openSession({ network: "read_only" });
+	// The page stays on the hosts submission may use, redirects included.
+	const session = await apply.browser.openSession({
+		network: "read_only",
+		allowedHosts: apply.allowedHosts ?? LOCAL_HOSTS,
+	});
 	try {
 		const page = await session.newPage();
 		const result = await readFormOnPage(page, board, url);

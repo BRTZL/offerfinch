@@ -391,6 +391,45 @@ class PlaywrightPage implements BrowserPage {
 		return route.fulfill({ response: response as never });
 	}
 
+	/**
+	 * "read_only" with `allowedHosts` (reading an application form): the page itself stays on
+	 * those hosts. A main-frame navigation elsewhere, or one that redirects elsewhere, is aborted
+	 * before it is followed; subresources and frames (a board's scoring widget) load as reads.
+	 * True when the request was handled here.
+	 */
+	private async refusedNavigation(
+		route: PlaywrightRouteLike,
+	): Promise<boolean> {
+		const request = route.request();
+		if (
+			!request.isNavigationRequest() ||
+			request.frame() !== this.page.mainFrame()
+		)
+			return false;
+		const method = request.method();
+		const url = request.url();
+		if (!/^https?:/.test(url)) return false;
+		if (!urlOnHosts(url, this.allowedHosts)) {
+			this.refuse(method, url);
+			await route.abort("blockedbyclient");
+			return true;
+		}
+		if (!readOnlyDecision(method, request.postData()).allow) return false;
+		const response = await route.fetch({ maxRedirects: 0 });
+		const location = response.headers().location;
+		if (response.status() >= 300 && response.status() < 400 && location) {
+			const target = new URL(location, url).href;
+			if (!urlOnHosts(target, this.allowedHosts)) {
+				this.refuse(method, target);
+				await route.abort("blockedbyclient");
+				return true;
+			}
+		}
+		this.log.push({ method, url, allowed: true, reason: "allowed host" });
+		await route.fulfill({ response: response as never });
+		return true;
+	}
+
 	/** Installs the request filter for a guarded page. Called once, before the first navigation. */
 	async guard(): Promise<void> {
 		if (this.mode === "open") return;
@@ -399,6 +438,8 @@ class PlaywrightPage implements BrowserPage {
 			if (this.mode === "pinned") return this.pinnedRoute(route);
 			const request = route.request();
 			const method = request.method();
+			if (this.mode === "read_only" && this.allowedHosts.length > 0)
+				if (await this.refusedNavigation(route)) return;
 			const decision =
 				this.mode === "none"
 					? { allow: false, reason: "network closed" }

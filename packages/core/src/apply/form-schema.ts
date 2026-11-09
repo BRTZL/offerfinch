@@ -51,24 +51,31 @@ export function schemaKey(
  * Lines the live form up with the approved schema at submit time. A combobox's options (read
  * only when it is opened) come from the schema. `unexpected` lists the required questions the
  * live form asks that the approved schema does not have: the run stops on them, they are never
- * answered on the fly.
+ * answered on the fly. `unreviewed` holds the refs of the optional ones: nothing is typed into
+ * them (only a value the page put there is cleared), since no value for them was approved.
  */
 export function alignWithSchema(
 	live: FormField[],
 	schema: SchemaField[],
-): { fields: FormField[]; unexpected: { label: string; kind: FieldKind }[] } {
+): {
+	fields: FormField[];
+	unexpected: { label: string; kind: FieldKind }[];
+	unreviewed: Set<string>;
+} {
 	const byKey = new Map(schema.map((f) => [f.key, f]));
 	const unexpected: { label: string; kind: FieldKind }[] = [];
+	const unreviewed = new Set<string>();
 	const fields = live.map((field) => {
 		const known = byKey.get(schemaKey(field));
 		if (!known) {
 			if (field.required && systemRole(field) !== "ignore")
 				unexpected.push({ label: field.label || field.name, kind: field.kind });
+			else unreviewed.add(field.ref);
 			return field;
 		}
 		return field.kind === "combobox" && field.options.length === 0
 			? { ...field, options: known.options }
 			: field;
 	});
-	return { fields, unexpected };
+	return { fields, unexpected, unreviewed };
 }

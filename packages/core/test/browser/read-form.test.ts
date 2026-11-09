@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import {
 	type ApplicationRun,
 	runApplication,
@@ -194,6 +196,22 @@ describe.each(["ashby", "greenhouse", "lever"] as const)(
 );
 
 describe("what is sent is what review listed", () => {
+	it("an optional field the review did not list stays empty", async () => {
+		const { result } = await readOn("greenhouse", "greenhouse-ok");
+		if (!result.ok) throw new Error(result.reason);
+		const phone = result.schema.fields.find((f) => f.name === "phone");
+		expect(phone, "the fixture asks for a phone").toBeDefined();
+		const reviewed = {
+			...result.schema,
+			fields: result.schema.fields.filter((f) => f.name !== "phone"),
+		};
+		const jobId = "greenhouse-unlisted";
+		const outcome = await submit("greenhouse", jobId, reviewed);
+		expect(outcome.outcome, JSON.stringify(outcome)).toBe("submitted");
+		const sent = boards.submissions.find((s) => s.path.includes(`/${jobId}/`));
+		expect(sent?.values.phone ?? [""]).toEqual([""]);
+	}, 60_000);
+
 	it.each(["ashby", "greenhouse"] as const)(
 		"%s: the self-identification question gets its decline option, as listed",
 		async (board) => {
@@ -282,6 +300,41 @@ describe("reading before review: the gates", () => {
 		});
 		expect(opened.n).toBe(0);
 	});
+
+	it("refuses a redirect to a host submission may not use", async () => {
+		// 127.0.0.1 is allowed; the form it redirects to sits on localhost, which is not.
+		const away = boards.url.replace("127.0.0.1", "localhost");
+		const server = createServer((req, res) => {
+			res.writeHead(302, { location: `${away}${req.url ?? ""}` });
+			res.end();
+		});
+		await new Promise<void>((resolve) =>
+			server.listen(0, "127.0.0.1", resolve),
+		);
+		const port = (server.address() as AddressInfo).port;
+		const reached: string[] = [];
+		const record = (req: { headers: { host?: string }; url?: string }) => {
+			if (req.headers.host?.startsWith("localhost"))
+				reached.push(req.url ?? "");
+		};
+		boards.server.on("request", record);
+		try {
+			const read = await readApplicationForm(
+				apply(
+					{ greenhouse: `http://127.0.0.1:${port}/greenhouse` },
+					{
+						n: 0,
+					},
+				),
+				context("greenhouse", "greenhouse-ok"),
+			);
+			expect(read.status).toBe("failed");
+			expect(reached).toEqual([]);
+		} finally {
+			boards.server.off("request", record);
+			server.close();
+		}
+	}, 60_000);
 
 	it("never reads a hand-off source's form", async () => {
 		const opened = { n: 0 };
