@@ -74,28 +74,20 @@ export const DEFAULT_WRITING_STYLE: WritingStyle = {
 
 /**
  * What a read accepts: each field on its own. A missing field (added in a later version), an
- * unknown value (written by a newer version) or an oversized one falls back or is clipped for
- * that field only; the user's other choices stay. Anything that is not an object reads as the
- * default.
+ * unknown value (written by a newer version) or an oversized one falls back to the default for
+ * that field only, never clipped (a cut instruction could say something the user did not); the
+ * user's other choices stay. Anything that is not an object reads as the default.
  */
 export const storedWritingStyleSchema = z
 	.object({
 		tone: z.enum(WRITING_TONES).catch("plain"),
 		coverLetterLength: z.enum(LETTER_LENGTHS).catch("standard"),
 		avoidWords: z
-			.array(z.unknown())
-			.transform((words) =>
-				cleanWords(
-					words
-						.filter((w): w is string => typeof w === "string")
-						.map((w) => w.trim().slice(0, AVOID_WORD_CHARS)),
-				).slice(0, AVOID_WORDS_MAX),
-			)
+			.array(z.string().max(AVOID_WORD_CHARS))
+			.max(AVOID_WORDS_MAX)
+			.transform(cleanWords)
 			.catch([]),
-		guidance: z
-			.string()
-			.transform((text) => cleanGuidance(text).slice(0, GUIDANCE_CHARS))
-			.catch(""),
+		guidance: z.string().max(GUIDANCE_CHARS).transform(cleanGuidance).catch(""),
 	})
 	.catch(DEFAULT_WRITING_STYLE);
 

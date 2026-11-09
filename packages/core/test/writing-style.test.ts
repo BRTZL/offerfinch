@@ -103,7 +103,7 @@ describe("the writing style setting", () => {
 		expect(() => writingStyleSchema.parse({ tone: "shouty" })).toThrow();
 	});
 
-	it("reads a stored row field by field: a missing or unknown field never resets the others", () => {
+	it("reads a stored row field by field: a missing, unknown or oversized field never resets the others", () => {
 		// Stored before a field existed: the rest is kept, the new field reads as its default.
 		expect(storedWritingStyleSchema.parse({ tone: "formal" })).toEqual({
 			...DEFAULT_WRITING_STYLE,
@@ -121,20 +121,30 @@ describe("the writing style setting", () => {
 		).toEqual({
 			tone: "plain",
 			coverLetterLength: "fuller",
-			avoidWords: ["synergy"],
+			avoidWords: [],
 			guidance: "Never say passionate.",
 		});
-		// Oversized: clipped, never dropped.
-		const read = storedWritingStyleSchema.parse({
-			avoidWords: Array.from(
-				{ length: 40 },
-				(_, i) => `w${i}${"x".repeat(50)}`,
-			),
-			guidance: "y".repeat(1500),
+		// Oversized: that field reads as its default, never clipped (a cut instruction could say
+		// something the user did not); the other fields stay.
+		const tooMany = Array.from({ length: 31 }, (_, i) => `w${i}`);
+		const tooLong = ["synergy", "x".repeat(41)];
+		for (const avoidWords of [tooMany, tooLong])
+			expect(
+				storedWritingStyleSchema.parse({ tone: "warm", avoidWords }),
+			).toEqual({ ...DEFAULT_WRITING_STYLE, tone: "warm" });
+		expect(
+			storedWritingStyleSchema.parse({
+				avoidWords: ["synergy"],
+				guidance: "y".repeat(1001),
+			}),
+		).toEqual({ ...DEFAULT_WRITING_STYLE, avoidWords: ["synergy"] });
+		// At the limits: kept whole.
+		const atLimit = storedWritingStyleSchema.parse({
+			avoidWords: Array.from({ length: 30 }, (_, i) => `${i}`.padEnd(40, "x")),
+			guidance: "y".repeat(1000),
 		});
-		expect(read.avoidWords).toHaveLength(30);
-		expect(read.avoidWords.every((w) => w.length <= 40)).toBe(true);
-		expect(read.guidance).toHaveLength(1000);
+		expect(atLimit.avoidWords).toHaveLength(30);
+		expect(atLimit.guidance).toHaveLength(1000);
 		// Not an object at all.
 		for (const value of [null, undefined, "formal", 3, []])
 			expect(storedWritingStyleSchema.parse(value)).toEqual(
