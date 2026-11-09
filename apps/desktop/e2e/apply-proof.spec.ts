@@ -63,7 +63,8 @@ const appRow = (userData: string) =>
 
 /**
  * Onboards, scans, prepares the fixture's full-stack role, answers its question if one waits,
- * turns submissions on (they start paused) and approves it. Returns its id.
+ * turns submissions on (they start paused) from the link in After you approve, through the
+ * switch and its confirmation in Settings, and approves it. Returns its id.
  */
 async function approveFullStack(page: Page, userData: string) {
 	await page.setViewportSize({ width: 1440, height: 1000 });
@@ -104,21 +105,32 @@ async function approveFullStack(page: Page, userData: string) {
 			"select count(*) n from submission_settings where paused = 0",
 		),
 	).toBe(0);
-	// No switch in the app yet: the test turns them on in its throwaway data folder.
-	withDb(
-		userData,
-		(db) =>
-			db
-				.prepare(
-					"insert into submission_settings (user_id, paused, updated_at) values ('local', 0, ?) on conflict(user_id) do update set paused = 0",
-				)
-				.run(Date.now()),
-		false,
+	await sidebar(page, "Inbox").click();
+	await showStatus(page, /^To review/);
+	await page.getByTestId("inbox-row").filter({ hasText: TITLE }).click();
+	// After you approve says so and links to the switch in Settings › Applying.
+	const pausedLine = (await inspectorOf(page)).getByTestId(
+		"after-approve-paused",
 	);
+	await expect(pausedLine).toBeVisible({ timeout: 30_000 });
+	await pausedLine.getByTestId("submissions-settings-link").click();
+	await turnSubmissionsOn(page);
+	await expect
+		.poll(() =>
+			countIn(
+				userData,
+				"select count(*) n from submission_settings where paused = 0",
+			),
+		)
+		.toBe(1);
 
 	await sidebar(page, "Inbox").click();
 	await showStatus(page, /^To review/);
 	await page.getByTestId("inbox-row").filter({ hasText: TITLE }).click();
+	await expect(
+		(await inspectorOf(page)).getByTestId("after-approve"),
+	).toBeVisible();
+	await expect(page.getByTestId("after-approve-paused")).toHaveCount(0);
 	// The fake checker flags lines of its own draft: settle each, as a user would, until Approve
 	// opens. A required field with no value would keep it closed, with its own caption.
 	const approve = page.getByTestId("approve");
@@ -140,6 +152,18 @@ async function approveFullStack(page: Page, userData: string) {
 		.toBe("open");
 	await approve.click();
 	return id;
+}
+
+/** Settings › Applying: the switch asks first; Turn On confirms. */
+async function turnSubmissionsOn(page: Page) {
+	await expect(page).toHaveURL(/\/settings\/applying$/);
+	const toggle = page.getByTestId("submissions-switch");
+	await expect(toggle).toHaveAttribute("aria-checked", "false");
+	await toggle.click();
+	await expect(page.getByTestId("submissions-confirm-dialog")).toBeVisible();
+	await page.getByTestId("submissions-confirm").click();
+	await expect(page.getByTestId("submissions-confirm-dialog")).toHaveCount(0);
+	await expect(toggle).toHaveAttribute("aria-checked", "true");
 }
 
 const docTab = (page: Page, name: RegExp) =>

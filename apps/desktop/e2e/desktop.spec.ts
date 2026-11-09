@@ -350,6 +350,10 @@ test("onboarding, first scan, question, flagged lines, approval and submitting b
 		await shot(page, "before-approve");
 		await approve.click();
 		await expect(page.getByTestId("paused")).toBeVisible({ timeout: 60_000 });
+		// The paused line links to the switch in Settings › Applying.
+		await expect(
+			page.getByTestId("paused").getByTestId("submissions-settings-link"),
+		).toHaveAttribute("href", "/settings/applying");
 		await expect(page.getByTestId("handoff")).toBeVisible();
 		const appId = new URL(page.url()).pathname.split("/").pop();
 		expect(
