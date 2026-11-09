@@ -208,6 +208,15 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 		await expect(answer).toBeVisible({ timeout: 90_000 });
 		await shot(page, "questions");
 		await answer.fill("One month.");
+		// The question's notification goes out after the batcher's short wait, and only while the
+		// question is still open (an answered one is dropped), so it is seen before saving. A typed
+		// answer stays in its box while suggested answers arrive.
+		await expect
+			.poll(
+				async () => (await notices(app)).some((n) => n.kind === "question"),
+				{ timeout: 90_000 },
+			)
+			.toBe(true);
 		await page
 			.getByRole("button", { name: /save|answer/i })
 			.first()
@@ -253,8 +262,8 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 			nativeTheme.themeSource = "system";
 		});
 
-		// Notifications: the first scan's strong matches came as one notification, then a
-		// question and a review; a click on the review opens that application.
+		// Notifications: the first scan's strong matches came as one notification, then the
+		// question (seen above) and a review; a click on the review opens that application.
 		await expect
 			.poll(
 				async () => {
