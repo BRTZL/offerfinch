@@ -182,7 +182,31 @@ export type RunResult = (
 			finalUrl: string;
 			filled: FilledField[];
 	  }
+	| {
+			/**
+			 * An employer's form after its one submit click (decision 2026-11-09): sent, and the user
+			 * checks their email. Never applied from what the page shows; `evidence` is for the proof.
+			 */
+			outcome: "web_sent";
+			before: Uint8Array;
+			after: Uint8Array | null;
+			finalUrl: string;
+			filled: FilledField[];
+			evidence: WebSentEvidence;
+	  }
 ) & { steps?: Uint8Array[] };
+
+/**
+ * What the run saw after an employer's form was sent, shown in the proof and never deciding the
+ * outcome: whether the request the click started carried the application, the page's own
+ * confirmation words, a refusal or error seen after the click, and anything else it noted.
+ */
+export interface WebSentEvidence {
+	requestSeen: boolean;
+	confirmation: string | null;
+	warning: string | null;
+	note: string | null;
+}
 
 const BLOCK_STATUSES = new Set([401, 403, 407, 429, 503]);
 

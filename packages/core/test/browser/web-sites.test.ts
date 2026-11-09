@@ -191,8 +191,13 @@ describe("an employer's form sends only to the exact host of its page (Codex re-
 		const { deps, calls } = harness(link, result.schema, ["jobs.acme.test"]);
 		const before = sites.requests.length;
 		const outcome = await submitStep(deps, "u1", "app-1");
-		expect(outcome).toMatchObject({ outcome: "applied" });
+		// Sent, check your email (decision 2026-11-09); never applied from the page.
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(/^Sent; check your email\./),
+		});
 		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+		expect(calls[1]?.submitted).toBe(false);
 		const sent = sites.requests.slice(before);
 		expect(sent.filter((r) => r.method === "POST")).toEqual([
 			expect.objectContaining({

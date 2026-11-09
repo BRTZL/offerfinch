@@ -1,4 +1,7 @@
-import type { ApplicationRun } from "@offerfinch/core/apply/applier";
+import type {
+	ApplicationRun,
+	WebSentEvidence,
+} from "@offerfinch/core/apply/applier";
 import { planFormFields } from "@offerfinch/core/apply/field-answers";
 import type { FormSchema } from "@offerfinch/core/apply/form-schema";
 import type { FormBoard } from "@offerfinch/core/apply/forms";
@@ -246,8 +249,7 @@ describe("reading an employer's form before review", () => {
 		expect(schema.submit).toBe("Submit application");
 		const { deps, calls } = harness("form-attr", schema);
 		const outcome = await submitStep(deps, "u1", "app-1");
-		expect(outcome).toMatchObject({ outcome: "applied" });
-		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+		expect(expectSent(outcome, calls)?.requestSeen).toBe(true);
 		expect(forms.count("form-attr")).toBe(1);
 	}, 60_000);
 
@@ -443,6 +445,8 @@ function harness(
 		key?: string | null;
 		submitted?: boolean;
 		stepKeys?: string[];
+		outcome?: unknown;
+		evidence?: WebSentEvidence;
 	}[] = [];
 	const store = {
 		submissionsPaused: async () => false,
@@ -475,6 +479,8 @@ function harness(
 				key: input.afterKey,
 				submitted: input.submitted,
 				stepKeys: input.proof.stepKeys as string[] | undefined,
+				outcome: input.proof.outcome,
+				evidence: input.proof.evidence as WebSentEvidence | undefined,
 			});
 		}),
 		stopSubmission: vi.fn(async (_u, _a, input) => {
@@ -505,18 +511,43 @@ function harness(
 	return { deps, calls, blobs };
 }
 
+/** The reason an employer's form ends with once sent (decision 2026-11-09). */
+const SENT = /^Sent; check your email\./;
+
+/** What the proof keeps of the run's evidence after the click, as one line to match. */
+const seen = (e: WebSentEvidence | undefined) =>
+	[e?.warning, e?.note].filter(Boolean).join(" ");
+
+/** After the one click: sent, check your email, whatever the page showed. */
+function expectSent(
+	outcome: unknown,
+	calls: ReturnType<typeof harness>["calls"],
+) {
+	expect(outcome).toMatchObject({
+		outcome: "needs_human",
+		reason: expect.stringMatching(SENT),
+	});
+	expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+	expect(calls[1]?.submitted).toBe(false);
+	expect(calls[1]?.outcome).toBe("web_sent");
+	return calls[1]?.evidence;
+}
+
 describe("submitting an employer's form", () => {
 	it.each(["single", "two-step"])(
 		"%s: fills, submits once after the claim, with screenshots before and after",
 		async (variant) => {
 			const { deps, calls, blobs } = harness(variant, await schemaOf(variant));
 			const outcome = await submitStep(deps, "u1", "app-1");
-			expect(outcome).toMatchObject({ outcome: "applied" });
+			// Sent, check your email: the page's thank-you and the request are evidence only.
+			const evidence = expectSent(outcome, calls);
 			expect(forms.count(variant)).toBe(1);
-			expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
-			expect(calls[1]?.reason).toMatch(
-				/^Submitted; the employer's page confirmed: "Thank you for/,
-			);
+			expect(evidence).toMatchObject({
+				requestSeen: true,
+				confirmation: expect.stringMatching(/^Thank you for/),
+				warning: null,
+				note: null,
+			});
 			for (const c of calls) {
 				expect(c.key).toBeTruthy();
 				expect(await blobs.get(c.key ?? "")).not.toBeNull();
@@ -658,27 +689,21 @@ describe("submitting an employer's form", () => {
 	it("an ambiguous page after the click is an unknown outcome, never a retry", async () => {
 		const { deps, calls } = harness("ambiguous", await schemaOf("ambiguous"));
 		const outcome = await submitStep(deps, "u1", "app-1");
-		expect(outcome).toMatchObject({
-			outcome: "needs_human",
-			reason: expect.stringMatching(
-				/does not say the application was received/,
-			),
-		});
+		const evidence = expectSent(outcome, calls);
+		expect(seen(evidence)).toMatch(/does not say the application was received/);
+		expect(evidence?.confirmation).toBeNull();
 		expect(forms.count("ambiguous")).toBe(1);
-		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
-		expect(calls[1]?.submitted).toBe(false);
 	}, 60_000);
 
 	it("without a model, a changed page is unknown", async () => {
-		const { deps } = harness("single", await schemaOf("single"), {
+		const { deps, calls } = harness("single", await schemaOf("single"), {
 			withModel: false,
 		});
 		const before = forms.count("single");
 		const outcome = await submitStep(deps, "u1", "app-1");
-		expect(outcome).toMatchObject({
-			outcome: "needs_human",
-			reason: expect.stringMatching(/no model was available/),
-		});
+		const evidence = expectSent(outcome, calls);
+		expect(evidence?.requestSeen).toBe(true);
+		expect(seen(evidence)).toMatch(/no model was available/);
 		expect(forms.count("single")).toBe(before + 1);
 	}, 60_000);
 
@@ -708,10 +733,10 @@ describe("submitting an employer's form", () => {
 				allowedHosts: ["127.0.0.1"],
 				claim: async () => ({ go: true }),
 			});
-			expect(result).toMatchObject({
-				outcome: "unknown",
-				reason: expect.stringMatching(/does not bear out/),
-			});
+			expect(result).toMatchObject({ outcome: "web_sent" });
+			expect(
+				result.outcome === "web_sent" ? seen(result.evidence) : "",
+			).toMatch(/does not bear out/);
 		} finally {
 			await session.close();
 		}
@@ -744,10 +769,10 @@ describe("submitting an employer's form", () => {
 				confirmTimeoutMs: 3_000,
 				claim: async () => ({ go: true }),
 			});
-			expect(result).toMatchObject({
-				outcome: "unknown",
-				reason: expect.stringMatching(/the form is still on the page/),
-			});
+			expect(result).toMatchObject({ outcome: "web_sent" });
+			expect(
+				result.outcome === "web_sent" ? seen(result.evidence) : "",
+			).toMatch(/the form is still on the page/);
 			expect(forms.count("stays")).toBe(1);
 		} finally {
 			await session.close();
@@ -860,7 +885,10 @@ describe("files from another host are fixed before the first keystroke (Codex, 2
 				claim: async () => ({ go: true }),
 			});
 			expect(result.outcome === "stopped" ? result.stop : null).toBeNull();
-			expect(result.outcome).toBe("submitted");
+			expect(result).toMatchObject({
+				outcome: "web_sent",
+				evidence: { requestSeen: true, warning: null },
+			});
 			const log = page.networkLog();
 			// The pieces were tried, and refused without stopping the run.
 			expect(
@@ -909,12 +937,10 @@ describe("what counts as a confirmation on an employer's form (Codex, 2026-11-09
 		async (variant, posts, why) => {
 			const { deps, calls } = harness(variant, await schemaOf(variant));
 			const outcome = await submitStep(deps, "u1", "app-1");
-			expect(outcome).toMatchObject({
-				outcome: "needs_human",
-				reason: expect.stringMatching(why),
-			});
-			expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
-			expect(calls[1]?.submitted).toBe(false);
+			// Sent, check your email; what the run saw is in the proof, never the decision.
+			const evidence = expectSent(outcome, calls);
+			expect(seen(evidence)).toMatch(why);
+			expect(evidence?.confirmation).toBeNull();
 			expect(forms.count(variant)).toBe(posts);
 		},
 		60_000,
@@ -960,9 +986,13 @@ describe("refusal or error wording after the click is never a confirmation (Code
 					claim: async () => ({ go: true }),
 					confirmTimeoutMs: 5_000,
 				});
+				// Sent, with the refusal as the proof's warning, not a confirmation.
 				expect(result).toMatchObject({
-					outcome: "unknown",
-					reason: expect.stringMatching(why),
+					outcome: "web_sent",
+					evidence: {
+						warning: expect.stringMatching(why),
+						confirmation: null,
+					},
 				});
 				expect(forms.count(variant)).toBe(1);
 			} finally {
@@ -977,15 +1007,13 @@ describe("the application request itself is the evidence (Codex re-review, 2026-
 	it("a native GET form whose query carries every approved value counts", async () => {
 		const { deps, calls } = harness("native-get", await schemaOf("native-get"));
 		const outcome = await submitStep(deps, "u1", "app-1");
-		expect(outcome).toMatchObject({ outcome: "applied" });
-		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+		expect(expectSent(outcome, calls)?.requestSeen).toBe(true);
 	}, 60_000);
 
 	it("a JSON post carrying every approved value counts", async () => {
 		const { deps, calls } = harness("json", await schemaOf("json"));
 		const outcome = await submitStep(deps, "u1", "app-1");
-		expect(outcome).toMatchObject({ outcome: "applied" });
-		expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+		expect(expectSent(outcome, calls)?.requestSeen).toBe(true);
 		expect(forms.count("json")).toBe(1);
 	}, 60_000);
 });

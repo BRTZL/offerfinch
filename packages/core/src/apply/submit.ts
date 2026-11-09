@@ -258,6 +258,46 @@ async function storeSteps(
 	return keys.length > 0 ? { stepKeys: keys } : {};
 }
 
+/**
+ * An employer's form after its one click (decision 2026-11-09): sent, and the user says whether
+ * the employer's email came. The attempt stays unresolved (needs_human, `proof.outcome:
+ * "web_sent"`) with what the run saw as `proof.evidence`; it is never applied from the page and
+ * never retried on its own.
+ */
+async function recordWebSent(
+	at: {
+		db: SubmissionStore;
+		blobs: BlobStore;
+		userId: string;
+		applicationId: string;
+	},
+	attemptId: string | null,
+	result: Extract<RunResult, { outcome: "web_sent" }>,
+	proof: Record<string, unknown>,
+): Promise<SubmitOutcome> {
+	const afterKey = result.after
+		? await store(
+				at.blobs,
+				keyFor(at.userId, at.applicationId, "after"),
+				result.after,
+			).catch(() => null)
+		: null;
+	const reason =
+		"Sent; check your email. The employer's form was submitted once; whether it arrived is told by the employer's email, not the page.";
+	await at.db.finishSubmission(at.userId, at.applicationId, attemptId ?? "", {
+		submitted: false,
+		afterKey,
+		reason,
+		proof: {
+			...proof,
+			finalUrl: result.finalUrl,
+			outcome: "web_sent",
+			evidence: result.evidence,
+		},
+	});
+	return { outcome: "needs_human", reason };
+}
+
 /** The submission mode for this application: its source, then its board. */
 export function modeOf(context: SubmissionContext) {
 	return submissionModeForSource(
@@ -644,6 +684,13 @@ export async function submitStep(
 					? { outcome: "applied", confirmation: result.confirmation }
 					: { outcome: "needs_human", reason };
 			}
+			case "web_sent":
+				return await recordWebSent(
+					{ db, blobs: apply.blobs, userId, applicationId },
+					attemptId,
+					result,
+					proof,
+				);
 			case "not_claimed": {
 				const key = await store(
 					apply.blobs,

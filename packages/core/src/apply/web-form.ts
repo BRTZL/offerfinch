@@ -10,6 +10,7 @@ import {
 	perform,
 	type RunResult,
 	type Stop,
+	type WebSentEvidence,
 } from "./applier";
 import {
 	type FormReadRefusal,
@@ -889,7 +890,7 @@ function applicationRequest(
 	const navigation = all.find((r) => seqOf(r) > before.started && r.navigation);
 	if (navigation && (isWrite(navigation) || carries(navigation)))
 		return carries(navigation)
-			? answered(navigation)
+			? { request: navigation }
 			: { unknown: NO_APPLICATION };
 	const until = navigation ? seqOf(navigation) : Number.POSITIVE_INFINITY;
 	const scripted = (r: { seq?: number; url: string; method: string }) =>
@@ -917,16 +918,16 @@ function applicationRequest(
 			unknown:
 				"The page changed after the click, but another request to the employer's site carried the same answers, so which one was the application cannot be told.",
 		};
-	return answered(request);
+	return { request };
 }
 
 /**
  * After the one click: waits for evidence (the application request the click started reached the
  * form's host, `applicationRequest`, and the form is gone or the page's path changed), then checks
  * that neither the page nor the employer's answer says anything went wrong (`refusalAfter`), then
- * the model reads the page. Only "confirmed", backed by all of that and a quote found on the page
- * in confirmation words that were not on it before the click, records it applied; anything else
- * is an unknown outcome, never a retry.
+ * the model reads the page. "confirmed" needs all of that and a quote found on the page in
+ * confirmation words that were not on it before the click. Since the decision of 2026-11-09 this
+ * is evidence for the proof only: an employer's form is "sent, check your email" either way.
  */
 async function readOutcome(
 	page: BrowserPage,
@@ -937,7 +938,9 @@ async function readOutcome(
 ): Promise<{ confirmed: string } | { unknown: string }> {
 	const changed = await awaitChange(page, formUrl, run);
 	if ("unknown" in changed) return changed;
-	const sent = applicationRequest(page, before, run, state);
+	const found = applicationRequest(page, before, run, state);
+	if ("unknown" in found) return found;
+	const sent = answered(found.request);
 	if ("unknown" in sent) return sent;
 	const refused = refusalAfter(changed.after, sent.request);
 	if (refused) return { unknown: refused };
@@ -1003,14 +1006,14 @@ function newConfirmation(
  */
 function refusalAfter(
 	after: WebAfter,
-	request: NetworkLogEntry,
+	request: NetworkLogEntry | null,
 ): string | null {
 	if (after.errors.length > 0)
 		return `The form showed errors after the click: ${after.errors.join(" | ")}`;
 	const shown = refusalIn(after.text);
 	if (shown)
 		return `The page after the click says "${shown}", so the application may not have gone through.`;
-	const inAnswer = request.answerHtml
+	const inAnswer = request?.answerHtml
 		? refusalIn(htmlText(request.answerHtml))
 		: null;
 	return inAnswer
@@ -1247,7 +1250,39 @@ async function fillSteps(
 	};
 }
 
-/** Clicks the final submit once and reads the outcome; never throws. */
+/**
+ * What the run saw after the one click, for the proof only (decision 2026-11-09): the request the
+ * click started that carried the application, if one did; an error answer to it or refusal
+ * wording after the click as a warning; the page's confirmation quote; and the outcome reader's
+ * other notes. Never throws.
+ */
+async function sentEvidence(
+	page: BrowserPage,
+	run: ApplicationRun,
+	state: RunState,
+	before: BeforeClick,
+	read: { confirmed: string } | { unknown: string },
+): Promise<WebSentEvidence> {
+	const found = applicationRequest(page, before, run, state);
+	const request = "request" in found ? found.request : null;
+	const answer = request ? answered(request) : null;
+	const after = await safeEvaluate<WebAfter>(page, WEB_AFTER_SCRIPT);
+	const warning =
+		(answer && "unknown" in answer ? answer.unknown : null) ??
+		(after ? refusalAfter(after, request) : null);
+	return {
+		requestSeen: request !== null,
+		confirmation: "confirmed" in read ? read.confirmed : null,
+		warning,
+		note: "unknown" in read && read.unknown !== warning ? read.unknown : null,
+	};
+}
+
+/**
+ * Clicks the final submit once, then records what it saw: an employer's form is "sent, check
+ * your email" whatever the page shows (decision 2026-11-09); the evidence goes into the proof and
+ * never decides. Never throws.
+ */
 async function submitOnce(
 	page: BrowserPage,
 	run: ApplicationRun,
@@ -1256,41 +1291,43 @@ async function submitOnce(
 ): Promise<RunResult> {
 	const formUrl = page.url();
 	const before = state.before ?? new Uint8Array();
+	const beforeClick: BeforeClick = { text: "", started: 0 };
+	let read: { confirmed: string } | { unknown: string };
 	try {
-		const beforeClick = {
-			text: (await safeEvaluate<string>(page, PAGE_TEXT_SCRIPT)) ?? "",
-			// Read last, just before the click: the click started every request after this count.
-			started: page.networkStarted().count,
-		};
+		beforeClick.text =
+			(await safeEvaluate<string>(page, PAGE_TEXT_SCRIPT)) ?? "";
+		// Read last, just before the click: the click started every request after this count.
+		beforeClick.started = page.networkStarted().count;
 		await page.click(`[data-jp-control="${submit.ref}"]`);
-		const result = await readOutcome(page, formUrl, run, beforeClick, state);
-		const after = (await shot(page)) ?? new Uint8Array();
-		return "confirmed" in result
-			? {
-					outcome: "submitted",
-					before,
-					after,
-					confirmation: result.confirmed,
-					finalUrl: page.url(),
-					filled: state.filled,
-					...stepsOf(state),
-				}
-			: {
-					outcome: "unknown",
-					before,
-					after,
-					reason: result.unknown,
-					finalUrl: page.url(),
-					filled: state.filled,
-					...stepsOf(state),
-				};
+		read = await readOutcome(page, formUrl, run, beforeClick, state);
 	} catch (error) {
-		return unknownAfterClaim(
-			page,
-			state,
-			`Error after the submit click: ${error instanceof Error ? error.message : String(error)}`,
-		);
+		read = {
+			unknown: `Error after the submit click: ${error instanceof Error ? error.message : String(error)}`,
+		};
 	}
+	const evidence = await sentEvidence(
+		page,
+		run,
+		state,
+		beforeClick,
+		read,
+	).catch(
+		(): WebSentEvidence => ({
+			requestSeen: false,
+			confirmation: null,
+			warning: null,
+			note: "unknown" in read ? read.unknown : null,
+		}),
+	);
+	return {
+		outcome: "web_sent",
+		before,
+		after: await shot(page),
+		finalUrl: page.url(),
+		filled: state.filled,
+		evidence,
+		...stepsOf(state),
+	};
 }
 
 /** A dry run's end: the filled form, short of the submit. */
