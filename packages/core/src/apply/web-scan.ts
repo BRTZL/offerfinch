@@ -201,13 +201,16 @@ export const WEB_SCAN_SCRIPT = String.raw`(() => {
 	// Buttons of the form (and those outside it whose form attribute names it); for a form that is
 	// the whole page, every button on it.
 	const BUTTONS = "button, input[type=submit], input[type=button], input[type=image], [role=button], a[href]";
-	const owned = root.tagName === "FORM" ? [...root.elements].filter((el) => el.matches(BUTTONS) && !root.contains(el)) : [];
+	// Every control that belongs to the form: form.elements leaves out <input type=image>, a
+	// submitter all the same, so those (inside it, or outside it naming it with form=) are added.
+	const members = root.tagName === "FORM" ? [...root.elements, ...[...document.querySelectorAll("input[type=image]")].filter((el) => el.form === root)] : [];
+	const owned = members.filter((el) => el.matches(BUTTONS) && !root.contains(el));
 	const nativeSubmit = (b) => (b.tagName === "BUTTON" && (b.getAttribute("type") || "submit").toLowerCase() === "submit") || (b.tagName === "INPUT" && /^(?:submit|image)$/i.test(b.type));
-	result.canSubmit = root.tagName === "FORM" && [...root.elements].some((b) => nativeSubmit(b) && !b.disabled);
+	result.canSubmit = members.some((b) => nativeSubmit(b) && !b.disabled);
 	// Where any control of the form may send it: every formaction of a button or input that
 	// belongs to it (inside it, or outside it naming it with form=), hidden, disabled or text-less
 	// ones too, before the filters below.
-	if (root.tagName === "FORM") for (const el of root.elements) if (el.hasAttribute("formaction") && el.formAction) result.endpoints.push(el.formAction);
+	for (const el of members) if (el.hasAttribute("formaction") && el.formAction) result.endpoints.push(el.formAction);
 	let c = 0;
 	for (const b of [...root.querySelectorAll(BUTTONS), ...owned]) {
 		if (!shown(b)) continue;

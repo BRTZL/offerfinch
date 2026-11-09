@@ -440,6 +440,37 @@ interface GuardState {
 	started: number;
 	/** "allowlist": requests started and not yet logged, by `seq`. */
 	readonly pending: Map<number, PendingRequest>;
+	/** Set when the session starts closing: requests still in flight end with it. */
+	closing: boolean;
+}
+
+/** The reason recorded for a request the session's closing (or its page's) cut off. */
+const SESSION_CLOSED = "session closed";
+
+/**
+ * Runs a route handler. Closing the session or its page cancels the requests still in flight
+ * (`route.fetch: Request context disposed.`, "Target page, context or browser has been closed");
+ * such a request is logged and ends there, and the handler never throws for it.
+ */
+async function routeUntilClosed(
+	state: GuardState,
+	route: PlaywrightRouteLike,
+	handler: (route: PlaywrightRouteLike) => Promise<void>,
+): Promise<void> {
+	const request = route.request();
+	try {
+		await handler(route);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (!state.closing && !/disposed|has been closed/i.test(message))
+			throw error;
+		state.log.push({
+			method: request.method(),
+			url: request.url(),
+			allowed: false,
+			reason: SESSION_CLOSED,
+		});
+	}
 }
 
 /** The URL of the frame that made a request, or "" when it cannot be told. */
@@ -851,7 +882,9 @@ class PlaywrightPage implements BrowserPage {
 			}
 			return route.fulfill({ response: response as never });
 		};
-		await this.page.route("**/*", handler);
+		const guarded = (route: PlaywrightRouteLike) =>
+			routeUntilClosed(this.state, route, handler);
+		await this.page.route("**/*", guarded);
 		try {
 			for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
 				redirect = null;
@@ -873,7 +906,7 @@ class PlaywrightPage implements BrowserPage {
 			}
 			throw new Error(`More than ${MAX_REDIRECTS} redirects from ${url}`);
 		} finally {
-			await this.page.unroute("**/*", handler);
+			await this.page.unroute("**/*", guarded);
 		}
 	}
 	content() {
@@ -974,6 +1007,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 			frozen: false,
 			started: 0,
 			pending: new Map(),
+			closing: false,
 		};
 		const pages = new Map<unknown, PlaywrightPage>();
 		if (network !== "open") {
@@ -987,7 +1021,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 			const allowed = options.allowedHosts ?? [];
 			// One filter for the whole context, installed before the first page: a pop-up's first
 			// request (and every later one) passes through it too, never around it.
-			await context.route("**/*", async (route) => {
+			const filter = async (route: PlaywrightRouteLike) => {
 				const page = pages.get(pageOf(route.request()));
 				if (page) return page.handle(route);
 				// A window the session did not open (a pop-up): nothing it asks for is fetched.
@@ -1003,7 +1037,10 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 							: "pop-up refused",
 				});
 				return route.abort("blockedbyclient");
-			});
+			};
+			await context.route("**/*", (route) =>
+				routeUntilClosed(state, route, filter),
+			);
 			await context.routeWebSocket(/.*/, (ws) => {
 				if (
 					state.mode === "allowlist" &&
@@ -1040,6 +1077,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 				return page;
 			},
 			close: async () => {
+				state.closing = true;
 				await context.close().catch(() => {});
 				await browser.close();
 			},

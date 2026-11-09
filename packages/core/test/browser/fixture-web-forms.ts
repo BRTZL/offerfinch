@@ -55,6 +55,10 @@ import {
  *   textless-away the same, with a visible submit button that has no text and a formaction on localhost
  *   outside-away  the same, with a hidden button after the form that names it with form= and posts to
  *                 localhost
+ *   image-away    the same, with a text-less image submit (`<input type=image>`, which `form.elements`
+ *                 leaves out) whose formaction is on localhost
+ *   image-outside-away the same, with a hidden image submit after the form that names it with form=
+ *                 and posts to localhost
  *   preclick      email and full name; once both are typed the page autosaves the whole form to
  *                 /web/preclick/autosave (its answer held until the next POST arrives); the submit
  *                 only posts "event=click", then the page shows a thank-you
@@ -357,11 +361,15 @@ function awayButtonBody(variant: string, away: string): string {
 			? `<button type="submit" style="display:none" formaction="${to}">Send</button>`
 			: variant === "textless-away"
 				? `<button type="submit" formaction="${to}" aria-hidden="true"></button>`
-				: "";
+				: variant === "image-away"
+					? `<input type="image" alt="" formaction="${to}">`
+					: "";
 	const outside =
 		variant === "outside-away"
 			? `<button type="submit" form="apply" hidden formaction="${to}">Send</button>`
-			: "";
+			: variant === "image-outside-away"
+				? `<input type="image" form="apply" hidden alt="Send" formaction="${to}">`
+				: "";
 	return `<h1>Robotics Engineer at Acme Robotics</h1><form id="apply" method="post" action="/web/${variant}/apply">
 ${text("Email address", "email", { type: "email" })}${text("Full name", "full_name", { required: true })}
 <p><button type="submit">Submit application</button>${inside}</p></form>${outside}`;
@@ -604,6 +612,8 @@ function formPage(
 		case "hidden-away":
 		case "textless-away":
 		case "outside-away":
+		case "image-away":
+		case "image-outside-away":
 			return page(awayButtonBody(variant, awayOrigin));
 		case "assets":
 			return page(assetsBody(awayOrigin), ASSETS, awayOrigin);
@@ -619,8 +629,8 @@ async function bodyOf(req: IncomingMessage): Promise<string> {
 }
 
 /**
- * Answers a POST (`postAnswer`). `unanswered`'s hang is never answered (until the server
- * closes). An autosave (`preclick`, `presave`) is answered only once the next post
+ * Answers a POST (`postAnswer`). `unanswered`'s hang is never answered: it is kept in `hanging`
+ * and settled (HTTP 503) when the fixture closes. An autosave (`preclick`, `presave`) is answered only once the next post
  * arrives, after the click; every other post answers at once and releases those held.
  */
 function answerPost(
@@ -628,13 +638,17 @@ function answerPost(
 	variant: string,
 	action: string,
 	held: (() => void)[],
+	hanging: ServerResponse[],
 ): void {
 	const answer = postAnswer(variant, action);
 	const reply = () => {
 		res.writeHead(answer.status, answer.headers);
 		res.end(answer.body);
 	};
-	if (variant === "unanswered" && action === "hang") return;
+	if (variant === "unanswered" && action === "hang") {
+		hanging.push(res);
+		return;
+	}
 	if (action === "autosave") {
 		held.push(reply);
 		return;
@@ -648,6 +662,7 @@ export async function startFixtureWebForms(): Promise<FixtureWebForms> {
 	const away: { method: string; path: string }[] = [];
 	const loads = new Map<string, number>();
 	const held: (() => void)[] = [];
+	const hanging: ServerResponse[] = [];
 	const server = createServer(async (req, res) => {
 		const host = (req.headers.host ?? "").split(":")[0] ?? "";
 		const port = (req.headers.host ?? "").split(":")[1] ?? "";
@@ -670,7 +685,7 @@ export async function startFixtureWebForms(): Promise<FixtureWebForms> {
 				fields: [...body.matchAll(/name="([^"]+)"/g)].map((m) => m[1] ?? ""),
 				body,
 			});
-			return answerPost(res, variant, action, held);
+			return answerPost(res, variant, action, held, hanging);
 		}
 		if (action === "thanks" || (variant === "native-get" && action === "sent"))
 			return html(
@@ -697,6 +712,11 @@ export async function startFixtureWebForms(): Promise<FixtureWebForms> {
 				.length,
 		close: () =>
 			new Promise<void>((done) => {
+				// A request left unanswered is settled, not cut off.
+				for (const res of hanging.splice(0)) {
+					res.writeHead(503);
+					res.end();
+				}
 				server.closeAllConnections?.();
 				server.close(() => done());
 			}),
