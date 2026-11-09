@@ -84,6 +84,12 @@ export interface ApplicationRun {
 	/** Waits for the confirmation this long after the click. */
 	confirmTimeoutMs?: number;
 	/**
+	 * Dry runs with the network closed: a location field, whose suggestions come from a lookup
+	 * over the network, is left untouched and listed as not chosen, so the rest of the form is
+	 * still filled. Never set on a submission.
+	 */
+	lookupsOffline?: boolean;
+	/**
 	 * Hosts the run may be on and send data to (a real submission). Checked after the form opens,
 	 * before the files, before the claim and on the confirmation: the page must still be on one
 	 * of them and must not have tried to navigate or send data elsewhere (the session's
@@ -391,7 +397,13 @@ export async function fillForm(
 	config: BoardConfig,
 	run: Pick<
 		ApplicationRun,
-		"data" | "files" | "beforeFill" | "beforeUpload" | "allowedHosts" | "schema"
+		| "data"
+		| "files"
+		| "beforeFill"
+		| "beforeUpload"
+		| "allowedHosts"
+		| "schema"
+		| "lookupsOffline"
 	>,
 ): Promise<
 	| { ok: true; plan: FillPlan; filled: FilledField[] }
@@ -407,11 +419,17 @@ export async function fillForm(
 		declineVoluntary: run.schema !== undefined,
 	});
 	// Only reviewed fields get a value; a field the review never listed is at most emptied.
+	const reviewed = planned.actions.filter(
+		(a) => !unreviewed.has(a.ref) || a.kind === "clear",
+	);
+	// A dry run with the network closed cannot pick a location suggestion (the field empties
+	// itself when left without one): it is not touched, and listed as not chosen.
+	const offline = run.lookupsOffline
+		? reviewed.filter((a) => a.kind === "location")
+		: [];
 	const plan = {
 		...planned,
-		actions: planned.actions.filter(
-			(a) => !unreviewed.has(a.ref) || a.kind === "clear",
-		),
+		actions: reviewed.filter((a) => !(offline as FillAction[]).includes(a)),
 	};
 	// Before the first interaction of any kind (clicks included): dry runs close the network here.
 	run.beforeFill?.();
@@ -441,7 +459,10 @@ export async function fillForm(
 			},
 		};
 	const byRef = new Map(fields.map((f) => [f.ref, f]));
-	const filled: FilledField[] = [];
+	const filled: FilledField[] = offline.map((a) => ({
+		label: a.label,
+		value: `${a.value} (not chosen: the suggestions need the network)`,
+	}));
 	let uploadsCleared = false;
 	for (const action of plan.actions) {
 		const field = byRef.get(action.ref);

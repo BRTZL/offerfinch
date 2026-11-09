@@ -355,6 +355,7 @@ async function openAndRun(
 		const page = await session.newPage();
 		const result = await runApplication(page, {
 			...run,
+			lookupsOffline: network === "read_only",
 			beforeFill:
 				network === "read_only"
 					? () => page.restrictNetwork("none")
