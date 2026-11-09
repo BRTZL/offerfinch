@@ -314,6 +314,37 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 			timeout: 90_000,
 		});
 
+		// A CV too long for two pages: the length flag has no line to edit, so "Fix with AI" opens
+		// Redraft for the CV with the problem as the instruction, and the new version clears it.
+		await docTab(page, /^CV/).click();
+		await page.getByRole("button", { name: /^Edit/ }).first().click();
+		const long = page.locator("textarea").first();
+		const before = await long.inputValue();
+		await long.fill(
+			before.replace("## Skills", `- ${"filler ".repeat(1200)}\n\n## Skills`),
+		);
+		await page.getByRole("button", { name: /^Save/ }).first().click();
+		const lengthFlag = page
+			.getByTestId("flag")
+			.filter({ has: page.getByTestId("flag-fix-ai") });
+		await expect(lengthFlag).toContainText(/so cut at least \d+/, {
+			timeout: 90_000,
+		});
+		await lengthFlag.scrollIntoViewIfNeeded();
+		await shot(page, "length-flag-fix-with-ai");
+		await lengthFlag.getByTestId("flag-fix-ai").click();
+		await expect(page.getByTestId("redraft-scope-cv")).toBeChecked();
+		await expect(page.getByTestId("redraft-instruction")).toHaveValue(
+			/^Fix this check: CV has \d+ words; at most 1100 fit two pages/,
+		);
+		await page.getByTestId("redraft-confirm").click();
+		await expect(page.getByTestId("flag-fix-ai")).toHaveCount(0, {
+			timeout: 120_000,
+		});
+		await expect(
+			page.getByTestId("flag").filter({ hasText: "filler filler" }),
+		).toHaveCount(0);
+
 		// The fake checker also flagged lines of its own draft: settle each open one, tab by tab,
 		// as a user would, until Approve opens (each settle may start a short re-check).
 		const approve = page.getByRole("button", { name: /^Approve/ }).first();

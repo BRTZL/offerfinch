@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { client } from "@/lib/orpc";
 import { cn } from "@/lib/utils";
+import { RedraftDialog } from "./redraft";
 
 export type Flag = AppDetail["flags"][number];
 
@@ -318,11 +319,7 @@ function FlagItem({
 							</Button>
 						</>
 					) : (
-						<span className="text-muted-foreground" data-testid="flag-unplaced">
-							{flag.text
-								? "Could not place this line in the document, so it has no mark in the rendered view: find it in Source and use Edit on the document."
-								: "About the whole document: use Edit on the document."}
-						</span>
+						<WholeDocument app={app} flag={flag} busy={busy} />
 					)}
 					{flag.confirmable ? (
 						<AlertDialog>
@@ -371,5 +368,62 @@ function FlagItem({
 				</div>
 			)}
 		</li>
+	);
+}
+
+const REDRAFTABLE = ["cv", "cover_letter", "form_answers"] as const;
+type Redraftable = (typeof REDRAFTABLE)[number];
+
+/**
+ * A flag with no line in the document: one the text could not place, or one about the whole
+ * document (its length, a missing company name). The latter on a redraftable document gets
+ * "Fix with AI": Redraft of that document with the flag's problem as the instruction.
+ */
+function WholeDocument({
+	app,
+	flag,
+	busy,
+}: {
+	app: AppDetail;
+	flag: Flag;
+	busy: boolean;
+}) {
+	const [fixing, setFixing] = useState(false);
+	const kind = REDRAFTABLE.find((k) => k === flag.document);
+	const fixable = !flag.text && kind !== undefined;
+	const redrafting = Boolean(app.redraft && !app.redraft.problem);
+	return (
+		<>
+			{fixable ? (
+				<Button
+					size="sm"
+					onClick={() => setFixing(true)}
+					disabled={busy || redrafting}
+					title={
+						redrafting
+							? "A redraft is already running"
+							: "Redraft this document with the problem as the instruction"
+					}
+					data-testid="flag-fix-ai"
+				>
+					Fix with AI
+				</Button>
+			) : null}
+			<span className="text-muted-foreground" data-testid="flag-unplaced">
+				{flag.text
+					? "Could not place this line in the document, so it has no mark in the rendered view: find it in Source and use Edit on the document."
+					: fixable
+						? "About the whole document: Fix with AI redrafts it, or use Edit on the document."
+						: "About the whole document: use Edit on the document."}
+			</span>
+			{fixing && kind ? (
+				<RedraftDialog
+					app={app}
+					initial={kind satisfies Redraftable}
+					initialInstruction={`Fix this check: ${flag.reasons.map((r) => r.message).join(" ")}`}
+					onClose={() => setFixing(false)}
+				/>
+			) : null}
+		</>
 	);
 }
