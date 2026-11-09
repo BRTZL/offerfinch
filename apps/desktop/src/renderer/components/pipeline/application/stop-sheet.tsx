@@ -133,7 +133,7 @@ function FinishPanel({
 				/>
 				<Button
 					size="sm"
-					onClick={() => actions.markSubmitted.mutate(appliedOn)}
+					onClick={() => actions.markSubmitted.mutate({ appliedOn })}
 					pending={actions.markSubmitted.isPending}
 					disabled={!appliedOn}
 					data-testid="stop-mark-submitted"
@@ -199,7 +199,10 @@ function StopActions({
 			router.push(`/questions/${view.question.id}`);
 		else if (action === "reread") reread.mutate();
 		else if (action === "mark" || action === "got_email")
-			actions.markSubmitted.mutate(today());
+			actions.markSubmitted.mutate({
+				appliedOn: today(),
+				gotEmail: action === "got_email",
+			});
 		else actions.retry.mutate();
 	};
 	return (

@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { desktop } from "@/lib/desktop";
 import { client, orpc } from "@/lib/orpc";
 import { AttemptList } from "./proof";
+import { isWebSent } from "./stop-model";
 
 /** Today as YYYY-MM-DD in the browser's time zone. */
 export function today(): string {
@@ -121,7 +122,8 @@ export function SubmissionPanel({
 	confirmedNotSent: boolean;
 	setConfirmedNotSent: (value: boolean) => void;
 	onRetry: () => void;
-	onMarkSubmitted: (appliedOn: string) => void;
+	/** `gotEmail`: Got the email, for an employer's form that was sent. */
+	onMarkSubmitted: (appliedOn: string, gotEmail?: boolean) => void;
 	onDryRun: () => void;
 	busy: boolean;
 	dryRunning: boolean;
@@ -134,7 +136,16 @@ export function SubmissionPanel({
 		app.state,
 	);
 	if (!relevant && app.attempts.length === 0) return null;
-	const open = app.state === "needs_human" || app.state === "approved";
+	// An employer's form that was sent waits for the user's email: finishing it by hand opens only
+	// once they say it didn't go through (decision 2026-11-09).
+	const waitingEmail =
+		app.state === "needs_human" &&
+		app.attempts.some(
+			(a) => a.attempt === app.unresolvedAttempt?.attempt && isWebSent(a),
+		);
+	const open =
+		(app.state === "needs_human" || app.state === "approved") &&
+		(!waitingEmail || confirmedNotSent);
 	const handoffBoard = app.submission?.mode === "handoff";
 	const contact = app.handoff.contact;
 	const pdfs = app.exports.filter(
@@ -150,8 +161,34 @@ export function SubmissionPanel({
 			: "Open the application form";
 
 	return (
-		<Section title={open ? "Submit it yourself" : "Submission"}>
+		<Section
+			title={
+				waitingEmail && !confirmedNotSent
+					? "Sent — check your email"
+					: open
+						? "Submit it yourself"
+						: "Submission"
+			}
+		>
 			<div className="flex flex-col gap-3 text-xs" data-testid="submission">
+				{waitingEmail && !confirmedNotSent && (
+					<div className="flex flex-col gap-1.5" data-testid="sent-check-email">
+						<p className="text-muted-foreground">
+							The employer's form was sent once. Their email tells whether it
+							arrived; nothing is sent again on its own.
+						</p>
+						<div>
+							<Button
+								size="sm"
+								onClick={() => onMarkSubmitted(today(), true)}
+								disabled={busy}
+								data-testid="got-email"
+							>
+								Got the email
+							</Button>
+						</div>
+					</div>
+				)}
 				{open && (
 					<ol className="flex flex-col gap-4" data-testid="handoff">
 						<Step
@@ -282,8 +319,9 @@ export function SubmissionPanel({
 							data-testid="confirm-not-sent"
 						/>
 						<span>
-							I checked the employer's portal or my email: attempt{" "}
-							{app.unresolvedAttempt.attempt} did not go through.
+							{waitingEmail
+								? "It didn't go through: no email came, and the employer's portal does not list it."
+								: `I checked the employer's portal or my email: attempt ${app.unresolvedAttempt.attempt} did not go through.`}
 						</span>
 					</label>
 				)}

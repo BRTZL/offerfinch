@@ -65,7 +65,9 @@ export const submissionMethods = {
 
 	/**
 	 * The user submitted it themselves, or checked that an unknown attempt went through. From
-	 * approved or needs_human; records a manual attempt and moves to applied.
+	 * approved or needs_human; records a manual attempt and moves to applied. `confirmedNotSent`:
+	 * the user said an earlier clicked attempt did not go through and sent it by hand; that
+	 * attempt is recorded as not sent instead of as the one that went through.
 	 */
 	async markSubmittedManually(input: {
 		userId: string;
@@ -73,6 +75,7 @@ export const submissionMethods = {
 		idempotencyKey: string;
 		/** The day the user submitted it (YYYY-MM-DD); default today. Never in the future. */
 		appliedOn?: string;
+		confirmedNotSent?: boolean;
 	}): Promise<PendingEvent> {
 		const appliedAt = appliedDate(input.appliedOn, new Date());
 		return this.database.transaction(async (tx) => {
@@ -89,11 +92,19 @@ export const submissionMethods = {
 				);
 			await tx
 				.update(submissionAttempts)
-				.set({
-					status: "submitted",
-					resolution: "The user confirmed it went through",
-					finishedAt: new Date(),
-				})
+				.set(
+					input.confirmedNotSent
+						? {
+								status: "not_sent",
+								resolution: "The user confirmed it did not go through",
+								finishedAt: new Date(),
+							}
+						: {
+								status: "submitted",
+								resolution: "The user confirmed it went through",
+								finishedAt: new Date(),
+							},
+				)
 				.where(
 					and(
 						eq(submissionAttempts.applicationId, input.applicationId),

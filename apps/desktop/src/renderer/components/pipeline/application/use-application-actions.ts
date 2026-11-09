@@ -265,11 +265,16 @@ export function useApplicationActions({
 	});
 
 	const markSubmitted = useMutation({
-		mutationFn: (appliedOn: string) =>
+		/**
+		 * I submitted this, or Got the email (`gotEmail`: the sent attempt went through). Sent by
+		 * hand after "It didn't go through" was ticked, the clicked attempt is recorded not sent.
+		 */
+		mutationFn: (input: { appliedOn: string; gotEmail?: boolean }) =>
 			client.submission.markSubmitted({
 				id,
 				idempotencyKey: submitKey.current,
-				appliedOn,
+				appliedOn: input.appliedOn,
+				confirmedNotSent: !input.gotEmail && confirmedNotSent,
 			}),
 		onSuccess: () => {
 			toast.success("Marked as applied.");

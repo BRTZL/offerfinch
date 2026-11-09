@@ -621,6 +621,8 @@ export const pipelineRouter = {
 						.string()
 						.regex(/^\d{4}-\d{2}-\d{2}$/)
 						.optional(),
+					/** An earlier clicked attempt did not go through; the user sent it by hand. */
+					confirmedNotSent: z.boolean().optional(),
 				}),
 			)
 			.handler(({ context, input }) =>
@@ -630,6 +632,7 @@ export const pipelineRouter = {
 						applicationId: input.id,
 						idempotencyKey: `manual-${input.idempotencyKey}`,
 						appliedOn: input.appliedOn,
+						confirmedNotSent: input.confirmedNotSent,
 					});
 					await context.sendEvent(event);
 					return { ok: true };

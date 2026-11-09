@@ -645,6 +645,43 @@ describe("an employer's form sent, check your email (decision 2026-11-09)", () =
 		expect(Number((await row())?.sentCheckEmail)).toBe(0);
 		expect((await repo.listApplied("u1")).map((a) => a.id)).toContain(id);
 	});
+
+	it("finished by hand after It didn't go through: the sent attempt is recorded not sent", async () => {
+		const id = await approvedApp();
+		await repo.setSubmissionsPaused("u1", false);
+		const { pipeline } = deps(async (run) => {
+			await run.claim?.(png, []);
+			return {
+				outcome: "web_sent",
+				before: png,
+				after: null,
+				finalUrl: run.url,
+				filled: [],
+				evidence: {
+					requestSeen: false,
+					confirmation: null,
+					warning: null,
+					note: null,
+				},
+			};
+		});
+		await beginSubmissionStep(pipeline, "u1", id);
+		await submitStep(pipeline, "u1", id);
+		await repo.markSubmittedManually({
+			userId: "u1",
+			applicationId: id,
+			idempotencyKey: `hand-${id}`,
+			confirmedNotSent: true,
+		});
+		expect(await repo.getApplication("u1", id)).toMatchObject({
+			state: "applied",
+			appliedVia: "manual",
+		});
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "not_sent", mode: "auto" },
+			{ attempt: 2, status: "submitted", mode: "manual" },
+		]);
+	});
 });
 
 describe("sweep", () => {
