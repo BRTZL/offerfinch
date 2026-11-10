@@ -24,9 +24,9 @@ describe("find", () => {
 	});
 
 	it("matches Turkish dotted and dotless i both ways, with offsets on the original text", () => {
-		const text = "İstanbul, ISPARTA, ılık, istanbul";
-		expect(slices(text, "istanbul")).toEqual(["İstanbul", "istanbul"]);
-		expect(slices(text, "İSTANBUL")).toEqual(["İstanbul", "istanbul"]);
+		const text = "İzmir, ISPARTA, ılık, izmir";
+		expect(slices(text, "izmir")).toEqual(["İzmir", "izmir"]);
+		expect(slices(text, "İZMİR")).toEqual(["İzmir", "izmir"]);
 		expect(slices(text, "ilik")).toEqual(["ılık"]);
 		expect(slices(text, "isparta")).toEqual(["ISPARTA"]);
 	});
