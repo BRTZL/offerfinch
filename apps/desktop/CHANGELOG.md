@@ -8,7 +8,7 @@ version it tags (docs/releasing.md). Right after a release there is no "Unreleas
 at the top, above the newest version. Only what is merged into main belongs here.
 -->
 
-## Unreleased
+## 0.5.0 (2026-11-10)
 
 - OfferFinch can send applications for you. Before you review a job it reads the application
   form, without sending anything, and the review shows "What will be sent": every field and the
