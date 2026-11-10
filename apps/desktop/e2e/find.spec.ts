@@ -10,7 +10,7 @@ import { showStatus } from "./matches-setup";
  * ⌘F in an open application (components/system/find-bar.tsx), on the sample data: in the
  * posting of a match, then in its drafted CV. Matches are painted with the CSS Custom Highlight
  * API; ↩, ⇧↩ and ⌘G step through them, Esc closes and clears them. The sidebar and the lists
- * are never searched. Screenshots and a recording go to test-results/find-shots (or E2E_SHOTS).
+ * are never searched. Screenshots (and a recording with E2E_VIDEO=1) go to test-results/find-shots (or E2E_SHOTS).
  */
 const SHOTS = path.resolve(
 	process.env.E2E_SHOTS ?? path.join(APP_DIR, "test-results", "find-shots"),
@@ -48,7 +48,9 @@ test("⌘F finds text in the posting and the CV, steps through matches, and Esc 
 	const { app, page, errors } = await launchApp({
 		userData,
 		env: { OFFERFINCH_FAKE_MODELS: "0" },
-		recordVideoDir: SHOTS,
+		// Video only on request, as in the other specs: recording hung this test at its first
+		// resize on the release runner (macos-15), twice, in the 0.5.0 release.
+		...(process.env.E2E_VIDEO ? { recordVideoDir: SHOTS } : {}),
 	});
 	try {
 		await page.setViewportSize({ width: 1280, height: 800 });
