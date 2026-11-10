@@ -11,15 +11,15 @@ catalog:
   zod: ^4.5.4
   typescript: ^7.0.2
   "@types/node": ^26.4.1
-  "@orpc/server": ^1.15.6
-  lucide-react: ^1.66.0
+  "@orpc/server": ^1.16.2
+  lucide-react: ^1.70.0
   react: ^19.2.8
   react-dom: ^19.2.8
   sonner: ^2.0.8
-  "@orpc/client": ^1.15.6
+  "@orpc/client": ^1.16.2
   "@types/react": ^19.2.18
   "@types/react-dom": ^19.2.7
-  tailwindcss: ^4.3.3
+  tailwindcss: ^4.3.5
   drizzle-orm: 1.0.0-rc.5
 minimumReleaseAgeExclude:
   - "@tanstack/react-virtual@3.14.25"
