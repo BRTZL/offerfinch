@@ -1,4 +1,5 @@
 import type { ApplicationRun, RunResult } from "@offerfinch/core/apply/applier";
+import type { FormSchema } from "@offerfinch/core/apply/form-schema";
 import {
 	type ApplyDeps,
 	beginSubmissionStep,
@@ -12,10 +13,10 @@ import { buildClaimsPrompt } from "@offerfinch/core/tailor/claims";
 import { checkQuote } from "@offerfinch/core/tailor/profile-rules";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-
 import {
 	DashboardRepository,
 	type Database,
+	exportUserData,
 	importProfile,
 	seedCompanies,
 } from "../src/index";
@@ -65,16 +66,20 @@ afterAll(async () => {
 });
 
 /** An application approved for exactly its current documents, with a CV PDF stored. */
-async function approvedApp(): Promise<string> {
+async function approvedApp(
+	source: NormalizedJob["source"] = "greenhouse",
+	applyUrl?: string,
+): Promise<string> {
 	n++;
 	const job: NormalizedJob = {
-		source: "greenhouse",
+		source,
 		externalId: `sub-${n}`,
 		url: `https://boards.greenhouse.io/acme/jobs/sub-${n}`,
 		title: "Engineer",
 		locations: ["Remote"],
 		workplaceType: "remote",
 		descriptionText: "TypeScript",
+		...(applyUrl ? { applyUrl } : {}),
 	};
 	const { jobId } = await repo.upsertJob("u1", companyId, job);
 	const id = (await repo.getApplicationByJob("u1", jobId))?.applicationId ?? "";
@@ -148,9 +153,9 @@ function deps(behave: (run: ApplicationRun) => Promise<RunResult>) {
 			},
 		},
 		blobs,
+		// Greenhouse submits automatically; these tests drive the applier on a local stand-in.
 		boardBases: { greenhouse: "http://127.0.0.1:9/greenhouse" },
-		// Greenhouse is a hand-off board; these tests drive the applier on a local stand-in.
-		autoSubmitFixtures: true,
+		fixtures: true,
 		run: async (run) => {
 			runs.push(run);
 			return behave(run);
@@ -190,6 +195,11 @@ async function attempts(id: string) {
 		db,
 		sql`select attempt, status, mode from submission_attempts where application_id = ${id} order by attempt`,
 	);
+}
+
+/** The attempt the page shows a confirmation for (`currentAttempt`), as the dashboard sends it. */
+async function current(id: string): Promise<string | null> {
+	return (await repo.getApplication("u1", id))?.currentAttempt?.id ?? null;
 }
 
 describe("submission on approval", () => {
@@ -239,6 +249,22 @@ describe("submission on approval", () => {
 		expect(clicks.n).toBe(1);
 	});
 
+	it("wakes approved applications only when submissions go from paused to on", async () => {
+		await approvedApp();
+		const woken = async (paused: boolean) =>
+			(await repo.setSubmissionsPaused("u1", paused)).events.length;
+		expect(await woken(true)).toBe(0);
+		const first = await woken(false);
+		expect(first).toBeGreaterThan(0);
+		// On again, or off: no second round of events.
+		expect(await woken(false)).toBe(0);
+		expect(await woken(true)).toBe(0);
+		expect(await woken(true)).toBe(0);
+		expect(await repo.submissionsPaused("u1")).toBe(true);
+		expect(await woken(false)).toBe(first);
+		expect(await repo.submissionsPaused("u1")).toBe(false);
+	});
+
 	it("never clicks twice: two concurrent claims, one wins", async () => {
 		const id = await approvedApp();
 		await beginSubmissionStep(deps(submits({ n: 0 })).pipeline, "u1", id);
@@ -282,6 +308,7 @@ describe("submission on approval", () => {
 			repo.retrySubmission({
 				userId: "u1",
 				applicationId: id,
+				attemptId: await current(id),
 				idempotencyKey: `r-${id}`,
 				confirmedNotSent: false,
 			}),
@@ -289,12 +316,14 @@ describe("submission on approval", () => {
 		const first = await repo.retrySubmission({
 			userId: "u1",
 			applicationId: id,
+			attemptId: await current(id),
 			idempotencyKey: `r2-${id}`,
 			confirmedNotSent: true,
 		});
 		const second = await repo.retrySubmission({
 			userId: "u1",
 			applicationId: id,
+			attemptId: await current(id),
 			idempotencyKey: `r2-${id}`,
 			confirmedNotSent: true,
 		});
@@ -344,6 +373,7 @@ describe("submission on approval", () => {
 		await repo.retrySubmission({
 			userId: "u1",
 			applicationId: id,
+			attemptId: await current(id),
 			idempotencyKey: `p-${id}`,
 			confirmedNotSent: false,
 		});
@@ -352,33 +382,184 @@ describe("submission on approval", () => {
 		});
 	});
 
-	it("never fills or submits on a real Ashby, Greenhouse or Lever host, whatever is turned on", async () => {
+	it("stops before opening the form when paused after approval", async () => {
 		const id = await approvedApp();
 		const { pipeline, runs } = deps(submits({ n: 0 }));
-		const apply = pipeline.apply as ApplyDeps;
-		apply.boardBases = {};
-		apply.allowedHosts = [
-			"jobs.ashbyhq.com",
+		await repo.setSubmissionsPaused("u1", false);
+		await beginSubmissionStep(pipeline, "u1", id);
+		await repo.setSubmissionsPaused("u1", true);
+		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
+			outcome: "paused",
+		});
+		expect(runs).toHaveLength(0);
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "not_sent", mode: "auto" },
+		]);
+	});
+
+	it("stops before opening a browser on a real board that is not opened", async () => {
+		const id = await approvedApp();
+		const { pipeline, runs } = deps(submits({ n: 0 }));
+		// The real configuration: real board hosts, no fixtures.
+		Object.assign(pipeline.apply as ApplyDeps, {
+			boardBases: {},
+			fixtures: false,
+		});
+		await repo.setSubmissionsPaused("u1", false);
+		expect(await beginSubmissionStep(pipeline, "u1", id)).toEqual({
+			outcome: "started",
+		});
+		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
+			outcome: "needs_human",
+			reason: "Greenhouse isn't opened in Settings › Applying.",
+		});
+		expect(runs).toHaveLength(0);
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "not_sent", mode: "auto" },
+		]);
+		const [stopped] = await execute<{ error: string; proof: string }>(
+			db,
+			sql`select error, proof from submission_attempts where application_id = ${id}`,
+		);
+		expect(JSON.parse(stopped?.proof ?? "{}")).toMatchObject({
+			stop: "host_not_allowed",
+		});
+	});
+
+	it("keeps real job sites closed by default; opening and closing one is idempotent", async () => {
+		expect(await repo.openedBoards("u1")).toEqual([]);
+		expect(await repo.setBoardOpen("u1", "lever", true)).toEqual({
+			board: "lever",
+			open: true,
+		});
+		await repo.setBoardOpen("u1", "lever", true);
+		expect(await repo.openedBoards("u1")).toEqual(["lever"]);
+		await repo.setBoardOpen("u1", "lever", false);
+		await repo.setBoardOpen("u1", "lever", false);
+		expect(await repo.openedBoards("u1")).toEqual([]);
+	});
+
+	it("sends an opened real board's form only from a field list read before review", async () => {
+		const id = await approvedApp();
+		const { pipeline, runs } = deps(submits({ n: 0 }));
+		// The real configuration: real board hosts, no fixtures.
+		Object.assign(pipeline.apply as ApplyDeps, {
+			boardBases: {},
+			fixtures: false,
+		});
+		await repo.setBoardOpen("u1", "greenhouse", true);
+		await repo.setSubmissionsPaused("u1", false);
+		await beginSubmissionStep(pipeline, "u1", id);
+		// Approved while Greenhouse was closed: its form was never read, so nothing opens.
+		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(/^The form was not read before review/),
+		});
+		expect(runs).toHaveLength(0);
+		await repo.setBoardOpen("u1", "greenhouse", false);
+	});
+
+	it("opens only the opened board's own form host for a run, never another's", async () => {
+		const id = await approvedApp();
+		const { pipeline, runs } = deps(submits({ n: 0 }));
+		// The run itself is a stub (`apply.run`) and the browser throws: no site is contacted.
+		// The real configuration: real board hosts, no fixtures.
+		Object.assign(pipeline.apply as ApplyDeps, {
+			boardBases: {},
+			fixtures: false,
+		});
+		// The form read before review, while Greenhouse was open.
+		const schema = {
+			board: "greenhouse",
+			url: "https://job-boards.greenhouse.io/acme/jobs/1",
+			submit: "Submit application",
+			fields: [],
+		};
+		await execute(
+			db,
+			sql`insert into application_forms (id, user_id, application_id, status, board, url, schema, read_at) values (${crypto.randomUUID()}, 'u1', ${id}, 'read', 'greenhouse', ${schema.url}, ${JSON.stringify(schema)}, ${Date.now()})`,
+		);
+		await repo.setBoardOpen("u1", "lever", true);
+		await repo.setBoardOpen("u1", "greenhouse", true);
+		expect((await repo.submissionContext("u1", id))?.boardOpened).toBe(true);
+		await repo.setSubmissionsPaused("u1", false);
+		await beginSubmissionStep(pipeline, "u1", id);
+		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
+			outcome: "applied",
+		});
+		expect(runs).toHaveLength(1);
+		expect(runs[0]?.url).toMatch(
+			/^https:\/\/job-boards\.greenhouse\.io\/acme\/jobs\//,
+		);
+		// Greenhouse's form host and its own upload and lookup hosts; not Lever's, and never this
+		// Mac (127.0.0.1, localhost) in the real configuration.
+		expect(runs[0]?.allowedHosts).toEqual([
 			"job-boards.greenhouse.io",
-			"jobs.lever.co",
-		];
+			"boards.greenhouse.io",
+			"email-address-validator.us.greenhouse.io",
+			"grnhse-prod-jben-us-east-1.s3.amazonaws.com",
+		]);
+		await repo.setBoardOpen("u1", "greenhouse", false);
+		await repo.setBoardOpen("u1", "lever", false);
+		expect((await repo.submissionContext("u1", id))?.boardOpened).toBe(false);
+	});
+
+	it("never fills or submits a hand-off source's job, even on a fixture board", async () => {
+		const id = await approvedApp("linkedin");
+		const { pipeline, runs } = deps(submits({ n: 0 }));
 		await repo.setSubmissionsPaused("u1", false);
 		expect(await beginSubmissionStep(pipeline, "u1", id)).toMatchObject({
 			outcome: "handoff",
-			reason: expect.stringMatching(/Submit this one yourself/),
+			reason: expect.stringMatching(/Easy Apply is never used/),
 		});
 		expect(await repo.getState("u1", id)).toBe("approved");
 		await expect(dryRunApplication(pipeline, "u1", id)).rejects.toThrow(
-			/Submit this one yourself/,
+			/Easy Apply is never used/,
 		);
-		// Even an application forced into applying opens no browser on a hand-off board.
+		// Even an application forced into applying opens no browser for a hand-off source.
 		await execute(
 			db,
 			sql`update applications set state = 'applying' where id = ${id}`,
 		);
 		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
 			outcome: "needs_human",
-			reason: expect.stringMatching(/Submit this one yourself/),
+			reason: expect.stringMatching(/Easy Apply is never used/),
+		});
+		expect(runs).toHaveLength(0);
+	});
+
+	// Plan step 6: a LinkedIn job whose employer link is a Greenhouse posting fills that posting.
+	it("fills the board a hand-off source's apply link names, with that posting's keys", async () => {
+		const link = "https://job-boards.greenhouse.io/acmerobotics/jobs/4012345";
+		const id = await approvedApp("linkedin", link);
+		expect(await repo.submissionContext("u1", id)).toMatchObject({
+			source: "linkedin",
+			board: "greenhouse",
+			boardFrom: "url",
+			companyKey: "acmerobotics",
+			externalId: "4012345",
+			jobUrl: link,
+		});
+		const { pipeline } = deps(submits({ n: 0 }));
+		await repo.setSubmissionsPaused("u1", false);
+		expect(await beginSubmissionStep(pipeline, "u1", id)).toEqual({
+			outcome: "started",
+		});
+	});
+
+	it("hands off an employer's own form whose fields were never read", async () => {
+		const link = "https://careers.acme-robotics.example/jobs/42/apply";
+		const id = await approvedApp("linkedin", link);
+		expect(await repo.submissionContext("u1", id)).toMatchObject({
+			board: "web",
+			boardFrom: "url",
+			jobUrl: link,
+		});
+		const { pipeline, runs } = deps(submits({ n: 0 }));
+		await repo.setSubmissionsPaused("u1", false);
+		expect(await beginSubmissionStep(pipeline, "u1", id)).toMatchObject({
+			outcome: "handoff",
+			reason: expect.stringMatching(/has not been read/),
 		});
 		expect(runs).toHaveLength(0);
 	});
@@ -470,12 +651,14 @@ describe("manual submission", () => {
 		const first = await repo.markSubmittedManually({
 			userId: "u1",
 			applicationId: id,
+			attemptId: await current(id),
 			idempotencyKey: key,
 		});
 		expect(
 			await repo.markSubmittedManually({
 				userId: "u1",
 				applicationId: id,
+				attemptId: await current(id),
 				idempotencyKey: key,
 			}),
 		).toEqual(first);
@@ -488,10 +671,315 @@ describe("manual submission", () => {
 			repo.retrySubmission({
 				userId: "u1",
 				applicationId: id,
+				attemptId: await current(id),
 				idempotencyKey: `x-${id}`,
 				confirmedNotSent: true,
 			}),
 		).rejects.toThrow(/Refusing/);
+	});
+});
+
+describe("an employer's form sent, check your email (decision 2026-11-09)", () => {
+	it("waits for Got the email, which moves it to Applied; never applied or retried on its own", async () => {
+		const id = await approvedApp();
+		await repo.setSubmissionsPaused("u1", false);
+		const { pipeline } = deps(async (run) => {
+			await run.claim?.(png, [{ label: "Email", value: "ada@example.test" }]);
+			return {
+				outcome: "web_sent",
+				before: png,
+				after: png,
+				finalUrl: run.url,
+				filled: [{ label: "Email", value: "ada@example.test" }],
+				evidence: {
+					requestSeen: true,
+					confirmation: "Thank you for applying",
+					warning: null,
+					note: null,
+				},
+			};
+		});
+		await beginSubmissionStep(pipeline, "u1", id);
+		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(/^Sent; check your email\./),
+		});
+		const sent = await repo.getApplication("u1", id);
+		expect(sent).toMatchObject({
+			state: "needs_human",
+			unresolvedAttempt: { attempt: 1 },
+		});
+		// The page's thank-you is in the proof as evidence, not as a confirmation.
+		expect(sent?.attempts[0]?.proof).toMatchObject({
+			outcome: "web_sent",
+			evidence: { requestSeen: true, confirmation: "Thank you for applying" },
+		});
+		expect(sent?.attempts[0]?.proof).not.toHaveProperty("confirmation");
+		const row = async () =>
+			(await repo.listApplications("u1")).find((r) => r.id === id);
+		expect(Number((await row())?.sentCheckEmail)).toBe(1);
+		expect((await repo.listApplied("u1")).map((a) => a.id)).not.toContain(id);
+		// A plain retry is refused until the user says it did not go through.
+		await expect(
+			repo.retrySubmission({
+				userId: "u1",
+				applicationId: id,
+				attemptId: await current(id),
+				idempotencyKey: `r-${id}`,
+				confirmedNotSent: false,
+			}),
+		).rejects.toThrow(/may have gone through/);
+
+		// Got the email: the same path as I submitted this.
+		await repo.markSubmittedManually({
+			userId: "u1",
+			applicationId: id,
+			attemptId: await current(id),
+			idempotencyKey: `got-${id}`,
+		});
+		expect(await repo.getApplication("u1", id)).toMatchObject({
+			state: "applied",
+			appliedVia: "manual",
+			unresolvedAttempt: null,
+		});
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "submitted", mode: "auto" },
+			{ attempt: 2, status: "submitted", mode: "manual" },
+		]);
+		expect(Number((await row())?.sentCheckEmail)).toBe(0);
+		expect((await repo.listApplied("u1")).map((a) => a.id)).toContain(id);
+	});
+
+	it("finished by hand after It didn't go through: the sent attempt is recorded not sent", async () => {
+		const id = await approvedApp();
+		await repo.setSubmissionsPaused("u1", false);
+		const { pipeline } = deps(async (run) => {
+			await run.claim?.(png, []);
+			return {
+				outcome: "web_sent",
+				before: png,
+				after: null,
+				finalUrl: run.url,
+				filled: [],
+				evidence: {
+					requestSeen: false,
+					confirmation: null,
+					warning: null,
+					note: null,
+				},
+			};
+		});
+		await beginSubmissionStep(pipeline, "u1", id);
+		await submitStep(pipeline, "u1", id);
+		await repo.markSubmittedManually({
+			userId: "u1",
+			applicationId: id,
+			attemptId: await current(id),
+			idempotencyKey: `hand-${id}`,
+			confirmedNotSent: true,
+		});
+		expect(await repo.getApplication("u1", id)).toMatchObject({
+			state: "applied",
+			appliedVia: "manual",
+		});
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "not_sent", mode: "auto" },
+			{ attempt: 2, status: "submitted", mode: "manual" },
+		]);
+	});
+});
+
+describe("a confirmation names the attempt it is about (review fix)", () => {
+	// Built per test: the repository opens in beforeAll.
+	const crashing = () =>
+		deps(async (run) => {
+			await run.claim?.(png, []);
+			throw new Error("browser crashed");
+		}).pipeline;
+	const sending = () =>
+		deps(async (run) => {
+			await run.claim?.(png, []);
+			return {
+				outcome: "web_sent",
+				before: png,
+				after: null,
+				finalUrl: run.url,
+				filled: [],
+				evidence: {
+					requestSeen: true,
+					confirmation: null,
+					warning: null,
+					note: null,
+				},
+			};
+		}).pipeline;
+
+	/** Attempt 1 ends unknown, is confirmed not sent and retried; attempt 2 ends unknown too. */
+	async function retriedOnce(pipeline: PipelineDeps) {
+		const id = await approvedApp();
+		await repo.setSubmissionsPaused("u1", false);
+		await beginSubmissionStep(pipeline, "u1", id);
+		await submitStep(pipeline, "u1", id);
+		const first = await current(id);
+		expect(first).not.toBeNull();
+		await repo.retrySubmission({
+			userId: "u1",
+			applicationId: id,
+			attemptId: first,
+			idempotencyKey: `again-${id}`,
+			confirmedNotSent: true,
+		});
+		await submitStep(pipeline, "u1", id);
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "not_sent", mode: "auto" },
+			{ attempt: 2, status: "needs_human", mode: "auto" },
+		]);
+		return { id, first };
+	}
+
+	it("refuses a delayed It didn't go through and Retry meant for attempt 1 once attempt 2 ended unknown", async () => {
+		const { id, first } = await retriedOnce(crashing());
+		await expect(
+			repo.retrySubmission({
+				userId: "u1",
+				applicationId: id,
+				attemptId: first,
+				idempotencyKey: `stale-retry-${id}`,
+				confirmedNotSent: true,
+			}),
+		).rejects.toThrow("This changed since you opened it; look again.");
+		await expect(
+			repo.markSubmittedManually({
+				userId: "u1",
+				applicationId: id,
+				attemptId: first,
+				idempotencyKey: `stale-hand-${id}`,
+				confirmedNotSent: true,
+			}),
+		).rejects.toThrow("This changed since you opened it; look again.");
+		// Attempt 2 is untouched and still waits for the user; nothing went back to applying.
+		expect(await repo.getState("u1", id)).toBe("needs_human");
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "not_sent", mode: "auto" },
+			{ attempt: 2, status: "needs_human", mode: "auto" },
+		]);
+		// Named for attempt 2, the same confirmation goes through.
+		await repo.retrySubmission({
+			userId: "u1",
+			applicationId: id,
+			attemptId: await current(id),
+			idempotencyKey: `fresh-retry-${id}`,
+			confirmedNotSent: true,
+		});
+		expect(await repo.getState("u1", id)).toBe("applying");
+		expect((await attempts(id))[1]).toMatchObject({ status: "not_sent" });
+	});
+
+	it("refuses a delayed Got the email meant for attempt 1 once attempt 2 was sent", async () => {
+		const { id, first } = await retriedOnce(sending());
+		await expect(
+			repo.markSubmittedManually({
+				userId: "u1",
+				applicationId: id,
+				attemptId: first,
+				idempotencyKey: `stale-got-${id}`,
+			}),
+		).rejects.toThrow("This changed since you opened it; look again.");
+		expect(await repo.getState("u1", id)).toBe("needs_human");
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "not_sent", mode: "auto" },
+			{ attempt: 2, status: "needs_human", mode: "auto" },
+		]);
+		// A confirmation shown with no attempt is stale too once one exists.
+		await expect(
+			repo.markSubmittedManually({
+				userId: "u1",
+				applicationId: id,
+				attemptId: null,
+				idempotencyKey: `none-got-${id}`,
+			}),
+		).rejects.toThrow("This changed since you opened it; look again.");
+		await repo.markSubmittedManually({
+			userId: "u1",
+			applicationId: id,
+			attemptId: await current(id),
+			idempotencyKey: `got-${id}`,
+		});
+		expect(await attempts(id)).toEqual([
+			{ attempt: 1, status: "not_sent", mode: "auto" },
+			{ attempt: 2, status: "submitted", mode: "auto" },
+			{ attempt: 3, status: "submitted", mode: "manual" },
+		]);
+	});
+
+	/** An application whose attempt 1 waits for the user; `pipeline` decides how it ended. */
+	async function waiting(pipeline: PipelineDeps) {
+		const id = await approvedApp();
+		await repo.setSubmissionsPaused("u1", false);
+		await beginSubmissionStep(pipeline, "u1", id);
+		await submitStep(pipeline, "u1", id);
+		return { id, seen: await current(id) };
+	}
+
+	it("is one action for concurrent double clicks on the same attempt", async () => {
+		const got = (id: string, seen: string | null, key: string) =>
+			repo.markSubmittedManually({
+				userId: "u1",
+				applicationId: id,
+				attemptId: seen,
+				idempotencyKey: key,
+			});
+		// The same click delivered twice: one event, one manual attempt.
+		const same = await waiting(sending());
+		const [a, b] = await Promise.all([
+			got(same.id, same.seen, `twice-${same.id}`),
+			got(same.id, same.seen, `twice-${same.id}`),
+		]);
+		expect(b).toEqual(a);
+		expect(await attempts(same.id)).toEqual([
+			{ attempt: 1, status: "submitted", mode: "auto" },
+			{ attempt: 2, status: "submitted", mode: "manual" },
+		]);
+		// Two windows' clicks at once on the same attempt: one goes through, nothing added twice.
+		const two = await waiting(sending());
+		const results = await Promise.allSettled([
+			got(two.id, two.seen, `window-a-${two.id}`),
+			got(two.id, two.seen, `window-b-${two.id}`),
+		]);
+		expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+		expect(await attempts(two.id)).toEqual([
+			{ attempt: 1, status: "submitted", mode: "auto" },
+			{ attempt: 2, status: "submitted", mode: "manual" },
+		]);
+	});
+
+	it("retries once for concurrent double clicks, whatever their keys", async () => {
+		const retry = (id: string, seen: string | null, key: string) =>
+			repo.retrySubmission({
+				userId: "u1",
+				applicationId: id,
+				attemptId: seen,
+				idempotencyKey: key,
+				confirmedNotSent: true,
+			});
+		const same = await waiting(crashing());
+		const [a, b] = await Promise.all([
+			retry(same.id, same.seen, `k-${same.id}`),
+			retry(same.id, same.seen, `k-${same.id}`),
+		]);
+		expect(b).toEqual(a);
+		const two = await waiting(crashing());
+		const results = await Promise.allSettled([
+			retry(two.id, two.seen, `k1-${two.id}`),
+			retry(two.id, two.seen, `k2-${two.id}`),
+		]);
+		expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+		for (const id of [same.id, two.id]) {
+			expect(await repo.getState("u1", id)).toBe("applying");
+			expect(await attempts(id)).toEqual([
+				{ attempt: 1, status: "not_sent", mode: "auto" },
+			]);
+		}
 	});
 });
 
@@ -599,5 +1087,186 @@ describe("a board's question label in the profile", () => {
 		expect(prompt).not.toContain("<instructions>");
 		expect(prompt.match(/<\/profile>/g)).toHaveLength(1);
 		expect(answers).toContain("third-party text, not evidence");
+	});
+});
+
+describe("proof of every step (plan step 7)", () => {
+	it("stores each step's screenshot, serves it by step, exports it, and never shows its key", async () => {
+		const id = await approvedApp();
+		await repo.setSubmissionsPaused("u1", false);
+		const { pipeline } = deps(async (run) => {
+			const result = await submits({ n: 0 })(run);
+			return { ...result, steps: [png, png] };
+		});
+		await beginSubmissionStep(pipeline, "u1", id);
+		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
+			outcome: "applied",
+		});
+		const attempt = (await repo.getApplication("u1", id))?.attempts[0];
+		expect(attempt).toMatchObject({ status: "submitted", stepShots: 2 });
+		expect(attempt?.proof).not.toHaveProperty("stepKeys");
+		expect(attempt?.proof).toMatchObject({
+			confirmation: "Thank you for applying",
+		});
+		const step1 = await repo.getProof("u1", attempt?.id ?? "", "step-1");
+		const step2 = await repo.getProof("u1", attempt?.id ?? "", "step-2");
+		expect(step1).toMatch(/step-1\.png$/);
+		expect(step2).toMatch(/step-2\.png$/);
+		expect(await repo.getProof("u1", attempt?.id ?? "", "step-3")).toBeNull();
+		expect(await repo.getProof("u2", attempt?.id ?? "", "step-1")).toBeNull();
+		const exported = await exportUserData(db, blobs, "u1");
+		const keys = exported.files.map((f) => f.key);
+		expect(keys).toContain(step1);
+		expect(keys).toContain(step2);
+	});
+});
+
+/** A form read whose one required question is a yes/no nothing on file answers. */
+function changedSchema(url: string, extra: boolean): FormSchema {
+	const field = (name: string, label: string, required: boolean) => ({
+		ref: name,
+		kind: "text" as const,
+		name,
+		label,
+		required,
+		options: [],
+		visible: true,
+		current: [],
+		key: `text:${name}`,
+		page: 1,
+		section: "",
+	});
+	return {
+		board: "greenhouse",
+		url,
+		submit: "Submit application",
+		fields: [
+			field("first_name", "First Name", true),
+			field("email", "Email", true),
+			...(extra
+				? [
+						field(
+							"clearance",
+							"Do you hold an active security clearance?",
+							true,
+						),
+					]
+				: []),
+		],
+	};
+}
+
+describe("read the form again after it changed (plan step 7)", () => {
+	async function stoppedOnChange() {
+		const id = await approvedApp();
+		await repo.setSubmissionsPaused("u1", false);
+		const { pipeline } = deps(async () => ({
+			outcome: "stopped",
+			stop: {
+				kind: "form_changed",
+				message: 'The form asks "Clearance", which review did not list.',
+			},
+			screenshot: png,
+			filled: [],
+		}));
+		await beginSubmissionStep(pipeline, "u1", id);
+		expect(await submitStep(pipeline, "u1", id)).toMatchObject({
+			outcome: "needs_human",
+		});
+		return id;
+	}
+
+	it("stores the new read, revokes the approval and sends it back to review", async () => {
+		const id = await stoppedOnChange();
+		expect(await repo.readFormAgainRefusal("u1", id)).toBeNull();
+		const read = {
+			status: "read" as const,
+			schema: changedSchema("http://127.0.0.1:9/x", false),
+			readAt: "2026-11-09T10:00:00.000Z",
+		};
+		const input = {
+			userId: "u1",
+			applicationId: id,
+			read,
+			add: [],
+			ask: [],
+			idempotencyKey: `again-${id}`,
+		};
+		const first = await repo.readFormAgain(input);
+		expect(first.asked).toBe(0);
+		expect(first.event).not.toBeNull();
+		// A double click is one change.
+		expect((await repo.readFormAgain(input)).event).toEqual(first.event);
+		const detail = await repo.getApplication("u1", id);
+		expect(detail?.state).toBe("ready_for_review");
+		expect(detail?.activeApproval).toBeNull();
+		expect(await repo.formRead("u1", id)).toMatchObject({
+			status: "read",
+			readAt: read.readAt,
+		});
+	});
+
+	it("asks what nothing answers and waits for it in needs_human", async () => {
+		const id = await stoppedOnChange();
+		const result = await repo.readFormAgain({
+			userId: "u1",
+			applicationId: id,
+			read: {
+				status: "read",
+				schema: changedSchema("http://127.0.0.1:9/x", true),
+				readAt: "2026-11-09T10:00:00.000Z",
+			},
+			add: [
+				{ question: "Notice period", answer: "Four weeks.", sourceId: null },
+			],
+			ask: [
+				{
+					label: "Do you hold an active security clearance?",
+					required: true,
+					kind: "text",
+					options: [],
+				},
+			],
+			idempotencyKey: `ask-${id}`,
+		});
+		expect(result).toEqual({ event: null, asked: 1 });
+		const detail = await repo.getApplication("u1", id);
+		expect(detail?.state).toBe("needs_human");
+		expect(detail?.activeApproval).toBeNull();
+		expect(detail?.questions.filter((q) => q.status === "open")).toHaveLength(
+			1,
+		);
+		expect(
+			detail?.documents.find((d) => d.kind === "form_answers")?.content,
+		).toContain("Four weeks.");
+	});
+
+	it("is refused while an attempt may have gone through", async () => {
+		const id = await approvedApp();
+		await repo.setSubmissionsPaused("u1", false);
+		const { pipeline } = deps(async (run) => {
+			await run.claim?.(png, []);
+			throw new Error("browser crashed");
+		});
+		await beginSubmissionStep(pipeline, "u1", id);
+		await submitStep(pipeline, "u1", id);
+		expect(await repo.readFormAgainRefusal("u1", id)).toMatch(
+			/may have gone through/,
+		);
+		await expect(
+			repo.readFormAgain({
+				userId: "u1",
+				applicationId: id,
+				read: {
+					status: "read",
+					schema: changedSchema("http://127.0.0.1:9/x", false),
+					readAt: "2026-11-09T10:00:00.000Z",
+				},
+				add: [],
+				ask: [],
+				idempotencyKey: `unknown-${id}`,
+			}),
+		).rejects.toThrow(/may have gone through/);
+		expect(await repo.getState("u1", id)).toBe("needs_human");
 	});
 });

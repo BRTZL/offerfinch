@@ -11,6 +11,7 @@ import { approvalMethods } from "./repository/approval";
 import type { DrizzlePipelineRepositoryContext } from "./repository/context";
 import { documentsMethods } from "./repository/documents";
 import { eventsMethods } from "./repository/events";
+import { formsMethods } from "./repository/forms";
 import { jobsMethods } from "./repository/jobs";
 import { profileMethods } from "./repository/profile";
 import { questionsMethods } from "./repository/questions";
@@ -248,6 +249,12 @@ export class DrizzlePipelineRepository
 		return eventsMethods.consumeEvent.apply(this, args);
 	}
 
+	protected refuseEmptyRequired(
+		...args: Parameters<typeof eventsMethods.refuseEmptyRequired>
+	) {
+		return eventsMethods.refuseEmptyRequired.apply(this, args);
+	}
+
 	recordUserAction(...args: Parameters<typeof eventsMethods.recordUserAction>) {
 		return eventsMethods.recordUserAction.apply(this, args);
 	}
@@ -256,6 +263,13 @@ export class DrizzlePipelineRepository
 		...args: Parameters<typeof submissionMethods.submissionsPaused>
 	) {
 		return submissionMethods.submissionsPaused.apply(
+			this as unknown as DrizzlePipelineRepositoryContext,
+			args,
+		);
+	}
+
+	openedBoards(...args: Parameters<typeof submissionMethods.openedBoards>) {
+		return submissionMethods.openedBoards.apply(
 			this as unknown as DrizzlePipelineRepositoryContext,
 			args,
 		);
@@ -341,6 +355,36 @@ export class DrizzlePipelineRepository
 
 	savedAnswers(...args: Parameters<typeof questionsMethods.savedAnswers>) {
 		return questionsMethods.savedAnswers.apply(this, args);
+	}
+
+	formRead(...args: Parameters<typeof formsMethods.formRead>) {
+		return formsMethods.formRead.apply(this, args);
+	}
+
+	protected missingRequiredFields(
+		...args: Parameters<typeof formsMethods.missingRequiredFields>
+	) {
+		return formsMethods.missingRequiredFields.apply(this, args);
+	}
+
+	saveFormRead(...args: Parameters<typeof formsMethods.saveFormRead>) {
+		return formsMethods.saveFormRead.apply(this, args);
+	}
+
+	addFormAnswers(...args: Parameters<typeof formsMethods.addFormAnswers>) {
+		return formsMethods.addFormAnswers.apply(this, args);
+	}
+
+	protected writeFormRead(
+		...args: Parameters<typeof formsMethods.writeFormRead>
+	) {
+		return formsMethods.writeFormRead.apply(this, args);
+	}
+
+	protected mergeFormAnswers(
+		...args: Parameters<typeof formsMethods.mergeFormAnswers>
+	) {
+		return formsMethods.mergeFormAnswers.apply(this, args);
 	}
 
 	markEventSent(...args: Parameters<typeof eventsMethods.markEventSent>) {

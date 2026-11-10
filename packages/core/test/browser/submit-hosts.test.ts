@@ -1,15 +1,16 @@
+import type { FormRead } from "@offerfinch/core/apply/form-schema";
 import type { Board } from "@offerfinch/core/apply/forms";
+import { readApplicationForm } from "@offerfinch/core/apply/read-form";
 import {
+	type ApplyDeps,
+	type SubmissionContext,
 	type SubmissionStore,
 	submitStep,
 } from "@offerfinch/core/apply/submit";
 import { MemoryBlobStore } from "@offerfinch/core/export/export";
 import type { PipelineDeps } from "@offerfinch/core/pipeline/ports";
-import { PlaywrightBrowserProvider } from "@offerfinch/core/scrape/browser";
-import { USER_AGENT } from "@offerfinch/core/sources/types";
-import { chromium } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { chromePath } from "./browser";
+import { fixtureBrowser, siteBrowser } from "./browser";
 import { type FixtureBoards, startFixtureBoards } from "./fixture-boards";
 
 /**
@@ -17,25 +18,6 @@ import { type FixtureBoards, startFixtureBoards } from "./fixture-boards";
  * redirects, navigates or posts elsewhere must stop the run before anything is sent there.
  * Only 127.0.0.1 is allowed here; localhost stands in for the disallowed host.
  */
-
-/**
- * Headless Chromium with its Local Network Access checks off. A page the guard fulfills has no
- * address, so Chromium treats it as public and blocks its requests to localhost by itself, which
- * would hide a leak to the away host these tests look for. Test-only; never used on a real board.
- */
-const fixtureBrowser = () =>
-	new PlaywrightBrowserProvider(
-		"fixture-playwright",
-		() =>
-			chromium.launch({
-				headless: true,
-				executablePath: chromePath,
-				args: [
-					"--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights",
-				],
-			}),
-		USER_AGENT,
-	);
 
 let boards: FixtureBoards;
 beforeAll(async () => {
@@ -55,15 +37,16 @@ const PROFILE = {
 	],
 };
 
-function harness(board: Board, jobId: string) {
+function harness(board: Board, jobId: string, source: string = board) {
 	const blobs = new MemoryBlobStore();
 	void blobs.put("cv.pdf", new TextEncoder().encode("%PDF-1.4 cv"), "x");
-	const calls: { method: string; reason?: string }[] = [];
+	const calls: { method: string; reason?: string; key?: string | null }[] = [];
 	const store = {
 		submissionsPaused: async () => false,
 		resolveInterrupted: async () => false,
 		submissionContext: async () => ({
 			applicationId: "app-1",
+			source,
 			board,
 			companyKey: "acme-robotics",
 			externalId: jobId,
@@ -79,12 +62,16 @@ function harness(board: Board, jobId: string) {
 			cvPdfKey: "cv.pdf",
 			coverLetterPdfKey: null,
 		}),
-		claimSubmission: vi.fn(async () => {
-			calls.push({ method: "claim" });
+		claimSubmission: vi.fn(async (_u, _a, input) => {
+			calls.push({ method: "claim", key: input.beforeKey });
 			return { go: true as const, attemptId: "attempt-1" };
 		}),
 		finishSubmission: vi.fn(async (_u, _a, _id, input) => {
-			calls.push({ method: "finish", reason: input.reason });
+			calls.push({
+				method: "finish",
+				reason: input.reason,
+				key: input.afterKey,
+			});
 		}),
 		stopSubmission: vi.fn(async (_u, _a, input) => {
 			calls.push({ method: "stop", reason: input.reason });
@@ -105,11 +92,11 @@ function harness(board: Board, jobId: string) {
 			browser: fixtureBrowser(),
 			blobs,
 			allowedHosts: ["127.0.0.1"],
-			autoSubmitFixtures: true,
+			fixtures: true,
 			boardBases: { [board]: `${boards.url}/${board}` },
 		},
 	} as unknown as PipelineDeps;
-	return { deps, calls };
+	return { deps, calls, blobs };
 }
 
 const away = (jobId: string) =>
@@ -168,3 +155,107 @@ describe.each(["ashby", "greenhouse", "lever"] as const)(
 		}, 60_000);
 	},
 );
+
+describe.each(["ashby", "greenhouse", "lever"] as const)(
+	"%s: submission on approval",
+	(board) => {
+		it("fills and submits once, with screenshots before and after", async () => {
+			const jobId = `${board}-auto-submit`;
+			const { deps, calls, blobs } = harness(board, jobId);
+			const outcome = await submitStep(deps, "u1", "app-1");
+			expect(outcome.outcome).toBe("applied");
+			expect(boards.count(jobId)).toBe(1);
+			expect(calls.map((c) => c.method)).toEqual(["claim", "finish"]);
+			expect(calls[1]?.reason).toMatch(/^Submitted; the board confirmed/);
+			for (const c of calls) {
+				expect(c.key).toBeTruthy();
+				expect(await blobs.get(c.key ?? "")).not.toBeNull();
+			}
+		}, 60_000);
+
+		it("sends nothing for a hand-off source's job, even on this board", async () => {
+			const jobId = `${board}-handoff-source`;
+			const { deps, calls } = harness(board, jobId, "linkedin");
+			const outcome = await submitStep(deps, "u1", "app-1");
+			expect(outcome.outcome).toBe("needs_human");
+			expect(boards.count(jobId)).toBe(0);
+			expect(calls.map((c) => c.method)).toEqual(["stop"]);
+			expect(calls[0]?.reason).toMatch(/Easy Apply is never used/);
+		}, 60_000);
+	},
+);
+
+/**
+ * Codex review of PR #149 (2026-11-09), P1: the real app allowed 127.0.0.1 and localhost in every
+ * run, so a board host that redirected to this Mac (and a `POST /mutate` there) was followed. Here
+ * the board is on a public-looking name (`boards.acme.test`, answered by the local fixture server
+ * through `siteBrowser`), with the hosts the desktop used to pass (`submitAllowedHosts`: its own
+ * and 127.0.0.1, localhost) and no `fixtures`: the real configuration. Its form 302s to
+ * `http://localhost:<port>/…`, which must be refused, in the submission and in the form read.
+ */
+describe("the real configuration: a redirect to this Mac is refused", () => {
+	const jobId = "greenhouse-redirect-away";
+	const port = () => new URL(boards.url).port;
+	const base = () => `http://boards.acme.test:${port()}/greenhouse`;
+	const allowedHosts = ["boards.acme.test", "127.0.0.1", "localhost"];
+	const context = (): SubmissionContext => ({
+		applicationId: "app-1",
+		source: "greenhouse",
+		board: "greenhouse",
+		companyKey: "acme-robotics",
+		externalId: jobId,
+		jobUrl: "",
+		formAnswers: [],
+		coverLetterMarkdown: null,
+		cvPdfKey: "cv.pdf",
+		coverLetterPdfKey: null,
+	});
+
+	it("stops the submission at the redirect, before anything is filled or sent", async () => {
+		const { deps, calls } = harness("greenhouse", jobId);
+		const url = `${base()}/acme-robotics/jobs/${jobId}`;
+		const read: FormRead = {
+			status: "read",
+			schema: {
+				board: "greenhouse",
+				url,
+				submit: "Submit application",
+				fields: [],
+			},
+			readAt: new Date().toISOString(),
+		};
+		const apply = deps.apply as ApplyDeps;
+		Object.assign(apply, {
+			browser: siteBrowser(Number(port())),
+			boardBases: { greenhouse: base() },
+			allowedHosts,
+			fixtures: undefined,
+		});
+		Object.assign(apply.store, { formRead: async () => read });
+		const outcome = await submitStep(deps, "u1", "app-1");
+		expect(outcome).toMatchObject({
+			outcome: "needs_human",
+			reason: expect.stringMatching(/localhost/),
+		});
+		expect(calls.map((c) => c.method)).toEqual(["stop"]);
+		expect(away(jobId)).toEqual([]);
+	}, 60_000);
+
+	it("reads no form there before review", async () => {
+		const read = await readApplicationForm(
+			{
+				store: {} as SubmissionStore,
+				browser: siteBrowser(Number(port())),
+				blobs: new MemoryBlobStore(),
+				boardBases: { greenhouse: base() },
+				allowedHosts,
+			},
+			context(),
+		);
+		// The navigation is refused at its redirect to localhost: nothing is read there.
+		expect(read).toMatchObject({
+			status: "failed",
+			note: expect.stringMatching(/ERR_BLOCKED_BY_CLIENT/),
+		});
+	}, 60_000);
+});

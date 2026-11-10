@@ -55,6 +55,10 @@ describe("Inbox status chips", () => {
 		expect(inboxStatus(row({ state: "needs_human" }))).toMatchObject({
 			bucket: "review",
 		});
+		// An employer's form that was sent waits for the user's email (decision 2026-11-09).
+		expect(
+			inboxStatus(row({ state: "needs_human", sentCheckEmail: 1 })),
+		).toMatchObject({ bucket: "review", label: "Sent — check your email" });
 		expect(inboxStatus(row({ state: "approved" }))).toMatchObject({
 			bucket: "approved",
 			label: "Approved",

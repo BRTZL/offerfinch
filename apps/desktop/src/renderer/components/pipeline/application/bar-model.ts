@@ -13,6 +13,8 @@ export interface BarApp {
 	reviewCurrent?: boolean;
 	checkError?: unknown;
 	staleProfile?: unknown[];
+	/** Required fields of "What will be sent" that have no value. */
+	missingRequired?: string[];
 }
 
 /**
@@ -43,6 +45,11 @@ export function approveBlocked(app: BarApp | undefined): string | null {
 		return flags === 1
 			? "Approve opens once the flagged line is resolved: edit, delete or confirm it."
 			: `Approve opens once the ${flags} flagged lines are resolved: edit, delete or confirm each.`;
+	const missing = app.missingRequired ?? [];
+	if (missing.length > 0)
+		return missing.length === 1
+			? `Approve opens once "${missing[0]}" has a value: it is required and would be sent empty.`
+			: `Approve opens once ${missing.length} required fields have a value: ${missing.map((m) => `"${m}"`).join(", ")} would be sent empty.`;
 	if ((app.staleProfile?.length ?? 0) > 0)
 		return "Your profile changed since the check: check again before approving.";
 	if (!app.reviewCurrent && !app.checkError)

@@ -1,6 +1,7 @@
 import { DashboardRepository, DrizzleSpendStore } from "@offerfinch/db";
 import { flowRuns } from "@offerfinch/db/schema/jobs";
 import { applications, companies, jobs } from "@offerfinch/db/schema/pipeline";
+import { sentCheckEmail } from "@offerfinch/db/web-sent";
 import { APPLICATION_KIND, recentScans } from "@offerfinch/runner";
 import { ORPCError } from "@orpc/server";
 import {
@@ -71,6 +72,8 @@ export const desktopStatusRouter = {
 			title: jobs.title,
 			company: companies.name,
 			source: jobs.source,
+			/** 1 while an employer's form that was sent waits for "Got the email". */
+			sentCheckEmail,
 		};
 		const joined = () =>
 			w.db

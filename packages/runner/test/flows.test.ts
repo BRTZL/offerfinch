@@ -206,6 +206,7 @@ describe("the core flows on the durable runner", () => {
 		const submitted = await dashboard.markSubmittedManually({
 			userId: "u1",
 			applicationId: kept.id,
+			attemptId: null,
 			idempotencyKey: "submitted-test-1",
 		});
 		await live.sendEvent(submitted);

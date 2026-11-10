@@ -4,7 +4,6 @@ import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import Database from "better-sqlite3";
 import { DB_FILE } from "../src/main/database-file";
-import type { DesktopBridge } from "../src/shared/bridge";
 import { APP_DIR, launchApp, tempUserData } from "./launch";
 import { showStatus } from "./matches-setup";
 
@@ -139,13 +138,12 @@ test("try it with sample data: matches, prepare, review, applied, then leave wit
 			.filter({ hasText: "Kestrel Freight" });
 		await kestrel.click();
 		await expect(page.getByTestId("interested")).toBeVisible();
-		// No link leaves the app in the demo: one the page asks to open is refused, with a toast
-		// (an .invalid name, so even a slip would reach nothing).
-		await page.evaluate(() =>
-			(window as unknown as { desktop: DesktopBridge }).desktop.openExternal(
-				"https://posting.example.invalid/jobs/1",
-			),
-		);
+		// No link leaves the app in the demo: one the page opens is refused, with a toast (an
+		// .invalid name, so even a slip would reach nothing). The page has no call that opens a
+		// URL it names; a link it opens goes through main's link guard.
+		await page.evaluate(() => {
+			window.open("https://posting.example.invalid/jobs/1", "_blank");
+		});
 		await expect(page.getByText("Links are off in the demo")).toBeVisible();
 		const appId = new URL(page.url()).pathname.split("/").pop();
 		await page.getByTestId("interested").click();

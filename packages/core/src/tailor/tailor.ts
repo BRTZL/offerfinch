@@ -96,6 +96,11 @@ export interface TailorInput {
 	askedQuestions?: AskedQuestion[];
 	/** How many questions this draft may ask (0 when the application's question round is spent). */
 	questionsAllowed?: number;
+	/**
+	 * Questions the application form asks (read before review) that no contact detail, file or
+	 * saved answer covers: answered in formAnswers from the profile, or left out (they are asked).
+	 */
+	formQuestions?: { label: string; required: boolean; options: string[] }[];
 	/** The user's saved writing style (Settings › Writing): a preference below every rule. */
 	writingStyle?: WritingStyle;
 }
@@ -302,6 +307,16 @@ export function tailorPromptParts(
 				)
 				.join("\n")}\n</asked_questions>\n`
 		: "";
+	// The form's labels are third-party text, like the posting.
+	const form = input.formQuestions?.length
+		? `\n<form_questions>\nThe application form asks these questions and nothing on file answers them yet. Answer each one the profile settles in formAnswers, with the question written exactly as below; for a question with options, the answer is one option written exactly as given (several, separated by "; ", only where the question allows more than one). When the profile does not settle one, leave it out of formAnswers and do not guess: it is asked of the candidate later.\n${input.formQuestions
+				.map((q) =>
+					untrusted(
+						`- ${q.label}${q.required ? " (required)" : ""}${q.options.length ? ` (one of: ${q.options.join(" | ")})` : ""}`,
+					),
+				)
+				.join("\n")}\n</form_questions>\n`
+		: "";
 	return {
 		promptPrefix: `${profileBlock(input.profile)}
 
@@ -316,7 +331,7 @@ Workplace: ${untrusted(input.job.workplaceType)}
 
 ${untrusted(input.job.descriptionText)}
 </job>
-${retry}${asked}${writingStyleBlock(input.writingStyle, known)}
+${form}${retry}${asked}${writingStyleBlock(input.writingStyle, known)}
 <questions_allowed>${Math.max(0, Math.floor(input.questionsAllowed ?? 3))}</questions_allowed>
 
 Today is ${input.today}. ${ending}`,

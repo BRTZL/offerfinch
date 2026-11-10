@@ -222,10 +222,20 @@ export interface DemoStatus {
 export interface DesktopBridge {
 	info(): Promise<AppInfo>;
 	/**
-	 * Opens an http(s) link in the default browser. Anything else is refused. In try-it mode no
-	 * link opens (`onLinkRefused` is called instead).
+	 * Opens one application's posting in the default browser. The worker resolves its link from
+	 * the stored job; the page never names a URL. In try-it mode no link opens (`onLinkRefused`).
 	 */
-	openExternal(url: string): Promise<void>;
+	openPosting(applicationId: string): Promise<void>;
+	/**
+	 * Opens one application's form in the default browser (Finish it yourself, the hand-off's
+	 * link). `attemptId`: the attempt the page showed (`currentAttempt`). The worker resolves the
+	 * stored form and refuses a changed attempt, or one whose click may have sent the
+	 * application before "It didn't go through" is recorded.
+	 */
+	openApplicationForm(
+		applicationId: string,
+		attemptId: string | null,
+	): Promise<void>;
 	/** Writes an exported file (PDF, DOCX) to a temp file and opens it in its default app. */
 	openDocument(documentId: string): Promise<void>;
 	/** Saves an exported file or proof screenshot where the user picks. */
@@ -264,7 +274,16 @@ export interface DesktopBridge {
 	 */
 	saveInterviewEvent(stageId: string): Promise<string | null>;
 	/** Opens a submission screenshot in the default viewer. */
-	openProof(attemptId: string, which: "before" | "after"): Promise<void>;
+	openProof(attemptId: string, which: ProofShot): Promise<void>;
+	/**
+	 * A submission screenshot as a PNG data URL: `thumb` scaled to 480 px wide for the proof's
+	 * thumbnails, `full` as stored. Before or after the click, or a multi-step form's step.
+	 */
+	proofImage(
+		attemptId: string,
+		which: ProofShot,
+		size: "thumb" | "full",
+	): Promise<string>;
 	/** Help › Export Diagnostics: builds and redacts the bundle, then saves it where the user picks. */
 	diagnostics: {
 		prepare(): Promise<DiagnosticsPreview>;
@@ -343,13 +362,23 @@ export interface DesktopBridge {
 }
 
 /** IPC channel names, shared by main and preload. */
+/** A submission screenshot: before or after the click, or a step of a multi-step form. */
+export type ProofShot = "before" | "after" | `step-${number}`;
+
+export function isProofShot(value: unknown): value is ProofShot {
+	return (
+		typeof value === "string" && /^(before|after|step-\d{1,2})$/.test(value)
+	);
+}
+
 export const IPC = {
 	info: "app:info",
 	/** The one theme source: main answers light or dark and tells the page when it changes. */
 	themeGet: "theme:get",
 	themeChanged: "theme:changed",
 	windowActive: "window:active",
-	openExternal: "app:open-external",
+	openPosting: "app:open-posting",
+	openApplicationForm: "app:open-application-form",
 	openDocument: "files:open",
 	saveDocument: "files:save",
 	saveDataExport: "files:save-export",
@@ -362,6 +391,7 @@ export const IPC = {
 	demoLeave: "demo:leave",
 	saveInterviewEvent: "files:save-interview",
 	openProof: "files:proof",
+	proofImage: "files:proof-image",
 	diagnosticsPrepare: "diagnostics:prepare",
 	diagnosticsSave: "diagnostics:save",
 	diagnosticsDiscard: "diagnostics:discard",

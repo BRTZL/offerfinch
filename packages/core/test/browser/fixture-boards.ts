@@ -1,4 +1,10 @@
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import { randomUUID } from "node:crypto";
+import {
+	createServer,
+	type IncomingMessage,
+	type Server,
+	type ServerResponse,
+} from "node:http";
 
 /**
  * Local stand-ins for the Ashby, Greenhouse and Lever hosted application forms, built from the
@@ -19,6 +25,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
  *                  checkbox group with an option already chosen (Lever: the relocation group has
  *                  "No" ticked as well)
  *   radio-default  Ashby's gender radio arrives with "Male" checked (a radio cannot be unticked)
+ *   location-prefix  Lever's location lookup offers only longer names that start with the text
  *   fake-thanks    the submission is refused on a page that only looks like a confirmation:
  *                  Lever lands on /lever/thanks-company/<id>/apply and Greenhouse on
  *                  .../confirmation-failed, both saying "Application rejected"; Ashby shows its
@@ -159,16 +166,19 @@ function ashbyForm(company: string, variant: Set<string>): string {
 				]
 			: []),
 	];
-	const eeo = `<div class="ashby-application-form-section-container"><div class="ashby-application-form-field-entry"><fieldset><legend class="ashby-application-form-question-title">Gender</legend>${[
+	// As on the real form (2026-11-09): the radio group is its own fieldset, outside any field
+	// entry, and its control name starts with a UUID that changes on every page load.
+	const eeoName = `${randomUUID()}__systemfield_eeoc_gender`;
+	const eeo = `<div class="ashby-application-form-section-container"><h3 class="ashby-application-form-section-header">Voluntary self-identification</h3><fieldset class="_fieldEntry_1e3gg_28 ashby-application-form-input-radio-group"><label class="_heading_f7cvd_52 ashby-application-form-question-title" for="_systemfield_eeoc_gender">Gender</label><div class="ashby-application-form-question-description"><p>Input gender</p></div>${[
 		"Male",
 		"Female",
 		"Decline to self-identify",
 	]
 		.map(
 			(g, i) =>
-				`<div class="ashby-application-form-input-radio-group-option"><input type="radio" id="eeo-gender-${i}" name="x__systemfield_eeoc_gender" value="${g}"${variant.has("radio-default") && i === 0 ? " checked" : ""}><label class="ashby-application-form-input-radio-group-option-label" for="eeo-gender-${i}">${g}</label></div>`,
+				`<div class="ashby-application-form-input-radio-group-option"><input type="radio" id="${eeoName}-labeled-radio-${i}" name="${eeoName}" value="${g}"${variant.has("radio-default") && i === 0 ? " checked" : ""}><label class="ashby-application-form-input-radio-group-option-label" for="${eeoName}-labeled-radio-${i}">${g}</label></div>`,
 		)
-		.join("")}</fieldset></div></div>`;
+		.join("")}</fieldset></div>`;
 	return page(
 		"Ashby",
 		`<h1>${company}</h1>${variant.has("captcha") ? CAPTCHA_FRAME : `<div class="ashby-application-form-container"><div class="ashby-application-form-section-container">${fields.join("")}</div>${eeo}<button class="ashby-application-form-submit-button"><span>Submit Application</span></button></div>`}`,
@@ -207,6 +217,8 @@ if (submit) submit.addEventListener("click", async () => {
 	);
 }
 
+const PHONE_COUNTRIES = ["United States +1", "Canada +1", "Turkey +90"];
+
 function greenhouseForm(company: string, variant: Set<string>): string {
 	const wrapper = (inner: string) =>
 		`<div class="field-wrapper">${inner}</div>`;
@@ -231,7 +243,9 @@ function greenhouseForm(company: string, variant: Set<string>): string {
 		text("first_name", "First Name", true),
 		text("last_name", "Last Name", true),
 		text("email", "Email", true),
-		`<div><fieldset class="phone-input"><legend class="visually-hidden">Phone</legend><input id="phone" name="phone" type="tel" aria-label="Phone" aria-required="false" class="input" value=""></fieldset></div>`,
+		// As on the real form (2026-11-09): a "Country" picker beside the number, which the page
+		// sets itself from the number's calling code as it is typed.
+		`<div><fieldset class="phone-input"><legend class="visually-hidden">Phone</legend><div class="phone-input__country"><div class="select"><div class="select__container"><label id="country-label" for="country" class="label select__label">Country</label><div class="select__control"><div class="select__single-value"></div><input class="select__input" id="country" role="combobox" aria-required="false" aria-labelledby="country-label" autocomplete="off" type="text" value="" data-options='${JSON.stringify(PHONE_COUNTRIES)}'><input type="hidden" name="country" value=""><div class="options" hidden></div></div></div></div></div><div class="phone-input__phone"><label id="phone-label" for="phone" class="label">Phone</label><input id="phone" name="phone" type="tel" aria-required="false" class="input" value=""></div></fieldset></div>`,
 		file("resume", "Resume/CV", true),
 		file("cover_letter", "Cover Letter"),
 		text("question_201", "LinkedIn Profile"),
@@ -247,6 +261,7 @@ function greenhouseForm(company: string, variant: Set<string>): string {
 					),
 				]
 			: []),
+		"<h3>Voluntary self-identification</h3>",
 		variant.has("defaults")
 			? wrapper(
 					`<label for="gender" class="label">Gender</label><select id="gender" name="gender"><option value="">Select...</option><option selected>Male</option><option>Female</option><option>Decline To Self Identify</option></select>`,
@@ -285,6 +300,13 @@ for (const input of document.querySelectorAll("input[role=combobox]")) {
 	input.addEventListener("input", () => { hidden.value = ""; render(); });
 	input.addEventListener("keydown", (e) => { if (e.key === "Escape") { list.hidden = true; list.innerHTML = ""; } });
 }
+const phone = document.getElementById("phone");
+if (phone) phone.addEventListener("input", () => {
+	const code = (phone.value.match(/^\\+(\\d{1,3})[\\s-]/) || [])[1];
+	const box = document.getElementById("country").parentElement;
+	box.querySelector(".select__single-value").textContent = code ? "+" + code : "";
+	box.querySelector("input[type=hidden]").value = code ? "+" + code : "";
+});
 if (form) form.addEventListener("submit", (e) => {
 	for (const el of form.querySelectorAll(".error-message")) el.remove();
 	const missing = [];
@@ -319,9 +341,12 @@ function leverForm(company: string, variant: Set<string>): string {
 		row("Full name", `<input type="text" name="name" required="">`, true),
 		row("Email", `<input type="email" name="email" required="">`, true),
 		row("Phone", `<input type="text" name="phone">`),
+		// As on the real form (2026-11-09, jobs.lever.co/js/retrieveLocations.js): suggestions come
+		// from GET /searchLocations 500 ms after the last key, as plain divs picked on mousedown;
+		// leaving the box without picking one empties it.
 		row(
 			"Current location",
-			`<input type="text" name="location" id="location-input" required="" autocomplete="off"><input type="hidden" name="selectedLocation" value=""><div class="options dropdown-location" hidden></div>`,
+			`<input class="location-input" data-qa="location-input" id="location-input" type="text" maxlength="100" name="location" required=""><input id="selected-location" type="hidden" name="selectedLocation"><div class="dropdown-container" style="display:none"><div class="dropdown-results"></div><div class="dropdown-no-results" style="display:none">No location found. Try entering a different location</div></div>`,
 			true,
 		),
 		row("LinkedIn URL", `<input type="text" name="urls[LinkedIn]">`),
@@ -365,13 +390,36 @@ window.CAPTCHA_AFTER = ${variant.has("captcha-after")};
 const form = document.getElementById("application-form");
 const loc = document.getElementById("location-input");
 if (loc) {
-	const list = loc.parentElement.querySelector(".options");
-	loc.addEventListener("input", () => {
-		loc.parentElement.querySelector("input[name=selectedLocation]").value = "";
-		const q = loc.value.trim();
-		list.innerHTML = q ? [q, q + " Province"].map((o) => '<div role="option">' + o + "</div>").join("") : "";
-		list.hidden = !q;
-		for (const opt of list.querySelectorAll("[role=option]")) opt.addEventListener("click", (e) => { e.preventDefault(); loc.value = opt.textContent; loc.parentElement.querySelector("input[name=selectedLocation]").value = JSON.stringify({ name: opt.textContent }); list.hidden = true; });
+	const box = loc.parentElement;
+	const shown = (sel, on) => { box.querySelector(sel).style.display = on ? "flex" : "none"; };
+	const results = box.querySelector(".dropdown-results");
+	const selected = document.getElementById("selected-location");
+	let found;
+	let timer;
+	const search = () => {
+		results.innerHTML = ""; found = undefined;
+		const text = loc.value;
+		if (!text) return;
+		fetch("/searchLocations?text=" + encodeURIComponent(text) + "${variant.has("location-prefix") ? "&prefix=1" : ""}").then((r) => r.json()).then((list) => {
+			found = list;
+			results.innerHTML = list.map((l, i) => '<div class="dropdown-location" id="location-' + i + '">' + l.name + "</div>").join("");
+			shown(".dropdown-no-results", list.length === 0);
+		}).catch(() => shown(".dropdown-no-results", true));
+	};
+	loc.addEventListener("input", () => shown(".dropdown-container", true));
+	loc.addEventListener("keydown", () => { clearTimeout(timer); timer = setTimeout(search, 500); });
+	loc.addEventListener("blur", () => {
+		if (box.querySelector(".dropdown-container").style.display !== "none") {
+			shown(".dropdown-container", false); results.innerHTML = ""; loc.value = ""; selected.value = "";
+		}
+	});
+	document.addEventListener("mousedown", (e) => {
+		const option = e.target.closest && e.target.closest(".dropdown-location");
+		if (!option) return;
+		shown(".dropdown-container", false);
+		loc.value = option.textContent;
+		selected.value = JSON.stringify(found[Number(option.id.split("-")[1])]);
+		results.innerHTML = "";
 	});
 }
 const button = document.getElementById("btn-submit");
@@ -387,14 +435,62 @@ if (button) button.addEventListener("click", () => {
 	);
 }
 
+/**
+ * Lever's location lookup: the typed text as a suggestion (second, so a pick is not just the
+ * first one), or with `prefix` only longer names ending in ", Region" (a name that already ends
+ * so is offered as it is).
+ */
+function searchLocations(params: URLSearchParams): { name: string }[] {
+	const typed = params.get("text") ?? "";
+	const names =
+		params.has("prefix") && !typed.endsWith(", Region")
+			? [`${typed}, Region`, `${typed} Province, Region`]
+			: [`${typed} Province`, typed];
+	return names.map((name) => ({ name }));
+}
+
+/** The fixture server's own routes (records, Lever's lookup, a challenge page); true when served. */
+function serveUtility(
+	url: URL,
+	req: IncomingMessage,
+	res: ServerResponse,
+	state: Pick<FixtureBoards, "submissions" | "leaks">,
+): boolean {
+	const json = (body: unknown) => {
+		res.writeHead(200, { "content-type": "application/json" });
+		res.end(JSON.stringify(body));
+	};
+	if (url.pathname === "/__submissions") json(state.submissions);
+	else if (url.pathname === "/searchLocations")
+		json(searchLocations(url.searchParams));
+	else if (url.pathname.startsWith("/__leak/")) {
+		state.leaks.push({
+			host: (req.headers.host ?? "").split(":")[0] ?? "",
+			path: url.pathname,
+		});
+		res.writeHead(204);
+		res.end();
+	} else if (url.pathname.startsWith("/recaptcha/")) {
+		res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+		res.end(page("Challenge", "<p>Select all images with traffic lights.</p>"));
+	} else return false;
+	return true;
+}
+
 async function readBody(req: IncomingMessage): Promise<string> {
 	const chunks: Buffer[] = [];
 	for await (const chunk of req) chunks.push(chunk as Buffer);
 	return Buffer.concat(chunks).toString("latin1");
 }
 
-/** Starts the fixture boards on 127.0.0.1 (port 0 = any free port). */
-export async function startFixtureBoards(port = 0): Promise<FixtureBoards> {
+/**
+ * Starts the fixture boards on 127.0.0.1 (port 0 = any free port). `variants` adds variants to
+ * a job id that cannot carry them in its name (the desktop e2e's numeric Greenhouse ids).
+ */
+export async function startFixtureBoards(
+	port = 0,
+	options: { variants?: Record<string, string[]> } = {},
+): Promise<FixtureBoards> {
 	const submissions: FixtureSubmission[] = [];
 	const leaks: FixtureBoards["leaks"] = [];
 	const failedOnce = new Set<string>();
@@ -410,27 +506,7 @@ export async function startFixtureBoards(port = 0): Promise<FixtureBoards> {
 			res.writeHead(status, { "content-type": "text/html; charset=utf-8" });
 			res.end(body);
 		};
-		if (url.pathname === "/__submissions") {
-			res.writeHead(200, { "content-type": "application/json" });
-			res.end(JSON.stringify(submissions));
-			return;
-		}
-		if (url.pathname.startsWith("/__leak/")) {
-			leaks.push({
-				host: (req.headers.host ?? "").split(":")[0] ?? "",
-				path: url.pathname,
-			});
-			res.writeHead(204);
-			res.end();
-			return;
-		}
-		if (url.pathname.startsWith("/recaptcha/")) {
-			html(
-				200,
-				page("Challenge", "<p>Select all images with traffic lights.</p>"),
-			);
-			return;
-		}
+		if (serveUtility(url, req, res, { submissions, leaks })) return;
 		const [board, company = "", ...rest] = parts;
 		const jobId = board === "greenhouse" ? (rest[1] ?? "") : (rest[0] ?? "");
 		const variant = new Set<string>();
@@ -445,8 +521,10 @@ export async function startFixtureBoards(port = 0): Promise<FixtureBoards> {
 			"leak-away",
 			"radio-default",
 			"fake-thanks",
+			"location-prefix",
 		])
 			if (jobId.includes(v)) variant.add(v);
+		for (const v of options.variants?.[jobId] ?? []) variant.add(v);
 		const port = (server.address() as { port: number }).port;
 		const onAllowedHost = (req.headers.host ?? "").startsWith("127.0.0.1");
 		awayOrigin = `http://localhost:${port}`;

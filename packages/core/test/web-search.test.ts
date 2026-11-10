@@ -401,7 +401,7 @@ describe("the web search provider", () => {
 			h.llm.calls.filter((c) => c.task === "extract-posting"),
 		).toHaveLength(1);
 		// Web jobs end at the hand-off.
-		expect(submissionModeForSource("web", null, null).mode).toBe("handoff");
+		expect(submissionModeForSource("web", null).mode).toBe("handoff");
 
 		// The next scan opens nothing already stored, and keeps the day's searches.
 		h.opened.length = 0;

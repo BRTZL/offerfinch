@@ -215,7 +215,7 @@ describe("feed parsers, on fabricated fixtures in each feed's shape", () => {
 
 	it("every feed's jobs are handed off, and say where they were found", () => {
 		for (const feed of FEEDS) {
-			const mode = submissionModeForSource(feed.source, null, null);
+			const mode = submissionModeForSource(feed.source, null);
 			expect(mode.mode).toBe("handoff");
 			expect(mode.reason).toMatch(/Found (on|in)/);
 		}

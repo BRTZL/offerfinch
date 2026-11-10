@@ -44,6 +44,7 @@ import { desktop } from "@/lib/desktop";
 import { keyHint } from "../../../../shared/shortcuts";
 import { approveBlocked, barKind, type MoreItem, moreItems } from "./bar-model";
 import { RedraftDialog } from "./redraft";
+import { StopSheetButton } from "./stop-sheet";
 import type {
 	ApplicationActions,
 	ApplicationDetailProps,
@@ -132,8 +133,7 @@ export function DetailActionBar({
 		if (!loaded) return;
 		const fail = (e: Error) => toast.error(e.message);
 		if (id === "redraft") setRedrafting(true);
-		else if (id === "open-posting")
-			desktop.openExternal(loaded.job.url).catch(fail);
+		else if (id === "open-posting") desktop.openPosting(loaded.id).catch(fail);
 		else if (id === "copy-link")
 			desktop
 				.copyText(loaded.job.url)
@@ -238,6 +238,7 @@ export function DetailActionBar({
 					<ActionBarDivider />
 				</>
 			) : null}
+			<StopSheetButton actions={actions} />
 			{chat}
 			<ActionBarButton
 				aria-pressed={detailsOpen}

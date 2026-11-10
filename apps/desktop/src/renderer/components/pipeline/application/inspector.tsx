@@ -10,6 +10,7 @@ import {
 	QuestionsSection,
 	WhyDisclosure,
 } from "@/components/pipeline/application/details";
+import { WhatWillBeSentSection } from "@/components/pipeline/application/form-fields";
 import { SubmissionPanel } from "@/components/pipeline/application/submission";
 import {
 	NotesSection,
@@ -71,8 +72,16 @@ export function ApplicationInspector({
 				app={loaded}
 				confirmedNotSent={confirmedNotSent}
 				setConfirmedNotSent={setConfirmedNotSent}
-				onRetry={() => retry.mutate()}
-				onMarkSubmitted={(appliedOn) => markSubmitted.mutate(appliedOn)}
+				onRetry={() =>
+					retry.mutate({ attemptId: loaded.currentAttempt?.id ?? null })
+				}
+				onMarkSubmitted={(appliedOn, gotEmail) =>
+					markSubmitted.mutate({
+						appliedOn,
+						gotEmail,
+						attemptId: loaded.currentAttempt?.id ?? null,
+					})
+				}
 				onDryRun={() => dryRun.mutate()}
 				busy={retry.isPending || markSubmitted.isPending}
 				dryRunning={dryRun.isPending}
@@ -83,6 +92,7 @@ export function ApplicationInspector({
 			<ChecksSection app={loaded} />
 			<JobFlagsSection app={loaded} />
 			<FitSection app={loaded} />
+			<WhatWillBeSentSection app={loaded} />
 			<AfterApproveSection app={loaded} />
 			<QuestionsSection app={loaded} />
 			<NotesSection applicationId={loaded.id} />

@@ -209,6 +209,19 @@ export const eventsMethods = {
 	 * the existing event and changes nothing. The caller then sends `{ eventId }` to
 	 * `applicationInstanceId(jobId)`; sending twice is harmless.
 	 */
+	/**
+	 * Approve waits while a required field of "What will be sent" has no value (plan step 7),
+	 * checked here, under the approval's own lock, from what the transaction reads: a contact
+	 * value removed after the review page checked it still holds the approval.
+	 */
+	async refuseEmptyRequired(t: Tx, userId: string, applicationId: string) {
+		const missing = await this.missingRequiredFields(t, userId, applicationId);
+		if (missing.length > 0)
+			throw new Error(
+				`Refusing: required fields would be sent empty: ${missing.map((m) => `"${m}"`).join(", ")}`,
+			);
+	},
+
 	async recordUserAction(input: {
 		userId: string;
 		applicationId: string;
@@ -264,6 +277,7 @@ export const eventsMethods = {
 			}
 			if (input.transition?.to === "approved") {
 				await refuseWhileRedrafting(tx, input.applicationId);
+				await this.refuseEmptyRequired(tx, input.userId, input.applicationId);
 				// Approve exactly what the user saw: refuse if the documents changed since.
 				const current = await this.currentHashes(
 					tx,

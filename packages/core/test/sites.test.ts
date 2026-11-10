@@ -161,7 +161,7 @@ describe("reading Indeed and Glassdoor pages (local fixtures; selectors unproven
 
 	it("hands every Indeed and Glassdoor job off: nothing is filled or sent", () => {
 		for (const source of ["indeed", "glassdoor"])
-			expect(submissionModeForSource(source, null, null).mode).toBe("handoff");
+			expect(submissionModeForSource(source, null).mode).toBe("handoff");
 	});
 });
 

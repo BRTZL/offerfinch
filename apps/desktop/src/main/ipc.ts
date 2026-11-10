@@ -8,11 +8,13 @@ import {
 	dialog,
 	type IpcMainInvokeEvent,
 	ipcMain,
+	nativeImage,
 	shell,
 } from "electron";
 import {
 	type AppInfo,
 	IPC,
+	isProofShot,
 	isSiteTabId,
 	type LoginItemState,
 	NOTIFICATION_SOUNDS,
@@ -146,13 +148,7 @@ export function registerIpc() {
 	// Try-it mode makes no network call: Updates itself refuses while suspended.
 	handle(IPC.updateCheck, () => mainState.updates.check());
 	handle(IPC.updateInstall, () => mainState.updates.install());
-	// The page that asked is told when a link is refused (try-it mode): main/external-links.ts.
-	ipcMain.handle(IPC.openExternal, async (event, url: unknown) => {
-		if (!isAppSender(event)) throw new Error("Refused: not the app's window");
-		if (typeof url !== "string" || !/^https?:\/\//.test(url))
-			throw new Error("Only web links open outside the app");
-		await openExternalLink(url, event.sender);
-	});
+	registerLinkIpc();
 	const tempFile = async (name: string, bytes: Uint8Array) => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "offerfinch-"));
 		const file = path.join(dir, name.replace(/[^\w.-]+/g, "_"));
@@ -182,10 +178,7 @@ export function registerIpc() {
 		return true;
 	});
 	handle(IPC.openProof, async (attemptId: unknown, which: unknown) => {
-		if (
-			typeof attemptId !== "string" ||
-			(which !== "before" && which !== "after")
-		)
+		if (typeof attemptId !== "string" || !isProofShot(which))
 			throw new Error("Bad request");
 		const file = await mainState.worker.request<{
 			name: string;
@@ -193,6 +186,7 @@ export function registerIpc() {
 		}>("proofBytes", attemptId, which);
 		await shell.openPath(await tempFile(file.name, file.bytes));
 	});
+	registerProofImageIpc();
 	handle(IPC.saveDataExport, async () => {
 		const target = await dialog.showSaveDialog({
 			defaultPath: path.join(
@@ -302,4 +296,61 @@ export function registerIpc() {
 		if (!win || !event.senderFrame?.url.startsWith(`${APP_ORIGIN}/`)) return;
 		connectRenderer(win);
 	});
+}
+
+/**
+ * The page names an application, never a URL: the worker resolves the link from stored data
+ * (worker/links.ts) and refuses what may not open; only an http(s) link is opened. The page that
+ * asked is told when a link is refused (try-it mode): main/external-links.ts.
+ */
+function registerLinkIpc() {
+	ipcMain.handle(IPC.openPosting, async (event, applicationId: unknown) => {
+		if (!isAppSender(event)) throw new Error("Refused: not the app's window");
+		if (typeof applicationId !== "string") throw new Error("Bad request");
+		const url = await mainState.worker.request<string>(
+			"postingLink",
+			applicationId,
+		);
+		await openExternalLink(url, event.sender);
+	});
+	ipcMain.handle(
+		IPC.openApplicationForm,
+		async (event, applicationId: unknown, attemptId: unknown) => {
+			if (!isAppSender(event)) throw new Error("Refused: not the app's window");
+			if (
+				typeof applicationId !== "string" ||
+				(attemptId !== null && typeof attemptId !== "string")
+			)
+				throw new Error("Bad request");
+			const url = await mainState.worker.request<string>(
+				"formLink",
+				applicationId,
+				attemptId,
+			);
+			await openExternalLink(url, event.sender);
+		},
+	);
+}
+
+/** Proof screenshots for the application page: a thumbnail, or the full page as stored. */
+function registerProofImageIpc() {
+	handle(
+		IPC.proofImage,
+		async (attemptId: unknown, which: unknown, size: unknown) => {
+			if (typeof attemptId !== "string" || !isProofShot(which))
+				throw new Error("Bad request");
+			const file = await mainState.worker.request<{
+				name: string;
+				bytes: Uint8Array;
+			}>("proofBytes", attemptId, which);
+			const image = nativeImage.createFromBuffer(Buffer.from(file.bytes));
+			if (image.isEmpty()) throw new Error("The screenshot could not be read");
+			// Full-page shots run long: the thumbnail keeps the top at a readable width.
+			return (
+				size === "thumb" && image.getSize().width > 480
+					? image.resize({ width: 480, quality: "good" })
+					: image
+			).toDataURL();
+		},
+	);
 }

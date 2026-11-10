@@ -9,6 +9,7 @@ import {
 	DOC_LABEL,
 } from "@/components/pipeline/application/types";
 import { ago, STATE_LABEL, sourceLabel } from "@/components/pipeline/bits";
+import { SubmissionsSettingsLink } from "@/components/pipeline/settings/submissions-link";
 import { Cells, Fit } from "@/components/system/bits";
 import { Disclosure, InspectorSection } from "@/components/system/pane";
 import { useEvidenceLabel } from "@/lib/evidence";
@@ -266,7 +267,10 @@ export function JobFlagsSection({ app }: { app: AppDetail }) {
 	);
 }
 
-/** Before approval: what happens once you approve, so the hand-off is no surprise. */
+/**
+ * Before approval: what happens once you approve. On an automatic board approval submits once,
+ * unless submissions are paused; elsewhere it opens the hand-off.
+ */
 export function AfterApproveSection({ app }: { app: AppDetail }) {
 	if (app.state !== "ready_for_review") return null;
 	const handoff = app.submission?.mode !== "auto";
@@ -304,9 +308,25 @@ export function AfterApproveSection({ app }: { app: AppDetail }) {
 			</ol>
 			{handoff ? (
 				<p className="text-muted-foreground text-xs">
-					Nothing is sent from OfferFinch: this board is always yours to submit.
+					Nothing is sent from OfferFinch: you submit this one yourself.
 				</p>
-			) : null}
+			) : app.submissionsPaused ? (
+				<p
+					className="text-muted-foreground text-xs"
+					data-testid="after-approve-paused"
+				>
+					Automatic submissions are paused, so approving sends nothing yet: it
+					waits as approved, with every answer ready to submit yourself.{" "}
+					<SubmissionsSettingsLink />.
+				</p>
+			) : (
+				<p className="text-muted-foreground text-xs">
+					Approving submits it once automatic submission is open for this
+					board's site; until then the run stops before any browser opens and
+					hands it to you. A challenge, an unknown question or an unclear result
+					also stops the run; it never clicks submit twice.
+				</p>
+			)}
 		</InspectorSection>
 	);
 }

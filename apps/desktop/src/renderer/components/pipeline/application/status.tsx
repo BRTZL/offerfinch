@@ -7,10 +7,18 @@ import {
 	DOC_LABEL,
 } from "@/components/pipeline/application/types";
 import { ago } from "@/components/pipeline/bits";
+import { SubmissionsSettingsLink } from "@/components/pipeline/settings/submissions-link";
 import { Button } from "@/components/ui/button";
 import { client, orpc } from "@/lib/orpc";
 import { Link } from "@/lib/router";
 import { redraftNotes } from "./redraft";
+import { isWebSent } from "./stop-model";
+
+/** The unresolved attempt, when it is an employer's form that was sent (decision 2026-11-09). */
+function sentAttempt(app: AppDetail) {
+	const n = app.unresolvedAttempt?.attempt;
+	return app.attempts.find((a) => a.attempt === n && isWebSent(a)) ?? null;
+}
 
 /** One line per thing the user should know now, each ending in what to do next. */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keep approval, handoff, and pause message conditions together and unchanged.
@@ -40,7 +48,13 @@ export function StatusStrip({ app }: { app: AppDetail }) {
 	if (app.state === "approved" && app.submissionsPaused && !handoffBoard)
 		items.push({
 			tone: "warn",
-			text: "Automatic submissions are paused, so nothing is sent. Submit it yourself with the steps under Submit it yourself.",
+			text: (
+				<>
+					Automatic submissions are paused, so nothing is sent.{" "}
+					<SubmissionsSettingsLink />, or submit it yourself with the steps
+					under Submit it yourself.
+				</>
+			),
 			testId: "paused",
 		});
 	if (app.state === "applying")
@@ -52,16 +66,21 @@ export function StatusStrip({ app }: { app: AppDetail }) {
 	if (app.state === "applied")
 		items.push({
 			tone: "ok",
-			text:
-				app.appliedVia === "manual"
+			text: app.attempts.some((a) => isWebSent(a) && a.status === "submitted")
+				? `Sent automatically to the employer's form; you got their email on ${app.appliedAt ? new Date(app.appliedAt).toISOString().slice(0, 10) : "the day you recorded"}.`
+				: app.appliedVia === "manual"
 					? `Applied by you on ${app.appliedAt ? new Date(app.appliedAt).toISOString().slice(0, 10) : "the day you recorded"}.`
-					: `Applied automatically ${ago(app.appliedAt)}; the board confirmed it.`,
+					: `Submitted automatically ${ago(app.appliedAt)} (${app.attempts.find((a) => a.status === "submitted")?.board === "web" ? "the employer's page confirmed" : "board confirmed"}). A confirmation page is not proof the employer received it; their email is.`,
 			testId: "applied",
 		});
 	if (app.state === "needs_human")
 		items.push({
-			tone: "stop",
-			text: `Needs you: ${app.attempts[0]?.error ?? app.history.at(-1)?.reason ?? "the submission stopped"}. Check the job board, then finish it by hand or retry.`,
+			tone: sentAttempt(app) ? "info" : "stop",
+			text: sentAttempt(app)
+				? "Sent — check your email. The employer's email tells whether it arrived: press Got the email under What to do when it comes. Nothing is sent again on its own."
+				: app.unresolvedAttempt
+					? "Outcome unknown: check your email or the employer's portal. What to do lists your options; it is never clicked again on its own."
+					: `Needs you: ${app.attempts[0]?.error ?? app.history.at(-1)?.reason ?? "the submission stopped"} What to do explains it and lists your options.`,
 			testId: "needs-human",
 		});
 	if (app.state === "approved" && app.activeApproval) {

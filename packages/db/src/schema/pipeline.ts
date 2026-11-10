@@ -1,3 +1,4 @@
+import type { FormSchema } from "@offerfinch/core/apply/form-schema";
 import type { ChatProposal, ChatScope } from "@offerfinch/core/chat/chat";
 import type { DocumentHashes } from "@offerfinch/core/domain/approval";
 import { APPLICATION_STATES } from "@offerfinch/core/domain/states";
@@ -695,6 +696,33 @@ export const submissionAttempts = sqliteTable(
 	],
 );
 
+/**
+ * The application's form as read before review (docs/auto-apply-plan.md, step 2): its fields,
+ * or why it could not be read. One row per application, written only while it is preparing.
+ */
+export const applicationForms = sqliteTable(
+	"application_forms",
+	{
+		id: text("id")
+			.primaryKey()
+			.$defaultFn(() => crypto.randomUUID()),
+		userId: userId(),
+		applicationId: text("application_id")
+			.notNull()
+			.references(() => applications.id, { onDelete: "cascade" }),
+		/** "read", "failed" or "skipped". */
+		status: text("status").notNull(),
+		board: text("board"),
+		url: text("url"),
+		/** The fields, files and submit control (`FormSchema`); null unless read. */
+		schema: text("schema", { mode: "json" }).$type<FormSchema>(),
+		/** Why there is no field list (a challenge, a missing form, a host not turned on). */
+		note: text("note"),
+		readAt: integer("read_at", { mode: "timestamp_ms" }).notNull(),
+	},
+	(t) => [uniqueIndex("application_forms_app_unique").on(t.applicationId)],
+);
+
 /** Per-user submission switch. No row means paused: nothing is submitted until the user turns it on. */
 export const submissionSettings = sqliteTable("submission_settings", {
 	userId: text("user_id")
@@ -703,6 +731,21 @@ export const submissionSettings = sqliteTable("submission_settings", {
 	paused: integer("paused", { mode: "boolean" }).notNull().default(true),
 	updatedAt: updatedAt(),
 });
+
+/**
+ * Real job sites the user opened for automatic submission in Settings › Applying (plan step 8):
+ * one row per opened board ("greenhouse" … or "web" for employers' own forms). No row means
+ * closed: a run on that board stops before any browser opens.
+ */
+export const submissionBoards = sqliteTable(
+	"submission_boards",
+	{
+		userId: userId(),
+		board: text("board").notNull(),
+		openedAt: createdAt(),
+	},
+	(t) => [primaryKey({ columns: [t.userId, t.board] })],
+);
 
 /**
  * Scan history: one row per scan run (`flow_run_id`, the runner's run), with what each source

@@ -1,8 +1,26 @@
-import { applyUrl, BOARDS, type Board } from "@offerfinch/core/apply/forms";
+import {
+	missingRequired,
+	type WhatWillBeSent,
+	whatWillBeSent,
+} from "@offerfinch/core/apply/field-answers";
+import { formTargetFor } from "@offerfinch/core/apply/form-target";
+import {
+	applyUrl,
+	BOARDS,
+	companyKeyProblem,
+} from "@offerfinch/core/apply/forms";
 import {
 	BOARD_SUBMISSION_MODES,
+	submissionModeAfterRead,
 	submissionModeForSource,
 } from "@offerfinch/core/apply/modes";
+import {
+	BOARD_NAMES,
+	BOARD_RISKS,
+	OPENABLE_BOARDS,
+	shownHosts,
+} from "@offerfinch/core/apply/open-boards";
+import { applicantData } from "@offerfinch/core/apply/submit";
 import { compareApproval } from "@offerfinch/core/domain/approval";
 import { normalizeLineEndings } from "@offerfinch/core/domain/line-endings";
 import { sourceMismatch } from "@offerfinch/core/domain/source";
@@ -32,12 +50,75 @@ import {
 	DrizzleLinkedInStore,
 	DrizzleSpendStore,
 	EditConflictError,
+	StaleAttemptError,
 	saveFilterSettings,
 } from "@offerfinch/db";
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
 import { protectedProcedure } from "./procedure";
+
+/** "What will be sent" for one application, from its saved form read; null when never read. */
+async function whatWillBeSentFor(
+	repo: ReturnType<typeof repoOf>,
+	userId: string,
+	applicationId: string,
+	profile: Awaited<ReturnType<ReturnType<typeof repoOf>["getProfile"]>>,
+): Promise<WhatWillBeSent | null> {
+	const read = await repo.formRead(userId, applicationId);
+	if (!read || !profile) return null;
+	const context = await repo.submissionContext(userId, applicationId);
+	if (!context) return null;
+	return whatWillBeSent(
+		read,
+		// Approval needs a finished review, which exports the letter: a drafted letter is attached.
+		applicantData(profile, context, context.coverLetterMarkdown !== null),
+		await repo.savedAnswers(userId),
+	);
+}
+
+/**
+ * How the application is submitted and the form the hand-off opens, decided as the submission
+ * decides it (core apply/form-target.ts): the source's board, else the board or employer form its
+ * apply link names; an employer's own form is a hand-off unless its field list was read.
+ */
+export async function submissionView(
+	repo: ReturnType<typeof repoOf>,
+	userId: string,
+	applicationId: string,
+	posting: {
+		job: {
+			source: string;
+			url: string;
+			applyUrl: string | null;
+			externalId: string;
+		};
+		companyKey: string;
+	},
+) {
+	const { job } = posting;
+	const target = formTargetFor({ ...job, companyKey: posting.companyKey });
+	// The posting's own apply form on the real board (the board, not a fixture, decides);
+	// otherwise the employer's own apply link when the listing showed one, else the posting. A
+	// company key that cannot name the board's form (not one DNS label) builds no form address.
+	const postingForm =
+		target.board === "web"
+			? target.url
+			: target.board && !companyKeyProblem(target.board, target.companyKey)
+				? applyUrl(target.board, target)
+				: (job.applyUrl ?? job.url);
+	const mode = submissionModeAfterRead(
+		submissionModeForSource(
+			job.source,
+			target.board,
+			target.from,
+			target.reason,
+		),
+		target.board,
+		target.board === "web" ? await repo.formRead(userId, applicationId) : null,
+	);
+	return { postingForm, mode };
+}
 
 const repoOf = (context: {
 	db: ConstructorParameters<typeof DashboardRepository>[0];
@@ -58,7 +139,10 @@ async function refusal<T>(fn: () => Promise<T>): Promise<T> {
 	try {
 		return await fn();
 	} catch (error) {
-		if (error instanceof EditConflictError)
+		if (
+			error instanceof EditConflictError ||
+			error instanceof StaleAttemptError
+		)
 			throw new ORPCError("CONFLICT", { message: error.message });
 		if (
 			error instanceof Error &&
@@ -133,34 +217,31 @@ export const pipelineRouter = {
 								("cited" in review ? review.cited : undefined) ?? [],
 							)
 						: [];
+				const formAnswers = detail.documents.find(
+					(d) => d.kind === "form_answers",
+				);
+				const contact = profile ? parseContact(evidenceProfile(profile)) : null;
+				const { postingForm, mode } = await submissionView(
+					repoOf(context),
+					context.session.user.id,
+					input.id,
+					{ job: detail.job, companyKey: detail.company.key },
+				);
+				const form = await whatWillBeSentFor(
+					repoOf(context),
+					context.session.user.id,
+					input.id,
+					profile,
+				);
+				const missingFields = missingRequired(form, mode);
 				const approvable =
 					detail.state === "ready_for_review" &&
 					!detail.redraft &&
 					reviewCurrent &&
 					review.passed &&
 					review.atsChecked &&
-					staleProfile.length === 0;
-				const formAnswers = detail.documents.find(
-					(d) => d.kind === "form_answers",
-				);
-				const contact = profile ? parseContact(evidenceProfile(profile)) : null;
-				const board = (BOARDS as readonly string[]).includes(detail.job.source)
-					? (detail.job.source as Board)
-					: null;
-				// The posting's own apply form on the real board (the board, not a fixture, decides).
-				// LinkedIn: the employer's own apply link when the listing showed one, else the posting.
-				const postingForm = board
-					? applyUrl(board, {
-							url: detail.job.url,
-							externalId: detail.job.externalId,
-							companyKey: detail.company.key,
-						})
-					: (detail.job.applyUrl ?? detail.job.url);
-				const mode = submissionModeForSource(
-					detail.job.source,
-					board,
-					postingForm,
-				);
+					staleProfile.length === 0 &&
+					missingFields.length === 0;
 				const docOf = (kind: string) =>
 					detail.documents.find((d) => d.kind === kind)?.content ?? "";
 				const flagDocs = {
@@ -233,6 +314,8 @@ export const pipelineRouter = {
 								}
 							: null,
 					approvable,
+					/** Required fields of "What will be sent" with no value: Approve waits for them. */
+					missingRequired: missingFields,
 					/** Cited facts edited or removed since the check: approval waits for Check again. */
 					staleProfile,
 					/** claims_flagged: the user resolves each flag before approving. */
@@ -255,11 +338,19 @@ export const pipelineRouter = {
 						formUrl:
 							mode.mode === "handoff"
 								? postingForm
-								: (detail.attempts.find((a) => a.url)?.url ?? detail.job.url),
+								: (detail.attempts.find((a) => a.url)?.url ?? postingForm),
 						contact,
 					},
-					/** "handoff": after approval the user submits it; nothing is filled automatically. */
+					/**
+					 * "auto": approval fills the form and submits once (unless submissions are paused).
+					 * "handoff": after approval the user submits it; nothing is filled automatically.
+					 */
 					submission: mode,
+					/**
+					 * The application form as read before review, with each field's exact value
+					 * ("What will be sent"), or why it could not be read. Null: never read.
+					 */
+					form,
 					/**
 					 * How old the posting is; `mayBeClosed` for LinkedIn, Indeed and Glassdoor
 					 * postings past 14 days, which are never re-read to check.
@@ -447,6 +538,7 @@ export const pipelineRouter = {
 			)
 			.handler(({ context, input }) =>
 				refusal(async () => {
+					// Required values are checked inside the approval's transaction (db approve).
 					const event = await repoOf(context).approve({
 						userId: context.session.user.id,
 						applicationId: input.id,
@@ -484,6 +576,8 @@ export const pipelineRouter = {
 			.input(
 				z.object({
 					id: z.string().uuid(),
+					/** The attempt the user saw (`currentAttempt`); null when none was shown. */
+					attemptId: z.string().uuid().nullable(),
 					confirmedNotSent: z.boolean(),
 					idempotencyKey: z.string().min(8).max(100),
 				}),
@@ -493,8 +587,10 @@ export const pipelineRouter = {
 					const event = await repoOf(context).retrySubmission({
 						userId: context.session.user.id,
 						applicationId: input.id,
+						attemptId: input.attemptId,
 						confirmedNotSent: input.confirmedNotSent,
-						idempotencyKey: `retry-${input.idempotencyKey}`,
+						// A key repeated for another attempt is a new action, not a repeat.
+						idempotencyKey: `retry-${input.attemptId ?? "none"}-${input.idempotencyKey}`,
 					});
 					await context.sendEvent(event);
 					return { ok: true };
@@ -504,12 +600,16 @@ export const pipelineRouter = {
 			.input(
 				z.object({
 					id: z.string().uuid(),
+					/** The attempt the user saw (`currentAttempt`); null when none was shown. */
+					attemptId: z.string().uuid().nullable(),
 					idempotencyKey: z.string().min(8).max(100),
 					/** The day it was submitted, YYYY-MM-DD; default today. */
 					appliedOn: z
 						.string()
 						.regex(/^\d{4}-\d{2}-\d{2}$/)
 						.optional(),
+					/** An earlier clicked attempt did not go through; the user sent it by hand. */
+					confirmedNotSent: z.boolean().optional(),
 				}),
 			)
 			.handler(({ context, input }) =>
@@ -517,11 +617,72 @@ export const pipelineRouter = {
 					const event = await repoOf(context).markSubmittedManually({
 						userId: context.session.user.id,
 						applicationId: input.id,
-						idempotencyKey: `manual-${input.idempotencyKey}`,
+						attemptId: input.attemptId,
+						// A key repeated for another attempt is a new action, not a repeat.
+						idempotencyKey: `manual-${input.attemptId ?? "none"}-${input.idempotencyKey}`,
 						appliedOn: input.appliedOn,
+						confirmedNotSent: input.confirmedNotSent,
 					});
 					await context.sendEvent(event);
 					return { ok: true };
+				}),
+			),
+		/**
+		 * "It didn't go through", recorded before Finish it yourself opens the form (the form
+		 * opens only once this is recorded for a click that may have sent the application).
+		 */
+		confirmNotSent: protectedProcedure
+			.input(
+				z.object({
+					id: z.string().uuid(),
+					/** The attempt the user saw (`currentAttempt`). */
+					attemptId: z.string().uuid(),
+				}),
+			)
+			.handler(({ context, input }) =>
+				refusal(() =>
+					repoOf(context).confirmNotSent({
+						userId: context.session.user.id,
+						applicationId: input.id,
+						attemptId: input.attemptId,
+					}),
+				),
+			),
+		readFormAgain: protectedProcedure
+			.input(
+				z.object({
+					id: z.string().uuid(),
+					idempotencyKey: z.string().min(8).max(100),
+				}),
+			)
+			.handler(({ context, input }) =>
+				refusal(async () => {
+					const userId = context.session.user.id;
+					const repo = repoOf(context);
+					if (!context.readFormAgain)
+						throw new ORPCError("NOT_IMPLEMENTED", {
+							message:
+								"Reading the form needs a browser; none is configured here",
+						});
+					// Nothing opens while an attempt may have gone through; checked again on save.
+					const refused = await repo.readFormAgainRefusal(userId, input.id);
+					if (refused) throw new ORPCError("CONFLICT", { message: refused });
+					const read = await context.readFormAgain(userId, input.id);
+					if (!read.ok)
+						throw new ORPCError("CONFLICT", { message: read.reason });
+					const result = await repo.readFormAgain({
+						userId,
+						applicationId: input.id,
+						read: read.read,
+						add: read.add,
+						ask: read.ask,
+						idempotencyKey: `form-again-${input.idempotencyKey}`,
+					});
+					if (result.event) await context.sendEvent(result.event);
+					return {
+						asked: result.asked,
+						fields: read.read.schema.fields.length,
+					};
 				}),
 			),
 		dryRun: protectedProcedure
@@ -535,15 +696,45 @@ export const pipelineRouter = {
 					return context.dryRun(context.session.user.id, input.id);
 				}),
 			),
-		settings: protectedProcedure.handler(async ({ context }) => ({
-			paused: await repoOf(context).submissionsPaused(context.session.user.id),
-			/** Per board, fixed in code (apply/modes.ts). */
-			modes: Object.entries(BOARD_SUBMISSION_MODES).map(([board, m]) => ({
-				board,
-				mode: m.mode,
-				why: m.why,
-			})),
-		})),
+		settings: protectedProcedure.handler(async ({ context }) => {
+			const userId = context.session.user.id;
+			const opened = new Set(await repoOf(context).openedBoards(userId));
+			return {
+				paused: await repoOf(context).submissionsPaused(userId),
+				/**
+				 * Real job sites, each closed until the user opens it (step 8): the hosts a run on
+				 * it may open, and its known risks for the confirmation.
+				 */
+				boards: OPENABLE_BOARDS.map((board) => ({
+					board,
+					name: BOARD_NAMES[board],
+					hosts: shownHosts(board),
+					risks: BOARD_RISKS[board],
+					open: opened.has(board),
+				})),
+				/** Per board, fixed in code (apply/modes.ts). */
+				modes: Object.entries(BOARD_SUBMISSION_MODES).map(([board, m]) => ({
+					board,
+					mode: m.mode,
+					why: m.why,
+				})),
+			};
+		}),
+		/** Opens or closes one real job site (idempotent). Wakes nothing; a stopped run is retried. */
+		setBoardOpen: protectedProcedure
+			.input(
+				z.object({
+					board: z.enum([...BOARDS, "web"]),
+					open: z.boolean(),
+				}),
+			)
+			.handler(({ context, input }) =>
+				repoOf(context).setBoardOpen(
+					context.session.user.id,
+					input.board,
+					input.open,
+				),
+			),
 		setPaused: protectedProcedure
 			.input(z.object({ paused: z.boolean() }))
 			.handler(async ({ context, input }) => {

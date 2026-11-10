@@ -4,6 +4,7 @@ import type {
 } from "@offerfinch/core/pipeline/ports";
 import { parseFormAnswers } from "@offerfinch/core/tailor/tailor";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { currentAttemptOf, shownAttempt, unresolvedOf } from "../proof-steps";
 import { firstPer } from "../repository";
 import {
 	applications,
@@ -21,6 +22,14 @@ import {
 	type PendingEvent,
 	subscriptionPauseOf,
 } from "./shared";
+
+/** The current attempt as the dashboard names it back: its id and number. */
+function currentOf(
+	attempts: { id: string; attempt: number; status: string }[],
+) {
+	const current = currentAttemptOf(attempts);
+	return current ? { id: current.id, attempt: current.attempt } : null;
+}
 
 /**
  * Whether the posting could be read, how old it is, and whether it was found closed (when, and
@@ -58,7 +67,7 @@ export const documentsMethods = {
 				),
 			);
 		if (!row) return null;
-		const [docs, exports, review, approval, appQuestions, history, attempts] =
+		const [docs, exports, review, approval, appQuestions, history, stored] =
 			await Promise.all([
 				this.latestDocuments(userId, applicationId),
 				this.database
@@ -146,6 +155,7 @@ export const documentsMethods = {
 					)
 					.orderBy(desc(submissionAttempts.attempt)),
 			]);
+		const attempts = stored.map(shownAttempt);
 		const currentHashes = await this.currentHashes(
 			this.database,
 			userId,
@@ -201,10 +211,12 @@ export const documentsMethods = {
 			/** Why it waits on a subscription (usage limit, logout), with how it resumes. */
 			subscriptionPause: subscriptionPauseOf(row.app.state, cost.calls),
 			/** A clicked attempt the user has not resolved: a retry needs their confirmation. */
-			unresolvedAttempt:
-				attempts.find(
-					(a) => a.status === "needs_human" || a.status === "started",
-				) ?? null,
+			unresolvedAttempt: unresolvedOf(attempts),
+			/**
+			 * The attempt a confirmation shown now is about; Retry, Got the email, I submitted this
+			 * and It didn't go through send its id back and are refused once it changed.
+			 */
+			currentAttempt: currentOf(attempts),
 			company: {
 				id: row.company.id,
 				name: row.company.name,

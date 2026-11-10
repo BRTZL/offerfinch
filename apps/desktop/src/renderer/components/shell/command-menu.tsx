@@ -95,6 +95,7 @@ const SETTINGS: { label: string; href: string; icon: ReactNode }[] = [
 	{ label: "Models", href: "/settings/models", icon: <SlidersHorizontal /> },
 	{ label: "Job search", href: "/settings/job-filter", icon: <Filter /> },
 	{ label: "Sources", href: "/settings/sources", icon: <Globe /> },
+	{ label: "Applying", href: "/settings/applying", icon: <Send /> },
 	{ label: "Writing", href: "/settings/writing", icon: <PenLine /> },
 	{ label: "Notifications", href: "/settings/notifications", icon: <Bell /> },
 	{ label: "General", href: "/settings/general", icon: <Settings2 /> },
@@ -112,7 +113,11 @@ const matches = (c: Command, q: string) =>
  * real sessions) or copy its link.
  */
 function postingCommands(
-	job: { company: { name: string }; job: { title: string; url: string } },
+	job: {
+		id: string;
+		company: { name: string };
+		job: { title: string; url: string };
+	},
 	demo: boolean,
 ): Command[] {
 	const group = `${job.company.name} · ${job.job.title}`;
@@ -133,7 +138,7 @@ function postingCommands(
 			group,
 			label: "Open the posting",
 			icon: <ExternalLink />,
-			run: () => desktop.openExternal(job.job.url),
+			run: () => desktop.openPosting(job.id),
 		},
 		copy,
 	];

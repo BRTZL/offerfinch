@@ -266,7 +266,9 @@ export function SourcesSettings() {
 					>
 						Job search
 					</Link>{" "}
-					lists, reading at a human pace. You always apply yourself.
+					lists, reading at a human pace. Approved applications on Ashby,
+					Greenhouse and Lever are submitted for you; elsewhere you apply
+					yourself.
 				</>
 			}
 		>

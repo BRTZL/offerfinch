@@ -406,6 +406,7 @@ export class WorkerApp {
 			userData: this.init.userData,
 			siteHost: this.siteHost(),
 			test: Boolean(this.init.test),
+			applyFixtures: Boolean(this.init.applyFixtures),
 			db: this.db,
 			ai: await this.settings.get("ai"),
 			workflows: this.starter,

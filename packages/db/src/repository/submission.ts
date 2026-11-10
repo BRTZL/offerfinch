@@ -1,10 +1,10 @@
 import type { FilledField } from "@offerfinch/core/apply/applier";
-import {
-	type AttemptInput,
-	type BeginOutcome,
-	boardOf,
-	type ClaimOutcome,
-	type SubmissionContext,
+import { formTargetFor } from "@offerfinch/core/apply/form-target";
+import type {
+	AttemptInput,
+	BeginOutcome,
+	ClaimOutcome,
+	SubmissionContext,
 } from "@offerfinch/core/apply/submit";
 import { parseFormAnswers } from "@offerfinch/core/tailor/tailor";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
@@ -15,6 +15,7 @@ import {
 	documents,
 	jobs,
 	submissionAttempts,
+	submissionBoards,
 	submissionSettings,
 } from "../schema/pipeline";
 import type { DrizzlePipelineRepositoryContext } from "./context";
@@ -32,6 +33,18 @@ export const submissionMethods = {
 			.from(submissionSettings)
 			.where(eq(submissionSettings.userId, userId));
 		return row?.paused ?? true;
+	},
+
+	/** Boards the user opened in Settings › Applying ("web": employers' own forms). */
+	async openedBoards(
+		this: DrizzlePipelineRepositoryContext,
+		userId: string,
+	): Promise<string[]> {
+		const rows = await this.db
+			.select({ board: submissionBoards.board })
+			.from(submissionBoards)
+			.where(eq(submissionBoards.userId, userId));
+		return rows.map((r) => r.board);
 	},
 
 	async submissionContext(
@@ -77,13 +90,36 @@ export const submissionMethods = {
 				.limit(1);
 			return pdf?.key ?? null;
 		};
+		// The board from the source, else from the job's apply link (core apply/form-target.ts).
+		const target = formTargetFor({
+			source: row.job.source,
+			url: row.job.url,
+			applyUrl: row.job.applyUrl,
+			externalId: row.job.externalId,
+			companyKey: row.companyKey,
+		});
+		// Read with every run: a board closed in Settings stops the next run before any browser.
+		const [opened] = target.board
+			? await this.db
+					.select({ board: submissionBoards.board })
+					.from(submissionBoards)
+					.where(
+						and(
+							eq(submissionBoards.userId, userId),
+							eq(submissionBoards.board, target.board),
+						),
+					)
+			: [];
 		return {
 			applicationId,
 			source: row.job.source,
-			board: boardOf(row.job.source),
-			companyKey: row.companyKey,
-			externalId: row.job.externalId,
-			jobUrl: row.job.url,
+			board: target.board,
+			boardFrom: target.from,
+			boardOpened: opened !== undefined,
+			...(target.reason ? { handoffNote: target.reason } : {}),
+			companyKey: target.companyKey,
+			externalId: target.externalId,
+			jobUrl: target.url,
 			formAnswers: parseFormAnswers(byKind.form_answers?.content ?? "[]"),
 			coverLetterMarkdown: byKind.cover_letter?.content ?? null,
 			cvPdfKey: await pdfFor("cv"),

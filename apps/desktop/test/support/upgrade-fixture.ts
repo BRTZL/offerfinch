@@ -1435,6 +1435,51 @@ function fixtureRows(): Record<string, Row[]> {
 			},
 		],
 		submission_settings: [{ user_id: U, paused: 0, updated_at: at(2) }],
+		// Real job sites the user opened in Settings › Applying (plan step 8).
+		submission_boards: [{ user_id: U, board: "greenhouse", created_at: at(2) }],
+		// The application forms read before review: one read, one that could not be read.
+		application_forms: [
+			{
+				id: "af1",
+				user_id: U,
+				application_id: "a7",
+				status: "read",
+				board: "greenhouse",
+				url: "https://job-boards.greenhouse.io/acme/jobs/7",
+				schema: j({
+					board: "greenhouse",
+					url: "https://job-boards.greenhouse.io/acme/jobs/7",
+					submit: "Submit application",
+					fields: [
+						{
+							ref: "1",
+							key: "text:email",
+							kind: "text",
+							label: "Email",
+							required: true,
+							name: "email",
+							options: [],
+							visible: true,
+							page: 1,
+							section: "",
+						},
+					],
+				}),
+				note: null,
+				read_at: at(4),
+			},
+			{
+				id: "af2",
+				user_id: U,
+				application_id: "a8",
+				status: "failed",
+				board: "greenhouse",
+				url: "https://job-boards.greenhouse.io/acme/jobs/8",
+				schema: null,
+				note: "The form could not be read before review: reCAPTCHA challenge shown instead of the form.",
+				read_at: at(5),
+			},
+		],
 		// What the Claude plan had used, and OfferFinch's share of it, as last read.
 		plan_usage: [
 			{

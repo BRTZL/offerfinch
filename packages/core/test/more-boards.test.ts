@@ -708,18 +708,19 @@ describe("the new boards in the app", () => {
 		}
 	});
 
-	it("are always handed off: nothing is filled or sent automatically", () => {
-		expect([...BOARDS]).toEqual(["ashby", "greenhouse", "lever"]);
+	it("submit automatically, except SmartRecruiters, whose form shows a CAPTCHA", () => {
 		for (const kind of NEW_BOARDS) {
-			const url = "https://example.com/apply";
-			expect(submissionModeForSource(kind, null, url).mode).toBe("handoff");
-			expect(
-				submissionModeForSource(kind, null, url, { autoSubmitFixtures: true })
-					.mode,
-			).toBe("handoff");
-			expect(submissionModeFor(kind as unknown as Board, url).mode).toBe(
-				"handoff",
-			);
+			if (kind === "smartrecruiters") {
+				const mode = submissionModeForSource(kind, null);
+				expect(mode.mode).toBe("handoff");
+				expect(mode.reason).toMatch(/DataDome/);
+				expect(submissionModeFor(kind as unknown as Board).mode).toBe(
+					"handoff",
+				);
+				continue;
+			}
+			expect(BOARDS).toContain(kind);
+			expect(submissionModeForSource(kind, kind).mode).toBe("auto");
 		}
 	});
 

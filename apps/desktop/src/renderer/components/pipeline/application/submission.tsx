@@ -7,22 +7,15 @@ import {
 	type AppDetail,
 	DOC_LABEL,
 } from "@/components/pipeline/application/types";
-import { ago, FileLink, Section } from "@/components/pipeline/bits";
+import { FileLink, Section } from "@/components/pipeline/bits";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { desktop } from "@/lib/desktop";
 import { client, orpc } from "@/lib/orpc";
-import { cn } from "@/lib/utils";
-
-const ATTEMPT_LABEL: Record<string, string> = {
-	started: "clicked, outcome pending",
-	submitted: "submitted",
-	needs_human: "outcome unknown",
-	not_sent: "not sent",
-	dry_run: "dry run",
-	failed: "failed",
-};
+import { useOpenForm } from "./open-form";
+import { AttemptList } from "./proof";
+import { isWebSent } from "./stop-model";
 
 /** Today as YYYY-MM-DD in the browser's time zone. */
 export function today(): string {
@@ -30,7 +23,8 @@ export function today(): string {
 	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function CopyRow({ label, value }: { label: string; value: string }) {
+/** A label and value with a Copy button; nothing when the value is empty. */
+export function CopyRow({ label, value }: { label: string; value: string }) {
 	const [copied, setCopied] = useState(false);
 	if (!value) return null;
 	return (
@@ -110,8 +104,46 @@ function useHandoffCheck(app: AppDetail) {
 }
 
 /**
- * Submission: for a hand-off (every board today) the numbered steps from approval to
- * "I submitted this"; for an automatic board the attempts, dry run and retry.
+ * The hand-off's link to the form. The worker opens it (worker/links.ts) for this application and
+ * the attempt shown; after a click that may have sent the application it opens only once the user
+ * ticked "It didn't go through", which is recorded first.
+ */
+function FormLink({
+	app,
+	confirmed,
+	children,
+}: {
+	app: AppDetail;
+	confirmed: boolean;
+	children: ReactNode;
+}) {
+	const openForm = useOpenForm(app);
+	if (app.unresolvedAttempt && !confirmed)
+		return (
+			<span
+				data-testid="handoff-link"
+				title="Tick It didn't go through below first"
+			>
+				{children}
+			</span>
+		);
+	return (
+		<button
+			type="button"
+			onClick={() => openForm.mutate()}
+			disabled={openForm.isPending}
+			className="text-primary text-left hover:underline"
+			data-testid="handoff-link"
+		>
+			{children} ↗
+		</button>
+	);
+}
+
+/**
+ * Submission: for a hand-off the numbered steps from approval to "I submitted this"; for an
+ * automatic board the attempts with their proof, the dry run and the retry, and the same steps
+ * while it waits (paused) or after a stop (needs_human).
  */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keep hand-off presentation and its mutually exclusive submission states together.
 export function SubmissionPanel({
@@ -128,7 +160,8 @@ export function SubmissionPanel({
 	confirmedNotSent: boolean;
 	setConfirmedNotSent: (value: boolean) => void;
 	onRetry: () => void;
-	onMarkSubmitted: (appliedOn: string) => void;
+	/** `gotEmail`: Got the email, for an employer's form that was sent. */
+	onMarkSubmitted: (appliedOn: string, gotEmail?: boolean) => void;
 	onDryRun: () => void;
 	busy: boolean;
 	dryRunning: boolean;
@@ -141,7 +174,16 @@ export function SubmissionPanel({
 		app.state,
 	);
 	if (!relevant && app.attempts.length === 0) return null;
-	const open = app.state === "needs_human" || app.state === "approved";
+	// An employer's form that was sent waits for the user's email: finishing it by hand opens only
+	// once they say it didn't go through (decision 2026-11-09).
+	const waitingEmail =
+		app.state === "needs_human" &&
+		app.attempts.some(
+			(a) => a.attempt === app.unresolvedAttempt?.attempt && isWebSent(a),
+		);
+	const open =
+		(app.state === "needs_human" || app.state === "approved") &&
+		(!waitingEmail || confirmedNotSent);
 	const handoffBoard = app.submission?.mode === "handoff";
 	const contact = app.handoff.contact;
 	const pdfs = app.exports.filter(
@@ -157,8 +199,34 @@ export function SubmissionPanel({
 			: "Open the application form";
 
 	return (
-		<Section title={open ? "Submit it yourself" : "Submission"}>
+		<Section
+			title={
+				waitingEmail && !confirmedNotSent
+					? "Sent — check your email"
+					: open
+						? "Submit it yourself"
+						: "Submission"
+			}
+		>
 			<div className="flex flex-col gap-3 text-xs" data-testid="submission">
+				{waitingEmail && !confirmedNotSent && (
+					<div className="flex flex-col gap-1.5" data-testid="sent-check-email">
+						<p className="text-muted-foreground">
+							The employer's form was sent once. Their email tells whether it
+							arrived; nothing is sent again on its own.
+						</p>
+						<div>
+							<Button
+								size="sm"
+								onClick={() => onMarkSubmitted(today(), true)}
+								disabled={busy}
+								data-testid="got-email"
+							>
+								Got the email
+							</Button>
+						</div>
+					</div>
+				)}
 				{open && (
 					<ol className="flex flex-col gap-4" data-testid="handoff">
 						<Step
@@ -167,15 +235,9 @@ export function SubmissionPanel({
 								demo ? (
 									<span data-testid="handoff-link">{formLink}</span>
 								) : (
-									<a
-										href={app.handoff.formUrl}
-										target="_blank"
-										rel="noreferrer"
-										className="text-primary hover:underline"
-										data-testid="handoff-link"
-									>
-										{formLink} ↗
-									</a>
+									<FormLink app={app} confirmed={confirmedNotSent}>
+										{formLink}
+									</FormLink>
 								)
 							}
 						>
@@ -289,70 +351,13 @@ export function SubmissionPanel({
 							data-testid="confirm-not-sent"
 						/>
 						<span>
-							I checked the employer's portal or my email: attempt{" "}
-							{app.unresolvedAttempt.attempt} did not go through.
+							{waitingEmail
+								? "It didn't go through: no email came, and the employer's portal does not list it."
+								: `I checked the employer's portal or my email: attempt ${app.unresolvedAttempt.attempt} did not go through.`}
 						</span>
 					</label>
 				)}
-				{app.attempts.length > 0 && (
-					<ol className="flex flex-col gap-2">
-						{app.attempts.map((a) => (
-							<li
-								key={a.id}
-								className="border-border border-l-2 pl-2"
-								data-testid="attempt"
-							>
-								<div className="flex items-center gap-2">
-									<span className="font-mono tabular-nums">#{a.attempt}</span>
-									<span
-										className={cn(
-											"font-medium",
-											a.status === "submitted" && "text-brand",
-											a.status === "needs_human" && "text-destructive",
-										)}
-										data-testid="attempt-status"
-									>
-										{ATTEMPT_LABEL[a.status] ?? a.status}
-									</span>
-									<span className="text-muted-foreground">
-										{a.mode === "manual" ? "by you" : a.board} ·{" "}
-										{ago(a.startedAt)}
-									</span>
-								</div>
-								{(a.error || a.resolution) && (
-									<div className="text-muted-foreground mt-0.5">
-										{a.resolution ?? a.error}
-									</div>
-								)}
-								{(a.hasBefore || a.hasAfter) && (
-									<div className="mt-1 flex gap-1.5">
-										{(["before", "after"] as const)
-											.filter((w) =>
-												w === "before" ? a.hasBefore : a.hasAfter,
-											)
-											.map((w) => (
-												<button
-													key={w}
-													type="button"
-													className={buttonVariants({
-														variant: "outline",
-														size: "xs",
-													})}
-													data-testid={`proof-${w}`}
-													onClick={() => void desktop.openProof(a.id, w)}
-												>
-													Screenshot{" "}
-													{w === "before"
-														? "before submitting"
-														: "after submitting"}
-												</button>
-											))}
-									</div>
-								)}
-							</li>
-						))}
-					</ol>
-				)}
+				<AttemptList attempts={app.attempts} />
 			</div>
 		</Section>
 	);

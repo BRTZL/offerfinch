@@ -1,5 +1,7 @@
 import { normalizeForMatch } from "../tailor/profile-rules";
 import type { Contact, FormAnswer } from "../tailor/tailor";
+import { BOARD_HOST_RULES, joinRules } from "./host-rules";
+import type { HostRules } from "./network-guard";
 
 /**
  * What the applier knows about each board's hosted application form, from the read-only
@@ -8,8 +10,23 @@ import type { Contact, FormAnswer } from "../tailor/tailor";
  * approved documents; anything else required is an unknown question.
  */
 
-export const BOARDS = ["ashby", "greenhouse", "lever"] as const;
+export const BOARDS = [
+	"ashby",
+	"greenhouse",
+	"lever",
+	"workable",
+	"recruitee",
+	"teamtailor",
+	"personio",
+] as const;
 export type Board = (typeof BOARDS)[number];
+
+/**
+ * Where an application's form is filled: a known board's config, or "web", any other employer's
+ * own form, read by the generic scan (`web-scan.ts`, docs/auto-apply-plan.md step 6). Never a
+ * member of `BOARDS`: "web" is also a job source.
+ */
+export type FormBoard = Board | "web";
 
 export interface BoardConfig {
 	board: Board;
@@ -23,22 +40,66 @@ export interface BoardConfig {
 	/**
 	 * The board's confirmation after a submit. `path` maps the form's path to the exact path the
 	 * board moves to (none: the confirmation replaces the form on the same page); `selector` is
-	 * where the confirmation text must be; `text` is what it says.
+	 * where the confirmation text must be; `text` is what it says. Text alone never confirms: a
+	 * board with neither `path` nor `selector` (its confirmation not yet seen) ends every
+	 * submission as an unknown outcome. `refused` is the board's own "already applied" state.
 	 */
 	success: {
 		path?: (formPath: string) => string;
 		text: string;
 		selector?: string;
+		refused?: string;
 	};
 	/** Visible validation errors. */
 	errors: string;
+	/**
+	 * Hosts besides the form's own that serve the form's files (scripts, styles, fonts, images),
+	 * from the live inspection. A real submission's session may load those files from them (GET,
+	 * HEAD; no xhr or fetch) with no query string, unless the board's rules list its parameters;
+	 * its scoring widget's frames and endpoints are in `BOARD_HOST_RULES` (host-rules.ts). No
+	 * request to them may carry a filled value. Employers' trackers are never listed.
+	 */
+	hosts?: readonly string[];
+	/**
+	 * The board's own hosts besides the form's that receive the application's data (uploads, a
+	 * lookup of the typed email): any method, like the allowed form hosts.
+	 */
+	formHosts?: readonly string[];
+	/** How this board's markup differs from the first three boards' (docs/form-inspection.md). */
+	scan?: {
+		/** Attribute that names a control without a `name` (its id changes on every load). */
+		nameAttr?: string;
+		/** Radios and checkboxes the board draws itself and hides from assistive tech are questions. */
+		hiddenChoices?: boolean;
+		/** Label text that is not part of the question ("Required", "(Optional)"), as a pattern. */
+		labelNoise?: string;
+		/** A question's container text that marks it required, as a pattern. */
+		requiredText?: string;
+		/** Controls marked required only by a style (an asterisk drawn in CSS), by name. */
+		requiredNames?: string[];
+		/** Where a file input's container lists the files chosen, when the input itself is emptied. */
+		attachedFiles?: string;
+	};
+	/**
+	 * The board's own cookie banner, when it covers the form: its "decline all" button, clicked
+	 * once before filling. Only ever the decline; an employer's own banner is never touched.
+	 */
+	declineCookies?: string;
+	/** The form's location box is plain text, not Lever's lookup that must resolve to a suggestion. */
+	plainLocation?: boolean;
 }
+
+/** Label words the newer boards add around the question. */
+const LABEL_NOISE =
+	"\\((?:required|optional)\\)|^required\\.\\s*|^required(?=\\s|$)|\\s\\brequired\\.?$|svgs not supported by this browser\\.?|choose file|replace file";
 
 export const BOARD_CONFIGS: Record<Board, BoardConfig> = {
 	ashby: {
 		board: "ashby",
 		root: ".ashby-application-form-container",
-		container: ".ashby-application-form-field-entry",
+		// The EEO radio groups (since 2026-11) are fieldsets of their own, outside any field entry.
+		container:
+			".ashby-application-form-field-entry, .ashby-application-form-input-radio-group",
 		label: ".ashby-application-form-question-title",
 		submit: "button.ashby-application-form-submit-button",
 		success: {
@@ -47,6 +108,14 @@ export const BOARD_CONFIGS: Record<Board, BoardConfig> = {
 		},
 		errors:
 			".ashby-application-form-field-entry [class*='error' i]:not(:empty), [role=alert]:not(:empty)",
+		// Seen on a live posting, 2026-11-09 (docs/form-inspection.md).
+		hosts: [
+			"app.ashbyhq.com",
+			"cdn.ashbyprd.com",
+			"fonts.googleapis.com",
+			"fonts.gstatic.com",
+			"www.gstatic.com",
+		],
 	},
 	greenhouse: {
 		board: "greenhouse",
@@ -60,6 +129,20 @@ export const BOARD_CONFIGS: Record<Board, BoardConfig> = {
 		},
 		errors:
 			".error-message:not(:empty), .helper-text--error:not(:empty), [role=alert]:not(:empty)",
+		hosts: [
+			"job-boards.cdn.greenhouse.io",
+			"s2-recruiting.cdn.greenhouse.io",
+			"fonts.gstatic.com",
+			"www.gstatic.com",
+		],
+		formHosts: [
+			// Hands out the upload's presigned fields (an xhr GET before each file).
+			"boards.greenhouse.io",
+			// Checks the typed email: it gets the address in its URL.
+			"email-address-validator.us.greenhouse.io",
+			// Greenhouse's upload bucket (a POST of each chosen file); this bucket only.
+			"grnhse-prod-jben-us-east-1.s3.amazonaws.com",
+		],
 	},
 	lever: {
 		board: "lever",
@@ -73,8 +156,208 @@ export const BOARD_CONFIGS: Record<Board, BoardConfig> = {
 		},
 		errors:
 			".error-message:not(:empty), .application-error:not(:empty), [role=alert]:not(:empty)",
+		hosts: [
+			"cdn.lever.co",
+			"lever-client-logos.s3.us-west-2.amazonaws.com",
+			// hCaptcha's per-session hosts (a random label each time); hCaptcha owns the name.
+			"*.w.hcaptcha.com",
+		],
+	},
+	workable: {
+		board: "workable",
+		root: "form[data-ui=application-form]",
+		// Text fields sit in the label that wraps them, choices in a fieldset, consent in its own label.
+		container:
+			"fieldset, label:not([data-ui=option] *):not([data-ui=option] > label)",
+		label: "[id$=_label]",
+		submit: "form[data-ui=application-form] button[data-ui=apply-button]",
+		success: {
+			// The success component in Workable's careers bundle (2026-11-09):
+			// `data-ui="successful-submit"`, "Your application has been submitted successfully."
+			text: "thank you for applying|application has been submitted successfully",
+			selector: "[data-ui=successful-submit]",
+		},
+		errors: "[role=alert]:not(:empty), [data-ui$=-error]:not(:empty)",
+		hosts: [
+			"challenges.cloudflare.com",
+			"dcvxs6ggqztsa.cloudfront.net",
+			"d2y4rc9q318ytb.cloudfront.net",
+			"workablehr.s3.amazonaws.com",
+		],
+		scan: {
+			nameAttr: "data-ui",
+			hiddenChoices: true,
+			labelNoise: LABEL_NOISE,
+			requiredText: "^\\s*\\*",
+			// The privacy consent's asterisk is drawn in CSS (inspection, 2026-11-09).
+			requiredNames: ["gdpr"],
+		},
+		declineCookies: "button[data-ui=cookie-consent-decline]",
+	},
+	recruitee: {
+		board: "recruitee",
+		root: "form#offer-application-form",
+		container:
+			"fieldset, div:has(> label):not(:has(> input[type=radio], > input[type=checkbox]))",
+		label: "legend, label",
+		submit: "form#offer-application-form button[type=submit]",
+		success: {
+			// Recruitee's tab panels, in the page before submit: the success one and the
+			// "already applied" one (`…-content-offer-application-rate-limited`).
+			text: "all done|thank you for (?:applying|your application)|application (?:has been |was )?(?:submitted|received|sent)",
+			selector: "[id$=-content-offer-application-success]",
+			refused: "[id$=-content-offer-application-rate-limited]",
+		},
+		errors: "[role=alert]:not(:empty)",
+		hosts: [
+			"careers.recruiteecdn.com",
+			"captcha-base.recruiteecdn.com",
+			"captcha-assets.recruiteecdn.com",
+		],
+		scan: { labelNoise: LABEL_NOISE },
+		// "Accept only the necessary": nothing optional is ticked in its dialog.
+		declineCookies: "button[data-testid=agree-to-selected-cookies]",
+	},
+	teamtailor: {
+		board: "teamtailor",
+		root: "form#job-application-form",
+		container: "fieldset, div[id^=id_]",
+		label: "legend, label",
+		submit:
+			"form#job-application-form input[type=submit], form#job-application-form button[type=submit]",
+		success: {
+			text: "thank you for (?:applying|your application)|application (?:has been |was )?(?:submitted|received|sent)",
+		},
+		errors: "[role=alert]:not(:empty), .error-message:not(:empty)",
+		hosts: [
+			"assets-aws.teamtailor-cdn.com",
+			"images.teamtailor-cdn.com",
+			"fonts.googleapis.com",
+			"fonts.gstatic.com",
+		],
+		scan: { labelNoise: LABEL_NOISE, requiredText: "\\brequired\\b" },
+		declineCookies: 'button[data-action*="common--cookies--alert#disableAll"]',
+	},
+	personio: {
+		board: "personio",
+		root: "form[class*=DynamicForm_formContainer]",
+		container: "div:has(> label), [role=group]",
+		label: "label, [id$=-label], [id^=doc-label]",
+		submit: "form[class*=DynamicForm_formContainer] button[type=submit]",
+		success: {
+			text: "thank you for (?:applying|your application)|application (?:has been |was )?(?:submitted|received|sent)|vielen dank für (?:deine|ihre) bewerbung",
+		},
+		errors: "[role=alert]:not(:empty), [class*=errorMessage]:not(:empty)",
+		hosts: ["assets.cdn.personio.de", "challenges.cloudflare.com"],
+		scan: {
+			labelNoise: LABEL_NOISE,
+			requiredText: "\\(required\\)",
+			attachedFiles: "[role=listitem] > span",
+		},
+		plainLocation: true,
 	},
 };
+
+/**
+ * What a real submission's session may reach: the allowed form hosts plus the board's own data
+ * hosts (`formHosts`, any method), and its asset and scoring hosts (`hosts`, read-only) as rules.
+ * Every other host is refused (quietly unless the request could carry the application). The form URL itself is still checked against the allowed
+ * hosts only, so with none allowed nothing opens.
+ */
+export function sessionHosts(
+	board: Board,
+	allowed: string[],
+): { form: string[]; rules: HostRules } {
+	const config = BOARD_CONFIGS[board];
+	return {
+		form: [...new Set([...allowed, ...(config.formHosts ?? [])])],
+		rules: joinRules({ assets: config.hosts ?? [] }, BOARD_HOST_RULES[board]),
+	};
+}
+
+/**
+ * Where each board's hosted form lives: one fixed host, or the company's own subdomain of the
+ * board's domain (`acme.recruitee.com`). `applyUrl` builds the form URL from this, and the hosts
+ * a run may open (`boardFormHost`) are read from it too, so the two cannot drift.
+ */
+const FORM_HOST: Readonly<
+	Record<Board, { host: string } | { companyDomain: string }>
+> = {
+	ashby: { host: "jobs.ashbyhq.com" },
+	greenhouse: { host: "job-boards.greenhouse.io" },
+	lever: { host: "jobs.lever.co" },
+	workable: { host: "apply.workable.com" },
+	recruitee: { companyDomain: "recruitee.com" },
+	teamtailor: { companyDomain: "teamtailor.com" },
+	personio: { companyDomain: "jobs.personio.de" },
+};
+
+/** One DNS label: a company key that can only ever name a subdomain of the board's domain. */
+const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/**
+ * The exact host of a board's real form for a company: the board's fixed host, or
+ * `<company>.<board domain>` when the company key is a single DNS label. Null for any other key
+ * (`evil.com#`, `a.b`), so a key can never make the host another site. No wildcards.
+ */
+export function boardFormHost(board: Board, companyKey: string): string | null {
+	const at = FORM_HOST[board];
+	if ("host" in at) return at.host;
+	const label = companyKey.toLowerCase();
+	return DNS_LABEL.test(label) ? `${label}.${at.companyDomain}` : null;
+}
+
+/** True for a board whose form lives on the company's own subdomain (Recruitee, Teamtailor, Personio). */
+export function companySubdomainBoard(board: Board): boolean {
+	return "companyDomain" in FORM_HOST[board];
+}
+
+/**
+ * Why `companyKey` cannot name this board's form: on a company-subdomain board the key becomes
+ * the host, so anything but one DNS label (`localhost:8123#`, `evil.com#`, `a.b`) is refused
+ * before any URL is built or any browser opens. Null when the key is fine (or the board's host is
+ * fixed, the key only a path segment).
+ */
+export function companyKeyProblem(
+	board: Board,
+	companyKey: string,
+): string | null {
+	if (!companySubdomainBoard(board)) return null;
+	return DNS_LABEL.test(companyKey.toLowerCase())
+		? null
+		: "The job's company key is not one company name on this board, so its form address cannot be built.";
+}
+
+/** The hosts Settings shows for a board: its form host (or `<company>.<domain>`) and `formHosts`. */
+export function boardShownHosts(board: Board): string[] {
+	const at = FORM_HOST[board];
+	return [
+		"host" in at ? at.host : `<company>.${at.companyDomain}`,
+		...(BOARD_CONFIGS[board].formHosts ?? []),
+	];
+}
+
+/** A board that keys the company in the subdomain: its origin, or the fixture base plus the company. */
+function companyBase(
+	base: string | undefined,
+	company: string,
+	board: Board,
+): string {
+	const at = FORM_HOST[board];
+	const domain = "companyDomain" in at ? at.companyDomain : at.host;
+	// The key is the host (or, on a fixture base, a path segment): one DNS label or nothing.
+	const problem = companyKeyProblem(board, company);
+	if (problem) throw new Error(problem);
+	return base
+		? `${base.replace(/\/+$/, "")}/${company}`
+		: `https://${company.toLowerCase()}.${domain}`;
+}
+
+/** A board's real form origin, or its fixture base. */
+function fixedBase(board: Board, base: string | undefined): string {
+	const at = FORM_HOST[board];
+	return base ?? `https://${"host" in at ? at.host : at.companyDomain}`;
+}
 
 /** A board's hosted form URL for a job, or null when the job's URL is not on that board. */
 export function applyUrl(
@@ -84,18 +367,26 @@ export function applyUrl(
 ): string {
 	const trim = (u: string) => u.replace(/\/+$/, "");
 	switch (board) {
-		case "ashby": {
-			const base = bases.ashby ?? "https://jobs.ashbyhq.com";
-			return `${trim(base)}/${job.companyKey}/${job.externalId}/application`;
+		case "ashby":
+			return `${trim(fixedBase(board, bases.ashby))}/${job.companyKey}/${job.externalId}/application`;
+		case "greenhouse":
+			return `${trim(fixedBase(board, bases.greenhouse))}/${job.companyKey}/jobs/${job.externalId}`;
+		case "lever":
+			return `${trim(fixedBase(board, bases.lever))}/${job.companyKey}/${job.externalId}/apply`;
+		case "workable":
+			return `${trim(fixedBase(board, bases.workable))}/${job.companyKey}/j/${job.externalId}/apply/`;
+		case "recruitee": {
+			// The stored id is `{company}:{slug}`; the form is the offer's /c/new page.
+			const slug = job.externalId.slice(job.externalId.lastIndexOf(":") + 1);
+			return `${companyBase(bases.recruitee, job.companyKey, board)}/o/${slug}/c/new`;
 		}
-		case "greenhouse": {
-			const base = bases.greenhouse ?? "https://job-boards.greenhouse.io";
-			return `${trim(base)}/${job.companyKey}/jobs/${job.externalId}`;
+		case "teamtailor": {
+			// The job's path is `{id}-{slug}`; the feed's link has it, the id alone is the fallback.
+			const tail = job.url.match(/\/jobs\/(\d+[^/?#]*)/)?.[1] ?? job.externalId;
+			return `${companyBase(bases.teamtailor, job.companyKey, board)}/jobs/${tail}/applications/new`;
 		}
-		case "lever": {
-			const base = bases.lever ?? "https://jobs.lever.co";
-			return `${trim(base)}/${job.companyKey}/${job.externalId}/apply`;
-		}
+		case "personio":
+			return `${companyBase(bases.personio, job.companyKey, board)}/job/${job.externalId}/apply`;
 	}
 }
 
@@ -129,6 +420,8 @@ export interface FormField {
 	current?: string[];
 	/** A select that has an option with an empty value, so it can be left unanswered. */
 	emptyOption?: boolean;
+	/** The heading the field sits under inside the form ("Voluntary self-identification"); empty when none. */
+	section?: string;
 }
 
 /**
@@ -138,19 +431,27 @@ export interface FormField {
  */
 export function scanScript(config: BoardConfig): string {
 	return `(() => {
-	const cfg = ${JSON.stringify({ root: config.root, container: config.container, label: config.label })};
+	const cfg = ${JSON.stringify({ root: config.root, container: config.container, label: config.label, ...config.scan })};
 	// Some boards split the form (Ashby renders its EEO survey in a second container).
 	const roots = [...document.querySelectorAll(cfg.root)].filter((r, i, all) => !all.some((o, j) => j !== i && o.contains(r)));
 	if (roots.length === 0) return null;
 	const root = { querySelectorAll: (sel) => roots.flatMap((r) => [...r.querySelectorAll(sel)]) };
-	const clean = (t) => (t || "").replace(/[*✱]/g, " ").replace(/\\s+/g, " ").trim();
+	const noise = cfg.labelNoise ? new RegExp(cfg.labelNoise, "gi") : null;
+	const clean = (t) => { const c = (t || "").replace(/[*✱]/g, " ").replace(/\\s+/g, " ").trim(); return noise ? c.replace(noise, " ").replace(/\\s+/g, " ").trim() : c; };
 	const textOf = (el) => clean(el ? el.textContent : "");
+	// The nearest container that has a question label, else the nearest one.
+	const boxOf = (el) => {
+		const first = el.closest(cfg.container);
+		for (let box = first; box; box = box.parentElement && box.parentElement.closest(cfg.container))
+			if (box.querySelector(cfg.label)) return box;
+		return first;
+	};
 	const labelFor = (el) => {
 		if (el.id) {
 			const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
 			if (l && textOf(l) && !/^(attach|enter manually)$/i.test(textOf(l))) return textOf(l);
 		}
-		const box = el.closest(cfg.container);
+		const box = boxOf(el);
 		const own = box && box.querySelector(cfg.label);
 		if (own && textOf(own)) return textOf(own);
 		const by = el.getAttribute("aria-labelledby");
@@ -164,13 +465,16 @@ export function scanScript(config: BoardConfig): string {
 		if (!box) return false;
 		const label = box.querySelector(cfg.label);
 		return !!(label && (/[*✱]/.test(label.textContent || "") || /required/i.test(label.className || "") || label.querySelector(".required")))
-			|| box.getAttribute("aria-required") === "true" || !!box.querySelector('[role=group][aria-required="true"]');
+			|| box.getAttribute("aria-required") === "true" || !!box.querySelector('[role=group][aria-required="true"]')
+			|| (!!cfg.requiredText && new RegExp(cfg.requiredText, "i").test(box.textContent || ""));
 	};
 	const visible = (el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 2 && r.height > 2 && s.visibility !== "hidden" && s.display !== "none"; };
 	const optionText = (input) => {
 		const wrap = input.closest("label");
 		if (wrap && textOf(wrap)) return textOf(wrap);
 		if (input.id) { const l = document.querySelector('label[for="' + CSS.escape(input.id) + '"]'); if (l) return textOf(l); }
+		const by = input.getAttribute("aria-labelledby");
+		if (by) { const t = by.split(/\\s+/).map((id) => textOf(document.getElementById(id))).join(" ").trim(); if (t) return t; }
 		return clean(input.value);
 	};
 	const comboValue = (el) => {
@@ -181,21 +485,48 @@ export function scanScript(config: BoardConfig): string {
 		return hidden && hidden.value.trim() ? [clean(hidden.value)] : [];
 	};
 	const currentOf = (el, kind) => {
-		if (kind === "file") return [...(el.files || [])].map((f) => f.name);
+		if (kind === "file") {
+			const own = [...(el.files || [])].map((f) => f.name);
+			// Some boards move a chosen file into a list and empty the input (Personio).
+			const box = cfg.attachedFiles && !own.length ? el.closest(cfg.container) : null;
+			return box ? [...box.querySelectorAll(cfg.attachedFiles)].map(textOf).filter(Boolean) : own;
+		}
 		if (kind === "select") return [...el.selectedOptions].filter((o) => o.value !== "").map((o) => clean(o.textContent));
 		if (kind === "combobox") return comboValue(el);
-		return el.value && el.value.trim() ? [el.value] : [];
+		if (!el.value || !el.value.trim()) return [];
+		return [isPhone(el) && !el.value.trim().startsWith("+") ? pickerCode(el) + el.value : el.value];
+	};
+	const isPhone = (el) => el.type === "tel" || /phone/i.test(el.name || el.id || "");
+	// A phone widget that moved the country code into its picker (Workable): the code it shows,
+	// read from the picker beside the box, goes in front, so the whole number is compared.
+	const pickerCode = (el) => {
+		let p = el.parentElement;
+		for (let i = 0; i < 4 && p; i++, p = p.parentElement) {
+			for (const c of p.querySelectorAll("button, select, [role=combobox]")) {
+				if (c === el) continue;
+				const shown = c.tagName === "SELECT" ? (c.selectedOptions[0] || {}).textContent : c.textContent + " " + (c.getAttribute("aria-label") || "");
+				const m = (shown || "").match(/\\+(\\d{1,4})\\b/);
+				if (m) return "+" + m[1] + " ";
+			}
+		}
+		return "";
+	};
+	const headings = root.querySelectorAll("h2, h3, h4, [class*=section-header], [class*=section-title]");
+	const sectionOf = (el) => {
+		let found = "";
+		for (const h of headings) if (h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) found = textOf(h);
+		return found;
 	};
 	const fields = [];
 	const seen = new Set();
 	let n = 0;
 	const stamp = (el) => { const ref = String(++n); el.setAttribute("data-jp", ref); return ref; };
 	for (const yesno of root.querySelectorAll(".ashby-application-form-input-yesno")) {
-		const box = yesno.closest(cfg.container);
+		const box = boxOf(yesno);
 		const hidden = yesno.querySelector("input");
 		if (hidden) seen.add(hidden);
 		const buttons = [...yesno.querySelectorAll("button")];
-		fields.push({ ref: stamp(yesno), kind: "yesno", label: textOf(box && box.querySelector(cfg.label)), required: requiredMark(box), name: hidden ? hidden.name : "", options: buttons.map(textOf), visible: true, current: buttons.filter((b) => b.getAttribute("aria-pressed") === "true").map(textOf) });
+		fields.push({ ref: stamp(yesno), kind: "yesno", label: textOf(box && box.querySelector(cfg.label)), required: requiredMark(box), name: hidden ? hidden.name : "", options: buttons.map(textOf), visible: true, current: buttons.filter((b) => b.getAttribute("aria-pressed") === "true").map(textOf), section: sectionOf(yesno) });
 	}
 	for (const el of root.querySelectorAll("input, textarea, select")) {
 		if (seen.has(el)) continue;
@@ -203,17 +534,20 @@ export function scanScript(config: BoardConfig): string {
 		if (["hidden", "submit", "button", "search"].includes(type)) continue;
 		if (el.name === "g-recaptcha-response" || el.name === "h-captcha-response") continue;
 		// Helper inputs a widget hides from people (react-select's requiredInput) are not questions.
-		if (type !== "file" && el.getAttribute("aria-hidden") === "true") continue;
+		if (type !== "file" && el.getAttribute("aria-hidden") === "true" && !(cfg.hiddenChoices && (type === "radio" || type === "checkbox"))) continue;
 		const box = el.closest(cfg.container);
 		if (type === "radio" || type === "checkbox") {
-			const group = el.name ? [...root.querySelectorAll('input[name="' + CSS.escape(el.name) + '"]')] : [el];
+			// Same name and type only: a hidden twin of that name (Rails sends "0" for an unticked box,
+			// Lever pairs its consent box with one) is not an option.
+			const group = el.name ? [...root.querySelectorAll('input[name="' + CSS.escape(el.name) + '"]')].filter((g) => (g.getAttribute("type") || "").toLowerCase() === type) : [el];
 			group.forEach((g) => seen.add(g));
 			const ref = String(++n);
 			group.forEach((g) => g.setAttribute("data-jp", ref));
 			const fieldset = el.closest("fieldset");
 			const legend = fieldset && fieldset.querySelector("legend");
-			const label = textOf(box && box.querySelector(cfg.label)) || textOf(legend) || (group.length === 1 ? optionText(el) : "");
-			fields.push({ ref, kind: type, label, required: group.some((g) => g.required || g.getAttribute("aria-required") === "true") || requiredMark(box), name: el.name || el.id, options: group.map(optionText), visible: group.some(visible), current: group.filter((g) => g.checked).map(optionText) });
+			const named = fieldset && fieldset.getAttribute("aria-labelledby");
+			const label = textOf(box && box.querySelector(cfg.label)) || textOf(legend) || (named ? named.split(/\\s+/).map((id) => textOf(document.getElementById(id))).join(" ").trim() : "") || (group.length === 1 ? optionText(el) : "");
+			fields.push({ ref, kind: type, label, required: group.some((g) => g.required || g.getAttribute("aria-required") === "true") || requiredMark(box) || (cfg.requiredNames || []).includes(el.name), name: el.name || el.id, options: group.map(optionText), visible: group.some(visible), current: group.filter((g) => g.checked).map(optionText), section: sectionOf(el) });
 			continue;
 		}
 		seen.add(el);
@@ -223,11 +557,12 @@ export function scanScript(config: BoardConfig): string {
 			kind,
 			label: labelFor(el),
 			required: el.required || el.getAttribute("aria-required") === "true" || requiredMark(box),
-			name: el.name || el.id || "",
+			name: el.name || (cfg.nameAttr && el.getAttribute(cfg.nameAttr)) || el.id || "",
 			options: el.tagName === "SELECT" ? [...el.options].filter((o) => o.value !== "").map((o) => clean(o.textContent)) : [],
 			visible: kind === "file" ? true : visible(el),
 			current: currentOf(el, kind),
 			emptyOption: el.tagName === "SELECT" ? [...el.options].some((o) => o.value === "") : undefined,
+			section: sectionOf(el),
 		});
 	}
 	return fields;
@@ -250,6 +585,11 @@ export function optionsScript(ref: string): string {
 		const box = input.closest(".field-wrapper, li, .select, [class*=field]") || input.parentElement;
 		options = [...(box ? box.querySelectorAll("[role=option]") : [])];
 	}
+	// Lever's location suggestions: plain divs, picked on mousedown.
+	if (options.length === 0) {
+		const box = input.closest("li, .application-field") || input.parentElement;
+		options = [...(box ? box.querySelectorAll(".dropdown-results .dropdown-location") : [])];
+	}
 	for (const o of document.querySelectorAll("[data-jp-option]")) o.removeAttribute("data-jp-option");
 	return options.filter(visible).map((o, i) => { o.setAttribute("data-jp-option", String(i)); return (o.textContent || "").replace(/\\s+/g, " ").trim(); });
 })()`;
@@ -271,6 +611,8 @@ export const VISIBLE_CHALLENGE_SCRIPT = `(() => {
 		if (/captcha-delivery\\.com|arkoselabs|funcaptcha/.test(src)) return "CAPTCHA";
 	}
 	for (const el of document.querySelectorAll(".cf-turnstile, #challenge-form, #challenge-stage, [data-captcha-challenge]")) if (shown(el)) return "challenge";
+	// Turnstile draws its frame in a shadow root: the box around its response field is what shows.
+	for (const t of document.querySelectorAll('[name="cf-turnstile-response"]')) { const box = t.parentElement; const r = box ? box.getBoundingClientRect() : null; if (r && r.width > 100 && r.height > 30 && getComputedStyle(box).visibility !== "hidden") return "Cloudflare Turnstile"; }
 	if (/^\\s*just a moment/i.test(document.title)) return "Cloudflare interstitial";
 	return null;
 })()`;
@@ -281,8 +623,12 @@ export function errorsScript(config: BoardConfig): string {
 }
 
 /** Words that make a would-be confirmation a refusal. */
-const REFUSAL =
-	"\\b(?:rejected|declined|not (?:been )?(?:submitted|received|accepted)|unsuccessful|could ?n[o']t|failed|error|try again)\\b";
+export const REFUSAL =
+	"\\b(?:rejected|declined|not (?:been )?(?:submitted|received|accepted)|unsuccessful|could ?n[o']t|failed|error|try again|already (?:applied|submitted|received|sent)|duplicate)\\b";
+
+/** A page that says the candidate applied before: never a confirmation of this submission. */
+export const DUPLICATE =
+	"\\balready (?:applied|submitted|received|sent)\\b|\\bduplicate application\\b";
 
 /**
  * Page script: the confirmation text when the board shows its confirmation, else null. All of
@@ -291,7 +637,9 @@ const REFUSAL =
  * element (Ashby), the confirmation text there, and no refusal wording.
  */
 export function successScript(config: BoardConfig, formUrl: string): string {
-	const { text, selector, path } = config.success;
+	const { text, selector, path, refused } = config.success;
+	// Text alone is no evidence: without the board's path or element nothing is confirmed.
+	if (!path && !selector) return "null";
 	const form = new URL(formUrl);
 	const expected = {
 		host: form.host,
@@ -306,7 +654,11 @@ export function successScript(config: BoardConfig, formUrl: string): string {
 	if ([...document.querySelectorAll(${JSON.stringify(`${config.root}, ${config.submit}`)})].some(shown)) return null;
 	if (expected.path !== null && location.pathname.replace(/\\/+$/, "") !== expected.path) return null;
 	const scope = ${JSON.stringify(selector ?? null)} ? document.querySelector(${JSON.stringify(selector ?? "")}) : document.body;
-	if (!scope) return null;
+	// Hidden nodes count for nothing: some boards ship their confirmation in the page before submit.
+	if (!scope || !shown(scope)) return null;
+	// The board's own "already applied" state, or a duplicate anywhere on the page, is a refusal.
+	if (${JSON.stringify(refused ?? null)} && [...document.querySelectorAll(${JSON.stringify(refused ?? "")})].some(shown)) return null;
+	if (new RegExp(${JSON.stringify(DUPLICATE)}, "i").test((document.body.innerText || "").slice(0, 20000))) return null;
 	const body = (scope.innerText || "").slice(0, 5000);
 	if (new RegExp(${JSON.stringify(REFUSAL)}, "i").test(body)) return null;
 	const m = body.match(new RegExp(${JSON.stringify(text)}, "i"));
@@ -323,6 +675,8 @@ export type SystemRole =
 	| "last_name"
 	| "email"
 	| "phone"
+	/** Greenhouse's country picker beside the phone number, set by the page from the number. */
+	| "phone_country"
 	| "location"
 	| "linkedin"
 	| "github"
@@ -334,16 +688,22 @@ export type SystemRole =
 	| "ignore";
 
 const ROLE_BY_NAME: [RegExp, SystemRole][] = [
-	[/^(_systemfield_name|name)$/, "full_name"],
-	[/^first_name$/, "first_name"],
-	[/^last_name$/, "last_name"],
-	[/^(_systemfield_email|email)$/, "email"],
-	[/^phone$/, "phone"],
+	// Control names hold in every language the form is shown in (Recruitee and Personio follow
+	// the employer's locale).
+	[/^(_systemfield_name|name|candidate\.name)$/, "full_name"],
+	[/^(first_name|firstname|candidate\[first_name\])$/, "first_name"],
+	[/^(last_name|lastname|candidate\[last_name\])$/, "last_name"],
+	[/^(_systemfield_email|email|candidate\.email|candidate\[email\])$/, "email"],
+	[/^(phone|candidate\.phone|candidate\[phone\])$/, "phone"],
 	[/^location$/, "location"],
 	[/^urls\[linkedin\]$/i, "linkedin"],
 	[/^urls\[github\]$/i, "github"],
 	[/^urls\[portfolio\]$/i, "website"],
-	[/^(_systemfield_resume|resume)$/, "resume"],
+	[
+		/^(_systemfield_resume|resume|candidate\.cv|documents\.cv|candidate_resume_remote_url)$/,
+		"resume",
+	],
+	[/^candidate\.coverLetterFile$/, "cover_letter"],
 	[/^cover_letter$/, "cover_letter"],
 	[/^comments$/, "cover_letter_text"],
 	[/^(resume_text|cover_letter_text)$/, "ignore"],
@@ -369,7 +729,7 @@ const ROLE_BY_LABEL: [RegExp, SystemRole][] = [
 		/^(website|portfolio|personal website|portfolio url|website url)$/,
 		"website",
 	],
-	[/^(resume|cv|resume ?\/ ?cv)$/, "resume"],
+	[/^(?:upload )?(resume|cv|resume ?\/ ?cv|cv or resume)$/, "resume"],
 	[/^cover letter$/, "cover_letter"],
 	[/^additional information$/, "cover_letter_text"],
 	[
@@ -379,6 +739,19 @@ const ROLE_BY_LABEL: [RegExp, SystemRole][] = [
 ];
 
 export function systemRole(field: FormField): SystemRole | null {
+	if (field.kind === "combobox" && field.name === "country")
+		return "phone_country";
+	const role = roleOf(field);
+	// A cover letter box that takes text (Workable, Teamtailor) gets the approved letter's text.
+	if (
+		role === "cover_letter" &&
+		(field.kind === "text" || field.kind === "textarea")
+	)
+		return "cover_letter_text";
+	return role;
+}
+
+function roleOf(field: FormField): SystemRole | null {
 	for (const [pattern, role] of ROLE_BY_NAME)
 		if (pattern.test(field.name)) return role;
 	const label = normalizeForMatch(field.label)
@@ -453,6 +826,11 @@ export type FillAction =
 	| { ref: string; label: string; kind: "yesno"; value: string }
 	| { ref: string; label: string; kind: "location"; value: string }
 	| { ref: string; label: string; kind: "file"; file: "cv" | "cover_letter" }
+	/**
+	 * Nothing to do: the page sets this control itself from another approved value (Greenhouse's
+	 * phone country from the number). Listed in review and checked after filling.
+	 */
+	| { ref: string; label: string; kind: "expect"; value: string }
 	/** Empties a control that arrived answered: text, a select's empty option, ticked boxes. */
 	| {
 			ref: string;
@@ -488,6 +866,15 @@ function splitName(name: string): { first: string; last: string } {
 	};
 }
 
+/**
+ * The country calling code a phone number starts with ("+1 555 …" gives "+1"), when it is set
+ * apart by a space, dash, dot or bracket; null otherwise.
+ */
+export function dialCode(phone: string): string | null {
+	const match = phone.trim().match(/^\+(\d{1,4})[\s\-.(]/);
+	return match ? `+${match[1]}` : null;
+}
+
 function contactValue(role: SystemRole, data: ApplicantData): string {
 	const c = data.contact;
 	const { first, last } = splitName(c.name);
@@ -519,11 +906,67 @@ function contactValue(role: SystemRole, data: ApplicantData): string {
 	}
 }
 
+/** An option that declines to self-identify ("Decline to self-identify", "I prefer not to say"). */
+const DECLINE =
+	/\b(?:decline|declined|prefer not|rather not|do not wish|don ?t wish|not wish to|choose not to|not to (?:say|disclose|answer|identify|self identify))\b/;
+
+/** The option of a self-identification question that declines to answer, or null. */
+export function declineOption(field: FormField): string | null {
+	return field.options.find((o) => DECLINE.test(questionKeyOf(o))) ?? null;
+}
+
+/**
+ * A contact field's action, or null when the contact details do not answer it. Greenhouse's
+ * phone country is set by the page from the number: it is expected, not filled. A location
+ * suggestion the user picked in Questions (an approved answer) wins over the profile's text.
+ */
+function contactAction(
+	field: FormField,
+	role: SystemRole,
+	data: ApplicantData,
+	plainLocation: boolean,
+): FillAction | null {
+	const base = { ref: field.ref, label: field.label };
+	if (role === "phone_country") {
+		const code = dialCode(data.contact.phone);
+		return code ? { ...base, kind: "expect", value: code } : null;
+	}
+	const value =
+		(role === "location"
+			? findAnswer(field.label, data.answers)?.answer
+			: "") || contactValue(role, data);
+	if (!value || (field.kind !== "text" && field.kind !== "textarea"))
+		return null;
+	return {
+		...base,
+		kind:
+			role === "location" && field.name === "location" && !plainLocation
+				? "location"
+				: "fill",
+		value,
+	};
+}
+
+export interface PlanOptions {
+	/**
+	 * Self-identification questions without an approved answer take their "decline to answer"
+	 * option when they offer one. Only for a form read before review, whose values the user
+	 * approved in the "What will be sent" list (docs/auto-apply-plan.md, step 3).
+	 */
+	declineVoluntary?: boolean;
+	/** The location box is plain text (Personio), not Lever's lookup. */
+	plainLocation?: boolean;
+}
+
 /**
  * Decides every field's value from approved data only. File fields come last so nothing is
  * uploaded (some boards upload on selection) before the rest of the form is known to be fillable.
  */
-export function planFill(fields: FormField[], data: ApplicantData): FillPlan {
+export function planFill(
+	fields: FormField[],
+	data: ApplicantData,
+	options: PlanOptions = {},
+): FillPlan {
 	const plan: FillPlan = { actions: [], unknown: [], blank: [] };
 	const files: FillAction[] = [];
 	const ask = (field: FormField, extra: Partial<UnknownQuestion> = {}) =>
@@ -588,29 +1031,27 @@ export function planFill(fields: FormField[], data: ApplicantData): FillPlan {
 			continue;
 		}
 		if (role === "voluntary") {
-			// Self-identification is the user's to give; an approved answer is used, nothing else.
+			// Self-identification is the user's to give: an approved answer is used, or, on a form
+			// read before review, the field's own "decline" option, shown in the approved list.
 			const answer = findAnswer(field.label, data.answers);
+			const decline = options.declineVoluntary ? declineOption(field) : null;
+			if (!answer && decline) {
+				plan.actions.push(declineAction(field, decline));
+				continue;
+			}
 			if (!answer) {
 				unknown(field);
 				continue;
 			}
 		}
 		if (role && role !== "voluntary") {
-			const value = contactValue(role, data);
-			if (!value) {
-				unknown(field);
-				continue;
-			}
-			if (field.kind === "text" || field.kind === "textarea")
-				plan.actions.push({
-					ref: field.ref,
-					label: field.label,
-					kind:
-						role === "location" && field.name === "location"
-							? "location"
-							: "fill",
-					value,
-				});
+			const action = contactAction(
+				field,
+				role,
+				data,
+				options.plainLocation === true,
+			);
+			if (action) plan.actions.push(action);
 			else unknown(field);
 			continue;
 		}
@@ -681,8 +1122,115 @@ export function planFill(fields: FormField[], data: ApplicantData): FillPlan {
 	return plan;
 }
 
+function declineAction(field: FormField, option: string): FillAction {
+	const base = { ref: field.ref, label: field.label };
+	switch (field.kind) {
+		case "select":
+			return { ...base, kind: "select", value: option };
+		case "combobox":
+			return { ...base, kind: "combobox", value: option };
+		case "yesno":
+			return { ...base, kind: "yesno", value: option };
+		default:
+			return { ...base, kind: "choose", values: [option] };
+	}
+}
+
+/**
+ * The same phone number, on a phone field only: every digit equal, country code included. A
+ * widget that moves the code into its picker is read with the picker's code in front (scanScript).
+ */
+function samePhone(field: FormField, held: string, approved: string): boolean {
+	if (systemRole(field) !== "phone") return false;
+	if (!/^\+?[\d\s().-]+$/.test(approved)) return false;
+	return held.replace(/\D/g, "") === approved.replace(/\D/g, "");
+}
+
 const fieldKey = (f: FormField) => `${f.kind}|${f.name}|${f.label}`;
+/** An option chosen from the page's own list: its text may differ in case and punctuation. */
 const same = (a: string, b: string) => questionKeyOf(a) === questionKeyOf(b);
+
+/** Only what never changes meaning: outer and repeated whitespace, and Unicode composition. */
+const tidy = (text: string) =>
+	text.normalize("NFC").replace(/\s+/g, " ").trim();
+
+const EMAIL = /^([^\s@]+)@([^\s@]+)$/;
+const LINK = /^([a-z][a-z0-9+.-]*:\/\/)?([^/?#\s]+\.[^/?#\s]+)([/?#].*)?$/i;
+
+/**
+ * True when a typed value holds exactly the approved text. Every character counts ("+" and "-"
+ * in an email, "/" and "-" in a link), except the case of an email's domain and of a link's
+ * scheme and host, which never change where it leads.
+ */
+function sameText(held: string, approved: string): boolean {
+	const a = tidy(held);
+	const b = tidy(approved);
+	if (a === b) return true;
+	const mailA = a.match(EMAIL);
+	const mailB = b.match(EMAIL);
+	if (mailA && mailB)
+		return (
+			mailA[1] === mailB[1] &&
+			(mailA[2] ?? "").toLowerCase() === (mailB[2] ?? "").toLowerCase()
+		);
+	const linkA = a.match(LINK);
+	const linkB = b.match(LINK);
+	if (linkA && linkB)
+		return (
+			(linkA[1] ?? "").toLowerCase() === (linkB[1] ?? "").toLowerCase() &&
+			(linkA[2] ?? "").toLowerCase() === (linkB[2] ?? "").toLowerCase() &&
+			(linkA[3] ?? "") === (linkB[3] ?? "")
+		);
+	return false;
+}
+
+/** Why a control's value is not the planned one, or null when it is. */
+function mismatch(
+	field: FormField,
+	action: FillAction,
+	label: string,
+	current: string[],
+): string | null {
+	const holds = current.length ? `"${current.join("; ")}"` : "nothing";
+	const one = current.length === 1 ? (current[0] ?? "") : null;
+	switch (action.kind) {
+		case "fill": {
+			const ok =
+				one !== null &&
+				(sameText(one, action.value) || samePhone(field, one, action.value));
+			return ok ? null : `"${label}" holds ${holds}, not the approved value.`;
+		}
+		case "select":
+		case "yesno":
+			return one !== null && same(one, action.value)
+				? null
+				: `"${label}" holds ${holds}, not "${action.value}".`;
+		case "choose": {
+			const want = action.values.map(questionKeyOf).sort().join("|");
+			const have = current.map(questionKeyOf).sort().join("|");
+			return want === have
+				? null
+				: `"${label}" holds ${holds}, not "${action.values.join("; ")}".`;
+		}
+		case "combobox":
+		case "location":
+			if (current.length === 0)
+				return `"${label}" is empty after choosing "${action.value}".`;
+			return same(current[0] ?? "", action.value)
+				? null
+				: `"${label}" holds ${holds}, not "${action.value}".`;
+		case "expect":
+			return one !== null &&
+				(one === action.value || one.endsWith(` ${action.value}`))
+				? null
+				: `"${label}" holds ${holds}, not "${action.value}".`;
+		case "file":
+			return current.length === 0 ? `"${label}" has no file attached.` : null;
+		case "clear":
+			// Checked by the caller: nothing may be held.
+			return null;
+	}
+}
 
 /**
  * The last check before the claim: reads the form again and compares every control with the
@@ -720,54 +1268,8 @@ export function verifyFilled(
 				problems.push(`"${label}" holds ${holds}, which was not approved.`);
 			continue;
 		}
-		switch (action.kind) {
-			case "fill":
-				if (
-					current.length !== 1 ||
-					!(
-						same(current[0] ?? "", action.value) ||
-						(/^\+?[\d\s().-]+$/.test(action.value) &&
-							(current[0] ?? "").replace(/\D/g, "") ===
-								action.value.replace(/\D/g, ""))
-					)
-				)
-					problems.push(`"${label}" holds ${holds}, not the approved value.`);
-				break;
-			case "select":
-			case "yesno":
-				if (current.length !== 1 || !same(current[0] ?? "", action.value))
-					problems.push(`"${label}" holds ${holds}, not "${action.value}".`);
-				break;
-			case "choose": {
-				const want = action.values.map(questionKeyOf).sort().join("|");
-				const have = current.map(questionKeyOf).sort().join("|");
-				if (want !== have)
-					problems.push(
-						`"${label}" holds ${holds}, not "${action.values.join("; ")}".`,
-					);
-				break;
-			}
-			case "combobox":
-			case "location":
-				if (current.length === 0)
-					problems.push(
-						`"${label}" is empty after choosing "${action.value}".`,
-					);
-				else if (
-					action.kind === "combobox" &&
-					!same(current[0] ?? "", action.value)
-				)
-					problems.push(`"${label}" holds ${holds}, not "${action.value}".`);
-				break;
-			case "file":
-				if (current.length === 0)
-					problems.push(`"${label}" has no file attached.`);
-				break;
-
-			default:
-				// Clear actions were handled before this switch.
-				break;
-		}
+		const problem = mismatch(field, action, label, current);
+		if (problem) problems.push(problem);
 	}
 	return problems;
 }

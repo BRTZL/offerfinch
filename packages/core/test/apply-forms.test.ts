@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 
+import { schemaKey } from "../src/apply/form-schema";
 import {
 	type ApplicantData,
 	applyUrl,
+	BOARD_CONFIGS,
+	BOARDS,
+	dialCode,
 	exactOption,
 	type FormField,
 	markdownToPlain,
 	planFill,
 	sameQuestion,
+	sessionHosts,
+	verifyFilled,
 } from "../src/apply/forms";
 
 const data: ApplicantData = {
@@ -68,6 +74,139 @@ describe("answer matching", () => {
 		expect(applyUrl("lever", job, { lever: "http://127.0.0.1:9/lever/" })).toBe(
 			"http://127.0.0.1:9/lever/acme/123/apply",
 		);
+		expect(applyUrl("workable", { ...job, externalId: "AB12CD" })).toBe(
+			"https://apply.workable.com/acme/j/AB12CD/apply/",
+		);
+		expect(
+			applyUrl("recruitee", { ...job, externalId: "acme:platform-engineer" }),
+		).toBe("https://acme.recruitee.com/o/platform-engineer/c/new");
+		expect(
+			applyUrl("teamtailor", {
+				url: "https://acme.teamtailor.com/jobs/4100001-platform-engineer",
+				externalId: "4100001",
+				companyKey: "acme",
+			}),
+		).toBe(
+			"https://acme.teamtailor.com/jobs/4100001-platform-engineer/applications/new",
+		);
+		expect(applyUrl("personio", job)).toBe(
+			"https://acme.jobs.personio.de/job/123/apply",
+		);
+		expect(
+			applyUrl("personio", job, { personio: "http://127.0.0.1:9/personio" }),
+		).toBe("http://127.0.0.1:9/personio/acme/job/123/apply");
+	});
+
+	it("lets a submission reach a board's own asset and scoring hosts, never trackers", () => {
+		const hosts = sessionHosts("personio", ["acme.jobs.personio.de"]);
+		// Only the form's own hosts receive data; asset and scoring hosts are read-only rules.
+		expect(hosts.form).toEqual(["acme.jobs.personio.de"]);
+		expect(hosts.rules.assets).toEqual([
+			"assets.cdn.personio.de",
+			"challenges.cloudflare.com",
+		]);
+		expect(sessionHosts("ashby", ["jobs.ashbyhq.com"]).form).toEqual([
+			"jobs.ashbyhq.com",
+		]);
+		for (const board of BOARDS)
+			for (const host of BOARD_CONFIGS[board].hosts ?? [])
+				expect(host).not.toMatch(
+					/googletagmanager|google-analytics|facebook|linkedin|reddit|sentry|ziggeo|analytics/,
+				);
+	});
+
+	describe("a filled number counts only with every digit, country code included", () => {
+		const fill = (value: string) => ({
+			actions: [{ ref: "1", label: "x", kind: "fill" as const, value }],
+			unknown: [],
+			blank: [],
+		});
+		const phone = {
+			ref: "1",
+			kind: "text" as const,
+			label: "Phone",
+			required: false,
+			name: "phone",
+			options: [],
+			visible: true,
+		};
+		const salary = { ...phone, label: "Expected salary", name: "salary" };
+
+		it("accepts the number as the scan reads it, picker code in front", () => {
+			const plan = fill("+90 555 000 00 00");
+			expect(
+				verifyFilled(
+					plan,
+					[phone],
+					[{ ...phone, current: ["+90 5550000000"] }],
+				),
+			).toEqual([]);
+		});
+
+		it("refuses a number whose country code was dropped or changed", () => {
+			const plan = fill("+90 555 000 00 00");
+			for (const held of ["5550000000", "555 000 00 00", "+31 555 000 00 00"])
+				expect(
+					verifyFilled(plan, [phone], [{ ...phone, current: [held] }]),
+				).toHaveLength(1);
+		});
+
+		it("refuses a typed email or link whose punctuation changed (Codex review)", () => {
+			const email = { ...phone, label: "Email", name: "email" };
+			const link = { ...phone, label: "LinkedIn", name: "linkedin" };
+			expect(
+				verifyFilled(
+					fill("ada+tag@example.test"),
+					[email],
+					[{ ...email, current: ["ada-tag@example.test"] }],
+				),
+			).toHaveLength(1);
+			expect(
+				verifyFilled(
+					fill("https://www.linkedin.com/in/ada-example"),
+					[link],
+					[{ ...link, current: ["https://www.linkedin.com/in/ada/example"] }],
+				),
+			).toHaveLength(1);
+			expect(
+				verifyFilled(
+					fill("Ada@example.test"),
+					[email],
+					[{ ...email, current: ["ada@example.test"] }],
+				),
+			).toHaveLength(1);
+		});
+
+		it("accepts the approved text with only whitespace, case of a domain or host, or composition changed", () => {
+			const email = { ...phone, label: "Email", name: "email" };
+			const link = { ...phone, label: "LinkedIn", name: "linkedin" };
+			const why = { ...phone, label: "Why us?", name: "why" };
+			for (const [f, approved, held] of [
+				[email, "ada+tag@example.test", "  ada+tag@Example.TEST "],
+				[
+					link,
+					"https://www.linkedin.com/in/ada-example",
+					"HTTPS://WWW.LinkedIn.com/in/ada-example",
+				],
+				[
+					why,
+					"The robotics  work\r\nmatches.",
+					" The robotics work\nmatches. ",
+				],
+				[why, "Café", "Café"],
+			] as const)
+				expect(
+					verifyFilled(fill(approved), [f], [{ ...f, current: [held] }]),
+					`${approved} / ${held}`,
+				).toEqual([]);
+		});
+
+		it("refuses a non-phone value that lost its leading digits", () => {
+			const plan = fill("+1000000");
+			expect(
+				verifyFilled(plan, [salary], [{ ...salary, current: ["000000"] }]),
+			).toHaveLength(1);
+		});
 	});
 });
 
@@ -159,5 +298,155 @@ describe("planFill", () => {
 		expect(
 			markdownToPlain("Ada\\\n**Bold** and [link](https://x.y)\n\n\n\nEnd"),
 		).toBe("Ada\nBold and link\n\nEnd");
+	});
+});
+
+/** Drift found on the real forms on 2026-11-09 (docs/form-inspection.md). */
+describe("2026-11-09 form drift", () => {
+	it("keys Ashby's EEO radios without the UUID that changes on every load", () => {
+		const a = schemaKey({
+			kind: "radio",
+			name: "48a5ac0a-8696-4f4b-9283-3e1010d67194__systemfield_eeoc_gender",
+			label: "Gender",
+		});
+		const b = schemaKey({
+			kind: "radio",
+			name: "d4a050b1-953d-41ab-9d43-fec43e7512cf__systemfield_eeoc_gender",
+			label: "Gender",
+		});
+		expect(a).toBe("radio:_systemfield_eeoc_gender");
+		expect(b).toBe(a);
+		// Lever's card ids are stable and stay in the key.
+		expect(
+			schemaKey({
+				kind: "checkbox",
+				name: "cards[95e981e4-5566-4377-abbf-351be458e327][field0]",
+				label: "",
+			}),
+		).toBe("checkbox:cards[95e981e4-5566-4377-abbf-351be458e327][field0]");
+	});
+
+	it("reads the calling code only when it is set apart", () => {
+		expect(dialCode("+1 555 010 0199")).toBe("+1");
+		expect(dialCode("+90 (555) 000 00 00")).toBe("+90");
+		expect(dialCode("+90-555")).toBe("+90");
+		expect(dialCode("+905550000000")).toBeNull();
+		expect(dialCode("0555 000 00 00")).toBeNull();
+	});
+
+	it("expects Greenhouse's phone country from the number and checks what it holds", () => {
+		const country = field({
+			kind: "combobox",
+			label: "Country",
+			name: "country",
+			options: ["United States +1", "Turkey +90"],
+		});
+		const phone = field({ label: "Phone", name: "phone" });
+		const plan = planFill([country, phone], data);
+		expect(plan.actions).toContainEqual({
+			ref: country.ref,
+			label: "Country",
+			kind: "expect",
+			value: "+90",
+		});
+		expect(plan.unknown).toEqual([]);
+		const held = (value: string[]) => [
+			{ ...country, current: value },
+			{ ...phone, current: ["+90 555"] },
+		];
+		expect(verifyFilled(plan, [country, phone], held(["+90"]))).toEqual([]);
+		expect(verifyFilled(plan, [country, phone], held(["Turkey +90"]))).toEqual(
+			[],
+		);
+		expect(verifyFilled(plan, [country, phone], held(["+1"]))).toEqual([
+			'"Country" holds "+1", not "+90".',
+		]);
+		// No calling code to read: the picker is left blank like any optional field.
+		const plain = planFill([country, phone], {
+			...data,
+			contact: { ...data.contact, phone: "0555 000" },
+		});
+		expect(plain.actions.some((a) => a.ref === country.ref)).toBe(false);
+		expect(plain.blank).toContain("Country");
+	});
+
+	it("checks a location exactly, and an approved answer for it wins", () => {
+		const location = field({
+			label: "Current location",
+			name: "location",
+			required: true,
+		});
+		const plan = planFill([location], data);
+		expect(plan.actions).toEqual([
+			{
+				ref: location.ref,
+				label: "Current location",
+				kind: "location",
+				value: "Izmir, Turkey",
+			},
+		]);
+		expect(
+			verifyFilled(plan, [location], [{ ...location, current: ["Izmir"] }]),
+		).toEqual(['"Current location" holds "Izmir", not "Izmir, Turkey".']);
+		const answered = planFill([location], {
+			...data,
+			answers: [
+				...data.answers,
+				{ question: "Current location", answer: "Izmir, Izmir, Turkey" },
+			],
+		});
+		expect(answered.actions[0]).toMatchObject({
+			kind: "location",
+			value: "Izmir, Izmir, Turkey",
+		});
+	});
+});
+
+describe("a board's other hosts in a real submission", () => {
+	it("adds the board's data hosts to the allowed ones, and its asset and scoring hosts as read-only rules", () => {
+		const hosts = sessionHosts("greenhouse", ["job-boards.greenhouse.io"]);
+		expect(hosts.form).toEqual([
+			"job-boards.greenhouse.io",
+			"boards.greenhouse.io",
+			"email-address-validator.us.greenhouse.io",
+			"grnhse-prod-jben-us-east-1.s3.amazonaws.com",
+		]);
+		expect(hosts.rules.assets).toContain("www.recaptcha.net");
+		expect(hosts.rules.assets).not.toContain("job-boards.greenhouse.io");
+		// Only reCAPTCHA's own frames, with Greenhouse's key, may post, and only to two paths.
+		expect(hosts.rules.widgets?.map((w) => w.endpoints)).toEqual([
+			[
+				"www.recaptcha.net/recaptcha/enterprise/reload",
+				"www.recaptcha.net/recaptcha/enterprise/clr",
+			],
+		]);
+		// Trackers are never listed: they are refused like any other host.
+		expect(sessionHosts("lever", []).rules.assets).not.toContain(
+			"www.googletagmanager.com",
+		);
+	});
+
+	it("never adds a form host: with none allowed, the form's own host is still not allowed", () => {
+		for (const board of ["ashby", "greenhouse", "lever"] as const) {
+			const own = new URL(
+				applyUrl(board, { url: "", externalId: "1", companyKey: "acme" }),
+			).hostname;
+			expect(sessionHosts(board, []).form).not.toContain(own);
+			expect(sessionHosts(board, []).rules.assets).not.toContain(own);
+		}
+	});
+
+	it("lists exact names, never a suffix many companies share", () => {
+		for (const config of Object.values(BOARD_CONFIGS))
+			for (const host of [
+				...(config.hosts ?? []),
+				...(config.formHosts ?? []),
+			]) {
+				expect(host).toMatch(/^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/);
+				if (host.startsWith("*.")) expect(host).toMatch(/\.hcaptcha\.com$/);
+				expect(host).not.toMatch(
+					/^(\*\.)?(s3\.amazonaws\.com|amazonaws\.com|cloudfront\.net|googleapis\.com|appspot\.com)$/,
+				);
+			}
 	});
 });

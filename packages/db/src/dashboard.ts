@@ -20,6 +20,7 @@ export {
 	EditConflictError,
 	INBOX_VIEWS,
 	type PendingEvent,
+	StaleAttemptError,
 	subscriptionPauseOf,
 } from "./dashboard/shared";
 
@@ -155,6 +156,10 @@ export class DashboardRepository extends DrizzlePipelineRepository {
 		return submissionMethods.setSubmissionsPaused.apply(this, args);
 	}
 
+	setBoardOpen(...args: Parameters<typeof submissionMethods.setBoardOpen>) {
+		return submissionMethods.setBoardOpen.apply(this, args);
+	}
+
 	markSubmittedManually(
 		...args: Parameters<typeof submissionMethods.markSubmittedManually>
 	) {
@@ -165,6 +170,26 @@ export class DashboardRepository extends DrizzlePipelineRepository {
 		...args: Parameters<typeof submissionMethods.retrySubmission>
 	) {
 		return submissionMethods.retrySubmission.apply(this, args);
+	}
+
+	confirmNotSent(...args: Parameters<typeof submissionMethods.confirmNotSent>) {
+		return submissionMethods.confirmNotSent.apply(this, args);
+	}
+
+	formLinkAttempt(
+		...args: Parameters<typeof submissionMethods.formLinkAttempt>
+	) {
+		return submissionMethods.formLinkAttempt.apply(this, args);
+	}
+
+	readFormAgainRefusal(
+		...args: Parameters<typeof submissionMethods.readFormAgainRefusal>
+	) {
+		return submissionMethods.readFormAgainRefusal.apply(this, args);
+	}
+
+	readFormAgain(...args: Parameters<typeof submissionMethods.readFormAgain>) {
+		return submissionMethods.readFormAgain.apply(this, args);
 	}
 
 	getProof(...args: Parameters<typeof submissionMethods.getProof>) {

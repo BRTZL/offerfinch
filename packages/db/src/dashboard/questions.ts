@@ -1,5 +1,6 @@
 import type { StoredSuggestion } from "@offerfinch/core/tailor/answer-helper";
 import { and, desc, eq, isNull, ne, or, sql } from "drizzle-orm";
+import type { Tx } from "../repository/shared";
 import {
 	applications,
 	companies,
@@ -9,6 +10,54 @@ import {
 } from "../schema/pipeline";
 import type { DashboardRepositoryContext } from "./context";
 import type { PendingEvent } from "./shared";
+
+async function stateOf(tx: Tx, applicationId: string) {
+	const [app] = await tx
+		.select({ state: applications.state })
+		.from(applications)
+		.where(eq(applications.id, applicationId));
+	return app?.state ?? null;
+}
+
+/**
+ * The last answer to a question the application form asked at submit time: the answers join the
+ * form answers and the application goes back to review, so the user approves them before
+ * anything is sent.
+ */
+async function backToReview(
+	self: DashboardRepositoryContext,
+	tx: Tx,
+	input: {
+		userId: string;
+		applicationId: string;
+		questionId: string;
+		state: string | null;
+	},
+): Promise<{
+	applicationId: string;
+	event: PendingEvent | null;
+	next?: "review";
+}> {
+	const { userId, applicationId } = input;
+	if (input.state !== "needs_human") return { applicationId, event: null };
+	const resumed = await self.resumeWithFormAnswers(
+		tx,
+		userId,
+		applicationId,
+		"needs_human",
+		"user",
+	);
+	if (!resumed) return { applicationId, event: null };
+	const event = await self.addEvent(
+		tx,
+		userId,
+		applicationId,
+		`answered-${input.questionId}`,
+		{ action: "answered_form" },
+	);
+	return { applicationId, event, next: "review" };
+}
+
 export const questionsMethods = {
 	async listQuestions(userId: string, status?: "open" | "answered") {
 		return this.database
@@ -141,31 +190,18 @@ export const questionsMethods = {
 					),
 				);
 			if ((open?.n ?? 0) > 0) return { applicationId, event: null };
-			if (question.formField) {
-				// A question the application form asked: the answers join the form answers and the
-				// application goes back to review, so the user approves them before anything is sent.
-				const [app] = await tx
-					.select({ state: applications.state })
-					.from(applications)
-					.where(eq(applications.id, applicationId));
-				if (app?.state !== "needs_human") return { applicationId, event: null };
-				const resumed = await this.resumeWithFormAnswers(
-					tx,
-					input.userId,
+			const state = question.formField
+				? await stateOf(tx, applicationId)
+				: null;
+			// A form question asked before review (the form was read while preparing) resumes
+			// preparation like any other question; one asked at submit time goes back to review.
+			if (question.formField && state !== "needs_answers")
+				return backToReview(this, tx, {
+					userId: input.userId,
 					applicationId,
-					"needs_human",
-					"user",
-				);
-				if (!resumed) return { applicationId, event: null };
-				const event = await this.addEvent(
-					tx,
-					input.userId,
-					applicationId,
-					`answered-${question.id}`,
-					{ action: "answered_form" },
-				);
-				return { applicationId, event, next: "review" };
-			}
+					questionId: question.id,
+					state,
+				});
 			const moved = await this.move(
 				input.userId,
 				applicationId,

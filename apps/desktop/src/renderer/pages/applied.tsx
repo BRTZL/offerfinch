@@ -89,7 +89,7 @@ export default function AppliedPage() {
 						<span className="text-muted-foreground truncate">
 							{row.appliedVia === "manual"
 								? "Sent by you"
-								: "Sent automatically"}
+								: "Submitted (board confirmed)"}
 						</span>
 						<span className="text-muted-foreground ml-auto shrink-0">
 							{sourceLabel("source" in row ? (row.source as string) : null)}

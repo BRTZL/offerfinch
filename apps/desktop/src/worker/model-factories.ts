@@ -56,19 +56,26 @@ export interface ModelConfig {
 	/** Fake claims check only: "1" makes every check throw (e2e of a failing check). */
 	FAKE_CLAIMS_FAIL?: string;
 	/**
-	 * Comma-separated hosts automatic submission may click submit on, e.g.
-	 * "jobs.ashbyhq.com,job-boards.greenhouse.io,jobs.lever.co". Default: none but 127.0.0.1 and
-	 * localhost, so a real board gets the handoff until the user turns it on.
+	 * Comma-separated hosts automatic submission may open and click submit on, besides 127.0.0.1
+	 * and localhost. The desktop leaves it unset: real boards open per run only when the user opened
+	 * them in Settings › Applying (core apply/open-boards.ts, docs/auto-apply-plan.md step 8).
 	 */
 	SUBMIT_ALLOWED_HOSTS?: string;
 	/** JSON object of board base URLs replacing the real hosts (fixture boards), e.g. {"lever":"http://127.0.0.1:4010/lever"}. */
 	APPLY_BOARD_BASES?: string;
 }
 
-/** @public Submission-host contract retained for callers outside the desktop bundle. */
-export function submitAllowedHosts(env: ModelConfig): string[] {
+/**
+ * @public Submission-host contract retained for callers outside the desktop bundle. The local
+ * fixture hosts (127.0.0.1, localhost) join only in a fixture run (`fixtures`): a real run never
+ * opens this Mac or a private network.
+ */
+export function submitAllowedHosts(
+	env: ModelConfig,
+	fixtures = false,
+): string[] {
 	return [
-		...LOCAL_HOSTS,
+		...(fixtures ? LOCAL_HOSTS : []),
 		...(env.SUBMIT_ALLOWED_HOSTS ?? "")
 			.split(",")
 			.map((h) => h.trim().toLowerCase())
@@ -217,6 +224,12 @@ export interface CreatePipelineOptions {
 	allowFakeLlm?: boolean;
 	/** Builds models on the user's own sign-ins in the desktop worker. Unset: they are refused. */
 	localLlm?: LocalLlmFactory;
+	/**
+	 * Fixture configuration (`ApplyDeps.fixtures`): set only by test code and the desktop's test
+	 * mode, never from the packaged app's environment. Lets submissions and form reads open the
+	 * local stand-in boards on this Mac.
+	 */
+	applyFixtures?: boolean;
 }
 
 export function createPipelineDeps(
@@ -282,8 +295,12 @@ export function createPipelineDeps(
 						store: repo,
 						browser: options.browser,
 						blobs: options.blobs,
-						allowedHosts: submitAllowedHosts(options.env),
+						allowedHosts: submitAllowedHosts(
+							options.env,
+							options.applyFixtures,
+						),
 						boardBases: boardBases(options.env),
+						fixtures: Boolean(options.applyFixtures),
 					}
 				: undefined,
 		spend,

@@ -462,6 +462,7 @@ describe("Redraft", () => {
 		});
 		await a.rpc.submission.markSubmitted({
 			id: appId,
+			attemptId: null,
 			idempotencyKey: "submitted-by-hand",
 		});
 		expect((await view()).state).toBe("applied");

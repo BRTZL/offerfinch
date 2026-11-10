@@ -26,8 +26,9 @@ import { showStatus } from "./matches-setup";
 
 /**
  * The desktop app end to end, with fake models and fixture job boards on 127.0.0.1: onboarding,
- * a first scan, notifications, a question, flagged lines, approval, the hand-off and "I
- * submitted this", then the worker and the whole app killed mid-flow and recovered.
+ * a first scan, notifications, a question, flagged lines, approval on an automatic board while
+ * submissions are paused (the default), "I submitted this", then the worker and the whole app
+ * killed mid-flow and recovered.
  */
 const SHOTS = process.env.E2E_SHOTS
 	? path.resolve(process.env.E2E_SHOTS)
@@ -66,7 +67,7 @@ test.afterAll(async () => {
 	await boards.close();
 });
 
-test("onboarding, first scan, question, flagged lines, approval and hand-off", async () => {
+test("onboarding, first scan, question, flagged lines, approval and submitting by hand", async () => {
 	const { app, page, errors } = await launchApp({
 		userData,
 		rewrite: boards.rewrite,
@@ -383,9 +384,17 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 				{ timeout: 150_000, intervals: [1_500] },
 			)
 			.toBe(true);
+		// Greenhouse submits automatically, but submissions are paused until turned on: approval
+		// says so up front, and the application waits as approved with nothing sent.
+		await expect(page.getByTestId("after-approve-paused")).toBeVisible();
 		await shot(page, "before-approve");
 		await approve.click();
-		await expect(page.getByTestId("handoff")).toBeVisible({ timeout: 60_000 });
+		await expect(page.getByTestId("paused")).toBeVisible({ timeout: 60_000 });
+		// The paused line links to the switch in Settings › Applying.
+		await expect(
+			page.getByTestId("paused").getByTestId("submissions-settings-link"),
+		).toHaveAttribute("href", "/settings/applying");
+		await expect(page.getByTestId("handoff")).toBeVisible();
 		const appId = new URL(page.url()).pathname.split("/").pop();
 		expect(
 			readDb<{ state: string }>(
@@ -393,6 +402,12 @@ test("onboarding, first scan, question, flagged lines, approval and hand-off", a
 				appId,
 			)[0]?.state,
 		).toBe("approved");
+		expect(
+			readDb<{ n: number }>(
+				"select count(*) n from submission_attempts where application_id = ?",
+				appId,
+			)[0]?.n,
+		).toBe(0);
 		await shot(page, "hand-off");
 		await page.getByTestId("mark-submitted").click();
 		await expect
@@ -858,6 +873,12 @@ test("Indeed and Glassdoor read local stand-ins only: jobs handed off, a check s
 			"select a.id from applications a join jobs j on j.id = a.job_id where j.source = 'indeed' limit 1",
 		)[0];
 		expect(indeedApp).toBeDefined();
+		expect(
+			readDb<{ n: number }>(
+				"select count(*) n from submission_attempts where application_id = ?",
+				indeedApp?.id,
+			)[0]?.n,
+		).toBe(0);
 		// Read in the app's own hidden tabs: no Chrome was started, no Chrome profile made.
 		expect(chrome.launches()).toEqual([]);
 		expect(fs.existsSync(path.join(userData, "indeed-chrome"))).toBe(false);

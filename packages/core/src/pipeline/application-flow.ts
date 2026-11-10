@@ -14,6 +14,7 @@ import {
 	type ApplicationUpdatedPayload,
 	type ApplicationWorkflowParams,
 } from "../workflow/types";
+import { fieldAnswersStep, readFormStep } from "./form-step";
 import {
 	ApplicationNotFoundError,
 	FlowPaused,
@@ -142,10 +143,25 @@ const MAX_WAKEUPS = 50;
 async function prepareOnce(
 	step: FlowStep,
 	deps: PipelineDeps,
-	userId: string,
-	jobId: string,
+	ids: { userId: string; jobId: string; applicationId: string },
 	wake: number,
 ): Promise<"capped" | "next"> {
+	const { userId, jobId, applicationId } = ids;
+	// The application form is read before the draft, so the draft can answer its questions. A
+	// read that fails, or a step that times out, is recorded or logged and never stops preparation.
+	try {
+		await step.do(
+			`read form ${wake}`,
+			() => readFormStep(deps, userId, applicationId),
+			{ retries: 0, timeoutSeconds: 180 },
+		);
+	} catch (error) {
+		if (error instanceof FlowPaused) throw error;
+		deps.log?.("form read failed", {
+			applicationId,
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
 	const drafted = await step.do(
 		`prepare ${wake}`,
 		() => draftStep(deps, userId, jobId),
@@ -153,6 +169,11 @@ async function prepareOnce(
 	);
 	if (drafted.outcome === "capped") return "capped";
 	if (drafted.outcome !== "drafted") return "next";
+	// Every field of the read form gets an approved value, a blank, or a question.
+	const fields = await step.do(`form answers ${wake}`, () =>
+		fieldAnswersStep(deps, userId, applicationId),
+	);
+	if (fields.outcome === "questions") return "next";
 	const reviewed = await step.do(
 		`review ${wake}`,
 		() => reviewStep(deps, userId, jobId),
@@ -250,7 +271,12 @@ export async function runApplicationFlow(
 		if (state === "preparing") {
 			let prepared: "capped" | "next";
 			try {
-				prepared = await prepareOnce(step, deps, userId, jobId, wake);
+				prepared = await prepareOnce(
+					step,
+					deps,
+					{ userId, jobId, applicationId },
+					wake,
+				);
 			} catch (error) {
 				if (error instanceof FlowPaused) throw error;
 				// The steps' own retries are spent: a real error, not a draft the check flagged.

@@ -22,6 +22,8 @@ interface StatusRow {
 	prepareRequestedAt: Date | string | null;
 	closedAt: Date | string | null;
 	openQuestions?: number;
+	/** Truthy while an employer's form that was sent waits for "Got the email". */
+	sentCheckEmail?: number | boolean;
 }
 
 const SUBMITTED = ["applying", "applied", "needs_human"];
@@ -89,7 +91,9 @@ export function inboxStatus(row: StatusRow): Status {
 		};
 	// Submitted or being submitted: a posting closed since then changes nothing.
 	if (state === "needs_human")
-		return { bucket: "review", label: "Needs you", tone: "warning" };
+		return row.sentCheckEmail
+			? { bucket: "review", label: "Sent — check your email", tone: "approved" }
+			: { bucket: "review", label: "Needs you", tone: "warning" };
 	if (state === "applying")
 		return { bucket: "approved", label: "Submitting", tone: "approved" };
 	return (!row.closedAt && openStatus(row)) || closedStatus(row);

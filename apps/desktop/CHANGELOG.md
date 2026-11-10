@@ -10,6 +10,16 @@ at the top, above the newest version. Only what is merged into main belongs here
 
 ## Unreleased
 
+- OfferFinch can send applications for you. Before you review a job it reads the application
+  form, without sending anything, and the review shows "What will be sent": every field and the
+  exact value. Once you approve, it fills only those values, clicks submit once and keeps a
+  screenshot of every step as proof. It works on Ashby, Greenhouse, Lever, Workable, Recruitee,
+  Teamtailor and Personio, and on employers' own forms, which end as "Sent — check your email"
+  until you press Got the email. It is off until you turn it on in Settings › Applying, and each
+  job site stays closed until you open it there. A CAPTCHA, a login, an emailed code or anything
+  unclear stops the run and hands it to you in "What to do", with every answer ready to copy.
+  A board can show its thank-you page and still drop an application it judged automated, so the
+  employer's email is the real proof.
 - A job in your Inbox counts as read as soon as you open it, so its blue dot goes away right
   away instead of after five seconds.
 - Settings › Documents picks how exported CVs and cover letters look: a template (Classic, as

@@ -1,6 +1,12 @@
 import type { BlobStore } from "../export/export";
 import type { PipelineDeps } from "../pipeline/ports";
-import type { BrowserProvider, NetworkLogEntry } from "../scrape/browser";
+import type { ProfileSnapshot } from "../profile/types";
+import type {
+	BrowserProvider,
+	HostRules,
+	NetworkLogEntry,
+} from "../scrape/browser";
+import { isPrivateHost } from "../sources/link";
 import { evidenceProfile } from "../tailor/profile-rules";
 import { type FormAnswer, parseContact } from "../tailor/tailor";
 import {
@@ -9,29 +15,53 @@ import {
 	type RunResult,
 	runApplication,
 } from "./applier";
+import type { SavedAnswer } from "./field-answers";
+import type { FormRead, FormReadRefusal, FormSchema } from "./form-schema";
 import {
-	BOARDS,
+	type ApplicantData,
 	type Board,
 	applyUrl as boardApplyUrl,
+	companyKeyProblem,
 	exactOption,
+	type FormBoard,
 	markdownToPlain,
 	sameQuestion,
+	sessionHosts,
 	type UnknownQuestion,
 } from "./forms";
-import { submissionModeForSource } from "./modes";
+import { submissionModeAfterRead, submissionModeForSource } from "./modes";
+import { boardClosedReason, runFormHosts } from "./open-boards";
+import { runWebApplication } from "./web-form";
+import { linkMoved, webSessionHosts } from "./web-hosts";
+import { webFormModelFor } from "./web-model";
 
 /**
- * Submission on approval (phase 3). `beginSubmissionStep` moves approved -> applying when the
- * user's switch allows; `submitStep` opens the board's form, fills it from the approved
- * documents and submits once. Postgres decides at every gate: the claim before the click is a
- * locked transaction that checks the approval, the switch and every earlier attempt.
+ * Submission on approval (phase 3; automatic since 2026-11-09, docs/auto-apply-plan.md).
+ * `beginSubmissionStep` moves approved -> applying on an "auto" board (`modes.ts`) when the
+ * user's switch (`submission_settings.paused`) allows; `submitStep` opens the board's form, fills
+ * it from the approved documents and submits once. The database decides at every gate: the claim
+ * before the click is a locked transaction that checks the approval, the switch and every earlier
+ * attempt.
  */
 
 export interface SubmissionContext {
 	applicationId: string;
 	/** Where the job was found; a hand-off source (LinkedIn) is never filled, whatever the board. */
 	source?: string;
-	board: Board | null;
+	/** The form it is filled on (`formTargetFor`): a board, an employer's own form ("web"), or none. */
+	board: FormBoard | null;
+	/**
+	 * How the board was decided (`FormTarget.from`): read from the job's apply link ("url"), the
+	 * posting fields below are that link's. Unset: from the source, as before step 6.
+	 */
+	boardFrom?: "source" | "url" | null;
+	/** Why the job's apply link named no form this app fills (`FormTarget.reason`). */
+	handoffNote?: string;
+	/**
+	 * Whether the user opened this board in Settings › Applying (`submission_boards`), read with
+	 * the context for each run. Unset (no such setting here): only `ApplyDeps.allowedHosts`.
+	 */
+	boardOpened?: boolean;
 	companyKey: string;
 	externalId: string;
 	jobUrl: string;
@@ -129,8 +159,28 @@ export interface SubmissionStore {
 		applicationId: string,
 		input: AttemptInput & { afterKey?: null },
 	): Promise<string>;
-	/** The user's saved answers (question inbox), for reuse. */
-	savedAnswers(userId: string): Promise<FormAnswer[]>;
+	/** The user's saved answers (question inbox), for reuse, with their record ids. */
+	savedAnswers(userId: string): Promise<SavedAnswer[]>;
+	/** The form read before review (step 2 of docs/auto-apply-plan.md), or null when never read. */
+	formRead?(userId: string, applicationId: string): Promise<FormRead | null>;
+	/**
+	 * Saves the read, replacing an earlier one; only while the application is preparing, so a
+	 * read never changes what an approval covered. False when it was not saved.
+	 */
+	saveFormRead?(
+		userId: string,
+		applicationId: string,
+		read: FormRead,
+	): Promise<boolean>;
+	/**
+	 * Adds answers to the form answers as a new version (same question: replaced), while the
+	 * application is preparing. Returns how many changed.
+	 */
+	addFormAnswers?(
+		userId: string,
+		applicationId: string,
+		answers: FormAnswer[],
+	): Promise<number>;
 	/**
 	 * Applications left in `applying` since before `before` (the worker running the submission
 	 * died, so nothing will wake them): a `started` attempt becomes an unknown outcome, otherwise
@@ -147,30 +197,37 @@ export interface ApplyDeps {
 	browser: BrowserProvider;
 	blobs: BlobStore;
 	/**
-	 * Hosts automatic submission may click submit on. Anything else stops before opening the form
-	 * and hands over. Default: only the local fixture boards.
+	 * Hosts automatic submission may click submit on, besides the board the user opened in
+	 * Settings › Applying. Anything else stops before opening the form and hands over. This Mac
+	 * and private networks are never among them unless `fixtures` is set. Default: none (with
+	 * `fixtures`: the local fixture hosts, 127.0.0.1 and localhost).
 	 */
 	allowedHosts?: string[];
 	/** Base URL per board, replacing the real hosts (fixtures and tests). */
 	boardBases?: Partial<Record<Board, string>>;
 	/**
-	 * Lets the applier run against the local fixture boards for a hand-off board (tests only; see
-	 * `submissionModeFor`). Real hosts stay hand-off whatever this says.
+	 * Fixture configuration (test code and the desktop's test mode only; never read from the
+	 * environment in the packaged app): forms on this Mac (127.0.0.1, localhost) may be opened,
+	 * a fixture board fills from its scan without a read before review, and sessions may reach
+	 * the local network. Unset, every run refuses this Mac and private networks: in its allowed
+	 * hosts, its redirects and every request its pages make.
 	 */
-	autoSubmitFixtures?: boolean;
+	fixtures?: boolean;
 	/** Replaces the browser run (tests). */
 	run?: (
 		run: ApplicationRun,
 	) => Promise<RunResult & { networkLog?: unknown[] }>;
+	/** Replaces the browser read of a form before review (tests). */
+	readForm?: (input: {
+		board: FormBoard;
+		url: string;
+	}) => Promise<{ ok: true; schema: FormSchema } | FormReadRefusal>;
 	now?: () => Date;
 }
 
 export const LOCAL_HOSTS = ["127.0.0.1", "localhost"];
 
-export function hostAllowed(
-	url: string,
-	allowed: string[] = LOCAL_HOSTS,
-): boolean {
+export function hostAllowed(url: string, allowed: string[]): boolean {
 	const host = new URL(url).hostname;
 	return allowed.some((h) => h === host);
 }
@@ -179,14 +236,6 @@ export function hostAllowed(
 export function formLabelOf(question: string): string {
 	return question.replace(/\s*\(one of: [^)]*\)\s*$/, "").trim();
 }
-
-function boardOf(source: string): Board | null {
-	return (BOARDS as readonly string[]).includes(source)
-		? (source as Board)
-		: null;
-}
-
-export { boardOf };
 
 const keyFor = (userId: string, applicationId: string, label: string) =>
 	`users/${userId}/applications/${applicationId}/submissions/${Date.now()}-${label}.png`;
@@ -201,28 +250,92 @@ async function store(
 	return key;
 }
 
-/** The board's submission mode for this application, with the URL the applier would open. */
-export function modeOf(apply: ApplyDeps, context: SubmissionContext) {
-	const url = context.board
-		? boardApplyUrl(
-				context.board,
-				{
-					url: context.jobUrl,
-					externalId: context.externalId,
-					companyKey: context.companyKey,
-				},
-				apply.boardBases,
-			)
+/**
+ * Stores the screenshot of each filled step of a multi-step form (before its "Next"), keyed
+ * `step-1`, `step-2` …; their keys go into the attempt's proof as `stepKeys`, in step order.
+ */
+async function storeSteps(
+	blobs: BlobStore,
+	userId: string,
+	applicationId: string,
+	steps: Uint8Array[] | undefined,
+): Promise<{ stepKeys?: string[] }> {
+	if (!steps?.length) return {};
+	const keys: string[] = [];
+	for (const [i, bytes] of steps.entries()) {
+		const key = await store(
+			blobs,
+			keyFor(userId, applicationId, `step-${i + 1}`),
+			bytes,
+		).catch(() => null);
+		if (key) keys.push(key);
+	}
+	return keys.length > 0 ? { stepKeys: keys } : {};
+}
+
+/**
+ * An employer's form after its one click (decision 2026-11-09): sent, and the user says whether
+ * the employer's email came. The attempt stays unresolved (needs_human, `proof.outcome:
+ * "web_sent"`) with what the run saw as `proof.evidence`; it is never applied from the page and
+ * never retried on its own.
+ */
+async function recordWebSent(
+	at: {
+		db: SubmissionStore;
+		blobs: BlobStore;
+		userId: string;
+		applicationId: string;
+	},
+	attemptId: string | null,
+	result: Extract<RunResult, { outcome: "web_sent" }>,
+	proof: Record<string, unknown>,
+): Promise<SubmitOutcome> {
+	const afterKey = result.after
+		? await store(
+				at.blobs,
+				keyFor(at.userId, at.applicationId, "after"),
+				result.after,
+			).catch(() => null)
 		: null;
-	return submissionModeForSource(context.source ?? "", context.board, url, {
-		autoSubmitFixtures: apply.autoSubmitFixtures,
+	const reason =
+		"Sent; check your email. The employer's form was submitted once; whether it arrived is told by the employer's email, not the page.";
+	await at.db.finishSubmission(at.userId, at.applicationId, attemptId ?? "", {
+		submitted: false,
+		afterKey,
+		reason,
+		proof: {
+			...proof,
+			finalUrl: result.finalUrl,
+			outcome: "web_sent",
+			evidence: result.evidence,
+		},
 	});
+	return { outcome: "needs_human", reason };
+}
+
+/** The submission mode for this application: its source, then its board. */
+export function modeOf(context: SubmissionContext) {
+	return submissionModeForSource(
+		context.source ?? "",
+		context.board,
+		context.boardFrom,
+		context.handoffNote,
+	);
 }
 
 /**
  * approved -> applying, only on a board whose mode is "auto". A hand-off board stays approved:
  * the dashboard shows the hand-off and the user records the submission.
  */
+/** Why this job's company key cannot name its form (a company-subdomain board), or null. */
+function keyProblem(
+	context: Pick<SubmissionContext, "board" | "companyKey">,
+): string | null {
+	return context.board && context.board !== "web"
+		? companyKeyProblem(context.board, context.companyKey)
+		: null;
+}
+
 export async function beginSubmissionStep(
 	deps: PipelineDeps,
 	userId: string,
@@ -239,10 +352,57 @@ export async function beginSubmissionStep(
 			outcome: "skipped",
 			reason: "the application's job could not be read",
 		};
-	const mode = modeOf(deps.apply, context);
+	// An employer's own form without a field list read before review is a hand-off too.
+	const mode = submissionModeAfterRead(
+		modeOf(context),
+		context.board,
+		context.board === "web"
+			? ((await deps.apply.store.formRead?.(userId, applicationId)) ?? null)
+			: null,
+	);
 	if (mode.mode === "handoff")
 		return { outcome: "handoff", reason: mode.reason };
 	return deps.apply.store.beginSubmission(userId, applicationId);
+}
+
+/**
+ * What the form is filled from: the profile's contact details, the approved form answers and
+ * letter. Shared by the submission, the dry run and the "What will be sent" list.
+ */
+export function applicantData(
+	profile: ProfileSnapshot,
+	context: Pick<SubmissionContext, "formAnswers" | "coverLetterMarkdown">,
+	hasCoverLetterFile: boolean,
+): ApplicantData {
+	return {
+		contact: parseContact(evidenceProfile(profile)),
+		answers: context.formAnswers,
+		coverLetterText: context.coverLetterMarkdown
+			? markdownToPlain(context.coverLetterMarkdown)
+			: null,
+		hasCoverLetterFile,
+	};
+}
+
+/**
+ * The board's form URL for this application (fixture bases replace the real hosts); an
+ * employer's own form is the apply link itself.
+ */
+export function formUrlOf(
+	context: Pick<SubmissionContext, "jobUrl" | "externalId" | "companyKey">,
+	board: FormBoard,
+	bases?: ApplyDeps["boardBases"],
+): string {
+	if (board === "web") return context.jobUrl;
+	return boardApplyUrl(
+		board,
+		{
+			url: context.jobUrl,
+			externalId: context.externalId,
+			companyKey: context.companyKey,
+		},
+		bases,
+	);
 }
 
 /** What a run needs from the approved application: URL, answers and the approved PDFs. */
@@ -255,15 +415,9 @@ async function prepareRun(
 ): Promise<{ run: ApplicationRun } | { stop: string }> {
 	if (!context.board)
 		return { stop: "This board has no automatic form filling; apply by hand." };
-	const url = boardApplyUrl(
-		context.board,
-		{
-			url: context.jobUrl,
-			externalId: context.externalId,
-			companyKey: context.companyKey,
-		},
-		apply.boardBases,
-	);
+	const badKey = keyProblem(context);
+	if (badKey) return { stop: badKey };
+	const url = formUrlOf(context, context.board, apply.boardBases);
 	if (!context.cvPdfKey)
 		return { stop: "The approved CV has no PDF export to upload." };
 	const cv = await apply.blobs.get(context.cvPdfKey);
@@ -274,19 +428,54 @@ async function prepareRun(
 		return { stop: `The approved CV PDF is missing from ${apply.blobs.name}.` };
 	const profile = await deps.repo.getProfile(userId);
 	if (!profile) return { stop: "No profile to read contact details from." };
+	// The form read before review: its fields are what the user approved values for.
+	const read = await apply.store.formRead?.(userId, context.applicationId);
+	// An employer's own form is filled only from a field list review showed and the user approved.
+	if (context.board === "web" && read?.status !== "read")
+		return {
+			stop: "The employer's form was not read before review, so no list of what will be sent was approved for it; apply on the employer's site yourself.",
+		};
+	// A real board's form is filled only from a field list review showed, like an employer's: a
+	// form not read before review (its board was closed then) goes back to review first. Only
+	// the local fixture boards of a fixture run keep filling from the scan, as before step 2.
+	if (
+		context.board !== "web" &&
+		read?.status !== "read" &&
+		!(apply.fixtures && hostAllowed(url, LOCAL_HOSTS))
+	)
+		return {
+			stop: "The form was not read before review, so no list of what will be sent was approved for it. Read the form again to review it.",
+		};
+	// A read saved before redirects to another host became a hand-off may hold a form page on
+	// another host than the job's link: never opened, never sent to.
+	const moved =
+		context.board === "web" && read?.status === "read" && read.schema.formUrl
+			? linkMoved(url, read.schema.formUrl)
+			: null;
+	if (moved) return { stop: moved };
+	const data = applicantData(profile, context, letter !== null);
 	return {
 		run: {
 			board: context.board,
-			url,
+			// An employer's form opens where its read landed after HTTP redirects: that exact host
+			// is the only one that receives the application (web-hosts.ts `webFormHost`).
+			url:
+				context.board === "web" && read?.status === "read"
+					? (read.schema.formUrl ?? url)
+					: url,
 			mode,
-			data: {
-				contact: parseContact(evidenceProfile(profile)),
-				answers: context.formAnswers,
-				coverLetterText: context.coverLetterMarkdown
-					? markdownToPlain(context.coverLetterMarkdown)
-					: null,
-				hasCoverLetterFile: letter !== null,
-			},
+			...(read?.status === "read" ? { schema: read.schema.fields } : {}),
+			// The drafting model reads an employer's buttons and its page after the click; the
+			// applicant's email and phone never reach it.
+			...(context.board === "web"
+				? {
+						model: webFormModelFor(deps, userId, context.applicationId, [
+							data.contact.email,
+							data.contact.phone,
+						]),
+					}
+				: {}),
+			data,
 			files: {
 				cv: { name: "CV.pdf", mimeType: "application/pdf", buffer: cv },
 				coverLetter: letter
@@ -301,21 +490,43 @@ async function prepareRun(
 	};
 }
 
+/** Every value the form may be filled with: none may reach a host outside the form's hosts. */
+function formValuesOf(data: ApplicationRun["data"]): string[] {
+	const { contact } = data;
+	return [
+		...Object.values(contact),
+		...data.answers.map((a) => a.answer),
+		data.coverLetterText ?? "",
+	].filter(Boolean);
+}
+
 async function openAndRun(
 	apply: ApplyDeps,
 	run: ApplicationRun,
 	network: "allowlist" | "read_only",
+	hostRules?: HostRules | null,
 ): Promise<RunResult & { networkLog?: unknown[] }> {
 	if (apply.run) return apply.run(run);
+	// A real run never reaches this Mac or a private network; only a fixture run may.
+	const refusePrivateNetwork = !apply.fixtures;
 	const session = await apply.browser.openSession(
 		network === "allowlist"
-			? { network, allowedHosts: run.allowedHosts }
-			: { network },
+			? {
+					network,
+					allowedHosts: run.allowedHosts,
+					...(hostRules ? { hostRules } : {}),
+					formValues: formValuesOf(run.data),
+					refusePrivateNetwork,
+				}
+			: { network, refusePrivateNetwork },
 	);
 	try {
 		const page = await session.newPage();
-		const result = await runApplication(page, {
+		// An employer's own form: the generic run (web-form.ts).
+		const drive = run.board === "web" ? runWebApplication : runApplication;
+		const result = await drive(page, {
 			...run,
+			lookupsOffline: network === "read_only",
 			beforeFill:
 				network === "read_only"
 					? () => page.restrictNetwork("none")
@@ -336,6 +547,129 @@ export type SubmitOutcome =
 	| { outcome: "ready_for_review"; reason: string }
 	| { outcome: "paused"; reason: string }
 	| { outcome: "skipped"; state: string };
+
+/** Records a stop before the click as a `not_sent` attempt and hands the application over. */
+function stopper(
+	db: ApplyDeps["store"],
+	userId: string,
+	applicationId: string,
+) {
+	return async (
+		reason: string,
+		board = "",
+		url = "",
+		screenshotKey: string | null = null,
+		proof: Record<string, unknown> = {},
+	) => {
+		await db.stopSubmission(userId, applicationId, {
+			board,
+			url,
+			screenshotKey,
+			reason: `${reason} Nothing was submitted.`,
+			proof,
+		});
+		return { outcome: "needs_human" as const, reason };
+	};
+}
+
+/**
+ * The form hosts a run on `url` may open: `ApplyDeps.allowedHosts`, plus this board's exact form
+ * host when the user opened it in Settings › Applying (open-boards.ts). Outside a fixture run
+ * (`ApplyDeps.fixtures`) this Mac and private networks are never among them, whatever the
+ * company key, the employer's link or `allowedHosts` say.
+ */
+export function allowedHostsFor(
+	apply: Pick<ApplyDeps, "allowedHosts" | "fixtures">,
+	context: SubmissionContext,
+	url: string,
+): string[] {
+	if (keyProblem(context)) return [];
+	const hosts = runFormHosts(
+		apply.allowedHosts ?? (apply.fixtures ? LOCAL_HOSTS : []),
+		context,
+		url,
+	);
+	return apply.fixtures ? hosts : hosts.filter((h) => !isPrivateHost(h));
+}
+
+/**
+ * What a real submission's session may reach. A board: its own data hosts, and its asset and
+ * scoring hosts read-only (docs/form-inspection.md, 2026-11-09). An employer's own form: only the
+ * exact host of its page receives data (web-hosts.ts).
+ */
+function runHosts(run: ApplicationRun, allowed: string[]) {
+	return run.board === "web"
+		? webSessionHosts(run.url)
+		: sessionHosts(run.board, allowed);
+}
+
+/**
+ * Stops a run whose form `url` is not on this run's allowed hosts (a board the user has not
+ * opened in Settings › Applying), before any browser opens; null when it may open.
+ */
+async function hostRefused(
+	apply: ApplyDeps,
+	context: SubmissionContext,
+	url: string,
+	stop: ReturnType<typeof stopper>,
+): Promise<SubmitOutcome | null> {
+	if (!context.board || hostAllowed(url, allowedHostsFor(apply, context, url)))
+		return null;
+	return stop(
+		context.boardOpened === false
+			? boardClosedReason(context.board)
+			: `Automatic submission to ${new URL(url).hostname} is not turned on.`,
+		context.board,
+		url,
+		null,
+		{ stop: "host_not_allowed" },
+	);
+}
+
+/** A gate that stops the run when submissions were paused before `what`. */
+function pausedBefore(db: SubmissionStore, userId: string, what: string) {
+	return async () =>
+		(await db.submissionsPaused(userId))
+			? `Submissions were paused before ${what}.`
+			: null;
+}
+
+/** Who confirmed a submission, in its reason. */
+const confirmer = (board: FormBoard) =>
+	board === "web" ? "the employer's page" : "the board";
+
+/** The gates before any browser opens; null when the run may open the form. */
+async function gateBeforeOpen(
+	apply: ApplyDeps,
+	userId: string,
+	stop: ReturnType<typeof stopper>,
+	context: SubmissionContext,
+): Promise<SubmitOutcome | null> {
+	const board = context.board ?? "";
+	// The hard gate: on a hand-off board no browser opens, whatever moved it to applying.
+	const mode = modeOf(context);
+	if (mode.mode === "handoff") return stop(mode.reason, board);
+	// A company key that is not one DNS label would make the form's host another site (this Mac
+	// included): refused before any URL is built or any browser opens, opened board or not.
+	const badKey = keyProblem(context);
+	if (badKey)
+		return stop(badKey, board, "", null, { stop: "host_not_allowed" });
+	// A pause after approval stops before the browser opens: typing on a live form can send
+	// answers through the page's own scripts, long before the upload or the click.
+	if (!(await apply.store.submissionsPaused(userId)))
+		// A real board the user has not opened stops before anything is prepared or opened.
+		return context.board && context.boardOpened === false
+			? hostRefused(
+					apply,
+					context,
+					formUrlOf(context, context.board, apply.boardBases),
+					stop,
+				)
+			: null;
+	const reason = "Submissions were paused before the form was opened.";
+	await stop(reason, board, "", null, { stop: "paused" });
+	return { outcome: "paused", reason };
+}
 
 /**
  * One submission. Never throws: a stop before the click records a `not_sent` attempt; an error
@@ -358,52 +692,36 @@ export async function submitStep(
 				"An earlier attempt was interrupted after it was cleared to submit; check before retrying.",
 		};
 	const context = await db.submissionContext(userId, applicationId);
-	const stop = async (
-		reason: string,
-		board = "",
-		url = "",
-		screenshotKey: string | null = null,
-		proof: Record<string, unknown> = {},
-	) => {
-		await db.stopSubmission(userId, applicationId, {
-			board,
-			url,
-			screenshotKey,
-			reason: `${reason} Nothing was submitted.`,
-			proof,
-		});
-		return { outcome: "needs_human" as const, reason };
-	};
+	const stop = stopper(db, userId, applicationId);
 	if (!context) return stop("The application's job could not be read.");
-	// The hard gate: on a hand-off board no browser opens, whatever moved it to applying.
-	const mode = modeOf(apply, context);
-	if (mode.mode === "handoff") return stop(mode.reason, context.board ?? "");
+	const gated = await gateBeforeOpen(apply, userId, stop, context);
+	if (gated) return gated;
 	let attemptId: string | null = null;
 	let pausedAtClaim = false;
 	try {
 		const prepared = await prepareRun(deps, apply, userId, context, "submit");
 		if ("stop" in prepared) return stop(prepared.stop, context.board ?? "");
 		const { run } = prepared;
-		if (!hostAllowed(run.url, apply.allowedHosts ?? LOCAL_HOSTS))
-			return stop(
-				`Automatic submission to ${new URL(run.url).hostname} is not turned on (SUBMIT_ALLOWED_HOSTS).`,
-				run.board,
-				run.url,
-			);
-		pausedAtClaim = false;
+		// An employer's form opens where its read landed: that exact host must be the allowed one.
+		const refused = await hostRefused(apply, context, run.url, stop);
+		if (refused) return refused;
+		const hosts = runHosts(run, allowedHostsFor(apply, context, run.url));
 		const result = await openAndRun(
 			apply,
 			{
 				...run,
 				// The run stays on these hosts: redirects, navigations, uploads and the submission
 				// itself are refused anywhere else, and the page is checked again before the claim.
-				allowedHosts: apply.allowedHosts ?? LOCAL_HOSTS,
+				allowedHosts: hosts.form,
 				// Boards upload a file as soon as it is chosen: re-check the switch first, so a
 				// pause during the fill stops before the CV leaves.
 				beforeUpload: async () =>
 					(await db.submissionsPaused(userId))
 						? "Submissions were paused before the files were uploaded."
 						: null,
+				// A multi-step form claims before its first "Next" (a step may save answers on the
+				// employer's site); every later step checks the switch again.
+				beforeStep: pausedBefore(db, userId, "the form's next step"),
 				claim: async (before, filled) => {
 					const beforeKey = await store(
 						apply.blobs,
@@ -425,8 +743,13 @@ export async function submitStep(
 				},
 			},
 			"allowlist",
+			hosts.rules,
 		);
-		const proof = { filled: result.filled, board: run.board };
+		const proof = {
+			filled: result.filled,
+			board: run.board,
+			...(await storeSteps(apply.blobs, userId, applicationId, result.steps)),
+		};
 		switch (result.outcome) {
 			case "submitted":
 			case "unknown": {
@@ -437,8 +760,8 @@ export async function submitStep(
 				).catch(() => null);
 				const submitted = result.outcome === "submitted";
 				const reason = submitted
-					? `Submitted; the board confirmed: "${result.confirmation}"`
-					: `Outcome unknown after the submit click: ${result.reason} Check the employer's portal or your email before retrying.`;
+					? `Submitted; ${confirmer(run.board)} confirmed: "${result.confirmation}"`
+					: `Outcome unknown after a click that may have sent the application: ${result.reason} Check the employer's portal or your email before retrying.`;
 				await db.finishSubmission(userId, applicationId, attemptId ?? "", {
 					submitted,
 					afterKey,
@@ -453,6 +776,13 @@ export async function submitStep(
 					? { outcome: "applied", confirmation: result.confirmation }
 					: { outcome: "needs_human", reason };
 			}
+			case "web_sent":
+				return await recordWebSent(
+					{ db, blobs: apply.blobs, userId, applicationId },
+					attemptId,
+					result,
+					proof,
+				);
 			case "not_claimed": {
 				const key = await store(
 					apply.blobs,
@@ -464,7 +794,7 @@ export async function submitStep(
 					url: run.url,
 					screenshotKey: key,
 					reason: `${result.reason} Nothing was submitted.`,
-					proof,
+					proof: pausedAtClaim ? { ...proof, stop: "paused" } : proof,
 				});
 				return pausedAtClaim
 					? { outcome: "paused", reason: result.reason }
@@ -560,6 +890,9 @@ export type DryRunOutcome =
  * Fills the approved application's form and screenshots it, never clicking submit. The page
  * loads read-only and the network closes before the first keystroke, so typed data and files
  * cannot leave the browser even on a live board. Changes no application state.
+ *
+ * It needs no approval, pause or host check on purpose: the closed network is its gate, and it
+ * is how a real board's form is checked before anything is sent (docs/auto-apply-plan.md, step 4).
  */
 export async function dryRunApplication(
 	deps: PipelineDeps,
@@ -571,7 +904,7 @@ export async function dryRunApplication(
 	const context = await apply.store.submissionContext(userId, applicationId);
 	if (!context) throw new Error(`Application ${applicationId} not found`);
 	// A dry run fills the form too: never on a hand-off board.
-	const mode = modeOf(apply, context);
+	const mode = modeOf(context);
 	if (mode.mode === "handoff") throw new Error(mode.reason);
 	const prepared = await prepareRun(deps, apply, userId, context, "dry_run");
 	if ("stop" in prepared) {

@@ -16,7 +16,7 @@ describe("a job's source", () => {
 		expect(parseJobSource(undefined)).toBe("manual");
 		expect(parseJobSource("scrape")).toBe("scrape");
 		expect(() => parseJobSource("monster")).toThrow(/ashby, greenhouse/);
-		expect(submissionModeForSource("manual", null, null).mode).toBe("handoff");
+		expect(submissionModeForSource("manual", null).mode).toBe("handoff");
 	});
 
 	it("reports a board label whose URL is not on that board", () => {
