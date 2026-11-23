@@ -13,7 +13,7 @@
 	},
 	"dependencies": {
 		"@offerfinch/core": "workspace:*",
-		"better-sqlite3": "13.0.3",
+		"better-sqlite3": "13.2.0",
 		"drizzle-orm": "catalog:",
 		"zod": "catalog:"
 	},
@@ -23,7 +23,7 @@
 		"@types/node": "catalog:",
 		"drizzle-kit": "1.0.0-rc.5",
 		"typescript": "catalog:",
-		"vitest": "^5.0.5",
+		"vitest": "^5.1.1",
 		"@orpc/client": "catalog:",
 		"@orpc/server": "catalog:"
 	}
